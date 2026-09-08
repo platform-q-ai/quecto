@@ -12,7 +12,14 @@ pub(super) fn negotiate(
     admission_context: Option<&Path>,
     stderr: &mut String,
 ) -> bool {
-    let negotiation = match (admission_context, config.admission_proposal()) {
+    let configured = match config.admission_proposal() {
+        Ok(configured) => configured,
+        Err(error) => {
+            stderr.push_str(&format!("agent: {error}\n"));
+            return false;
+        }
+    };
+    let negotiation = match (admission_context, configured) {
         (Some(context), _) => Negotiation::Child {
             context: context.to_path_buf(),
         },
@@ -26,4 +33,9 @@ pub(super) fn negotiate(
             false
         }
     }
+}
+
+/// Bounded orderly exit of the process's admission binding (no-op when disabled).
+pub(crate) fn shutdown() {
+    process::shutdown(std::time::Duration::from_secs(3));
 }

@@ -257,3 +257,171 @@ async fn container_child_negotiates_admission_through_the_mounted_client_directo
         )
         .status();
 }
+
+/// Review HIGH-4a / MEDIUM-6: with the default authority directory under the
+/// identity-mounted `~/.quecto`, the adapter masks everything but `client/`
+/// inside the container; a create that fails its admission precondition leaves
+/// no unreported environment directory behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn container_sees_only_the_client_directory_and_failed_creates_leak_nothing() {
+    if std::env::var("QUECTO_ADMISSION_CONTAINER_E2E").as_deref() != Ok("1") {
+        eprintln!(
+            "skipped: set QUECTO_ADMISSION_CONTAINER_E2E=1 with podman/docker and quecto-box:local"
+        );
+        return;
+    }
+    let cli = runtime_cli().expect("podman or docker with quecto-box:local");
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let base = home.join(".quecto");
+    let run = home.join("run");
+    let state = home.join("state");
+    let authority = base.join("admission");
+    for dir in [&base, &run, &state, &home.join("workspace")] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let config = base.join("config.json");
+    std::fs::write(
+        &config,
+        format!(
+            r#"{{"agents":{{"defaults":{{"workspace":{ws:?},"model":"fake/test-model"}}}},
+"providers":{{"openai_compatible":{{"endpoints":[{{"prefix":"fake","api_key":"k","api_base":"http://127.0.0.1:9","allow_remote_http":true}}]}}}},
+"admission":{{"groups":{{"g":{{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":8,"queue_timeout_ms":60000,"attempt_timeout_ms":120000,"fallback_base_ms":100,"max_cooldown_ms":10000}}}},"aliases":{{"acct":"g"}},"bindings":{{"fake":"acct"}}}}}}"#,
+            ws = home.join("workspace").to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let quecto = PathBuf::from(env!("CARGO_BIN_EXE_quecto"));
+    let mut broker = Command::new(&quecto)
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "admission-broker",
+            "run",
+        ])
+        .env("HOME", home)
+        .env("QUECTO_BASE_DIR", &base)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let dir = AuthorityDirectory::open(&authority).unwrap();
+    wait_connectable(&dir.client_socket(), "authority", || {
+        broker.try_wait().unwrap().is_none()
+    });
+    let _broker = Proc(broker);
+    let root = AuthorityConnection::connect(&dir.client_socket())
+        .await
+        .unwrap();
+    let credential = root
+        .register_root(WorkloadClass::Interactive)
+        .await
+        .unwrap();
+    root.bind(credential).await.unwrap();
+    let child = root.register_child().await.unwrap();
+    let context = run.join("quecto-admission-mask.json");
+    write_admission_context(&context, &dir.client_socket(), &child).unwrap();
+    let create = repo_root().join("scripts/container-runtime/docker/create.sh");
+    let kill = repo_root().join("scripts/container-runtime/docker/kill.sh");
+    let child_socket = run.join("quecto-agent-mask.sock");
+    let output = Command::new(&create)
+        .args(["--state-dir", state.to_str().unwrap(), "--"])
+        .arg(&quecto)
+        .args([
+            "agent",
+            "--mode",
+            "uds",
+            "-s",
+            "mask",
+            "--socket",
+            child_socket.to_str().unwrap(),
+            "--persist",
+            "--spawned",
+            "--config",
+            config.to_str().unwrap(),
+            "--admission-context",
+            context.to_str().unwrap(),
+        ])
+        .env("HOME", home)
+        .env("QUECTO_BASE_DIR", &base)
+        .env("QUECTO_CONTAINER_CLI", cli)
+        .env("QUECTO_CONTAINER_CONFIG", "docker")
+        .env("QUECTO_CONTAINER_ENVIRONMENT_REF", "ref-admission-mask")
+        .env("QUECTO_ADMISSION_DIR", dir.client_dir())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let environment_id = result["environment_id"].as_str().unwrap().to_owned();
+    wait_connectable(&child_socket, "container child", || true);
+    let container = format!("quecto-{environment_id}");
+    let probe = |expr: &str| {
+        Command::new(cli)
+            .args(["exec", &container, "sh", "-c", expr])
+            .status()
+            .unwrap()
+            .success()
+    };
+    let journal = dir.journal_path();
+    let admin = dir.admin_socket();
+    let token = dir.root_token_path();
+    let socket = dir.client_socket();
+    let hidden = probe(&format!(
+        "test ! -e {} && test ! -e {} && test ! -e {} && test -S {}",
+        journal.display(),
+        admin.display(),
+        token.display(),
+        socket.display()
+    ));
+    let _ = Command::new(&kill)
+        .args(["--state-dir", state.to_str().unwrap()])
+        .env("QUECTO_CONTAINER_CLI", cli)
+        .env("QUECTO_CONTAINER_ENVIRONMENT_ID", &environment_id)
+        .status();
+    assert!(
+        hidden,
+        "journal, admin socket and root token are masked; client socket is visible"
+    );
+
+    let before: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    let output = Command::new(&create)
+        .args(["--state-dir", state.to_str().unwrap(), "--"])
+        .arg(&quecto)
+        .args([
+            "agent",
+            "--mode",
+            "uds",
+            "--socket",
+            run.join("leak.sock").to_str().unwrap(),
+        ])
+        .env("HOME", home)
+        .env("QUECTO_BASE_DIR", &base)
+        .env("QUECTO_CONTAINER_CLI", cli)
+        .env("QUECTO_CONTAINER_CONFIG", "docker")
+        .env("QUECTO_CONTAINER_ENVIRONMENT_REF", "ref-admission-leak")
+        .env("QUECTO_ADMISSION_DIR", home.join("does-not-exist"))
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "missing admission directory fails create"
+    );
+    let after: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(
+        before, after,
+        "a failed create leaves no environment directory"
+    );
+}

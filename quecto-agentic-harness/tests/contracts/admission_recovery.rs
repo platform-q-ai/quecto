@@ -298,3 +298,40 @@ fn high_water_reports_the_last_accepted_sequence_per_scope() {
     s.retire(two).unwrap();
     assert_eq!(s.high_water(two), Err(AdmissionError::UnknownScope));
 }
+
+/// Review MEDIUM-4: a sequence above the high-water mark was never enqueued,
+/// so no grant can exist for it; refusing it must not poison any group.
+#[test]
+fn completing_a_never_enqueued_sequence_is_refused_without_poisoning_groups() {
+    let (mut s, one, _two) = seeded();
+    assert_eq!(
+        s.complete(one, 99, Feedback::Success, 5),
+        Err(AdmissionError::UnknownRequest)
+    );
+    assert!(!s.snapshot(&group("a"), 5).unwrap().unavailable);
+    assert!(!s.snapshot(&group("b"), 5).unwrap().unavailable);
+    s.enqueue(one, 3, "b", 6).unwrap();
+    assert!(
+        s.next(&group("b"), 6).unwrap().is_some(),
+        "other group still grants"
+    );
+}
+
+/// Review MEDIUM-5: the scope limit bounds live scopes; retired scopes free
+/// their slot while serials are never recycled.
+#[test]
+fn scope_limit_counts_live_scopes_and_serials_are_never_recycled() {
+    let mut cfg = config();
+    cfg.max_scopes = 2;
+    let mut s = AdmissionService::new(1, cfg).unwrap();
+    let a = s.register_root(WorkloadClass::Interactive).unwrap();
+    let b = s.register_root(WorkloadClass::Interactive).unwrap();
+    assert_eq!(
+        s.register_root(WorkloadClass::Interactive),
+        Err(AdmissionError::ScopeLimit)
+    );
+    s.retire(a).unwrap();
+    let c = s.register_root(WorkloadClass::Interactive).unwrap();
+    assert!(c.serial > b.serial, "serial identity is never reused");
+    assert_eq!(s.high_water(a), Err(AdmissionError::UnknownScope));
+}

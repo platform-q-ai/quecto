@@ -155,9 +155,9 @@ fn journal_failure_withdraws_the_grant_and_stops_new_grants_until_recovery() {
     assert!(!a.inspect(0).journal_healthy);
     a.acquire(&root, 2, "g", 1).unwrap();
     assert_eq!(a.pump(1).err(), Some(AuthorityError::JournalUnavailable));
-    assert_eq!(
-        a.status(&root, 2, 1).unwrap(),
-        RequestState::Terminal(TerminalOutcome::Cancelled)
+    assert!(
+        matches!(a.status(&root, 2, 1).unwrap(), RequestState::Queued { .. }),
+        "while unhealthy the probe fails first and queued work is held"
     );
     journal.0.borrow_mut().fail = false;
     a.acquire(&root, 3, "g", 2).unwrap();
@@ -288,5 +288,54 @@ fn retire_releases_a_scope_and_its_capability() {
     assert_eq!(
         a.acquire(&root, 1, "g", 1).err(),
         Some(AuthorityError::Unauthorized)
+    );
+}
+
+/// Review MEDIUM-5: a parent can retire a descendant it registered (for
+/// example when the launch failed), but not an unrelated scope.
+#[test]
+fn a_parent_can_retire_only_its_own_descendants() {
+    let (mut a, _) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let other = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let child = a.register_child(&root, 0).unwrap();
+    assert_eq!(
+        a.retire_child(&other, child.scope, 1).err(),
+        Some(AuthorityError::Unauthorized)
+    );
+    a.retire_child(&root, child.scope, 1).unwrap();
+    assert_eq!(
+        a.acquire(&child, 1, "g", 2).err(),
+        Some(AuthorityError::Unauthorized),
+        "retired child capability is revoked"
+    );
+    assert_eq!(a.inspect(2).live_scopes, 2);
+}
+
+/// Review MEDIUM-7: an unhealthy journal is probed before any candidate is
+/// selected, so queued work is neither withdrawn nor charged for pacing.
+#[test]
+fn unhealthy_journal_is_probed_before_dispatch_so_queued_work_is_held() {
+    let (mut a, journal) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    journal.0.borrow_mut().fail = true;
+    a.acquire(&root, 1, "g", 0).unwrap();
+    assert_eq!(a.pump(0).err(), Some(AuthorityError::JournalUnavailable));
+    assert_eq!(
+        a.status(&root, 1, 1).unwrap(),
+        RequestState::Terminal(TerminalOutcome::Cancelled),
+        "the first selected grant is withdrawn"
+    );
+    a.acquire(&root, 2, "g", 1).unwrap();
+    assert_eq!(a.pump(1).err(), Some(AuthorityError::JournalUnavailable));
+    assert!(
+        matches!(a.status(&root, 2, 1).unwrap(), RequestState::Queued { .. }),
+        "while unhealthy, the probe fails before any further selection"
+    );
+    journal.0.borrow_mut().fail = false;
+    assert_eq!(
+        a.pump(2).unwrap().len(),
+        1,
+        "held work dispatches once durable"
     );
 }

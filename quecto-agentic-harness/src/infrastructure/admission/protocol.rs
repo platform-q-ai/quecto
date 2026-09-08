@@ -10,8 +10,12 @@ use crate::domain::inference_admission::*;
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub const PROTOCOL_VERSION: u8 = 1;
-/// Requests and replies are small; a large declared length is an attack, not a message.
-pub const FRAME_CAP: usize = 64 * 1024;
+/// Requests and replies are small; a large declared length is an attack, not a
+/// message. The hello reply (the effective policy) must fit as well; the server
+/// validates that at start.
+pub const FRAME_CAP: usize = 256 * 1024;
+/// Once a frame prefix has arrived, the rest must follow within this bound.
+pub const FRAME_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 pub const CAPABILITY_DIRECT: &str = "admission-uds-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,8 +297,10 @@ pub enum Op {
         version: u8,
         capability: String,
     },
+    /// Roots are minted only with the owner token kept outside `client/`.
     RegisterRoot {
         class: ClassWire,
+        owner_token: String,
     },
     Bind {
         credential: CredentialWire,
@@ -320,6 +326,10 @@ pub enum Op {
         sequence: u64,
     },
     Retire,
+    /// A parent retires a descendant it registered (failed launch).
+    RetireChild {
+        scope: ScopeWire,
+    },
     Inspect,
     Reset,
 }
@@ -387,6 +397,7 @@ pub enum Body {
     Status {
         epoch: u64,
         journal_healthy: bool,
+        live_scopes: usize,
         groups: BTreeMap<String, SnapshotWire>,
     },
     Reset {
@@ -431,6 +442,7 @@ pub fn status_body(status: &AuthorityStatus) -> Body {
     Body::Status {
         epoch: status.epoch,
         journal_healthy: status.journal_healthy,
+        live_scopes: status.live_scopes,
         groups: status
             .groups
             .iter()
@@ -453,6 +465,7 @@ pub fn status_body(status: &AuthorityStatus) -> Body {
 pub fn status_from_body(
     epoch: u64,
     journal_healthy: bool,
+    live_scopes: usize,
     groups: BTreeMap<String, SnapshotWire>,
 ) -> Result<AuthorityStatus, AdmissionError> {
     let mut out = BTreeMap::new();
@@ -472,6 +485,7 @@ pub fn status_from_body(
     Ok(AuthorityStatus {
         epoch,
         journal_healthy,
+        live_scopes,
         groups: out,
     })
 }

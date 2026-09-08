@@ -178,6 +178,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // and hand it the capability through a private sidecar (#1679 P3).
             let admission = crate::infrastructure::admission::process::current();
             let mut launch_args = cli_args.to_vec();
+            let mut registered: Option<(
+                std::path::PathBuf,
+                crate::application::ports::Credential,
+            )> = None;
             let admission_dir = match admission.as_ref() {
                 Some(admission) => {
                     let agent_uuid = self.agent_uuid.as_ref().expect("identity allocated");
@@ -199,12 +203,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         DomainError::Tool(format!("failed to write admission context: {e}"))
                     })?;
                     launch_args.push("--admission-context".into());
-                    launch_args.push(path.into());
+                    launch_args.push(path.clone().into());
+                    registered = Some((path, credential));
                     Some(admission.client_dir().to_path_buf())
                 }
                 None => None,
             };
-            super::spawn_container::spawn_prepared_child(
+            let prepared = super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
                     swarm_context: self.tool.swarm_context.as_ref(),
@@ -216,7 +221,21 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 &self.tool.environment_registry,
                 parent_config.as_deref(),
             )
-            .await
+            .await;
+            if prepared.is_err() {
+                // A child that never started must not keep a live scope or a
+                // capability file behind.
+                if let (Some(admission), Some((path, credential))) =
+                    (admission.as_ref(), registered)
+                {
+                    let _ = std::fs::remove_file(&path);
+                    if let Err(error) = admission.connection().retire_child(credential.scope).await
+                    {
+                        tracing::warn!(%error, "failed to retire the unlaunched child's admission scope");
+                    }
+                }
+            }
+            prepared
         })
     }
 

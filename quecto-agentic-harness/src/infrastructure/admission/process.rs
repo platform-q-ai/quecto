@@ -74,7 +74,7 @@ pub struct ProcessAdmission {
     context: Arc<AdmissionRuntimeContext>,
     proposal: AdmissionRuntimeProposal,
     client_dir: PathBuf,
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
 }
 
 impl ProcessAdmission {
@@ -143,8 +143,8 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
                 .map_err(|e| format!("admission root bind: {e}"))?;
             Ok((connection, dir.client_dir()))
         }
-        Negotiation::Child { context } => {
-            let context = read_admission_context(context)?;
+        Negotiation::Child { context: path } => {
+            let context = read_admission_context(path)?;
             let connection = AuthorityConnection::connect(&context.endpoint)
                 .await
                 .map_err(|e| format!("admission authority unreachable: {e}"))?;
@@ -159,6 +159,9 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
                 .bind(credential)
                 .await
                 .map_err(|e| format!("admission capability rejected: {e}"))?;
+            // The sidecar is single-use: once bound, the capability material
+            // has no reason to remain on disk.
+            let _ = std::fs::remove_file(path);
             let client_dir = context
                 .endpoint
                 .parent()
@@ -169,8 +172,8 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
     }
 }
 
-/// Negotiate and install the process binding. Idempotent for the same
-/// negotiation; a second, different negotiation is refused.
+/// Negotiate and install the process binding. A binding is installed once per
+/// process; later calls return it unchanged (policy is restart-only).
 pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String> {
     if let Some(existing) = PROCESS.get() {
         return Ok(existing.clone());
@@ -201,10 +204,38 @@ pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String
         context: Arc::new(context),
         proposal,
         client_dir,
-        _runtime: runtime,
+        runtime,
     });
     match PROCESS.set(binding.clone()) {
         Ok(()) => Ok(binding),
         Err(_) => Ok(PROCESS.get().expect("set by a concurrent install").clone()),
+    }
+}
+
+/// Orderly exit: wait (bounded) for outstanding completions to be acknowledged,
+/// then retire this process's scope so it stops counting as live. A retire
+/// refused as busy is reported, never forced.
+pub fn shutdown(limit: std::time::Duration) {
+    let Some(binding) = current() else {
+        return;
+    };
+    let handle = binding.runtime.handle().clone();
+    let connection = binding.connection.clone();
+    let outcome = std::thread::spawn(move || {
+        handle.block_on(async move {
+            let drained = connection.drain(limit).await;
+            let retired = connection.retire().await;
+            (drained, retired)
+        })
+    })
+    .join();
+    match outcome {
+        Ok((true, Ok(()))) => {}
+        Ok((drained, retired)) => tracing::warn!(
+            drained,
+            ?retired,
+            "admission shutdown left work unacknowledged; the authority keeps it as uncertain"
+        ),
+        Err(_) => tracing::warn!("admission shutdown thread panicked"),
     }
 }

@@ -61,7 +61,13 @@ quecto admission-broker reset    # new accounting epoch (see recovery below)
 
 `run` prints `admission authority ready: <socket>` on stderr. A second `run`
 on the same directory exits with status 3. Stopping the authority does not
-kill sessions; their next attempt fails explicitly until it is back.
+kill sessions, but capabilities live only in the authority process: after a
+restart every running session's next attempt fails explicitly and the session
+must be restarted to register again. A ledger that is missing after prior
+operation is refused; `run --accept-missing-ledger` explicitly starts an
+empty one. Roots are minted with the owner token at `<directory>/root.token`
+(0600, outside `client/`), so a process that only sees the client directory
+can bind a pre-registered child capability but never promote itself to a root.
 
 Every `quecto agent` started with the section configured registers itself as
 a root at the authority before composing its provider. If the authority is
@@ -77,9 +83,10 @@ mounted at the same path. The parent passes `QUECTO_ADMISSION_DIR` to the
 reports `"admission_capability": "shared-directory-v1"`. An admission-enabled
 parent refuses to launch a container whose script does not report that
 capability. Only admission operations are exposed through the mount; the
-journal and the admin socket stay outside it. The bundled adapter also
-identity-mounts `$HOME/.quecto`, so set `directory` outside that tree when the
-default `<base_dir>/admission` would otherwise be visible to containers.
+journal, the admin socket and the owner token stay outside it. The bundled
+adapter also identity-mounts `$HOME/.quecto`; when the authority directory
+lives under it (the default `<base_dir>/admission`), the adapter masks the
+authority root with an empty tmpfs and re-exposes only `client/`.
 
 ## Failure safety and recovery
 

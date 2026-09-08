@@ -26,11 +26,29 @@ pub(crate) fn cmd_admission_broker(
             return 1;
         }
     };
-    let Some((directory, proposal)) = config.admission_proposal() else {
-        stderr
-            .push_str("admission-broker: no `admission` section is configured; nothing to serve\n");
-        return 1;
+    let (directory, proposal) = match config.admission_proposal() {
+        Ok(Some(configured)) => configured,
+        Ok(None) => {
+            stderr.push_str(
+                "admission-broker: no `admission` section is configured; nothing to serve\n",
+            );
+            return 1;
+        }
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
     };
+    let accept_missing_ledger = args[1..]
+        .iter()
+        .any(|flag| flag == "--accept-missing-ledger");
+    if let Some(unknown) = args[1..]
+        .iter()
+        .find(|flag| flag.as_str() != "--accept-missing-ledger")
+    {
+        stderr.push_str(&format!("admission-broker: unknown option '{unknown}'\n"));
+        return 2;
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -53,7 +71,7 @@ pub(crate) fn cmd_admission_broker(
         }
     };
     match action {
-        "run" => runtime.block_on(run(dir, proposal, stdout, stderr)),
+        "run" => runtime.block_on(run(dir, proposal, accept_missing_ledger, stdout, stderr)),
         "status" => runtime.block_on(async {
             match AdminConnection::connect(&dir.admin_socket()).await {
                 Ok(admin) => match admin.inspect().await {
@@ -123,6 +141,7 @@ fn status_json(status: &crate::application::ports::AuthorityStatus) -> serde_jso
     serde_json::json!({
         "epoch": status.epoch,
         "journal_healthy": status.journal_healthy,
+        "live_scopes": status.live_scopes,
         "groups": groups,
     })
 }
@@ -130,10 +149,16 @@ fn status_json(status: &crate::application::ports::AuthorityStatus) -> serde_jso
 async fn run(
     dir: AuthorityDirectory,
     proposal: crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    accept_missing_ledger: bool,
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    let server = match AuthorityServer::start(dir, proposal).await {
+    let started = if accept_missing_ledger {
+        AuthorityServer::start_accepting_missing_ledger(dir, proposal).await
+    } else {
+        AuthorityServer::start(dir, proposal).await
+    };
+    let server = match started {
         Ok(server) => server,
         Err(ServerError::Busy(message)) => {
             stderr.push_str(&format!("admission-broker: {message}\n"));

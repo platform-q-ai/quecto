@@ -46,6 +46,8 @@ pub struct AdmissionPolicy {
     config: AdmissionConfig,
     epoch: u64,
     now: u64,
+    /// Monotonic: a serial is never reused, even after retirement.
+    next_serial: u64,
     scopes: BTreeMap<ScopeId, Scope>,
     requests: BTreeMap<RequestId, Request>,
     terminals: VecDeque<RequestId>,
@@ -81,6 +83,7 @@ impl AdmissionPolicy {
             config,
             epoch,
             now: 0,
+            next_serial: 0,
             scopes: BTreeMap::new(),
             requests: BTreeMap::new(),
             terminals: VecDeque::new(),
@@ -102,13 +105,17 @@ impl AdmissionPolicy {
         root: Option<ScopeId>,
         class: WorkloadClass,
     ) -> Result<ScopeId, AdmissionError> {
-        if self.scopes.len() >= self.config.max_scopes {
+        // The limit bounds live scopes; retired scopes free their slot while
+        // their serial stays burned so identity is never recycled.
+        let live = self.scopes.values().filter(|scope| !scope.retired).count();
+        if live >= self.config.max_scopes {
             return Err(AdmissionError::ScopeLimit);
         }
-        let serial = u64::try_from(self.scopes.len())
-            .ok()
-            .and_then(|n| n.checked_add(1))
+        let serial = self
+            .next_serial
+            .checked_add(1)
             .ok_or(AdmissionError::ScopeLimit)?;
+        self.next_serial = serial;
         let id = ScopeId {
             epoch: self.epoch,
             serial,
@@ -389,18 +396,10 @@ impl AdmissionPolicy {
         self.scope(scope)?;
         self.tick(now)?;
         let id = RequestId { scope, sequence };
-        let request = match self.request(scope, sequence) {
-            Ok(r) => r,
-            Err(AdmissionError::UnknownRequest) => {
-                // No group can be inferred from an unknown grant. Fail closed for
-                // every group this scope could access, never free another attempt.
-                for group in self.groups.values_mut() {
-                    group.unavailable = true;
-                }
-                return Err(AdmissionError::UnknownRequest);
-            }
-            Err(error) => return Err(error),
-        };
+        // A sequence above the high-water mark was never enqueued, so no grant
+        // can exist for it: refuse without touching any group's availability.
+        // Replays below the mark are fenced separately and cannot free work.
+        let request = self.request(scope, sequence)?;
         if let RequestState::Terminal(_) = request.state {
             return if request.feedback == Some(feedback) {
                 Ok(request.state)

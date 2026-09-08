@@ -1,10 +1,10 @@
 //! `AttemptAdmission` over an authority connection: acquire waits for the
-//! grant, dropping the wait cancels at the authority, and the permit reports
-//! feedback/completion through the same bound connection.
+//! grant, dropping the wait cancels at the authority (a raced grant is then
+//! completed as failed), and the permit reports feedback/completion through
+//! the same bound connection.
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Notify;
@@ -14,9 +14,6 @@ use super::protocol::{Body, Op};
 use crate::application::ports::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
 use crate::domain::error::DomainError;
 use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
-
-const COMPLETE_RETRIES: u32 = 40;
-const COMPLETE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub struct RemoteAdmission {
@@ -45,14 +42,7 @@ struct CancelOnDrop {
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         if self.armed {
-            self.inner
-                .notices
-                .lock()
-                .expect("notice map")
-                .remove(&self.sequence);
-            self.inner.send_detached(Op::Cancel {
-                sequence: self.sequence,
-            });
+            self.inner.cancel_detached(self.sequence);
         }
     }
 }
@@ -61,25 +51,16 @@ impl AttemptAdmission for RemoteAdmission {
     fn acquire(&self) -> AttemptAcquisition<'_> {
         Box::pin(async move {
             let inner = self.inner.clone();
-            let sequence = inner.next_sequence.fetch_add(1, Ordering::AcqRel);
             let notify = Arc::new(Notify::new());
-            inner
-                .notices
-                .lock()
-                .expect("notice map")
-                .insert(sequence, notify.clone());
+            let (sequence, receiver) = inner
+                .send_acquire(&self.alias, notify.clone())
+                .map_err(|error| DomainError::Provider(format!("admission: {error}")))?;
             let mut guard = CancelOnDrop {
                 inner: inner.clone(),
                 sequence,
                 armed: true,
             };
-            let reply = inner
-                .call(Op::Acquire {
-                    sequence,
-                    alias: self.alias.clone(),
-                })
-                .await;
-            match reply {
+            match Inner::await_acquire(receiver).await {
                 Ok(Body::Granted {
                     deadline_ms: _,
                     receipt_ms,
@@ -130,12 +111,19 @@ impl AttemptPermit for RemotePermit {
         let notify = self.notify.clone();
         let inner = self.inner.clone();
         Box::pin(async move {
-            if inner.closed.load(Ordering::Acquire) {
+            // Register interest before checking the flag so a close between the
+            // check and the await cannot be missed.
+            let notified = notify.notified();
+            let closed = inner.closed_notify.notified();
+            tokio::pin!(notified, closed);
+            notified.as_mut().enable();
+            closed.as_mut().enable();
+            if inner.closed.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }
             tokio::select! {
-                _ = notify.notified() => {}
-                _ = inner.closed_notify.notified() => {}
+                _ = &mut notified => {}
+                _ = &mut closed => {}
             }
         })
     }
@@ -161,34 +149,9 @@ impl AttemptPermit for RemotePermit {
     }
 
     /// The release is acknowledged only when the authority reports it durable;
-    /// a non-durable reply is retried with bounded backoff.
+    /// a non-durable reply is retried with bounded backoff on the connection's
+    /// own runtime, and a process shutdown drains it.
     fn finish(self: Box<Self>, feedback: Feedback) {
-        let inner = self.inner.clone();
-        let sequence = self.sequence;
-        inner.notices.lock().expect("notice map").remove(&sequence);
-        let op = Op::Complete {
-            sequence,
-            feedback: feedback.into(),
-        };
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                handle.spawn(async move {
-                    for _ in 0..COMPLETE_RETRIES {
-                        match inner.call(op.clone()).await {
-                            Err(ClientError::JournalUnavailable) => {
-                                tokio::time::sleep(COMPLETE_RETRY_DELAY).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, sequence, "admission completion not acknowledged");
-                                return;
-                            }
-                            Ok(_) => return,
-                        }
-                    }
-                    tracing::warn!(sequence, "admission completion retries exhausted");
-                });
-            }
-            Err(_) => inner.send_detached(op),
-        }
+        self.inner.spawn_completion(self.sequence, feedback);
     }
 }

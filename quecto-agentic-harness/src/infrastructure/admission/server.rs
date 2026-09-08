@@ -26,6 +26,15 @@ pub enum ServerError {
     Policy(String),
 }
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut diff = a.len() ^ b.len();
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= usize::from(x ^ y);
+    }
+    diff == 0
+}
+
 impl std::fmt::Display for ServerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -84,10 +93,31 @@ struct Actor {
     authority: Authority,
     clock: Clock,
     proposal: ProposalWire,
+    owner_token: String,
     sessions: BTreeMap<u64, Session>,
     bound: BTreeMap<ScopeId, u64>,
     waiters: BTreeMap<RequestId, oneshot::Sender<Body>>,
     notified: BTreeSet<RequestId>,
+}
+
+/// Fresh owner token per start, 0600 in the authority root (never in `client/`).
+fn write_owner_token(dir: &AuthorityDirectory) -> Result<String, ServerError> {
+    use crate::application::ports::AdmissionSecretSource;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let token = RandomSecretSource.mint();
+    let path = dir.root_token_path();
+    let _ = std::fs::remove_file(&path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|e| ServerError::Io(format!("owner token {}: {e}", path.display())))?;
+    file.write_all(token.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|e| ServerError::Io(format!("owner token {}: {e}", path.display())))?;
+    Ok(token)
 }
 
 fn bind_private(path: &Path) -> Result<UnixListener, ServerError> {
@@ -115,10 +145,48 @@ impl AuthorityServer {
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
     ) -> Result<Self, ServerError> {
+        Self::start_with(dir, proposal, false).await
+    }
+
+    /// Operator acknowledgement that a ledger missing after prior operation
+    /// may be replaced by an empty one (outstanding remote work is no longer
+    /// claimed bounded).
+    pub async fn start_accepting_missing_ledger(
+        dir: AuthorityDirectory,
+        proposal: AdmissionRuntimeProposal,
+    ) -> Result<Self, ServerError> {
+        Self::start_with(dir, proposal, true).await
+    }
+
+    async fn start_with(
+        dir: AuthorityDirectory,
+        proposal: AdmissionRuntimeProposal,
+        accept_missing_ledger: bool,
+    ) -> Result<Self, ServerError> {
         proposal
             .policy
             .validate()
             .map_err(|e| ServerError::Policy(format!("invalid admission policy: {e:?}")))?;
+        let proposal_wire = ProposalWire::from(&proposal);
+        let hello_bytes = serde_json::to_vec(&Reply {
+            id: Some(0),
+            body: Body::Hello {
+                version: PROTOCOL_VERSION,
+                role: Role::Client,
+                epoch: u64::MAX,
+                proposal: proposal_wire.clone(),
+            },
+        })
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+        if hello_bytes > FRAME_CAP {
+            return Err(ServerError::Policy(format!(
+                "admission policy is too large to publish ({hello_bytes} bytes > {FRAME_CAP})"
+            )));
+        }
+        // The lock file's existence before this start is the evidence of prior
+        // operation: a fresh directory has none.
+        let previously_operated = dir.lock_path().exists();
         let lock = SingletonLock::acquire(&dir).map_err(|e| match e.kind() {
             std::io::ErrorKind::WouldBlock => ServerError::Busy(e.to_string()),
             _ => ServerError::Io(e.to_string()),
@@ -128,7 +196,13 @@ impl AuthorityServer {
         };
         let journal = FileJournal::new(&dir);
         let ledger = FileJournal::load(&dir).map_err(|e| ServerError::Journal(format!("{e:?}")))?;
-        let authority = match ledger {
+        if ledger.is_none() && previously_operated && !accept_missing_ledger {
+            return Err(ServerError::Journal(format!(
+                "ledger {} is missing after prior operation; outstanding remote work cannot be accounted. Restore it or run with --accept-missing-ledger to start an empty ledger",
+                dir.journal_path().display()
+            )));
+        }
+        let mut authority = match ledger {
             Some(ledger) => AdmissionAuthority::restore(
                 proposal.policy.clone(),
                 &ledger,
@@ -141,6 +215,12 @@ impl AuthorityServer {
             }
         }
         .map_err(|e| ServerError::Journal(format!("ledger incompatible with policy: {e:?}")))?;
+        // A ledger exists from the first start onward, so "missing" is never
+        // ambiguous again.
+        authority
+            .checkpoint(clock.now_ms())
+            .map_err(|e| ServerError::Journal(format!("initial ledger not durable: {e:?}")))?;
+        let owner_token = write_owner_token(&dir)?;
         let client_listener = bind_private(&dir.client_socket())?;
         let admin_listener = bind_private(&dir.admin_socket())?;
         let (tx, rx) = mpsc::unbounded_channel();
@@ -148,7 +228,8 @@ impl AuthorityServer {
         let actor = Actor {
             authority,
             clock,
-            proposal: ProposalWire::from(&proposal),
+            proposal: proposal_wire,
+            owner_token,
             sessions: BTreeMap::new(),
             bound: BTreeMap::new(),
             waiters: BTreeMap::new(),
@@ -229,6 +310,8 @@ async fn accept_loop(
         }
     }
 }
+
+const JOURNAL_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
@@ -358,12 +441,16 @@ impl Actor {
         let credential = state.credential.clone();
         let result = match &request.op {
             Op::Hello { .. } => unreachable!("handled above"),
-            Op::RegisterRoot { class } => {
-                self.authority
-                    .register_root((*class).into(), now)
-                    .map(|c| Body::Credential {
-                        credential: CredentialWire::from(&c),
-                    })
+            Op::RegisterRoot { class, owner_token } => {
+                if constant_time_eq(owner_token, &self.owner_token) {
+                    self.authority
+                        .register_root((*class).into(), now)
+                        .map(|c| Body::Credential {
+                            credential: CredentialWire::from(&c),
+                        })
+                } else {
+                    Err(AuthorityError::Unauthorized)
+                }
             }
             Op::Bind { credential } => self.bind(session, credential.clone().into()),
             Op::Inspect | Op::Reset if role != Role::Admin => Err(AuthorityError::Unauthorized),
@@ -381,9 +468,15 @@ impl Actor {
         let high_water = self.authority.verify(&credential)?;
         if let Some(previous) = self.bound.insert(credential.scope, session) {
             if previous != session {
+                // Supersede: the old session's queued work can never be
+                // answered and its active work is unverified until this
+                // session completes it.
                 if let Some(old) = self.sessions.get_mut(&previous) {
                     old.credential = None;
                 }
+                let now = self.clock.now_ms();
+                let _ = self.authority.disconnect(credential.scope, now);
+                self.waiters.retain(|id, _| id.scope != credential.scope);
             }
         }
         self.sessions.get_mut(&session).expect("session").credential = Some(credential);
@@ -466,6 +559,21 @@ impl Actor {
                         state: state.into(),
                     })
             }
+            Op::RetireChild { scope } => {
+                let child: ScopeId = (*scope).into();
+                let outcome = self
+                    .authority
+                    .retire_child(credential, child, now)
+                    .map(|()| Body::Ok);
+                if outcome.is_ok() {
+                    if let Some(session) = self.bound.remove(&child) {
+                        if let Some(state) = self.sessions.get_mut(&session) {
+                            state.credential = None;
+                        }
+                    }
+                }
+                outcome
+            }
             Op::Retire => {
                 let outcome = self.authority.retire(credential, now).map(|()| Body::Ok);
                 if outcome.is_ok() {
@@ -498,9 +606,15 @@ impl Actor {
             }
         }
         let ids: Vec<RequestId> = self.waiters.keys().copied().collect();
+        let journal_healthy = self.authority.journal_healthy();
         for id in ids {
             let body = match self.authority.observe(id, now) {
                 Ok(RequestState::Queued { .. }) => continue,
+                // A waiter still present that observes Cancelled was withdrawn
+                // by the authority (client cancels answer their waiter directly).
+                Ok(RequestState::Terminal(TerminalOutcome::Cancelled)) if !journal_healthy => {
+                    error_body(&AuthorityError::JournalUnavailable)
+                }
                 Ok(state) => grant_or_terminal(state, now),
                 Err(e) => error_body(&e),
             };
@@ -522,10 +636,18 @@ impl Actor {
             }
         }
         self.notified.retain(|id| due.contains(id));
-        match self.authority.next_wake(now) {
+        let wake = match self.authority.next_wake(now) {
             Ok(Some(ms)) => self.clock.instant_at(ms),
             Ok(None) => far_future(),
             Err(_) => Instant::now() + Duration::from_millis(50),
+        };
+        // During a ledger outage held work can only proceed after a successful
+        // probe write, so probe at a bounded cadence rather than waiting for
+        // queue deadlines.
+        if self.authority.journal_healthy() {
+            wake
+        } else {
+            wake.min(Instant::now() + JOURNAL_PROBE_INTERVAL)
         }
     }
 }

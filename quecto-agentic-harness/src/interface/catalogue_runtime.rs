@@ -58,7 +58,12 @@ pub fn compose_and_publish_runtime(
     // or binding set is rejected instead of replacing live budgets (#1679).
     let composed = match crate::infrastructure::admission::process::current() {
         Some(admission) => {
-            let proposal = config.admission_proposal().map(|(_, proposal)| proposal);
+            // An invalid or removed section is "changed" and rejected below.
+            let proposal = config
+                .admission_proposal()
+                .ok()
+                .flatten()
+                .map(|(_, proposal)| proposal);
             ComposeProviderRuntimeUseCase::new().compose_and_publish(
                 &AdmissionProviderRuntimeFactory::new(admission.runtime_context().clone()),
                 &AdmissionRuntimeCandidate {

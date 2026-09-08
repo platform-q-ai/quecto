@@ -102,6 +102,12 @@ socket_dir="$(dirname "$socket_path")"
 if [ -n "$config_path" ]; then
   [ -f "$config_path" ] || die "child --config $config_path does not exist"
 fi
+# Every die-able check precedes the environment mktemp below so a failed
+# create never leaks an unreported environment directory.
+admission_dir="${QUECTO_ADMISSION_DIR:-}"
+if [ -n "$admission_dir" ]; then
+  [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
+fi
 
 mkdir -p -m 700 "$state_dir"
 [ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
@@ -146,11 +152,23 @@ fi
 # Shared inference admission (#1679 P3): the authority's client directory is
 # identity-mounted so the child reaches the same private socket by path. The
 # capability is reported only when the mount is actually present; an
-# admission-enabled parent refuses to launch without it.
+# admission-enabled parent refuses to launch without it. When the authority
+# lives under the identity-mounted $HOME/.quecto, its root (journal, admin
+# socket, owner token) is masked with an empty directory and only client/ is
+# re-exposed underneath it.
 admission_capability=""
-admission_dir="${QUECTO_ADMISSION_DIR:-}"
 if [ -n "$admission_dir" ]; then
-  [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
+  admission_root="$(dirname "$admission_dir")"
+  case "$admission_root" in
+  "$HOME/.quecto"/*)
+    # An empty owner-only host directory bound read-only over the authority
+    # root hides journal/admin/token identically under Docker and Podman
+    # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.
+    mask_dir="$env_dir/admission-mask"
+    mkdir -m 700 "$mask_dir"
+    mounts+=(-v "$mask_dir:$admission_root:ro")
+    ;;
+  esac
   mounts+=(-v "$admission_dir:$admission_dir:rw")
   admission_capability="shared-directory-v1"
   printf '%s\n' "$admission_dir" >"$env_dir/admission-dir"

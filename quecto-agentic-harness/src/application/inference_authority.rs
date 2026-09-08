@@ -43,6 +43,8 @@ impl From<JournalError> for AuthorityError {
 pub struct AuthorityStatus {
     pub epoch: u64,
     pub journal_healthy: bool,
+    /// Scopes holding a live capability (roots and descendants).
+    pub live_scopes: usize,
     pub groups: BTreeMap<GroupId, GroupSnapshot>,
 }
 
@@ -50,6 +52,7 @@ pub struct AuthorityStatus {
 struct Issued {
     token: String,
     root: ScopeId,
+    parent: Option<ScopeId>,
 }
 
 #[derive(Debug)]
@@ -122,7 +125,7 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         }
     }
 
-    fn issue(&mut self, scope: ScopeId, root: ScopeId) -> Credential {
+    fn issue(&mut self, scope: ScopeId, root: ScopeId, parent: Option<ScopeId>) -> Credential {
         let token = self.secrets.mint();
         debug_assert!(!token.is_empty(), "secret source must mint material");
         self.issued.insert(
@@ -130,9 +133,19 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
             Issued {
                 token: token.clone(),
                 root,
+                parent,
             },
         );
         Credential { scope, token }
+    }
+
+    pub fn journal_healthy(&self) -> bool {
+        self.journal_healthy
+    }
+
+    /// Persist the current ledger (initial checkpoint or operator probe).
+    pub fn checkpoint(&mut self, now: u64) -> Result<(), AuthorityError> {
+        self.persist(now)
     }
 
     fn persist(&mut self, now: u64) -> Result<(), AuthorityError> {
@@ -156,7 +169,7 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
     ) -> Result<Credential, AuthorityError> {
         let _ = now;
         let scope = self.service.register_root(class)?;
-        Ok(self.issue(scope, scope))
+        Ok(self.issue(scope, scope, None))
     }
 
     /// Children are registered by an authenticated parent before launch and are
@@ -170,7 +183,7 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         self.authenticate(parent)?;
         let root = self.issued[&parent.scope].root;
         let scope = self.service.register_child(parent.scope)?;
-        Ok(self.issue(scope, root))
+        Ok(self.issue(scope, root, Some(parent.scope)))
     }
 
     /// Prove a capability without acting on it; returns the scope's acquire
@@ -207,8 +220,13 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
 
     /// Dispatch every grant the policy allows, making each durable first. On a
     /// journal failure the undelivered grants are withdrawn and no grant is
-    /// returned until a later durable write succeeds.
+    /// returned until a later durable write succeeds. While the journal is
+    /// known unhealthy a probe write precedes any selection, so queued work is
+    /// held rather than withdrawn one grant at a time.
     pub fn pump(&mut self, now: u64) -> Result<Vec<RequestId>, AuthorityError> {
+        if !self.journal_healthy {
+            self.persist(now)?;
+        }
         let mut grants = Vec::new();
         let mut first_error = None;
         for group in self.groups.clone() {
@@ -297,6 +315,25 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         Ok(())
     }
 
+    /// A parent retires a descendant it registered (for example a launch that
+    /// never started). Only the direct parent may do so.
+    pub fn retire_child(
+        &mut self,
+        parent: &Credential,
+        child: ScopeId,
+        now: u64,
+    ) -> Result<(), AuthorityError> {
+        let _ = now;
+        self.authenticate(parent)?;
+        match self.issued.get(&child) {
+            Some(issued) if issued.parent == Some(parent.scope) => {}
+            _ => return Err(AuthorityError::Unauthorized),
+        }
+        self.service.retire(child)?;
+        self.issued.remove(&child);
+        Ok(())
+    }
+
     /// Transport loss without retirement: the capability stays valid so the
     /// same client can reconnect and verify its outstanding work.
     pub fn disconnect(
@@ -310,9 +347,10 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
     /// Active attempts whose owners must terminate their local transport.
     pub fn cancellation_due(&mut self, now: u64) -> Result<Vec<RequestId>, AuthorityError> {
         let mut due = Vec::new();
-        for attempt in self.service.ledger(now)?.outstanding {
+        let ledger = self.service.ledger(now)?;
+        for attempt in ledger.outstanding {
             let scope = ScopeId {
-                epoch: self.inspect_epoch(),
+                epoch: ledger.epoch,
                 serial: attempt.scope,
             };
             if !self.issued.contains_key(&scope) {
@@ -336,17 +374,6 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         Ok(self.service.next_wake(now)?)
     }
 
-    fn inspect_epoch(&mut self) -> u64 {
-        self.service
-            .ledger(0)
-            .map(|ledger| ledger.epoch)
-            .unwrap_or_else(|_| self.epoch_hint())
-    }
-
-    fn epoch_hint(&self) -> u64 {
-        self.issued.keys().next().map_or(0, |scope| scope.epoch)
-    }
-
     pub fn inspect(&mut self, now: u64) -> AuthorityStatus {
         let groups = self
             .groups
@@ -361,6 +388,7 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         AuthorityStatus {
             epoch: self.service.ledger(now).map_or(0, |ledger| ledger.epoch),
             journal_healthy: self.journal_healthy,
+            live_scopes: self.issued.len(),
             groups,
         }
     }

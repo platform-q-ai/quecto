@@ -233,6 +233,13 @@ async fn independent_root_processes_share_the_configured_bound() {
         provider.peak.load(Ordering::SeqCst)
     );
     assert_eq!(provider.inflight.load(Ordering::SeqCst), 0);
+    // Clean exits retire their scopes and leave no occupancy behind.
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
+    let status = admin.inspect().await.unwrap();
+    let g = status.groups[&quecto::domain::inference_admission::GroupId::new("g").unwrap()];
+    assert_eq!((g.active, g.queued, g.uncertain), (0, 0, 0), "{g:?}");
+    assert_eq!(status.live_scopes, 0, "exited roots retired their scopes");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -307,6 +314,10 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
     assert!(ok, "descendant failed: {stderr}");
     assert!(stdout.contains("admitted-reply"));
     assert_eq!(provider.total.load(Ordering::SeqCst), 1);
+    assert!(
+        !context.exists(),
+        "the child consumed and removed its capability sidecar"
+    );
 
     let forged = temp.path().join("forged.json");
     let mut bogus = child.clone();

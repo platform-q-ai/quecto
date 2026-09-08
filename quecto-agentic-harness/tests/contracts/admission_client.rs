@@ -306,12 +306,16 @@ fn duplicate_and_conflicting_acquire_terminal_eviction_and_scope_limits() {
     assert_eq!(s.enqueue(a, 1, "alpha", 1), Err(Error::Replay));
     assert_eq!(s.complete(a, 1, Feedback::Success, 1), Err(Error::Replay));
     assert!(!s.snapshot(&group("a"), 1).unwrap().unavailable);
-    s.retire(b).unwrap();
-    assert_eq!(s.enqueue(b, 1, "alpha", 1), Err(Error::UnknownScope));
     assert_eq!(
         s.register_root(WorkloadClass::Interactive),
-        Err(Error::ScopeLimit)
+        Err(Error::ScopeLimit),
+        "the limit bounds live scopes"
     );
+    s.retire(b).unwrap();
+    assert_eq!(s.enqueue(b, 1, "alpha", 1), Err(Error::UnknownScope));
+    // Retirement frees the slot; the burned serial is never reused (P3 review).
+    let c = s.register_root(WorkloadClass::Interactive).unwrap();
+    assert!(c.serial > b.serial);
 }
 
 #[test]
@@ -332,13 +336,13 @@ fn unknown_identity_and_completion_do_not_release_other_attempts() {
         Err(Error::StaleEpoch)
     );
     assert_eq!(s.snapshot(&group("a"), 0).unwrap().active, 1);
-    // An unknown completion cannot identify a group safely: quarantine all groups
-    // reachable by this scope rather than guessing which live attempt it describes.
+    // A sequence above the high-water mark was never enqueued, so no grant can
+    // exist for it: refused, and no group is poisoned (P3 review MEDIUM-4).
     assert_eq!(
         s.complete(a, 99, Feedback::Success, 0),
         Err(Error::UnknownRequest)
     );
-    assert!(s.snapshot(&group("a"), 0).unwrap().unavailable);
+    assert!(!s.snapshot(&group("a"), 0).unwrap().unavailable);
     assert_eq!(s.snapshot(&group("a"), 0).unwrap().active, 1);
 }
 
@@ -491,7 +495,14 @@ fn regressions_and_unknown_completion_fail_without_unsafe_dispatch() {
         Err(Error::UnknownRequest)
     );
     s.complete(a, 2, Feedback::Success, 10).unwrap();
-    assert_eq!(s.next(&group("a"), 11), Err(Error::Unavailable));
+    assert_eq!(
+        s.next(&group("a"), 11).unwrap(),
+        Some(RequestId {
+            scope: a,
+            sequence: 3
+        }),
+        "a never-enqueued completion does not poison dispatch"
+    );
     assert_eq!(s.enqueue(a, 2, "beta", 11), Err(Error::Conflict));
 }
 

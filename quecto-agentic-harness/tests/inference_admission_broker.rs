@@ -4,13 +4,14 @@
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use quecto::application::ports::AdmissionJournal;
 use quecto::domain::inference_admission::*;
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
-    FileJournal, SingletonLock,
+    FileJournal, ServerError, SingletonLock,
 };
 use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 use tokio::time::timeout;
@@ -357,12 +358,12 @@ async fn journal_failure_denies_grants_instead_of_bypassing() {
     let denied = timeout(LIMIT, a.gate("acct").unwrap().acquire())
         .await
         .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(denied.is_err(), "no grant without a durable ledger");
     let admin = AdminConnection::connect(&server.directory().admin_socket())
         .await
         .unwrap();
     assert!(!admin.inspect().await.unwrap().journal_healthy);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     timeout(LIMIT, a.gate("acct").unwrap().acquire())
         .await
         .unwrap()
@@ -400,5 +401,300 @@ async fn protocol_rejects_unsupported_hello_unbound_operations_and_child_admin()
     let parent = root(&server).await;
     let child = parent.register_child().await.unwrap();
     assert!(child.scope.serial > parent.credential().unwrap().scope.serial);
+    server.shutdown().await;
+}
+
+// ---- Review fixes (adversarial review of P3) --------------------------------
+
+fn write_probe_config(
+    policy: &AdmissionRuntimeProposal,
+    capacity: usize,
+) -> AdmissionRuntimeProposal {
+    let mut p = policy.clone();
+    for g in p.policy.groups.values_mut() {
+        g.capacity = capacity;
+        g.queue_capacity = 512;
+    }
+    p
+}
+
+/// HIGH-1: a full-duplex client must never lose a partially read frame while
+/// it is writing. Many concurrent acquire/finish cycles over one connection
+/// keep grants and completions interleaved on the wire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interleaved_grants_and_completions_never_desynchronize_the_connection() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        write_probe_config(&proposal(4, 20_000), 4),
+    )
+    .await
+    .unwrap();
+    let a = Arc::new(root(&server).await);
+    let mut tasks = Vec::new();
+    for _ in 0..64 {
+        let a = a.clone();
+        tasks.push(tokio::spawn(async move {
+            for _ in 0..4 {
+                let permit = timeout(LIMIT, a.gate("acct").unwrap().acquire())
+                    .await
+                    .expect("bounded")
+                    .expect("grant on a healthy connection");
+                permit.finish(Feedback::Success);
+            }
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    wait_for(&admin, (0, 0)).await;
+    timeout(LIMIT, a.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .expect("connection is still open and bound after 256 cycles")
+        .finish(Feedback::Success);
+    wait_for(&admin, (0, 0)).await;
+    server.shutdown().await;
+}
+
+/// HIGH-2: cancelling an attempt that was already granted (grant/cancel race)
+/// must complete it as a failure — no transport ever existed — so the slot is
+/// released instead of leaking until process exit.
+#[tokio::test]
+async fn cancel_after_grant_releases_the_slot_as_a_failed_attempt() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 20_000),
+    )
+    .await
+    .unwrap();
+    let a = root(&server).await;
+    let permit = timeout(LIMIT, a.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    std::mem::forget(permit);
+    a.cancel_detached(1);
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    wait_for(&admin, (0, 0)).await;
+    let status = admin.inspect().await.unwrap();
+    assert_eq!(
+        status.groups[&group()].uncertain,
+        0,
+        "verified release, not uncertainty"
+    );
+    assert_eq!(
+        a.status(1).await.unwrap(),
+        RequestState::Terminal(TerminalOutcome::Finished)
+    );
+    server.shutdown().await;
+}
+
+/// MEDIUM-1: concurrent acquires on one scope are serialized so the
+/// authority's replay fence never rejects a legitimate attempt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_acquires_on_one_scope_are_never_rejected_as_replay() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        write_probe_config(&proposal(32, 20_000), 32),
+    )
+    .await
+    .unwrap();
+    let a = Arc::new(root(&server).await);
+    let mut tasks = Vec::new();
+    for _ in 0..32 {
+        let a = a.clone();
+        tasks.push(tokio::spawn(async move {
+            timeout(LIMIT, a.gate("acct").unwrap().acquire())
+                .await
+                .unwrap()
+                .map(|permit| permit.finish(Feedback::Success))
+        }));
+    }
+    for task in tasks {
+        task.await
+            .unwrap()
+            .expect("no Replay for concurrent attempts");
+    }
+    server.shutdown().await;
+}
+
+/// HIGH-4b: minting a root requires the owner token kept outside `client/`, so
+/// a process that only sees the mounted client directory cannot self-promote.
+#[tokio::test]
+async fn root_registration_requires_the_owner_token_outside_the_client_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+        .await
+        .unwrap();
+    let token_path = dir.root_token_path();
+    assert!(token_path.starts_with(dir.path()) && !token_path.starts_with(dir.client_dir()));
+    let mode = std::fs::metadata(&token_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let connection = AuthorityConnection::connect(&dir.client_socket())
+        .await
+        .unwrap();
+    assert!(matches!(
+        connection
+            .register_root_with_token(WorkloadClass::Interactive, "forged")
+            .await,
+        Err(ClientError::Unauthorized)
+    ));
+    let token = std::fs::read_to_string(&token_path).unwrap();
+    connection
+        .register_root_with_token(WorkloadClass::Interactive, token.trim())
+        .await
+        .expect("owner token mints a root");
+    server.shutdown().await;
+}
+
+/// MEDIUM-2: a ledger that vanished after prior operation never restarts as an
+/// empty epoch-one budget; a fresh directory persists its initial ledger.
+#[tokio::test]
+async fn missing_ledger_after_prior_operation_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+        .await
+        .unwrap();
+    assert!(
+        dir.journal_path().exists(),
+        "fresh start persists an initial ledger"
+    );
+    server.shutdown().await;
+    std::fs::remove_file(dir.journal_path()).unwrap();
+    let refused = match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+        Err(ServerError::Journal(message)) => message,
+        Err(other) => panic!("unexpected refusal {other}"),
+        Ok(_) => panic!("a vanished ledger must not start an empty budget"),
+    };
+    assert!(refused.contains("missing"), "{refused}");
+    let accepted = AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300))
+        .await
+        .expect("explicit operator acknowledgement starts a fresh ledger");
+    accepted.shutdown().await;
+}
+
+/// MEDIUM-3: a capability re-bound on a new connection supersedes the old one:
+/// the old session's queued work is cancelled and its active work is uncertain
+/// until the new session completes it.
+#[tokio::test]
+async fn rebinding_a_capability_supersedes_the_previous_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 60_000),
+    )
+    .await
+    .unwrap();
+    let old = root(&server).await;
+    let credential = old.credential().unwrap();
+    let permit = timeout(LIMIT, old.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    let old_gate = old.gate("acct").unwrap();
+    let queued = Box::pin(old_gate.acquire());
+    assert!(timeout(Duration::from_millis(50), queued).await.is_err());
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    let fresh = AuthorityConnection::connect(&server.directory().client_socket())
+        .await
+        .unwrap();
+    fresh.bind(credential).await.unwrap();
+    wait_for(&admin, (1, 0)).await;
+    assert_eq!(admin.inspect().await.unwrap().groups[&group()].uncertain, 1);
+    fresh.complete(1, Feedback::Success).await.unwrap();
+    std::mem::forget(permit);
+    wait_for(&admin, (0, 0)).await;
+    assert_eq!(admin.inspect().await.unwrap().groups[&group()].uncertain, 0);
+    server.shutdown().await;
+}
+
+/// MEDIUM-7: while the ledger cannot be written the queue is neither drained
+/// nor answered as "cancelled"; waiters hold until durability returns.
+#[tokio::test]
+async fn journal_outage_holds_queued_work_and_reports_the_ledger_not_cancellation() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("authority");
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&path).unwrap(),
+        proposal(2, 20_000),
+    )
+    .await
+    .unwrap();
+    let a = root(&server).await;
+    let b = root(&server).await;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let gate_a = a.gate("acct").unwrap();
+    let gate_b = b.gate("acct").unwrap();
+    // The first selection discovers the outage: its grant is withdrawn and the
+    // waiter learns it was the ledger, not a cancellation.
+    let first = timeout(LIMIT, gate_a.acquire()).await.unwrap();
+    let error = first
+        .err()
+        .expect("withdrawn without a durable ledger")
+        .to_string();
+    assert!(error.contains("ledger"), "{error}");
+    // Later requests are held while the journal is probed, never drained.
+    let mut second = Box::pin(gate_b.acquire());
+    assert!(
+        timeout(Duration::from_millis(300), &mut second)
+            .await
+            .is_err()
+    );
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    let status = admin.inspect().await.unwrap();
+    assert_eq!(
+        status.groups[&group()].queued,
+        1,
+        "queue is held, not drained"
+    );
+    assert!(!status.journal_healthy);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let p2 = timeout(LIMIT, second)
+        .await
+        .unwrap()
+        .expect("granted once durable");
+    p2.finish(Feedback::Success);
+    wait_for(&admin, (0, 0)).await;
+    server.shutdown().await;
+}
+
+/// LOW-6: a peer that sends a frame prefix and stalls is disconnected within
+/// the framing deadline instead of holding a session forever.
+#[tokio::test]
+async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 300),
+    )
+    .await
+    .unwrap();
+    let mut raw = tokio::net::UnixStream::connect(server.directory().client_socket())
+        .await
+        .unwrap();
+    raw.write_all(&[0, 0, 0, 40]).await.unwrap();
+    let mut buf = [0u8; 16];
+    let closed = timeout(
+        quecto::infrastructure::admission::protocol::FRAME_DEADLINE + Duration::from_secs(5),
+        raw.read(&mut buf),
+    )
+    .await
+    .expect("server closes the stalled session");
+    assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
     server.shutdown().await;
 }

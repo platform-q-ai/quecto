@@ -1,7 +1,7 @@
 //! One authority connection: bounded framed reads, correlated replies and
 //! server-initiated notices. Malformed or oversized input closes the session.
 use quecto_line_io::{FrameError, read_frame, write_frame};
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot};
 
@@ -37,10 +37,29 @@ pub(super) async fn serve(
     });
     let mut reader = BufReader::new(read);
     loop {
-        let frame = match read_frame(&mut reader, FRAME_CAP).await {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(FrameError::Oversized { .. }) | Err(FrameError::VersionMismatch { .. }) => {
+        // Idle connections wait indefinitely; once the first byte of a frame
+        // has arrived the remainder must follow within the framing deadline.
+        match reader.fill_buf().await {
+            Ok(buffer) if buffer.is_empty() => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let frame = match tokio::time::timeout(FRAME_DEADLINE, read_frame(&mut reader, FRAME_CAP))
+            .await
+        {
+            Err(_) => {
+                let _ = notices.send(Reply {
+                    id: None,
+                    body: Body::Error {
+                        code: ErrorCode::Malformed,
+                        reason: "frame deadline elapsed".into(),
+                    },
+                });
+                break;
+            }
+            Ok(Ok(Some(frame))) => frame,
+            Ok(Ok(None)) => break,
+            Ok(Err(FrameError::Oversized { .. })) | Ok(Err(FrameError::VersionMismatch { .. })) => {
                 let _ = notices.send(Reply {
                     id: None,
                     body: Body::Error {
@@ -50,7 +69,7 @@ pub(super) async fn serve(
                 });
                 break;
             }
-            Err(FrameError::Io(_)) => break,
+            Ok(Err(FrameError::Io(_))) => break,
         };
         let request: Request = match serde_json::from_slice(&frame) {
             Ok(request) => request,

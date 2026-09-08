@@ -265,7 +265,9 @@ pub(crate) fn cmd_agent(
         &build.extension_prompt_snippets,
     ));
     let mut out = AgentOutput { stdout, stderr };
-    run_agent_session(&base_dir, build.agent, &flags, &mut out)
+    let code = run_agent_session(&base_dir, build.agent, &flags, &mut out);
+    admission_startup::shutdown();
+    code
 }
 
 pub(crate) struct AgentBuildResult {
@@ -697,6 +699,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         provider_reload: Some(&mut provider_reload),
         provider_reload_inputs: Some(&build.provider_reload_inputs),
     });
+    admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
     scrub_ephemeral_spill(&base_dir, ephemeral);
     code

@@ -13,13 +13,13 @@ const ENABLED: &str = r#"{"providers":{"openai_compatible":{"endpoints":[{"prefi
 #[test]
 fn absent_admission_section_keeps_the_runtime_disabled() {
     let config = load(r#"{"providers":{"anthropic":{"api_key":"k"}}}"#).unwrap();
-    assert!(config.admission_proposal().is_none());
+    assert!(config.admission_proposal().unwrap().is_none());
 }
 
 #[test]
 fn enabled_admission_section_yields_a_validated_proposal_and_directory() {
     let config = load(ENABLED).unwrap();
-    let (directory, proposal) = config.admission_proposal().unwrap();
+    let (directory, proposal) = config.admission_proposal().unwrap().unwrap();
     assert_eq!(directory, std::path::Path::new("/tmp/x"));
     assert_eq!(proposal.bindings["fake"], "acct");
     let group = crate::domain::inference_admission::GroupId::new("g").unwrap();
@@ -44,4 +44,23 @@ fn invalid_admission_policy_is_rejected_at_load_time() {
         load(&unknown_key).is_err(),
         "unknown admission keys never silently pass"
     );
+}
+
+#[test]
+fn relative_authority_directory_is_rejected() {
+    let relative = ENABLED.replace(
+        "\"directory\":\"/tmp/x\"",
+        "\"directory\":\"relative/authority\"",
+    );
+    assert!(matches!(load(&relative), Err(ConfigError::Admission(_))));
+}
+
+#[test]
+fn admission_proposal_reports_invalid_sections_instead_of_panicking() {
+    let mut config = load(ENABLED).unwrap();
+    config.admission.as_mut().unwrap().bindings.clear();
+    assert!(matches!(
+        config.admission_proposal(),
+        Err(ConfigError::Admission(_))
+    ));
 }

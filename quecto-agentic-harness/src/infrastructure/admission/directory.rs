@@ -10,6 +10,7 @@ const CLIENT_SOCKET: &str = "admission.sock";
 const ADMIN_SOCKET: &str = "admin.sock";
 const LOCK_FILE: &str = "authority.lock";
 const JOURNAL_FILE: &str = "journal.json";
+const ROOT_TOKEN_FILE: &str = "root.token";
 
 /// Layout of one authority's private directory. The `client/` subdirectory is
 /// the only part a container child ever sees (mounted by path); administration
@@ -49,6 +50,11 @@ impl AuthorityDirectory {
     }
     pub fn journal_path(&self) -> PathBuf {
         self.root.join(JOURNAL_FILE)
+    }
+    /// Owner token that mints roots; outside `client/`, so a process that only
+    /// sees the mounted client directory can bind children but not promote.
+    pub fn root_token_path(&self) -> PathBuf {
+        self.root.join(ROOT_TOKEN_FILE)
     }
 }
 

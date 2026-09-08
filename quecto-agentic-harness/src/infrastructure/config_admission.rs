@@ -108,24 +108,32 @@ impl AdmissionSection {
 
 impl Config {
     pub(super) fn validate_admission(&self) -> Result<(), ConfigError> {
-        match &self.admission {
-            Some(section) => section.proposal().map(|_| ()),
-            None => Ok(()),
-        }
+        self.admission_proposal().map(|_| ())
     }
 
-    /// The validated admission proposal and authority directory, or `None`
-    /// when admission is not configured (normal disabled runtime).
-    pub fn admission_proposal(&self) -> Option<(PathBuf, AdmissionRuntimeProposal)> {
-        let section = self.admission.as_ref()?;
-        let proposal = section
-            .proposal()
-            .expect("admission section validated at load time");
+    /// The validated admission proposal and authority directory, `Ok(None)`
+    /// when admission is not configured (normal disabled runtime), or the
+    /// configuration error for an invalid section.
+    pub fn admission_proposal(
+        &self,
+    ) -> Result<Option<(PathBuf, AdmissionRuntimeProposal)>, ConfigError> {
+        let Some(section) = self.admission.as_ref() else {
+            return Ok(None);
+        };
+        let proposal = section.proposal()?;
+        if let Some(directory) = &section.directory {
+            if !directory.is_absolute() {
+                return Err(ConfigError::Admission(format!(
+                    "directory {} must be absolute so every session and the authority resolve the same path",
+                    directory.display()
+                )));
+            }
+        }
         let directory = section
             .directory
             .clone()
             .unwrap_or_else(|| default_admission_directory(&self.admission_base_dir));
-        Some((directory, proposal))
+        Ok(Some((directory, proposal)))
     }
 
     /// Record the base directory used to resolve the default authority
