@@ -58,6 +58,7 @@ pub trait AdmissionDispatcher {
 /// when durability fails, scheduler wake computation, ledger export and the
 /// operator epoch reset. Never exposed through a client capability.
 pub trait AdmissionRecovery {
+    fn high_water(&self, scope: ScopeId) -> Result<u64, AdmissionError>;
     fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError>;
     fn withdraw(&mut self, scope: ScopeId, sequence: u64, now: u64) -> Result<(), AdmissionError>;
     fn next_wake(&mut self, now: u64) -> Result<Option<u64>, AdmissionError>;
@@ -94,6 +95,9 @@ impl AdmissionService {
 }
 
 impl AdmissionRecovery for AdmissionService {
+    fn high_water(&self, scope: ScopeId) -> Result<u64, AdmissionError> {
+        self.policy.high_water(scope)
+    }
     fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError> {
         self.policy.abandon(scope, now)
     }

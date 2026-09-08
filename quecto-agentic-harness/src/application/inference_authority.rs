@@ -173,6 +173,18 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         Ok(self.issue(scope, root))
     }
 
+    /// Prove a capability without acting on it; returns the scope's acquire
+    /// high-water mark so a reconnecting client continues its sequence.
+    pub fn verify(&self, credential: &Credential) -> Result<u64, AuthorityError> {
+        self.authenticate(credential)?;
+        Ok(self.service.high_water(credential.scope)?)
+    }
+
+    /// Owner-side observation of any request; never exposed to clients.
+    pub fn observe(&mut self, id: RequestId, now: u64) -> Result<RequestState, AuthorityError> {
+        Ok(self.service.status(id.scope, id.sequence, now)?)
+    }
+
     pub fn lineage(&self, scope: ScopeId) -> Result<ScopeId, AuthorityError> {
         self.issued
             .get(&scope)

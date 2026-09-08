@@ -5,6 +5,12 @@
 use super::*;
 
 impl AdmissionPolicy {
+    /// Highest acquire sequence accepted for `scope`; a reconnecting client
+    /// continues above it so replay fencing keeps holding.
+    pub fn high_water(&self, scope: ScopeId) -> Result<u64, AdmissionError> {
+        Ok(self.scope(scope)?.high_water)
+    }
+
     /// The client owning `scope` vanished: queued work can never dispatch, and
     /// active work becomes uncertain occupancy that quarantines its group.
     pub fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError> {

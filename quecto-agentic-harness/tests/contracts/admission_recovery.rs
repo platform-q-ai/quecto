@@ -289,3 +289,12 @@ fn restore_rejects_a_ledger_for_an_unknown_group() {
         Some(AdmissionError::UnknownGroup)
     );
 }
+
+#[test]
+fn high_water_reports_the_last_accepted_sequence_per_scope() {
+    let (mut s, one, two) = seeded();
+    assert_eq!(s.high_water(one).unwrap(), 2);
+    assert_eq!(s.high_water(two).unwrap(), 1);
+    s.retire(two).unwrap();
+    assert_eq!(s.high_water(two), Err(AdmissionError::UnknownScope));
+}

@@ -14,6 +14,10 @@ impl GroupId {
         }
         Ok(Self(value.into()))
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
