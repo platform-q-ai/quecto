@@ -186,3 +186,82 @@ async fn approval_exchange(busy: bool) {
     assert_eq!(board.summary().unwrap()["status"], "running");
     accept.abort();
 }
+
+#[tokio::test]
+async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
+    let mut env = DispatchTestEnv::new(
+        make_workflow(),
+        Arc::new(ApprovalProvider {
+            started: Arc::new(tokio::sync::Notify::new()),
+        }),
+    );
+    let workspace = Arc::new(env.tmp.path().to_path_buf());
+    let socket = workspace.join("full.sock");
+    let ctx = env.ctx();
+    let (commands, _received) = tokio::sync::mpsc::channel(1);
+    commands
+        .send(crate::interface::cli::uds_multi::ClientMessage::Command(
+            crate::interface::cli::uds_multi::ClientCommand {
+                line: "occupied".into(),
+                client_id: 0,
+            },
+        ))
+        .await
+        .unwrap();
+    let (broadcast, _) = tokio::sync::broadcast::channel(16);
+    let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+    *ctx.cancel_handle.lock().unwrap() = super::CancelSlot::Armed(cancel);
+    let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
+        crate::interface::cli::uds_multi::AcceptLoopArgs {
+            listener: tokio::net::UnixListener::bind(&socket).unwrap(),
+            broadcast_tx: broadcast,
+            cmd_tx: commands,
+            cancel_handle: ctx.cancel_handle.clone(),
+            turn_control: ctx.turn_control.clone(),
+            live_clients: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            client_tool_registry: ctx.client_tool_registry.clone(),
+            conversation_snapshot: ctx.conversation_snapshot.clone(),
+            state_snapshot: ctx.state_snapshot.clone(),
+            execution_state: ctx.execution_state.clone(),
+            session_stats_snapshot: ctx.session_stats_snapshot.clone(),
+            tool_catalogue_snapshot: ctx.tool_catalogue_snapshot.clone(),
+            busy: ctx.busy.clone(),
+            subagent_registry: None,
+            workflow_state: None,
+            workspace_path: workspace.as_ref().clone(),
+        },
+    );
+
+    let rejected = crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout(
+        &socket, r#"{"type":"prompt","streamingBehavior":"steer","message":"unretained approval","ack":"accept","id":"full"}"#, std::time::Duration::from_secs(2)).await.unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rejected).unwrap()["success"],
+        false
+    );
+    assert!(
+        matches!(
+            cancelled.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ),
+        "rejected steer cancelled active work"
+    );
+    assert!(!ctx.turn_control.is_steer_pending());
+    let aborted =
+        crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout(
+            &socket,
+            r#"{"type":"abort","ack":"accept","id":"stop"}"#,
+            std::time::Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&aborted).unwrap()["success"],
+        true
+    );
+    assert!(ctx.turn_control.is_abort_pending());
+    assert!(!matches!(
+        cancelled.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    accept.abort();
+}

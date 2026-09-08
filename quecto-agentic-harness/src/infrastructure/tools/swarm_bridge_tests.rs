@@ -544,3 +544,64 @@ async fn live_wake_hint_is_coalesced_and_teaches_terminal_safe_inspection() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn watcher_cancels_foreground_after_cancelled_outcome() {
+    foreground_terminal_watcher("cancelled").await;
+}
+
+#[tokio::test]
+async fn watcher_cancels_foreground_after_successful_outcome() {
+    foreground_terminal_watcher("succeeded").await;
+}
+
+async fn foreground_terminal_watcher(outcome: &str) {
+    // The production watcher is process-scoped. Give each outcome its own
+    // process, using the same test entry point and real lifecycle adapter.
+    if std::env::var("SWARM_WATCHER_TEST").as_deref() != Ok(outcome) {
+        let name = std::thread::current().name().unwrap().to_owned();
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture"])
+            .env("SWARM_WATCHER_TEST", outcome)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use crate::domain::swarm::CoordinationPort;
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    let workspace = Arc::new(directory.path().to_path_buf());
+    let tool = SwarmTool::new(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+        SwarmConfig::default(),
+    )
+    .with_context(Some(context.clone()));
+    super::swarm_lifecycle::supervise(context.clone(), context.snapshot().unwrap());
+    let terminal = if outcome == "succeeded" {
+        "board.evidence('tests','proof','R1','command',True); board.complete('R1')"
+    } else {
+        "board.stop('cancelled','operator request')"
+    };
+    let code = format!(
+        "from swarm import board; import time; {terminal}; time.sleep(2); open('late-write','w').write('escaped')"
+    );
+    let result = tool
+        .execute(&json!({"op":"run", "code":code, "timeout_seconds":10}).to_string())
+        .await
+        .unwrap();
+    assert!(
+        !workspace.join("late-write").exists(),
+        "foreground interpreter survived terminal settlement"
+    );
+    assert_eq!(context.summary().unwrap()["status"], outcome);
+    assert!(result.content.contains("cancelled"), "{}", result.content);
+}

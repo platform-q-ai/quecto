@@ -5,13 +5,20 @@ use std::time::SystemTime;
 
 use super::{ActiveExecutions, JobRegistry, JobState};
 
-/// forever.
+/// Retain this many finished artifact directories per execution registry.
 pub(crate) const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
 
-/// Deletes the oldest artifact directories once the retention ceiling is
+/// Only this registry can know which of its executions are live. The opaque
+/// owner prefix excludes other registries, including those in other processes.
+/// Deletes the oldest owned artifact directories once the retention ceiling is
 /// passed. Directories belonging to a job that has not finished are never
 /// removed, so a running program cannot have its output deleted underneath it.
-pub(crate) fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry, active: &ActiveExecutions) {
+pub(crate) fn prune_artifact_dirs(
+    workspace: &Path,
+    jobs: &JobRegistry,
+    active: &ActiveExecutions,
+    owner: &str,
+) {
     let root = workspace.join(".quecto/swarm");
     let mut live: Vec<String> = active
         .lock()
@@ -30,11 +37,13 @@ pub(crate) fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry, active: 
             })
             .unwrap_or_default(),
     );
+    let prefix = format!("py_{owner}_");
     let Ok(entries) = std::fs::read_dir(&root) else {
         return;
     };
     let mut dirs: Vec<(SystemTime, PathBuf)> = entries
         .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter(|e| !live.iter().any(|id| *id == e.file_name().to_string_lossy()))
         .filter_map(|e| {
@@ -124,5 +133,52 @@ impl std::ops::Deref for Jobs {
 impl std::ops::DerefMut for Jobs {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.entries
+    }
+}
+
+/// Foreground children share terminal cancellation with background jobs, but
+/// disappear from the registry when the invocation (including errors) ends.
+pub(crate) struct ForegroundRegistration(JobRegistry, String);
+impl ForegroundRegistration {
+    pub(crate) fn new(
+        jobs: &JobRegistry,
+        id: &str,
+        state: Arc<Mutex<JobState>>,
+    ) -> Result<Self, crate::domain::error::DomainError> {
+        let mut registry = jobs.lock().unwrap();
+        if registry.stopped {
+            return Err(crate::domain::error::DomainError::Tool(
+                "swarm execution registry stopped".into(),
+            ));
+        }
+        registry.insert(id.to_owned(), state);
+        Ok(Self(jobs.clone(), id.to_owned()))
+    }
+}
+impl Drop for ForegroundRegistration {
+    fn drop(&mut self) {
+        if let Some(state) = self.0.lock().unwrap().remove(&self.1) {
+            let mut state = state.lock().unwrap();
+            state.cancel_requested = true;
+            if let Some(pid) = state.pid {
+                super::terminate_member(pid);
+            }
+        }
+    }
+}
+
+pub(crate) fn cancel_jobs(jobs: &JobRegistry) {
+    if let Ok(mut jobs) = jobs.lock() {
+        jobs.stopped = true;
+        for job in jobs.values() {
+            if let Ok(mut job) = job.lock() {
+                if !is_terminal(&job.status) {
+                    job.cancel_requested = true;
+                    if let Some(pid) = job.pid {
+                        super::terminate_member(pid);
+                    }
+                }
+            }
+        }
     }
 }

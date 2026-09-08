@@ -27,8 +27,13 @@ async fn rejected_queue(closed: bool) {
     }
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
     let (broadcast, _) = tokio::sync::broadcast::channel(4);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let control = super::super::uds_cancel::TurnControl::default();
     let delivery = dispatch(ReaderDispatchCtx {
         line: r#"{"type":"prompt","streamingBehavior":"steer","message":"Approved: use schema v2","ack":"accept","id":"approval-1"}"#.into(),
+        cancel_handle: &cancel, turn_control: &control,
         snapshot: &snapshot, registry: &registry, subagent_registry: &None,
         broadcast_tx: &broadcast, client_id: 1, cmd_tx: &commands,
     });

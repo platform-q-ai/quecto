@@ -14,10 +14,10 @@ use super::protocol::AgentEvent;
 use super::uds::uds_dispatch_session;
 use super::uds::{
     DispatchCtx, LineResult, MAX_FRAME_PAYLOAD_BYTES, dispatch_command,
-    emit_event_to_broadcast_or_writer, inject_system_prompt, is_cancel_command, parse_line,
+    emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
     remove_injected_system_prompt,
 };
-use super::uds_cancel::{CancelHandle, CancelSlot, fire_cancel};
+use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use super::uds_session::AgentSession;
 pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
@@ -662,19 +662,6 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         // only pay a copy for the lossy fallback on malformed input.
         let line = String::from_utf8(bytes)
             .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-        let trimmed = line.trim();
-
-        if is_cancel_command(trimmed) {
-            // Record operator intent BEFORE firing the cancel so the post-cancel
-            // idle drain cannot observe the cancel and run a nudge before the
-            // abort/steer flag lands (#895/#896).
-            if super::uds::is_abort_command(trimmed) {
-                turn_control.mark_abort();
-            } else if super::uds::is_steer_command(trimmed) {
-                turn_control.mark_steer();
-            }
-            fire_cancel(&cancel_handle);
-        }
         if !super::uds_reader_dispatch::dispatch(super::uds_reader_dispatch::ReaderDispatchCtx {
             line,
             snapshot: &conversation_snapshot,
@@ -683,6 +670,8 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             broadcast_tx: &broadcast_tx,
             client_id,
             cmd_tx: &cmd_tx,
+            cancel_handle: &cancel_handle,
+            turn_control: &turn_control,
         })
         .await
         {

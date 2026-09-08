@@ -98,6 +98,8 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
         broadcast_tx: &broadcast_tx,
         client_id: 1,
         cmd_tx: &cmd_tx,
+        cancel_handle: &std::sync::Arc::new(std::sync::Mutex::new(uds_cancel::CancelSlot::Idle)),
+        turn_control: &uds_cancel::TurnControl::default(),
     })
     .await;
     let served_inline = cmd_rx.try_recv().is_err();

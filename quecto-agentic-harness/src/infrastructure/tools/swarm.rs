@@ -18,13 +18,11 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 pub use super::swarm_config::{SwarmConfig, SwarmToolConfig};
 
-/// Registry of background jobs, keyed by job id.
+/// Background jobs and in-flight foreground executions share cancellation.
 type JobRegistry = Arc<Mutex<Jobs>>;
 
-/// Execution ids with a run in flight. Foreground runs never enter the job
-/// registry, so without this their artifact directory is prunable from the
-/// moment it is created — pruning it mid-run destroys the output the run is
-/// about to read back.
+/// Protect artifacts from creation through result publication, including the
+/// interval before an execution joins the cancellation registry.
 type ActiveExecutions = Arc<Mutex<std::collections::HashSet<String>>>;
 
 /// Removes its execution id on drop, so an early return or an error cannot
@@ -47,11 +45,13 @@ pub struct SwarmTool {
     session_key: Mutex<String>,
     jobs: JobRegistry,
     active: ActiveExecutions,
+    artifact_owner: String,
 }
 
 #[derive(Debug)]
 pub(crate) struct JobState {
     pub(crate) execution_id: String,
+    pub(crate) background: bool,
     pub(crate) status: String,
     pub(crate) exit_code: Option<i32>,
     pub(crate) pid: Option<u32>,
@@ -79,6 +79,7 @@ impl SwarmTool {
             session_key: Mutex::new(String::new()),
             jobs: Arc::new(Mutex::new(Jobs::default())),
             active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            artifact_owner: uuid::Uuid::new_v4().simple().to_string(),
         }
     }
 }
@@ -139,6 +140,7 @@ impl Tool for SwarmTool {
         let cfg = self.config.clone();
         let jobs = self.jobs.clone();
         let active = self.active.clone();
+        let artifact_owner = self.artifact_owner.clone();
         let session_key = self
             .session_key
             .lock()
@@ -175,6 +177,7 @@ impl Tool for SwarmTool {
                             jobs,
                             active,
                             session_key,
+                            artifact_owner,
                         },
                     )
                     .await
@@ -200,6 +203,7 @@ struct RunEnv {
     jobs: JobRegistry,
     active: ActiveExecutions,
     session_key: String,
+    artifact_owner: String,
 }
 
 async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainError> {
@@ -211,6 +215,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         jobs,
         active,
         session_key,
+        artifact_owner,
     } = env;
     let summary = match super::swarm_control::execution_state(context.clone()).await {
         Ok(summary) => summary,
@@ -230,7 +235,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     spec.timeout_secs = spec.timeout_secs.min(remaining.ceil() as u64);
     spec.bootstrap = Some(context.bootstrap());
     let exec_id = format!(
-        "py_{}_{:x}_{}",
+        "py_{artifact_owner}_{}_{:x}_{}",
         std::process::id(),
         now_ms(),
         EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -257,30 +262,34 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         let (ws, jobs, active) = (workspace.clone(), jobs.clone(), active.clone());
         // read_dir plus an unbounded number of remove_dir_all calls must not
         // run on the async worker thread.
-        let _ = tokio::task::spawn_blocking(move || prune_artifact_dirs(&ws, &jobs, &active)).await;
+        let _ = tokio::task::spawn_blocking(move || {
+            prune_artifact_dirs(&ws, &jobs, &active, &artifact_owner)
+        })
+        .await;
     }
     let stdout_path = artifact_dir.join("stdout.txt");
     let stderr_path = artifact_dir.join("stderr.txt");
+    let state = Arc::new(Mutex::new(JobState {
+        execution_id: exec_id.clone(),
+        background: spec.background,
+        status: "running".into(),
+        exit_code: None,
+        pid: None,
+        started_ms: start,
+        completed_ms: None,
+        stdout_path: stdout_path.clone(),
+        stderr_path: stderr_path.clone(),
+        max_output_bytes: spec.max_out,
+        result: None,
+        cancel_requested: false,
+        session_id: session_key.clone(),
+        invocation_type: spec.invocation_type.clone(),
+        timeout_seconds: spec.timeout_secs,
+        resource_limits: json!({"memory_bytes":cfg.max_memory_bytes,"cpu_seconds":cfg.max_cpu_seconds,"processes":cfg.max_processes}),
+        inherit_environment: cfg.inherit_environment,
+    }));
     if spec.background {
         let job_id = format!("job_{}", exec_id);
-        let state = Arc::new(Mutex::new(JobState {
-            execution_id: exec_id.clone(),
-            status: "running".into(),
-            exit_code: None,
-            pid: None,
-            started_ms: start,
-            completed_ms: None,
-            stdout_path: stdout_path.clone(),
-            stderr_path: stderr_path.clone(),
-            max_output_bytes: spec.max_out,
-            result: None,
-            cancel_requested: false,
-            session_id: session_key.clone(),
-            invocation_type: spec.invocation_type.clone(),
-            timeout_seconds: spec.timeout_secs,
-            resource_limits: json!({"memory_bytes":cfg.max_memory_bytes,"cpu_seconds":cfg.max_cpu_seconds,"processes":cfg.max_processes}),
-            inherit_environment: cfg.inherit_environment,
-        }));
         {
             let mut registry = jobs.lock().unwrap();
             if registry.stopped {
@@ -290,7 +299,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                 .values()
                 .filter(|j| {
                     j.lock()
-                        .map(|s| s.status == "running" || s.status == "cancelling")
+                        .map(|s| s.background && !is_terminal(&s.status))
                         .unwrap_or(false)
                 })
                 .count();
@@ -386,8 +395,20 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             false,
         );
     }
-    let (status, code) =
-        run_child(spec.clone(), &workspace, &stdout_path, &stderr_path, None).await?;
+    let _foreground = ForegroundRegistration::new(&jobs, &exec_id, state.clone())?;
+    let (status, code) = run_child(
+        spec.clone(),
+        &workspace,
+        &stdout_path,
+        &stderr_path,
+        Some(state.clone()),
+    )
+    .await?;
+    let status = if state.lock().unwrap().cancel_requested {
+        "cancelled".into()
+    } else {
+        status
+    };
     let end = now_ms();
     let changed = {
         let ws = workspace.clone();
@@ -705,22 +726,6 @@ pub(crate) use swarm_support::*;
 #[path = "swarm_registry.rs"]
 mod swarm_registry;
 pub(crate) use swarm_registry::*;
-
-fn cancel_jobs(jobs: &JobRegistry) {
-    if let Ok(mut jobs) = jobs.lock() {
-        jobs.stopped = true;
-        for job in jobs.values() {
-            if let Ok(mut job) = job.lock() {
-                if !is_terminal(&job.status) {
-                    job.cancel_requested = true;
-                    if let Some(pid) = job.pid {
-                        terminate_member(pid);
-                    }
-                }
-            }
-        }
-    }
-}
 
 pub(crate) fn terminate_member(pid: u32) {
     // Snapshot/terminate descendants while the parent is still present, then

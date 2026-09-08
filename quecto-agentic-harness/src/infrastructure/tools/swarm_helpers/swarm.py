@@ -59,7 +59,7 @@ class Workbench(Tasks):
                            (uuid.uuid4().hex, goal, encode(constraints), encode(criteria), self.member,
                             self.member, member_limit, deadline, 'running'))
                 db.execute("INSERT INTO members VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
-            self.store.event(db, 'created', {'goal': goal, 'deadline': deadline})
+            self.store.event(db, 'created', {'goal': goal, 'deadline': deadline, 'contract': {'goal': goal, 'constraints': constraints, 'criteria': criteria}})
         return self.summary()
 
     def amend(self, goal, constraints, criteria, reason):
@@ -70,7 +70,9 @@ class Workbench(Tasks):
             self._criteria(criteria)
             db.execute('UPDATE run SET goal=?,constraints=?,criteria=?', (goal, encode(constraints), encode(criteria)))
             db.execute('DELETE FROM evidence')
-            self.store.event(db, 'amended', {'previous_goal': run['goal'], 'goal': goal, 'reason': reason})
+            self.store.event(db, 'amended', {'previous_goal': run['goal'], 'goal': goal, 'reason': reason,
+                'before': {'goal': run['goal'], 'constraints': json.loads(run['constraints']), 'criteria': json.loads(run['criteria'])},
+                'after': {'goal': goal, 'constraints': constraints, 'criteria': criteria}})
 
     def _notifications(self):
         return self.coordination.notifications()

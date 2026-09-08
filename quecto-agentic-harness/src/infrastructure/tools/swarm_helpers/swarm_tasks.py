@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
+from swarm_policy import require_unsubmitted
 from swarm_store import SwarmError, bounded, encode
 
 
@@ -117,7 +118,7 @@ class Tasks:
     def block(self, task_id, token, reason):
         bounded(reason, 'blocker')
         with self.store.operation() as (db, _):
-            self._owned(db, task_id, token)
+            require_unsubmitted(self._owned(db, task_id, token))
             db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE id=?", (reason, task_id))
             self.store.event(db, 'blocked', {'task': task_id, 'reason': reason})
 
@@ -132,6 +133,7 @@ class Tasks:
             task = self._owned(db, task_id, token)
             if task['status'] == 'submitted' and task['evidence'] == evidence:
                 return
+            require_unsubmitted(task)
             db.execute("UPDATE tasks SET status='submitted',evidence=?,blocker=NULL WHERE id=?", (encode(evidence), task_id))
             self.store.event(db, 'submitted', {'task': task_id})
 

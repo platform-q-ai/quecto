@@ -233,3 +233,41 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
     assert_eq!(messages[0]["body"], "Approved: schema v2");
     assert_eq!(messages[0]["status"], "accepted");
 }
+
+#[when("the member replaces submitted evidence under the same claim")]
+fn replace_submission(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run", "code":"from swarm import board; t=board.task(1); board.submit(t['id'],t['token'],[{'artifact':'unreviewed.log','revision':'abc'}])"}),
+    );
+}
+
+#[when("the swarm coordinator changes only the done criteria")]
+fn amend_criteria(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run", "code":"from swarm import board; s=board.summary(); board.amend(s['goal'],s['constraints'],[{'id':'changed','kind':'review','description':'new requirement'}],'approved change')"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}
+
+#[then("the swarm audit retains both complete contracts")]
+fn contract_history(world: &mut QuectoWorld) {
+    let summary = result_json(world);
+    let events = summary["events"].as_array().unwrap();
+    let detail = |action: &str| -> serde_json::Value {
+        serde_json::from_str(
+            events.iter().find(|e| e["action"] == action).unwrap()["detail"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let created = detail("created");
+    let amended = detail("amended");
+    assert_eq!(amended["before"], created["contract"]);
+    assert_eq!(amended["after"]["criteria"], summary["criteria"]);
+    assert_ne!(amended["before"]["criteria"], amended["after"]["criteria"]);
+    assert_eq!(amended["reason"], "approved change");
+}

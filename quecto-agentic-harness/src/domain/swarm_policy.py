@@ -77,3 +77,8 @@ def notification_targets(run, actor, members, events):
         elif action in ('task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'amended'):
             targets.update(live)
     return [live[identity] for identity in sorted(targets) if identity in live]
+
+
+def require_unsubmitted(task):
+    if task['status'] == 'submitted':
+        raise SwarmError('submitted evidence is immutable; release and reclaim before revising')

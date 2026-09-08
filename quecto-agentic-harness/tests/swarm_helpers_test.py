@@ -1,6 +1,7 @@
 """Behavioral contract for the packaged swarm workbench, using real SQLite."""
 import concurrent.futures
 from contextlib import closing
+import json
 import importlib.util
 import pathlib
 import sqlite3
@@ -36,6 +37,43 @@ class WorkbenchBehavior(unittest.TestCase):
 
     def task(self, request='task', dependencies=None):
         return self.worker.task_create(request, 'implement behavior', ['tests pass'], dependencies or [])
+
+    def test_reviewed_submission_cannot_be_replaced_under_the_same_claim(self):
+        claim = self.worker.claim(self.task()['id'])
+        a = [{'artifact': 'reviewed-A', 'revision': 'R1'}]
+        b = [{'artifact': 'unreviewed-B', 'revision': 'R1'}]
+        self.worker.submit(claim['id'], claim['token'], a)
+        reviewed = self.parent.task(claim['id'])
+        self.worker.submit(claim['id'], claim['token'], a)  # safe retry
+        with self.assertRaisesRegex(SwarmError, 'submitted'):
+            self.worker.submit(claim['id'], claim['token'], b)
+        with self.assertRaisesRegex(SwarmError, 'submitted'):
+            self.worker.block(claim['id'], claim['token'], 'replace via blocked')
+        self.parent.verify_task(reviewed['id'], reviewed['token'], 'R1')
+        self.assertEqual(self.parent.task(claim['id'])['evidence'], a)
+
+    def test_released_submission_requires_a_new_review_claim(self):
+        claim = self.worker.claim(self.task()['id'])
+        self.worker.submit(claim['id'], claim['token'], [{'artifact': 'A', 'revision': 'R1'}])
+        self.worker.release(claim['id'], claim['token'])
+        replacement = self.worker.claim(claim['id'])
+        self.worker.submit(claim['id'], replacement['token'], [{'artifact': 'B', 'revision': 'R1'}])
+        with self.assertRaisesRegex(SwarmError, 'stale'):
+            self.parent.verify_task(claim['id'], claim['token'], 'R1')
+        self.parent.verify_task(claim['id'], replacement['token'], 'R1')
+
+    def test_amendment_preserves_the_entire_original_contract(self):
+        original = self.parent.summary()
+        changed = [{'id': 'tests', 'kind': 'command', 'description': 'replacement test'}]
+        self.parent.amend(original['goal'], ['replacement constraint'], changed, 'approved change')
+        events = self.parent.summary()['events']
+        created = json.loads(next(e['detail'] for e in events if e['action'] == 'created'))
+        amended = json.loads(next(e['detail'] for e in events if e['action'] == 'amended'))
+        before = {key: original[key] for key in ('goal', 'constraints', 'criteria')}
+        self.assertEqual(created['contract'], before)
+        self.assertEqual(amended['before'], before)
+        self.assertEqual(amended['after'], {'goal': original['goal'], 'constraints': ['replacement constraint'], 'criteria': changed})
+        self.assertEqual(amended['reason'], 'approved change')
 
     def test_dependent_tasks_can_be_revalidated_at_final_revision(self):
         a = self.worker.claim(self.task('a')['id'])

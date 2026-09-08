@@ -375,3 +375,65 @@ from lost messages; the second checked bounded socket handling, preserved inbox
 state, typed adapter setup and assertion relevance. No further finding survived.
 These are sequential self-reviews, not independent assurance. No coverage gate
 or production behavior was weakened or changed for this follow-up.
+
+
+## Review remediation at 114b0edb (2026-09-08)
+
+Reviewed all five new threads from the review submitted at 14:36 UTC, against
+`114b0edb5ddef3ed4fcf505cc8956a07de93758e`. Each finding was confirmed by a
+regression before its production fix:
+
+| Finding | Observed RED | Fix and GREEN boundary |
+|---|---|---|
+| Foreground terminal cancellation | Actual process-scoped watcher allowed delayed checkout writes after both cancelled and succeeded outcomes | Foreground invocations register their process state with terminal cancellation before spawn; real watcher subprocess tests stop both writes while keeping the coordinator harness alive |
+| Cross-member artifact pruning | Two member/tool registries shared a workspace; forty short calls deleted the waiting member's artifacts and its stdout became empty | Opaque per-registry execution prefix scopes pruning; same-member live protection and the 32-finished-directory limit remain; other registries' output survives |
+| Reviewed submission replacement | Replacing A with B at the same revision/claim was accepted | Pure domain guard makes submitted references immutable; identical retries are harmless; blocking cannot bypass the guard; release/reclaim rotates the token and stale verification fails |
+| Lost definition of done | Creation lacked a contract snapshot; criteria/constraint-only amendment lost its predecessor | Creation retains full contract; amendment records full before/after goal, constraints and criteria plus reason, in the update transaction |
+| Rejected steer cancels current work | Real socket reader returned negative acceptance after already firing cancellation | Queue permit precedes steering flags/cancellation and enqueue; explicit abort remains independent; full-queue real socket test preserves the current cancellation receiver, then proves abort still works |
+
+BDD adds replacement-submission and criteria-only amendment scenarios. User and
+agent docs describe immutable submissions, terminal interpreter cancellation,
+full contract history, and per-instance retention. Old audit events cannot be
+reconstructed. Old/other registry artifacts require explicit cleanup or environment
+disposal; live protection takes precedence over global directory eviction.
+
+### Adversarial-review loop 1
+
+Followed the built-in `tests/fixtures/adversarial-review.json` scope → inspect →
+challenge → validate → report stages, with sequential narrow finder/verifier
+passes rather than independent agents. Scope: the diff above the pinned baseline,
+with particular attention to lifecycle races, review interleavings, admission,
+architecture direction, and retained output. This is **self-review, not independent**.
+
+All five reviewer mechanisms survived attempted refutation and were reproduced as
+listed above. After remediation, the compatibility finder identified an additional
+candidate: foreground registration could count toward the old background-only
+concurrency limit. A new regression with one occupied foreground execution and
+one available background slot failed with `concurrent job limit reached`.
+The registry now records execution mode and counts only background jobs for this
+limit. This preserves admission semantics while sharing cancellation. Cancellation
+and pruning remain infrastructure effects; submission immutability is domain
+policy; queue admission and UDS cancellation remain interface responsibilities.
+
+### Adversarial-review loop 2
+
+Repeated all five workflow stages on the corrected diff. The source diff
+(`git diff -- quecto-agentic-harness/src | sha256sum`) was
+`62500d18838312bcfb31147ea2e6a64667f8e2956c287633b631f79d15535f9c`. Retried direct replacement,
+block-then-replace and release/reclaim paths; verified token invalidation, same-revision
+handling and unchanged idempotent retries. Traced foreground registration through
+registry closure, spawn/PID publication, terminal watcher settlement, error/drop
+cleanup and result publication. Checked pruning ownership across separate member
+registries and normal retention. Traced socket permit reservation, steering flags,
+cancellation and enqueue without an intervening await; rejected admission has no
+steering effects and explicit abort bypasses capacity. Checked before/after event
+snapshots against the transaction and compared both documentation surfaces.
+No additional finding survived this second self-review.
+
+Validation includes the real SQLite suite, pure policy suite, real watcher and
+real socket unit regressions, workspace unit/binary tests, architecture/port/product
+contracts, tagged swarm BDD, strict workspace Clippy, formatting and repository
+quality gates. Commands are the standard ones listed earlier in this document.
+These are local test processes with temporary workspaces and sockets, not a new
+live provider/container end-to-end run. PR CI is verified separately at the pushed
+head. The PR remains unmerged and auto-merge disabled.

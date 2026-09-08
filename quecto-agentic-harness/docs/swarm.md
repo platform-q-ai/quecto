@@ -168,7 +168,10 @@ from an empty ready queue.
 
 ## Verification, stopping and progress
 
-Workers submit evidence references. Only the coordinator can verify submitted
+Workers submit evidence references. Once submitted, those references are immutable
+under the claim token (identical retries are harmless). To revise rejected evidence,
+release and reclaim the task, then submit with the new token so an earlier review
+cannot verify the replacement. A submitted task cannot be changed to blocked. Only the coordinator can verify submitted
 tasks with `verify_task(id, claim_token, revision)`, accept evidence using
 `evidence(criterion, artifact, revision, kind, passed)`, and `complete(revision)`.
 A worker's `evidence` call records an unaccepted submission. A coordinator must
@@ -185,7 +188,9 @@ task and nonempty artifact evidence matching that revision; it records both old
 and new evidence in the audit. Workers cannot revalidate. Existing evidence is
 never silently relabeled. Submitted tasks, idle agents and an empty queue do
 not prove success. `amend(goal, constraints, criteria, reason)` is coordinator-only,
-records the amendment, and invalidates prior overall evidence.
+records the reason and complete before/after goal, constraints and criteria, and
+invalidates prior overall evidence. The creation event preserves the original
+contract. Existing audit events from older versions are not retroactively reconstructed.
 
 `op=summary` reports goal, status, membership usage/limit, task counts and the first 50 task/file details,
 blockers, evidence and recent actor/timestamp audit events. Total counts include
@@ -193,10 +198,13 @@ entries beyond the first page. File reservations are bounded to 1000 per run. Th
 audit remains in SQLite. `stop(status, reason)` distinguishes `blocked`, `failed`,
 `cancelled`, and `budget-exhausted`; success is `succeeded`. `op=cancel_run` is the
 parent cancellation operation. New work and admission stop at terminal state;
-settlement cancels local detached Python jobs before attempting UDS turn abort,
+settlement cancels local foreground and background Python processes before attempting UDS turn abort,
 then terminates workers through the process adapter. Every member's watcher checks
 for remote terminal outcomes at 500 ms intervals, including while idle, and cancels
-its own detached registry. The registry closes against concurrent new launches.
+its own execution registry, including coordinator Python. The coordinator harness
+remains available for reporting after success or cancellation; put final report
+data on the board before calling `complete` or `stop`, since the interpreter may
+be killed as soon as the watcher observes the outcome. The registry closes against concurrent new launches.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
@@ -208,7 +216,11 @@ timeout, on a suitable **local filesystem** only. Corrupt, missing or locked sta
 fails explicitly; it never creates a replacement board or bypasses admission.
 
 Execution artifacts remain under `.quecto/swarm/<execution_id>/` with the existing
-32-directory pruning policy. The sibling `.quecto/swarm.sqlite` database is never
+32-finished-directory retention limit per tool instance. Execution IDs carry an
+opaque owner prefix; pruning only touches that registry’s directories and excludes
+its live executions. Other members’ output and directories from previous tool
+instances are retained until explicitly exported/cleaned or the environment is
+discarded. The sibling `.quecto/swarm.sqlite` database is never
 pruned with those artifacts. Container destruction remains destructive unless the
 user preserves its storage; cross-container recovery is not provided.
 
@@ -286,6 +298,7 @@ turn to finish. The coordinator should explicitly acknowledge the answer and
 apply it to the task before optional inbox work. Transport acceptance means the
 command was queued, not that the model read or acted on it; retrieve the report
 with `get_messages` to verify handling. A full/closed dispatch queue returns an
-explicit failure instead of falsely accepting the clarification. A terminal run
+explicit failure without cancelling the current turn or recording pending steering.
+Explicit `abort` remains effective even when the dispatch queue is full. A terminal run
 cannot be revived by steering: preserve its report and start a fresh environment
 when further implementation is authorized.

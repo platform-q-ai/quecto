@@ -63,3 +63,13 @@ Feature: Container swarm coordination
     Then the swarm result should not be an error
     And the swarm result should contain "wake hint failed for worker"
     And the rejected wake still leaves the message in the recipient inbox
+
+  Scenario: Reviewed submissions cannot change under an existing claim
+    When a swarm member submits its work
+    And the member replaces submitted evidence under the same claim
+    Then the swarm result should be an error
+    And the swarm result should contain "submitted evidence is immutable"
+
+  Scenario: Criteria amendments retain the original definition of done
+    When the swarm coordinator changes only the done criteria
+    Then the swarm audit retains both complete contracts

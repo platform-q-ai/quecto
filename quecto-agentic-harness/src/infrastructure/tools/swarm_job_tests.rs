@@ -474,3 +474,87 @@ async fn cancel_during_result_build_is_not_overwritten() {
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
 }
+
+#[tokio::test]
+async fn another_member_cannot_prune_a_live_foreground_result() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fast = tool(tmp.path());
+    let worker = super::swarm_bridge::SwarmContext {
+        checkout: tmp.path().to_path_buf(),
+        member: "worker".into(),
+        lifecycle: Arc::new(crate::application::ports::SwarmTestLifecycle),
+    };
+    let parent = super::swarm_bridge::SwarmContext {
+        member: "coordinator".into(),
+        ..worker.clone()
+    };
+    parent
+        .call("_admit", serde_json::json!(["worker", "reservation"]))
+        .unwrap();
+    parent
+        .call(
+            "_activate",
+            serde_json::json!(["worker", "reservation", 123, "start", null]),
+        )
+        .unwrap();
+    let slow = SwarmTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
+        SwarmConfig::default(),
+    )
+    .with_context(Some(worker));
+    let run = tokio::spawn(async move {
+        slow.execute(r#"{"op":"run","code":"import pathlib,time; pathlib.Path('ready').touch();\nwhile not pathlib.Path('release').exists(): time.sleep(0.01)\nprint('survived')","timeout_seconds":30}"#).await.unwrap()
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !tmp.path().join("ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    for _ in 0..40 {
+        fast.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
+    }
+    std::fs::write(tmp.path().join("release"), "").unwrap();
+    let result = run.await.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(value["stdout"], "survived\n", "{}", result.content);
+}
+
+#[tokio::test]
+async fn foreground_registration_preserves_background_job_capacity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = Arc::new(super::swarm_test_support::tool(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
+        SwarmConfig {
+            max_concurrent_jobs: 1,
+            ..Default::default()
+        },
+    ));
+    let foreground = {
+        let lab = lab.clone();
+        tokio::spawn(async move {
+            lab.execute(r#"{"op":"run","code":"import pathlib,time; pathlib.Path('ready').touch();\nwhile not pathlib.Path('release').exists(): time.sleep(0.01)","timeout_seconds":30}"#).await.unwrap()
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !tmp.path().join("ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let background = lab
+        .execute(r#"{"op":"run","code":"pass","background":true}"#)
+        .await
+        .unwrap();
+    std::fs::write(tmp.path().join("release"), "").unwrap();
+    assert!(!foreground.await.unwrap().is_error);
+    assert!(
+        !background.is_error,
+        "foreground work consumed the background job slot: {}",
+        background.content
+    );
+}
