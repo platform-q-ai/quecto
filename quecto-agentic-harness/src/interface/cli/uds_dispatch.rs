@@ -329,6 +329,16 @@ pub(super) async fn handle_steer(
     type_name: &str,
     message: String,
 ) -> bool {
+    // Acceptance is independent of the provider outcome. Keep the idle
+    // control receipt even if the ensuing turn fails before completion.
+    if !ctx.session.is_streaming() {
+        let event = AgentEvent::ok(
+            id,
+            type_name,
+            Some(serde_json::json!({"status":"accepted"})),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
     super::handle_prompt(
         ctx,
         super::PromptCommand {

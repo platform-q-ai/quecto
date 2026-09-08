@@ -32,3 +32,7 @@ The large incomplete-history test already retains a latest substantive acknowled
 - Logs: `/tmp/swarm-trial-harness-final.log`, `/tmp/swarm-trial-python-final.log`, `/tmp/swarm-trial-all-regressions.log`, `/tmp/swarm-trial-bdd-final.log`, `/tmp/swarm-trial-clippy-final.log`.
 
 No new live-provider/container trial, issue-1671 implementation result, or new CI run is claimed. The shared master checkout and unrelated work were preserved.
+
+## CI follow-up: idle steering receipt
+
+CI run `34258504890` exposed the same missing idle-steer acceptance response in both BDD suites: a failing provider emitted `agent_error` before any successful `steer` response. The existing `UDS steer while idle is acknowledged` scenario reproduced locally as RED (`/tmp/swarm-trial-ci-steer-red.log`), then passed all six steps after restoring the explicit acceptance response before executing the turn (`/tmp/swarm-trial-ci-steer-green.log`). Provider failure remains visible and acceptance does not claim successful execution. No fixture, test requirement, or threshold was weakened.
