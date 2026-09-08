@@ -80,19 +80,6 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
     true
 }
 
-#[cfg(test)]
-#[test]
-fn latest_report_ignores_tool_backlog_and_bounds_unicode_content() {
-    let text = "界".repeat(10000);
-    let report = Message::assistant(text, vec![]);
-    let id = report.id().to_string();
-    let data = latest_report(&[report, Message::user("pending instruction")]);
-    assert_eq!(data["report"]["messageId"], id);
-    assert!(data["report"]["content"].as_str().unwrap().len() <= 8192);
-    assert_eq!(data["report"]["contentTruncated"], true);
-    assert_eq!(data["recovery"]["command"], "get_message");
-}
-
 pub(super) async fn report(
     snapshot: &super::uds_multi::ConversationSnapshot,
     export_raw: bool,
@@ -153,79 +140,5 @@ pub(super) async fn report(
 }
 
 #[cfg(test)]
-#[tokio::test]
-async fn raw_report_export_preserves_content_without_consuming_cursor() {
-    let directory = tempfile::tempdir().unwrap();
-    let message = Message::assistant("raw".repeat(10000), vec![]);
-    let mut state =
-        super::uds_snapshots::ConversationSnapshotData::from_messages(vec![message.clone()]);
-    state.export_root = Some(directory.path().to_path_buf());
-    let epoch = state.epoch;
-    let rev = state.rev;
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
-    let result = report(&snapshot, true).await.unwrap();
-    assert!(result.to_string().len() < 10000);
-    let path = result["rawExport"]["path"].as_str().unwrap();
-    let raw = std::fs::read_to_string(path).unwrap();
-    assert!(raw.contains(&message.content));
-    assert_eq!(snapshot.read().await.epoch, epoch);
-    assert_eq!(snapshot.read().await.rev, rev);
-}
-
-#[cfg(test)]
-mod export_control_tests {
-    use super::*;
-    use crate::domain::{
-        error::DomainError,
-        session::{ContextSpillStore, SpillEntry, SpillIndexList},
-    };
-    use std::{future::Future, pin::Pin, sync::Arc};
-    struct SlowExportStore;
-    impl ContextSpillStore for SlowExportStore {
-        fn append(
-            &self,
-            _: &str,
-            _: &SpillEntry,
-        ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-            Box::pin(async { Ok(()) })
-        }
-        fn recall(
-            &self,
-            _: &str,
-            _: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>
-        {
-            Box::pin(async { Ok(None) })
-        }
-        fn list_entries(&self, _: &str) -> SpillIndexList<'_> {
-            Box::pin(std::future::pending())
-        }
-        fn clear(
-            &self,
-            _: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-    #[tokio::test]
-    async fn raw_export_releases_reader_before_spill_io_completes() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut state = super::super::uds_snapshots::ConversationSnapshotData::default();
-        state.export_root = Some(directory.path().to_path_buf());
-        state.set_spill_store(Some(Arc::new(SlowExportStore)), "test".into());
-        let snapshot = Arc::new(tokio::sync::RwLock::new(state));
-        let registry = super::super::uds_ext_protocol::new_client_tool_registry();
-        let ctx = super::super::uds_busy_get_message::BusyCommandCtx {
-            line: r#"{"type":"get_report","id":"slow-export","export_raw":true}"#,
-            snapshot: &snapshot,
-            registry: &registry,
-            client_id: 1,
-        };
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(100), intercept(&ctx))
-                .await
-                .is_ok(),
-            "the same reader must remain available for pause/abort"
-        );
-    }
-}
+#[path = "uds_latest_report_tests.rs"]
+mod tests;

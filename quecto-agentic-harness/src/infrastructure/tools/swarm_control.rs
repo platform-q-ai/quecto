@@ -112,3 +112,7 @@ fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainErro
             .ok_or_else(|| DomainError::Tool(format!("{field} must be a nonnegative integer"))),
     }
 }
+
+#[cfg(test)]
+#[path = "swarm_control_tests.rs"]
+mod tests;

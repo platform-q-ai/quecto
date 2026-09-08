@@ -40,3 +40,52 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
         }
     }
 }
+
+#[tokio::test]
+async fn runtime_cleanup_checks_process_identity_even_when_abort_endpoint_is_absent() {
+    use std::os::unix::process::CommandExt;
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    let processes = RuntimeProcesses(&context);
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let identity = ProcessIdentity {
+        pid: child.id(),
+        started: process_start(child.id()).unwrap(),
+    };
+    let member = Member {
+        id: "worker".into(),
+        status: MemberStatus::Live,
+        process: Some(identity.clone()),
+        endpoint: None,
+    };
+    assert!(!processes.abort(&member).await);
+    processes
+        .terminate(&ProcessIdentity {
+            started: "stale-identity".into(),
+            ..identity.clone()
+        })
+        .await
+        .unwrap();
+    assert!(child.try_wait().unwrap().is_none());
+    processes.terminate(&identity).await.unwrap();
+    assert!(!child.wait().unwrap().success());
+}
+
+#[test]
+fn paused_coordinator_reattaches_without_reopening_admission() {
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    context.pause("approval").unwrap();
+    join_current_process(
+        &context,
+        Some(std::path::Path::new("/test-supervisor.sock")),
+    )
+    .unwrap();
+    let snapshot = context.snapshot().unwrap();
+    assert_eq!(snapshot.status, RunStatus::Paused);
+    assert_eq!(snapshot.members.len(), 1);
+    assert!(settle_observed_snapshot(&context, &snapshot));
+    assert_eq!(context.snapshot().unwrap().status, RunStatus::Paused);
+}

@@ -63,3 +63,10 @@ Post-CI review results are recorded in the PR description.
 - Runtime revision and digest can be unknown/pending. No workload SHA is substituted.
 - This verification does not claim a successful replay of the original live trial
   or causally attribute its reported token volume to a single defect.
+
+CI follow-up: stale slim-state fixtures were updated for the new diagnostics.
+Live-child fixtures used an obsolete provider route and non-streaming response;
+explicit API routing plus a valid stream restored prompt/follow-up delivery without
+weakening the failure circuit. Seven targeted BDD scenarios passed. The library-only
+coverage lane now executes the shared swarm contracts and adapter failure tests:
+4,179 tests passed with 92.24% function coverage locally (92% required).

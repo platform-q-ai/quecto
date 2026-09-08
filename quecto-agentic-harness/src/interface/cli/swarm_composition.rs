@@ -26,18 +26,23 @@ pub(super) fn bind_suspension(
     context: Option<SwarmContext>,
 ) {
     if let Some(context) = context {
-        let cancel = cancel.clone();
-        crate::infrastructure::tools::swarm_lifecycle::bind_local_suspension(Arc::new(
-            move |status, generation| {
-                super::uds_cancel::suspend_swarm_turn(&cancel, generation, || {
-                    context
-                        .control_status()
-                        .and_then(|value| SwarmContext::decode_control_receipt(value, false))
-                        .is_ok_and(|current| {
-                            current.status == status && current.generation == generation
-                        })
-                });
-            },
+        crate::infrastructure::tools::swarm_lifecycle::bind_local_suspension(suspension_callback(
+            cancel, context,
         ));
     }
+}
+
+pub(super) fn suspension_callback(
+    cancel: &super::uds_cancel::CancelHandle,
+    context: SwarmContext,
+) -> Arc<dyn Fn(crate::domain::swarm::RunStatus, u64) + Send + Sync> {
+    let cancel = cancel.clone();
+    Arc::new(move |status, generation| {
+        super::uds_cancel::suspend_swarm_turn(&cancel, generation, || {
+            context
+                .control_status()
+                .and_then(|value| SwarmContext::decode_control_receipt(value, false))
+                .is_ok_and(|current| current.status == status && current.generation == generation)
+        });
+    })
 }

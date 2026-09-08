@@ -56,3 +56,34 @@ mod attempt_permit_contracts;
 #[cfg(all(test, unix))]
 #[path = "../tests/inference_admission_broker.rs"]
 mod inference_admission_broker_cov;
+
+#[cfg(test)]
+#[path = "../tests/contracts/coordination_port.rs"]
+mod coordination_port;
+#[cfg(test)]
+#[path = "../tests/contracts/process_control.rs"]
+mod process_control;
+#[cfg(test)]
+#[path = "../tests/contracts/request_accounting.rs"]
+mod request_accounting_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/request_admission.rs"]
+mod request_admission_contracts;
+#[cfg(test)]
+#[path = "../tests/swarm_agent_loop.rs"]
+mod swarm_agent_loop;
+#[cfg(test)]
+#[path = "../tests/common/swarm_control_fixture.rs"]
+mod swarm_control_fixture;
+#[cfg(test)]
+#[path = "../tests/contracts/swarm_lifecycle.rs"]
+mod swarm_lifecycle;
+#[cfg(test)]
+#[path = "../tests/swarm_product_contract.rs"]
+mod swarm_product_contract;
+#[cfg(test)]
+#[path = "../tests/contracts/swarm_run_control.rs"]
+mod swarm_run_control_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/tool_execution_admission.rs"]
+mod tool_execution_admission_contracts;

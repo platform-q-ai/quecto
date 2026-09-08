@@ -1331,6 +1331,8 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
     let obj = data.as_object().expect("get_state data must be object");
     let allowed: std::collections::BTreeSet<&str> = if workflow {
         [
+            "automaticTurnsSuspended",
+            "repeatedFailureNotifications",
             "state",
             "effort",
             "effortLevels",
@@ -1347,6 +1349,8 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
         // source for the durable key persisted into workspace manifests so
         // `/resume` can restore the conversation (#1534).
         [
+            "automaticTurnsSuspended",
+            "repeatedFailureNotifications",
             "state",
             "effort",
             "effortLevels",
