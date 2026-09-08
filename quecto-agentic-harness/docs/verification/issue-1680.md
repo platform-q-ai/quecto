@@ -276,3 +276,18 @@ notification suppression and embedded docs. The container mounted only the test
 binary, not the checkout or provider credentials. The PR records the final source
 commit, binary SHA-256 digests and image ID for the repeat after commit. This is
 container regression validation, not a new live-provider four-agent walkthrough.
+
+### Agent and user documentation follow-up
+
+The documentation-only delta after `2125daa9` adds README discovery, a user/master
+launch and inspection guide, and an embedded subagent-manual handoff to the swarm
+manual. Two bounded sequential self-review loops followed scope, inspect,
+challenge, validate and report from the same built-in fixture. Loop 1 checked
+launch/configuration claims against the container and subagent references, plus
+summary, terminal execution and artifact contracts; no unsupported launch/API
+claim survived. Loop 2 checked cross-document consistency, discoverability and
+relative links, and distinguished the existing agent UDS channel from future
+structured swarm endpoints. Links resolve and the embedded manual regression
+passes. These were self-reviews, not independent reviews. Container binary
+provenance above refers to the product-fix commit; the subsequent changes are
+documentation only and receive fresh authoritative CI.

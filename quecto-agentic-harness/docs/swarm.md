@@ -7,6 +7,48 @@ accepted as a configuration alias for `tools.swarm`; serialization uses the new
 name. Update tool policy names and saved prompts to `swarm`. Supplying both
 configuration keys is an error rather than silently choosing one.
 
+## Start from the TUI or master agent
+
+Ask the master to start a swarm with a goal, constraints, explicit acceptance
+criteria, a member limit and a deadline. For example: “Use four members including
+the coordinator to implement this change; acceptance tests and independent review
+must pass at the final revision; stop after 30 minutes; do not merge.” The master
+passes those requirements to a container coordinator, which creates the run and
+starts its local workers. A worker finishing its turn is not swarm completion.
+
+The master launches a normal agent through the existing `spawn` container
+capability. The selected named `container_configs` entry determines the image,
+repository and environment; swarm does not select a special image or start a
+separate service. Use the official isolated Docker/Podman adapter and an image
+with the current harness and Python 3. See [container configuration](../../docs/container-runtimes.md)
+and [subagent control](subagents.md). Agents can load `docs {"name":"swarm"}`
+without the documentation files being present in the container checkout.
+
+## Inspection and results for users and master agents
+
+| Need | Current interface |
+|---|---|
+| Agent/container status | Existing TUI agent views or `agent_cmd` inventory/state commands |
+| Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
+| Detailed live task/file pages | Coordinator uses `board.tasks()` / `board.file_owners()` while the run is running |
+| Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
+| Final result | Read summary status, final revision and criterion evidence; distinguish `succeeded` from blocked/failed/cancelled/budget-exhausted |
+| Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
+
+There are no dedicated public swarm creation, update, inspection or result UDS
+endpoints, and no swarm dashboard/config panel in this change. Existing UDS agent
+supervision carries prompts and reports; it does not expose the durable board as
+a structured event feed. That public interface is follow-on work.
+
+On a wake hint, inspect summary first. After a terminal outcome, `op=summary`
+remains readable but `op=run` is closed: do not request inbox reads or acknowledgments
+through Python. Keep the coordinator available for final reporting and export.
+Returned execution artifact paths are workspace-relative inside the container;
+join them to `artifact_base`, preserve them through the normal environment file
+transport, and do not assume they are host paths. Record the tested commit and
+binary build identity with important reports. Container deletion and execution
+artifact pruning can remove evidence; board persistence is not an export.
+
 ## Container and membership
 
 Use the existing `spawn` container capability with the official Docker/Podman
@@ -117,8 +159,9 @@ messages. Unknown/dead recipients and full inboxes fail explicitly. The board
 bounds tasks to 1000 and request-ledger entries to 10000 per run. Store large data
 in artifacts, not task or message text.
 
-After mutations the harness uses existing UDS prompt/follow-up capabilities for
-wake hints. Read-only executions do not generate hints. Failed hints are returned
+After actionable mutations the harness uses existing UDS prompt/follow-up capabilities
+for coalesced wake hints. Reads, acknowledgments and reservation bookkeeping do not
+generate hints; terminal runs suppress new hints. Failed hints are returned
 as `notification_warnings`; accepted SQLite records remain recoverable. When no
 work is ready, yield the turn. Do not poll, repeatedly sleep, or infer completion
 from an empty ready queue.

@@ -40,6 +40,24 @@ When a config file defines `container_configs`, `spawn` can place a child in an 
 - `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the container config's kill operation runs exactly once; the JSON result includes the environment ref and up to 20 terminated member agent ids/names (`omitted_agents` reports any cap overflow); a failed kill is retryable by calling it again.
 - When the final member exits, the environment tears itself down — no explicit kill needed for the happy path.
 
+## Running a bounded swarm
+
+Read `docs {"name":"swarm"}` before directing a swarm. Use the configured
+container launch above; there is no separate swarm daemon or swarm-specific image.
+Give the coordinator the goal, constraints, command/review acceptance criteria,
+fixed member limit (including itself) and deadline. It calls `swarm` `op=create`
+before spawning local workers into that shared checkout. The external master
+supervises the coordinator and does not count as a member.
+
+For progress, ask the coordinator to inspect `swarm` `op=summary`; retrieve its
+report with `agent_cmd.get_messages`. Generic agent state is not the task board.
+A terminal run still permits summary and ordinary artifact export; do not ask
+for Python inbox/ack execution after completion. Request the final revision,
+criterion evidence and any blockers, and preserve artifacts before teardown.
+Artifact references resolve against the returned container `artifact_base`.
+Dedicated swarm UDS creation/update/inspection/result endpoints and a dashboard
+are follow-on work; use the existing agent supervision channel today.
+
 ## See also
 
 - Manual index: `docs {}`
