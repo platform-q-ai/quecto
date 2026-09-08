@@ -29,3 +29,6 @@ pub mod usage_accounting;
 mod usage_accounting_tests;
 pub mod visible_thinking;
 pub mod workflow;
+
+pub mod inference_admission;
+pub mod inference_admission_policy;

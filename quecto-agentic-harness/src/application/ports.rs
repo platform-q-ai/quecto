@@ -14,4 +14,5 @@ pub use super::catalogue_refresh::{
     RefreshBounds, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
     RefreshableCatalogueSource,
 };
+pub use super::inference_admission::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
