@@ -21,6 +21,7 @@ fn unissued_and_retired_scope_handles_cannot_create_descendants() {
                     queue_capacity: 1,
                     queue_timeout_ms: 1,
                     attempt_timeout_ms: 1,
+                    fallback_base_ms: 1,
                     max_cooldown_ms: 1,
                 },
             )]),

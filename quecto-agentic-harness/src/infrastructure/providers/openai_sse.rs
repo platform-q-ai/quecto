@@ -35,7 +35,7 @@ impl OpenAiSseHandler {
         }
     }
 
-    fn with_model(model: impl Into<String>) -> Self {
+    pub(crate) fn with_model(model: impl Into<String>) -> Self {
         let mut handler = Self::new();
         handler.model = Some(model.into());
         handler

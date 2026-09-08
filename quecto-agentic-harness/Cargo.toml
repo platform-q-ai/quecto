@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.2"
+version = "0.107.3"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -19,6 +19,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 
 # Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
+
+# HTTP-date parsing (already present transitively through hyper).
+httpdate = "1.0.3"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

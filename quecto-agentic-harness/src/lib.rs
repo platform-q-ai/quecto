@@ -19,5 +19,26 @@ mod admission_client_contracts;
 #[path = "../tests/contracts/admission_dispatcher.rs"]
 mod admission_dispatcher_contracts;
 #[cfg(test)]
+#[path = "../tests/contracts/admission_fallback.rs"]
+mod admission_fallback_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_feedback.rs"]
+mod admission_feedback_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_group_fallback.rs"]
+mod admission_group_fallback_contracts;
+#[cfg(test)]
 #[path = "../tests/contracts/admission_registry.rs"]
 mod admission_registry_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_typed_feedback_cases.rs"]
+mod admission_typed_feedback_cases_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_typed_feedback.rs"]
+mod admission_typed_feedback_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/attempt_admission.rs"]
+mod attempt_admission_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/attempt_permit.rs"]
+mod attempt_permit_contracts;

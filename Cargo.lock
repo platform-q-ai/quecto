@@ -1624,13 +1624,14 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.107.2"
+version = "0.107.3"
 dependencies = [
  "base64",
  "cucumber",
  "dirs",
  "filetime",
  "futures",
+ "httpdate",
  "humantime",
  "libc",
  "quecto-line-io",

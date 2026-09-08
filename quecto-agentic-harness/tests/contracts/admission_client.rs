@@ -15,6 +15,7 @@ fn config(capacity: usize, reserve: usize) -> AdmissionConfig {
         queue_capacity: 32,
         queue_timeout_ms: 100,
         attempt_timeout_ms: 100,
+        fallback_base_ms: 1000,
         max_cooldown_ms: 1000,
     };
     AdmissionConfig {
