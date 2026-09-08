@@ -107,3 +107,93 @@ fn configured_provider_without_binding_cannot_compose() {
             .contains("requires an explicit alias binding")
     );
 }
+
+#[test]
+fn invalid_policy_cannot_create_a_runtime_authority() {
+    let mut invalid = proposal();
+    invalid.policy.groups.values_mut().next().unwrap().capacity = 0;
+    let result = AdmissionRuntimeContext::new(
+        invalid,
+        gates(),
+        SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+    );
+    assert!(matches!(result, Err(message) if message.starts_with("invalid admission policy:")));
+}
+
+#[test]
+fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes() {
+    let mut initial = proposal();
+    initial.bindings = BTreeMap::from([("openai-api".into(), "account".into())]);
+    let authority = Arc::new(
+        AdmissionRuntimeContext::new(
+            initial.clone(),
+            gates(),
+            SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let factory = AdmissionProviderRuntimeFactory::new(authority.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let inputs = AgentRuntimeInputs {
+        base_dir: tmp.path().into(),
+        http_client: reqwest::Client::new(),
+        refresh_fn: Arc::new(|_, _| {
+            Box::pin(async { panic!("API-key composition must not refresh OAuth") })
+        }),
+        openai_oauth_factory: Arc::new(|_| panic!("API-key composition must not create OAuth")),
+        model_registry: Ok(
+            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+        ),
+    };
+    let mut config = Config::default();
+    config.providers.openai.api_key = "fixture-key".into();
+    let original_gate = authority.binding("openai-api").unwrap().gate;
+    assert!(
+        factory
+            .compose_runtime(
+                &AdmissionRuntimeCandidate {
+                    providers: &config,
+                    admission: Some(&initial),
+                },
+                &inputs
+            )
+            .is_ok()
+    );
+
+    let mut changed_binding = initial.clone();
+    changed_binding.bindings.clear();
+    let mut changed_policy = initial.clone();
+    changed_policy
+        .policy
+        .groups
+        .values_mut()
+        .next()
+        .unwrap()
+        .capacity += 1;
+    for candidate in [None, Some(&changed_binding), Some(&changed_policy)] {
+        let rejected = factory.compose_runtime(
+            &AdmissionRuntimeCandidate {
+                providers: &config,
+                admission: candidate,
+            },
+            &inputs,
+        );
+        assert!(matches!(rejected, Err(message) if message.contains("restart required")));
+    }
+    config.providers.openai.api_key = "refreshed-fixture-key".into();
+    assert!(
+        factory
+            .compose_runtime(
+                &AdmissionRuntimeCandidate {
+                    providers: &config,
+                    admission: Some(&initial),
+                },
+                &inputs
+            )
+            .is_ok()
+    );
+    assert!(Arc::ptr_eq(
+        &original_gate,
+        &authority.binding("openai-api").unwrap().gate
+    ));
+}

@@ -80,3 +80,5 @@ mod subagent_status_tests;
 
 #[cfg(test)]
 mod swarm_bridge_tests;
+#[cfg(test)]
+mod swarm_scope_tests;

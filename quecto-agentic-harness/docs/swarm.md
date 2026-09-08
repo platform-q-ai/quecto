@@ -204,7 +204,15 @@ for remote terminal outcomes at 500 ms intervals, including while idle, and canc
 its own execution registry, including coordinator Python. The coordinator harness
 remains available for reporting after success or cancellation; put final report
 data on the board before calling `complete` or `stop`, since the interpreter may
-be killed as soon as the watcher observes the outcome. The registry closes against concurrent new launches.
+be killed as soon as the watcher observes the outcome. The registry closes against concurrent new launches. Each Python invocation owns
+its ordinary process group until cleanup: even if Python returns first, remaining
+ordinary children are terminated before its result is published. On Linux, the
+interpreter is reaped only after group cleanup, preventing PID reuse during
+termination. Timeout and dropped-invocation cleanup follow the same rule.
+With operator-configured subprocess permissions, wait/join children whose work
+must finish. Background mode makes the invocation asynchronous; it does not let
+children outlive the invocation. This does not add containment for intentional
+process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline

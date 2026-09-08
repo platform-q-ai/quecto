@@ -12,6 +12,10 @@ use crate::infrastructure::tools::swarm::{JobState, RunSpec};
 /// PATH handed to the interpreter when the environment is cleared. Includes
 /// `/usr/local/bin` because that is where a source-built or Homebrew `python3`
 /// commonly lives; omitting it made the tool unusable on those hosts.
+#[path = "swarm_scope.rs"]
+mod swarm_scope;
+use swarm_scope::ExecutionScope;
+
 const CHILD_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
 pub(crate) async fn run_child(
@@ -60,7 +64,7 @@ pub(crate) async fn run_child(
         .stderr(std::process::Stdio::piped());
     // Serialize spawn/identity publication against registry cancellation. A
     // cancellation that wins this lock prevents the child from starting.
-    let mut child = {
+    let child = {
         let mut job = state.as_ref().map(|s| s.lock().unwrap());
         if job.as_ref().is_some_and(|s| s.cancel_requested) {
             return Ok(("cancelled".into(), None));
@@ -73,18 +77,19 @@ pub(crate) async fn run_child(
         }
         child
     };
+    let mut child = ExecutionScope::new(child, state.clone());
     // Each stream gets its own budget. A shared one let whichever stream wrote
     // first consume the whole allowance, so a program that flooded stdout could
     // erase its own traceback from stderr — including from the artifact that is
     // supposed to make truncated output recoverable.
-    let stdout_task = child.stdout.take().map(|pipe| {
+    let stdout_task = child.child.stdout.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stdout_path.to_path_buf(),
             Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
-    let stderr_task = child.stderr.take().map(|pipe| {
+    let stderr_task = child.child.stderr.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stderr_path.to_path_buf(),
@@ -92,7 +97,7 @@ pub(crate) async fn run_child(
         ))
     });
     if let Some(input) = spec.stdin {
-        if let Some(mut pipe) = child.stdin.take() {
+        if let Some(mut pipe) = child.child.stdin.take() {
             tokio::spawn(async move {
                 let _ = pipe.write_all(input.as_bytes()).await;
             });
@@ -103,24 +108,11 @@ pub(crate) async fn run_child(
         Ok(Ok(st)) => Ok(("completed".into(), st.code())),
         Ok(Err(e)) => Err(DomainError::Other(format!("python3 execution failed: {e}"))),
         Err(_) => {
-            if let Some(pid) = child.id() {
-                kill_pid(pid);
-                kill_pid_tree_best_effort(pid);
-            } else {
-                let _ = child.kill().await;
-            }
+            child.terminate();
             let _ = child.wait().await;
             Ok(("timed_out".into(), None))
         }
     };
-    // The child has been reaped, so its pid may be recycled by the OS at any
-    // point from here. Clear it before anything else can signal it: a later
-    // cancel or teardown would otherwise SIGKILL an unrelated process group.
-    if let Some(st) = &state {
-        if let Ok(mut s) = st.lock() {
-            s.pid = None;
-        }
-    }
     let drain_timeout = if matches!(outcome, Ok((ref st, _)) if st == "timed_out")
         || state
             .as_ref()

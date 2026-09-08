@@ -1,5 +1,5 @@
 use super::{QuectoWorld, result, result_json, run};
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use serde_json::json;
 
 #[when("a swarm member creates an acceptance task")]
@@ -270,4 +270,75 @@ fn contract_history(world: &mut QuectoWorld) {
     assert_eq!(amended["after"]["criteria"], summary["criteria"]);
     assert_ne!(amended["before"]["criteria"], amended["after"]["criteria"]);
     assert_eq!(amended["reason"], "approved change");
+}
+
+#[given("swarm Python is permitted to create subprocesses")]
+fn permit_subprocesses(world: &mut QuectoWorld) {
+    let workspace = super::ensure_workspace(world);
+    let tool = quecto::infrastructure::tools::swarm_test_support::tool(
+        std::sync::Arc::new(workspace.clone()),
+        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace),
+        )),
+        quecto::infrastructure::tools::swarm::SwarmConfig {
+            max_processes: None,
+            ..Default::default()
+        },
+    );
+    world.swarm_tool = Some(crate::DebugSwarm(std::sync::Arc::new(tool)));
+}
+
+#[when(expr = "a {string} swarm interpreter returns before its ordinary child")]
+fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
+    assert!(matches!(mode.as_str(), "foreground" | "background"));
+    let child = "import pathlib,time,os; pathlib.Path('child-ready').write_text(str(os.getpid())); time.sleep(10)";
+    let code = format!(
+        "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
+        json!(child)
+    );
+    run(world, json!({"code":code,"background":mode=="background"}));
+    assert!(!result(world).is_error, "{}", result(world).content);
+    if mode == "background" {
+        let id = result_json(world)["job_id"].clone();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            run(world, json!({"op":"status","job_id":id}));
+            if result_json(world)["status"] == "completed" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "invocation did not complete"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    assert_eq!(result_json(world)["status"], "completed");
+}
+
+#[then("the completed swarm invocation has stopped its child")]
+fn invocation_child_stopped(world: &mut QuectoWorld) {
+    let workspace = super::ensure_workspace(world);
+    let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let running = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|s| {
+                s.rsplit_once(')')
+                    .map(|(_, tail)| !tail.trim_start().starts_with('Z'))
+            })
+            .unwrap_or(false);
+        if !running {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "completed interpreter left its child running"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }

@@ -437,3 +437,79 @@ quality gates. Commands are the standard ones listed earlier in this document.
 These are local test processes with temporary workspaces and sockets, not a new
 live provider/container end-to-end run. PR CI is verified separately at the pushed
 head. The PR remains unmerged and auto-merge disabled.
+
+
+## Independent descendant review and master refresh (2026-09-08)
+
+An independent subagent followed the built-in adversarial-review workflow over
+`44392d8b`, confirming the five preceding fixes and finding one additional P2:
+with subprocess creation permitted, both foreground and background interpreters
+could exit and leave ordinary children writing after run cancellation. Its scratch
+reproduction used cached build artifacts, so it was followed by freshly compiled
+regressions in this worktree. The default non-root one-process limit prevented the
+original scratch trigger; supported higher limits exposed it.
+
+Updated the feature branch with master `739c039c` in merge commit `2e3f4e7f`.
+The two conflicts were additive module declarations; both swarm and new admission
+modules were retained. The remaining descendant correction is based on this merged
+head. Four new real-process regressions failed before the fix, each with
+`completed invocation left a writer after run settlement`: foreground/background
+crossed with cancelled/succeeded run outcomes. Child-ready/release handshakes prove
+that an actual child was alive and only allowed to write after run settlement.
+
+The infrastructure execution-scope guard now retains the interpreter until its
+ordinary process group has been terminated. Linux `waitid(WNOWAIT|WNOHANG)` observes
+exit without releasing the PID; group cleanup precedes reap, and reap plus registry
+PID removal share the cancellation mutex. Error/drop/timeout cleanup also occurs
+while the child identity is owned. This preserves application/domain boundaries
+and avoids retaining a bare numeric PID for later signalling. Background mode
+extends invocation lifetime, not arbitrary child lifetime. Intentional session or
+process-group escapes remain outside this ordinary-descendant correction.
+
+### Review loop 1: independent subagent
+
+The reviewer repeated scope → inspect → challenge → validate → report over the
+fix. It traced normal exit, timeout, errors, concurrent registry cancellation,
+future drop and architecture boundaries. No actionable finding survived the
+bounded source review. It recommended explicit leader-plus-child timeout/drop
+regressions; those were added and pass. The reviewer did not independently run the
+fixed build. Reviewed source hashes:
+
+- `swarm_scope.rs`: `37404306391005d4bd588da726695db32fa0d6a077d35e1ca7c246bf0dbe90c2`
+- `swarm_process.rs`: `01fa82f136622183fec3fd2066b19106f600c7679d0968025141c299de24f6dd`
+
+### Review loop 2: primary self-review
+
+Repeated the workflow stages over the final source and tests. Checked Tokio's
+owned-child reap path, absence of wait/try_wait before group cleanup, lock ordering
+against cancellation, interpreter exit-code preservation, stdout/stderr drain,
+timeout/future-drop ownership, and removal of identity before Child destruction.
+Checked that the tests require actual child startup, retain meaningful process
+limits, and cover completed foreground/background results plus two exceptional
+paths. No additional issue survived. This second loop is self-review, not an
+independent review. No PID-exhaustion stress or intentional group-escape isolation
+claim is made; runtime swarm admission remains Linux-specific.
+
+The six descendant tests and existing swarm suite pass together (97 Rust tests).
+BDD adds foreground/background ordinary-child completion scenarios. User and agent
+docs explain the invocation ownership rule and operator-configured subprocess
+permissions. The four principal RED failures were observed before implementation;
+the additional timeout/drop and BDD cases are follow-up regression coverage.
+
+The master-refresh CI run `34244091782` passed seven jobs but missed the harness
+function-coverage gate: 3907/4249 = 91.95%, below the unchanged 92% requirement.
+The subagent added two admission-runtime tests covering invalid policy, factory
+composition, forbidden admission-authority changes on reload, and retained gate
+identity across credential-only rebuilds. All four tests in that module pass.
+These test existing admission behavior; no production admission code or threshold
+was changed. Combined coverage and final-head CI are verified after this correction.
+
+
+Final local validation for this correction: 97 targeted swarm tests, 36 swarm BDD
+scenarios/156 steps, and all 4,083 instrumented harness unit tests pass. A fresh
+isolated coverage target reports 3923/4257 functions = 92.15%, above the unchanged
+92% gate. The initial shared-target report included stale binaries from the other
+checkout and was discarded; the isolated run used the CI command and exclusion
+pattern. Strict workspace Clippy, formatting and pre-push architecture/contract
+checks are required before publication. Final CI is tied to the pushed head in
+the PR description; no merge is authorized.
