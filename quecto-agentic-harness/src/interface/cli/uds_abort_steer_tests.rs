@@ -526,3 +526,30 @@ async fn trial_full_pending_queue_reports_handling_rejection() {
         "silently dropped work must not report successful handling"
     );
 }
+
+#[tokio::test]
+async fn admitted_steer_burst_precedes_all_buffered_hints() {
+    let mut env = Env::with_unselected_workflow();
+    env.session.enqueue_pending("buffered hint".into());
+    env.turn_control.mark_steer();
+    env.turn_control.mark_steer();
+    let mut ctx = env.ctx();
+    super::uds_dispatch::handle_steer(&mut ctx, Some("s1"), "steer", "first steer".into()).await;
+    assert!(
+        ctx.turn_control.is_steer_pending(),
+        "first handler erased the second admitted steer"
+    );
+    assert!(!ctx.messages.iter().any(|m| m.content == "buffered hint"));
+    super::uds_dispatch::handle_steer(&mut ctx, Some("s2"), "steer", "second steer".into()).await;
+    assert!(!ctx.turn_control.is_steer_pending());
+    let prompts: Vec<_> = ctx
+        .messages
+        .iter()
+        .filter(|m| m.role == crate::domain::message::Role::User)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(
+        prompts,
+        vec!["first steer", "second steer", "buffered hint"]
+    );
+}

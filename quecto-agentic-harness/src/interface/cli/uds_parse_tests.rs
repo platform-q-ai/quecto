@@ -24,8 +24,14 @@ fn parse_line_parses_valid_command_and_reports_invalid_json() {
 #[test]
 fn cancel_command_detection_matches_abort_and_steer_payloads() {
     assert!(super::is_cancel_command(r#"{"type":"abort"}"#));
-    assert!(super::is_cancel_command(r#"{"type":"steer"}"#));
     assert!(super::is_cancel_command(
+        r#"{"type":"steer","message":"redirect"}"#
+    ));
+    assert!(!super::is_cancel_command(r#"{"type":"steer"}"#));
+    assert!(super::is_cancel_command(
+        r#"{"type":"prompt","message":"redirect","streamingBehavior":"steer"}"#
+    ));
+    assert!(!super::is_cancel_command(
         r#"{"type":"prompt","streamingBehavior":"steer"}"#
     ));
     assert!(!super::is_cancel_command(r#"{"type":"prompt"}"#));

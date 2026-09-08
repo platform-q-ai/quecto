@@ -55,6 +55,11 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
         return None;
     }
     let raw_cmd_type = obj.get("type").and_then(|v| v.as_str())?;
+    // Do not normalize malformed message/id fields into an accepted command.
+    // The dispatch parser and eager-cancel classifier must agree on validity.
+    if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
+        serde_json::from_value::<super::protocol::AgentCommand>(value.clone()).ok()?;
+    }
     let is_prompt_steer = raw_cmd_type == "prompt"
         && obj.get("streamingBehavior").and_then(|v| v.as_str()) == Some("steer");
     let cmd_type = if is_prompt_steer {

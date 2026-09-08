@@ -37,12 +37,12 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 ///
 /// - `abort_requested` = full stop (#895): suppress the workflow auto-continue
 ///   nudge and discard any queued work so the bound workflow does NOT resume.
-/// - `steer_pending` = explicit redirect (#896): the auto-continue nudge yields
+/// - `pending_steers` counts admitted redirects: the auto-continue nudge yields
 ///   so the steered instruction is obeyed next instead of being overridden.
 #[derive(Default)]
 pub struct TurnControl {
     abort_requested: std::sync::atomic::AtomicBool,
-    steer_pending: std::sync::atomic::AtomicBool,
+    pending_steers: std::sync::atomic::AtomicUsize,
 }
 
 impl TurnControl {
@@ -54,8 +54,8 @@ impl TurnControl {
 
     /// Reader: record an explicit steer ahead of dispatch (#896).
     pub fn mark_steer(&self) {
-        self.steer_pending
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.pending_steers
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Idle drain: consume the abort flag (true once, then cleared).
@@ -72,21 +72,32 @@ impl TurnControl {
 
     /// Whether a steer is queued but not yet handled.
     pub fn is_steer_pending(&self) -> bool {
-        self.steer_pending.load(std::sync::atomic::Ordering::SeqCst)
+        self.pending_steers
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
     }
 
-    /// Release the steer gate (its handler is now running).
+    /// One admitted steering command has reached its handler. Other queued
+    /// steering commands keep priority over buffered follow-ups.
+    pub fn consume_steer(&self) {
+        let _ = self.pending_steers.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |pending| pending.checked_sub(1),
+        );
+    }
+
+    /// Abort/reset releases all pending steering intent.
     pub fn clear_steer(&self) {
-        self.steer_pending
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.pending_steers
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Clear both flags (abort handler / full reset).
     pub fn clear(&self) {
         self.abort_requested
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        self.steer_pending
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.clear_steer();
     }
 }
 

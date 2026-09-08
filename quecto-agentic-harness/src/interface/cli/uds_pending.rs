@@ -40,7 +40,7 @@ pub(super) async fn queue_prompt(
 ) -> bool {
     let type_name = if steer { "steer" } else { type_name };
     let retained = if steer {
-        ctx.turn_control.clear_steer();
+        ctx.turn_control.consume_steer();
         ctx.session.prepend_pending(message)
     } else {
         ctx.session.enqueue_pending(message)

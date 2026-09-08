@@ -36,3 +36,10 @@ No new live-provider/container trial, issue-1671 implementation result, or new C
 ## CI follow-up: idle steering receipt
 
 CI run `34258504890` exposed the same missing idle-steer acceptance response in both BDD suites: a failing provider emitted `agent_error` before any successful `steer` response. The existing `UDS steer while idle is acknowledged` scenario reproduced locally as RED (`/tmp/swarm-trial-ci-steer-red.log`), then passed all six steps after restoring the explicit acceptance response before executing the turn (`/tmp/swarm-trial-ci-steer-green.log`). Provider failure remains visible and acceptance does not claim successful execution. No fixture, test requirement, or threshold was weakened.
+
+
+## Independent adversarial-review follow-up
+
+A fresh independent source-guided review of `f63d024f` reported two P2 control-admission gaps in `/tmp/swarm-trial-adversarial-review-f63d024f.md`: malformed steering left a stale gate after parse rejection, and one handled steer cleared priority for a second already-admitted steer. The former was an introduced recovery regression; the latter exposed an incomplete repair of the preexisting boolean design. Parent verification reproduced both as failing behavior tests (`/tmp/swarm-trial-review-red.log`).
+
+Steering classification and control normalization now validate the same typed command accepted by dispatch, including message and ID types. Outstanding steering intent is counted; each handler consumes only its own admission, while abort/reset clears all intent. Tests cover malformed raw/accepting controls without cancellation and two admitted steers running before buffered hints. The independent review followed the repository workflow's source guidance; it was not a workflow-engine execution and is not represented as one of the required engine runs.

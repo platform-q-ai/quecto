@@ -44,12 +44,14 @@ pub(super) fn is_abort_command(trimmed: &str) -> bool {
 }
 
 pub(super) fn is_steer_command(trimmed: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return false;
-    };
-    v.get("type").and_then(|t| t.as_str()) == Some("steer")
-        || (v.get("type").and_then(|t| t.as_str()) == Some("prompt")
-            && v.get("streamingBehavior").and_then(|b| b.as_str()) == Some("steer"))
+    matches!(
+        serde_json::from_str::<AgentCommand>(trimmed),
+        Ok(AgentCommand::Steer { .. }
+            | AgentCommand::Prompt {
+                streaming_behavior: Some(StreamingBehavior::Steer),
+                ..
+            })
+    )
 }
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
@@ -410,7 +412,7 @@ fn arm_prompt_cancel(
     is_steer_prompt: bool,
 ) -> Option<tokio::sync::oneshot::Receiver<()>> {
     if is_steer_prompt {
-        ctx.turn_control.clear_steer();
+        ctx.turn_control.consume_steer();
     }
     match arm_cancel(&ctx.cancel_handle) {
         Some(rx) => Some(rx),
