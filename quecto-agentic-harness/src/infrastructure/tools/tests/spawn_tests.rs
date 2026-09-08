@@ -141,7 +141,7 @@ fn test_definition() {
     assert!(def.description.contains("restricted to [a-zA-Z0-9_-]"));
     assert!(def.description.contains("use hyphens instead of spaces"));
     assert!(def.description.ends_with(
-        "when spawning an agent with a bound workflow or instructing it to select a workflow, avoid extra instructions that conflict with workflow steps; such as DO NOT PUSH or DO NOT COMMIT etc."
+        "When spawning a host-local agent with a bound workflow or instructing it to select a workflow, avoid extra instructions that conflict with workflow steps; such as DO NOT PUSH or DO NOT COMMIT etc."
     ));
 
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();

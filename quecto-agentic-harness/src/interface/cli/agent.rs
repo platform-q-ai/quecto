@@ -236,7 +236,7 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
     flags.cwd_override = ctx.cwd.clone();
-    if !swarm_runtime::admit(&flags, stderr) {
+    if !swarm_runtime::admit(&mut flags, stderr) {
         return 1;
     }
 

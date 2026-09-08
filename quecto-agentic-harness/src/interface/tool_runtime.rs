@@ -196,6 +196,12 @@ pub(crate) fn build_tool_runtime(
     // All composed harness entrypoints share startup admission, including
     // nested agents with a new session or a different provider entrypoint.
     let swarm_context = swarm_context();
+    let swarm_agent = swarm_context.is_some();
+    crate::domain::swarm::validate_workflow(
+        swarm_agent,
+        workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(context) = &swarm_context {
         crate::infrastructure::tools::swarm_lifecycle::join_current_process(
             context,
@@ -214,6 +220,7 @@ pub(crate) fn build_tool_runtime(
     let parent_config_path = canonical_parent_config_path(parent_config_path);
 
     let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
+    policy_state.workflow_supported &= !swarm_agent;
     policy_state.inherited_tool_policy = inherited_tool_policy.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools_with_scope(
@@ -271,7 +278,14 @@ pub(crate) fn build_tool_runtime(
         registry.disable_tool_by_entrypoint_default("agent_cmd");
     }
 
-    let wf_state = build_workflow_runtime(&mut registry, entrypoint, config, workflow, stderr)?;
+    let wf_state = build_workflow_runtime(
+        &mut registry,
+        entrypoint,
+        config,
+        workflow,
+        stderr,
+        swarm_agent,
+    )?;
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -340,7 +354,16 @@ fn build_workflow_runtime(
     config: &crate::infrastructure::config::Config,
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
+    swarm_agent: bool,
 ) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+    crate::domain::swarm::validate_workflow(
+        swarm_agent,
+        workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
+    )
+    .map_err(|e| e.to_string())?;
+    if swarm_agent {
+        return Ok(None);
+    }
     if !entrypoint.workflow_supported() {
         return Ok(None);
     }

@@ -39,21 +39,32 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     {
         return true;
     }
-    if let Some(ctrl) = super::uds_control_forward::intercept_control_forward(&ctx.line) {
-        if let Some(forward_line) =
-            super::uds_ext_protocol::ack_accepted_control(ctx.registry, ctx.client_id, ctrl).await
-        {
-            return ctx
+    if let Some(mut ctrl) = super::uds_control_forward::intercept_control_forward(&ctx.line) {
+        if let Some(line) = ctrl.forward_line.take() {
+            // Acceptance means retained by dispatch, not merely read from a socket.
+            // Never acknowledge work before queue admission, or wait indefinitely
+            // behind a full queue while the sender believes delivery succeeded.
+            if ctx
                 .cmd_tx
-                .send(ClientMessage::Command(ClientCommand {
-                    line: forward_line,
+                .try_send(ClientMessage::Command(ClientCommand {
+                    line,
                     client_id: ctx.client_id,
                 }))
-                .await
-                .is_ok();
+                .is_err()
+            {
+                let request: serde_json::Value =
+                    serde_json::from_str(&ctx.line).expect("validated control JSON");
+                ctrl.ack_line = super::protocol::AgentEvent::err(
+                    request["id"].as_str(), request["type"].as_str().unwrap_or("prompt"),
+                    "control queue is full or closed; message was not queued; inspect agent state before retrying",
+                ).to_json_line() + "\n";
+            }
         }
+        super::uds_ext_protocol::ack_accepted_control(ctx.registry, ctx.client_id, ctrl).await;
+        // Keep the connection alive long enough for its writer to flush the reply.
         return true;
     }
+
     ctx.cmd_tx
         .send(ClientMessage::Command(ClientCommand {
             line: ctx.line,
@@ -62,3 +73,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         .await
         .is_ok()
 }
+
+#[cfg(test)]
+#[path = "uds_reader_dispatch_tests.rs"]
+mod tests;

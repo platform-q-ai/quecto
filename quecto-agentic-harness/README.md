@@ -561,7 +561,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 
 `swarm` is registered but rejects execution outside a recognised Docker/Podman swarm container. Create a bounded run before executing code. See [Swarm workbench](docs/swarm.md) for setup, coordination, membership and verification. Existing `tools.python_lab` resource limits remain accepted as an alias; use `tools.swarm` for new configuration. Every resource-limit key below is optional.
 
-Agents can read the embedded manual with `docs {"name":"swarm"}`. Python defaults to `RLIMIT_NPROC=1`: use it for board coordination and in-process computation, and use the separately configured `bash` tool for Git, tests and external commands. A subprocess `EAGAIN` is not proof that the container is full. Do not change limits from agent code.
+Workflow is unavailable for swarm coordinators and workers; workflow flags, guards and bound specs are rejected on their launches. Agents can read the embedded manual with `docs {"name":"swarm"}`. Python defaults to `RLIMIT_NPROC=1`: use it for board coordination and in-process computation, and use the separately configured `bash` tool for Git, tests and external commands. A subprocess `EAGAIN` is not proof that the container is full. Do not change limits from agent code.
 
 For progress, ask the coordinator for `swarm {"op":"summary"}` and retrieve its report through `agent_cmd.get_messages`. After completion, summary and ordinary artifact export remain available, but Python inbox/ack execution is closed. There is no dedicated swarm dashboard or public UDS board API yet. See [inspection and results](docs/swarm.md#inspection-and-results-for-users-and-master-agents).
 

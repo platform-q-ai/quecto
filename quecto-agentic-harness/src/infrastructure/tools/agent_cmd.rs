@@ -606,10 +606,12 @@ impl Tool for AgentCmdTool {
             };
 
             // Send the command via UDS. Lifecycle state comes from the child's
-            // monitor events; the transport ack alone cannot prove accepted work
+            // monitor events; the transport ack alone cannot prove task progress
             // and must not race with `agent_end` by marking the child Busy here.
             match send {
                 Ok(response) => {
+                    let rejected = serde_json::from_str::<serde_json::Value>(&response)
+                        .is_ok_and(|value| value["success"] == false);
                     let response = if default_get_messages_report {
                         self.expand_default_get_messages_response(
                             socket_path,
@@ -628,7 +630,7 @@ impl Tool for AgentCmdTool {
                     };
                     Ok(ToolResult {
                         content,
-                        is_error: false,
+                        is_error: rejected,
                         image_blocks: vec![],
                         delivery_metadata,
                     })

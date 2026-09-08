@@ -59,14 +59,16 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
             continue;
         }
         let command = json!({"type":"prompt", "message":"Swarm work may be available. First call swarm with op=summary. If the run is running, inspect your durable inbox and ready tasks; acknowledge messages after reading. If it is terminal, do not run Python or attempt inbox acknowledgment: report the final summary and remain available for supervisor requests, including artifact export. This hint may have been queued before completion.", "streamingBehavior":"followUp", "ack":"accept"});
-        if super::subagent_registry::send_subagent_uds_command_with_timeout(
+        let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
             std::path::Path::new(socket),
             &command.to_string(),
             std::time::Duration::from_millis(500),
         )
         .await
-        .is_err()
-        {
+        .is_ok_and(|response| {
+            serde_json::from_str::<Value>(&response).is_ok_and(|value| value["success"] == true)
+        });
+        if !accepted {
             warnings.push(format!(
                 "wake hint failed for {}; durable board is authoritative",
                 member.id

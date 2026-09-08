@@ -291,3 +291,70 @@ structured swarm endpoints. Links resolve and the embedded manual regression
 passes. These were self-reviews, not independent reviews. Container binary
 provenance above refers to the product-fix commit; the subsequent changes are
 documentation only and receive fresh authoritative CI.
+
+## Workflow exclusion and master clarification follow-up
+
+Scope: changes against `20e8018a633f39b8738d312798288b4ef2a8dad7`. The user
+reported workflow-enabled swarm launches whose hidden workflow tool was demanded
+by guards, plus a coordinator that did not act on repeated master clarification.
+They recalled that the run was described as blocked pending approval. No new
+transcript or exact board-state record was supplied; the earlier product report
+is not evidence for this later exchange.
+
+RED: a container launch with `workflow: true` was accepted. Domain validation now
+rejects workflow flags, guards and non-null bound specs for container/swarm-local
+launches and direct swarm CLI startup. Shared runtime composition omits the
+workflow engine, tool and guards for swarm context, independently of visibility
+policy. Host-local workflow support remains. Tests exercise new/existing
+containers, local swarm workers, CLI activation forms and implicit UDS defaults.
+
+RED: the reader returned a successful control acknowledgment before a full
+command queue admitted the clarification. It now admits the command first and
+returns an explicit negative acknowledgment for a full/closed queue, keeping the
+connection alive to flush the reply. A second RED regression showed `agent_cmd`
+marking a negative child response as a successful tool result; it now propagates
+the rejection as `is_error`. Swarm hints also recognize negative acknowledgments.
+
+Two real-socket tests use the master's actual framed steer payload, the accept
+loop, dispatch, agent loop, packaged swarm tool and SQLite board. One targets an
+idle coordinator; the other interrupts a pending provider call. A scripted
+provider then acknowledges the clarification, writes its approved artifact and
+submits the blocked task while the run remains running. These verify transport
+and handling mechanics, not autonomous model judgment or the exact cause of the
+user's historical run.
+
+A blocked task is resumable; `stop('blocked', ...)` is a terminal run outcome and
+cannot be resumed by steering. Agent and human docs now require keeping a run
+running while awaiting approval, blocking only affected tasks, yielding instead
+of polling, and explicitly acknowledging/applying the master's answer. Deadlines
+continue to apply. No terminal reset, extra budget or implicit approval is added.
+
+### Two adversarial-review workflow loops
+
+Both sequential self-reviews used the built-in fixture's scope, inspect,
+challenge, validate and report stages; these were not independent reviews.
+
+**Loop 1:** Traced launch flags through composition, visibility, guards and
+workflow restoration, then traced socket receipt through queue admission and
+parent tool-result handling. Confirmed the hidden-engine mismatch and the two
+false-success mechanisms with the RED cases above. Rejected the assumption that
+a successfully queued clarification proves model acknowledgment. Kept workflow
+policy in the domain and setup in the composition root; framing/queue/error
+translation remain interface/infrastructure effects.
+
+**Loop 2:** Challenged queue saturation/closure, negative acknowledgments, reply
+flushing, explicit/implicit workflow activation, idle and busy steering, and
+blocked task versus terminal run semantics. Closed-channel reply flushing was
+corrected before publication. The two successful socket/action tests, failed
+admission tests, absent engine/tool/guard assertions and BDD approval-wait case
+provide counterevidence. No further candidate survived the bounded review. The
+historical missed clarification remains unattributed without its transcript;
+these fixes address demonstrated defects rather than asserting its cause.
+
+Validation: full workspace library/binary suite passed, plus the subsequently
+added busy-steer case; 46 architecture checks; 104 contracts; all 103 agent_cmd
+checks; 31 swarm BDD scenarios (135 steps); strict workspace/all-target Clippy;
+formatting, quality and BDD tag gates. Existing BDD quality warnings remain.
+The first broad run caught the intentionally updated spawn-description assertion
+and a transient cleanup-test failure; the corrected assertion, isolated cleanup
+recheck and full workspace rerun passed. PR CI remains required on the final head.

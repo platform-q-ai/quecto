@@ -103,7 +103,7 @@ Interrupt the current agent run and deliver a new message. If the agent is idle,
 - **Agent running:** Fires the cancellation signal (interrupts after the current tool completes), then prepends this message to the pending queue so it runs next
 - **Agent idle:** Queues the message. It will execute after the next `prompt` completes
 
-**Response:** Always `success: true` (the steer is acknowledged, not a guarantee the in-flight run was cancelled — it may have already finished).
+**Response:** `success: true` acknowledges the steer, not proof that the model has acted on it or that the prior run was cancelled. Forwarded controls carrying `ack: "accept"` are acknowledged only after admission to the dispatch queue. A full or closed queue returns `success: false` with an explicit delivery error; `agent_cmd` propagates that as a tool error. Retrieve the coordinator’s report to verify clarification handling.
 
 **Example:**
 

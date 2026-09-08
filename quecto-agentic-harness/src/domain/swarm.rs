@@ -2,6 +2,14 @@
 use super::error::DomainError;
 use super::subagent_launch::LaunchFuture;
 
+/// A swarm owns its coordination lifecycle; workflow engines cannot run alongside it.
+pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), DomainError> {
+    if swarm_agent && requested {
+        return Err(DomainError::Tool("workflow is unavailable for swarm agents; omit workflow, workflow_guards and workflow_spec".into()));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunStatus {
     Setup,

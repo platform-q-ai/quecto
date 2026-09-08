@@ -44,3 +44,16 @@ Feature: Container swarm coordination
     When a swarm member supplies acceptance as a string
     Then the swarm result should be an error
     And the swarm result should contain "list[str]"
+
+  Scenario: Approval waits block a task without stopping the swarm
+    When a swarm task awaits master approval
+    Then the swarm run status is "running"
+    And the swarm task status is "blocked"
+    When the approved swarm task is completed
+    Then the swarm run status is "running"
+    And the swarm task status is "submitted"
+
+  Scenario: Workflow-enabled container launches are rejected
+    When a workflow-enabled swarm container is requested
+    Then the swarm result should be an error
+    And the swarm result should contain "workflow is unavailable for swarm agents"

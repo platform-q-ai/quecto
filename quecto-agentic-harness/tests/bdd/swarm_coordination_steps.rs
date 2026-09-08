@@ -117,3 +117,34 @@ fn acceptance_type(world: &mut QuectoWorld) {
         json!({"op":"run","code":"from swarm import board; board.task_create('invalid','work','tests pass')"}),
     );
 }
+
+#[when("a swarm task awaits master approval")]
+fn await_approval(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; t=board.task_create('approval','wishlist',['approved schema']); c=board.claim(t['id']); board.block(t['id'],c['token'],'awaiting master approval')"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("the approved swarm task is completed")]
+fn apply_approval(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; t=board.task(1); board.submit(1,t['token'],[{'artifact':'approved-tests.log','revision':'approved-revision'}])"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("a workflow-enabled swarm container is requested")]
+async fn reject_workflow(world: &mut QuectoWorld) {
+    use quecto::domain::tool::Tool;
+    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
+    world.swarm_result = Some(
+        tool.execute(r#"{"container":true,"workflow":true}"#)
+            .await
+            .unwrap(),
+    );
+}

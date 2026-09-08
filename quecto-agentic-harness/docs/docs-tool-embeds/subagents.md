@@ -42,12 +42,19 @@ When a config file defines `container_configs`, `spawn` can place a child in an 
 
 ## Running a bounded swarm
 
-Read `docs {"name":"swarm"}` before directing a swarm. Use the configured
+Read `docs {"name":"swarm"}` before directing a swarm. Never enable workflow,
+workflow guards or a bound workflow spec for container/swarm workers; these
+launches are rejected and workflow is unavailable inside the swarm. Use the configured
 container launch above; there is no separate swarm daemon or swarm-specific image.
 Give the coordinator the goal, constraints, command/review acceptance criteria,
 fixed member limit (including itself) and deadline. It calls `swarm` `op=create`
 before spawning local workers into that shared checkout. The external master
 supervises the coordinator and does not count as a member.
+
+For approval/clarification, tell the coordinator to keep the run running and
+block only the affected task, then yield. A blocked run is terminal. Reply with
+`prompt` when idle or `steer` when busy, and retrieve its explicit acknowledgment
+and action report; transport acceptance alone does not prove handling.
 
 For progress, ask the coordinator to inspect `swarm` `op=summary`; retrieve its
 report with `agent_cmd.get_messages`. Generic agent state is not the task board.

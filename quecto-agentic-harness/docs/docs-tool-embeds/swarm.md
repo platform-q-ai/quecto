@@ -123,3 +123,29 @@ names the execution workspace inside the container; join it with each
 output paging and synchronous spills use the same namespace. These are not host
 paths. The SQLite board is `.quecto/swarm.sqlite`; old execution directories may
 be pruned, so copy important evidence to durable report files before cleanup.
+
+## Workflow exclusion and awaiting approval
+
+Workflow is fully unavailable for swarm coordinators and workers: no workflow
+tool, engine, guards or automatic nudges are installed. Container and swarm-local
+launches reject `workflow: true`, `workflow_guards: true`, and a non-null
+`workflow_spec`; direct swarm startup rejects the corresponding CLI flags.
+Default UDS workflow availability is disabled inside the swarm. A host-local
+master may still use a workflow to supervise it.
+
+For a clarification or approval, keep the run **running**, mark the affected task
+with `board.block(task_id, claim_token, reason)`, report the exact question to the
+master and yield the turn. Do not sleep/poll or use `board.stop('blocked', ...)`
+as a pause: a blocked **run** is terminal, closes Python execution and settles
+workers. A blocked **task** retains its claim and can be submitted after the
+answer arrives and work is completed. The original deadline continues to apply.
+
+The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
+it must interrupt a busy coordinator. A queued `follow_up` waits for the current
+turn to finish. The coordinator should explicitly acknowledge the answer and
+apply it to the task before optional inbox work. Transport acceptance means the
+command was queued, not that the model read or acted on it; retrieve the report
+with `get_messages` to verify handling. A full/closed dispatch queue returns an
+explicit failure instead of falsely accepting the clarification. A terminal run
+cannot be revived by steering: preserve its report and start a fresh environment
+when further implementation is authorized.
