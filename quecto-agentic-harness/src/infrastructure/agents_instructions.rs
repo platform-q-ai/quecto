@@ -3,7 +3,6 @@
 //! This adapter intentionally performs one exact lookup. Ancestor traversal and
 //! workspace/config-directory fallback do not belong to this policy.
 
-use std::io::ErrorKind;
 use std::path::Path;
 
 const AGENTS_FILE_NAME: &str = "AGENTS.md";
@@ -14,16 +13,31 @@ const AGENTS_FILE_NAME: &str = "AGENTS.md";
 /// returned with the attempted path so the CLI can fail startup contextually.
 pub fn load_agents_instructions(initialization_dir: &Path) -> Result<Option<String>, String> {
     let path = initialization_dir.join(AGENTS_FILE_NAME);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(format!(
-                "failed to read AGENTS.md at '{}': {error}",
+    let entries = std::fs::read_dir(initialization_dir).map_err(|error| {
+        format!(
+            "failed to read AGENTS.md at '{}': cannot inspect initialization directory: {error}",
+            path.display()
+        )
+    })?;
+    let mut exists = false;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read AGENTS.md at '{}': cannot inspect initialization directory: {error}",
                 path.display()
-            ));
+            )
+        })?;
+        if entry.file_name() == AGENTS_FILE_NAME {
+            exists = true;
+            break;
         }
-    };
+    }
+    if !exists {
+        return Ok(None);
+    }
+
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("failed to read AGENTS.md at '{}': {error}", path.display()))?;
 
     String::from_utf8(bytes).map(Some).map_err(|error| {
         format!(

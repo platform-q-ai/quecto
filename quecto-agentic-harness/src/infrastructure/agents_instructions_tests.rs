@@ -28,6 +28,33 @@ fn missing_agents_md_is_a_no_op_even_when_an_ancestor_has_one() {
 }
 
 #[test]
+fn missing_initialization_directory_is_a_contextual_read_error() {
+    let parent = tempfile::tempdir().unwrap();
+    let initialization_dir = parent.path().join("missing-project");
+    let path = initialization_dir.join("AGENTS.md");
+
+    let error = load_agents_instructions(&initialization_dir).unwrap_err();
+
+    assert!(error.contains("failed to read AGENTS.md"), "{error}");
+    assert!(error.contains(&path.display().to_string()), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_agents_md_symlink_is_a_contextual_read_error() {
+    use std::os::unix::fs::symlink;
+
+    let initialization_dir = tempfile::tempdir().unwrap();
+    let path = initialization_dir.path().join("AGENTS.md");
+    symlink(initialization_dir.path().join("missing-target"), &path).unwrap();
+
+    let error = load_agents_instructions(initialization_dir.path()).unwrap_err();
+
+    assert!(error.contains("failed to read AGENTS.md"), "{error}");
+    assert!(error.contains(&path.display().to_string()), "{error}");
+}
+
+#[test]
 fn read_error_names_the_exact_agents_md_path() {
     let initialization_dir = tempfile::tempdir().unwrap();
     let path = initialization_dir.path().join("AGENTS.md");
