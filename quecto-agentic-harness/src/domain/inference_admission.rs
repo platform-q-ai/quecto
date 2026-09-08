@@ -42,6 +42,8 @@ pub struct GroupPolicy {
     pub queue_capacity: usize,
     pub queue_timeout_ms: u64,
     pub attempt_timeout_ms: u64,
+    /// Operator-configured initial no-hint throttle delay, in milliseconds.
+    pub fallback_base_ms: u64,
     pub max_cooldown_ms: u64,
 }
 
@@ -70,6 +72,8 @@ impl AdmissionConfig {
                     || p.queue_capacity == 0
                     || p.queue_timeout_ms == 0
                     || p.attempt_timeout_ms == 0
+                    || p.fallback_base_ms == 0
+                    || p.fallback_base_ms > p.max_cooldown_ms
                     || p.max_cooldown_ms == 0
                     || !self.aliases.values().any(|mapped| mapped == group)
             })
@@ -114,6 +118,17 @@ pub enum RequestState {
         cancellation_required: bool,
     },
     Terminal(TerminalOutcome),
+}
+
+/// Receipt-anchored advice. Reporting it does not complete the transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThrottleFeedback {
+    /// Typed throttle without usable advice; randomness supplied by authority.
+    NoHint {
+        jitter: u64,
+    },
+    Until(u64),
+    Unavailable,
 }
 
 /// A confirmed transport completion, not receipt/receiver creation. P2 owns

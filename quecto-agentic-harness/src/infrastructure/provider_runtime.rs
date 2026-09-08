@@ -21,6 +21,9 @@ use crate::infrastructure::providers::refreshable::{RefreshableConfig, Refreshab
 use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
 
+use super::provider_runtime_admission::AdmissionRuntimeContext;
+use crate::infrastructure::providers::AttemptTransportBinding;
+
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
 /// The non-config inputs one runtime composition needs. Entry points wire
@@ -63,6 +66,14 @@ pub fn compose_agent_provider(
     config: &Config,
     inputs: &AgentRuntimeInputs,
 ) -> Result<Arc<dyn LlmProvider>, String> {
+    compose_agent_provider_inner(config, inputs, None)
+}
+
+pub(crate) fn compose_agent_provider_inner(
+    config: &Config,
+    inputs: &AgentRuntimeInputs,
+    admission: Option<&AdmissionRuntimeContext>,
+) -> Result<Arc<dyn LlmProvider>, String> {
     let base_dir: &std::path::Path = &inputs.base_dir;
     let http_client = &inputs.http_client;
     let store = CredentialStore::new(base_dir);
@@ -100,11 +111,14 @@ pub fn compose_agent_provider(
     };
     if !openai_api_key.is_empty() {
         provider_list.push(
-            providers::create_named_openai_provider_with_client(
+            providers::create_named_openai_provider_with_client_and_admission(
                 "openai-api",
                 openai_api_key,
                 openai_base.clone(),
-                http_client.clone(),
+                providers::ProviderTransportContext {
+                    client: http_client.clone(),
+                    admission: bound_attempt_transport(admission, "openai-api")?,
+                },
                 false,
                 model_registry
                     .models()
@@ -126,14 +140,32 @@ pub fn compose_agent_provider(
         // refreshes lazily on a 401 at first real request, after socket announce.
         let openai_oauth_key = openai_oauth_cred.token;
         if !openai_oauth_key.is_empty() {
-            let inner = build_single_provider(
+            let inner = build_single_provider_with_admission(
                 "openai",
                 &openai_oauth_key,
                 &openai_base,
                 http_client,
                 false,
+                bound_attempt_transport(admission, "openai-oauth")?,
             )?;
-            let factory = inputs.openai_oauth_factory.clone();
+            let factory = if let Some(context) = admission {
+                let binding = context.binding("openai-oauth")?;
+                let base = openai_base.clone();
+                let client = http_client.clone();
+                Arc::new(move |token: &str| {
+                    build_single_provider_with_admission(
+                        "openai",
+                        token,
+                        &base,
+                        &client,
+                        false,
+                        Some(binding.clone()),
+                    )
+                    .expect("validated OpenAI OAuth provider should rebuild")
+                }) as ProviderFactory
+            } else {
+                inputs.openai_oauth_factory.clone()
+            };
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
                 store: store_arc.clone(),
@@ -162,23 +194,25 @@ pub fn compose_agent_provider(
     };
     if !anthropic_api_key.is_empty() {
         provider_list.push(
-            providers::create_anthropic_compatible_provider(
+            providers::create_anthropic_compatible_provider_and_admission(
                 "anthropic-api",
                 anthropic_api_key,
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
+                bound_attempt_transport(admission, "anthropic-api")?,
             )
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
         #[cfg(feature = "test-support")]
         if mock_llm_bare_anthropic_alias_enabled(&anthropic_base) {
             provider_list.push(
-                providers::create_provider_with_client(
+                providers::create_provider_with_client_and_admission(
                     "anthropic",
                     config.providers.anthropic.api_key.clone(),
                     anthropic_base.clone(),
                     http_client.clone(),
+                    bound_attempt_transport(admission, "anthropic")?,
                 )
                 .map_err(|e| format!("anthropic provider configuration error: {}", e))?,
             );
@@ -194,20 +228,22 @@ pub fn compose_agent_provider(
         // refreshes lazily on a 401 at first real request, after socket announce.
         let anthropic_oauth_key = anthropic_oauth_cred.token;
         if !anthropic_oauth_key.is_empty() {
-            let inner = providers::create_anthropic_compatible_provider(
+            let inner = providers::create_anthropic_compatible_provider_and_admission(
                 "anthropic-oauth",
                 anthropic_oauth_key,
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
+                bound_attempt_transport(admission, "anthropic-oauth")?,
             )
             .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
-            let factory = registry_provider_factory(
+            let factory = registry_provider_factory_with_admission(
                 crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
                 "anthropic-oauth".to_string(),
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
+                bound_attempt_transport(admission, "anthropic-oauth")?,
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
@@ -241,8 +277,14 @@ pub fn compose_agent_provider(
         {
             continue;
         }
-        let Some(provider) =
-            build_registry_provider(model, base_dir, &store_arc, &refresh_fn, http_client)?
+        let Some(provider) = build_registry_provider_with_admission(
+            model,
+            base_dir,
+            &store_arc,
+            &refresh_fn,
+            http_client,
+            admission,
+        )?
         else {
             continue;
         };
@@ -266,12 +308,13 @@ pub fn compose_agent_provider(
                 prefix
             ));
         }
-        let provider = providers::create_openai_compatible_provider(
+        let provider = providers::create_openai_compatible_provider_and_admission(
             &endpoint.prefix,
             endpoint.api_key.clone(),
             endpoint.api_base.clone(),
             endpoint.allow_remote_http,
             http_client.clone(),
+            bound_attempt_transport(admission, &endpoint.prefix)?,
         )
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
@@ -303,12 +346,31 @@ fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
         })
 }
 
+#[cfg(test)]
 fn registry_provider_factory(
     provider_api: crate::infrastructure::model_registry::ProviderApi,
     provider_prefix: String,
     base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
+) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+    registry_provider_factory_with_admission(
+        provider_api,
+        provider_prefix,
+        base,
+        allow_remote_http,
+        client,
+        None,
+    )
+}
+
+fn registry_provider_factory_with_admission(
+    provider_api: crate::infrastructure::model_registry::ProviderApi,
+    provider_prefix: String,
+    base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+    binding: Option<AttemptTransportBinding>,
 ) -> crate::infrastructure::providers::refreshable::ProviderFactory {
     use crate::infrastructure::model_registry::ProviderApi;
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
@@ -317,23 +379,27 @@ fn registry_provider_factory(
                 let base = base
                     .clone()
                     .expect("OpenAI-compatible registry provider base should be validated");
-                providers::create_openai_compatible_provider(
+                providers::create_openai_compatible_provider_and_admission(
                     &provider_prefix,
                     new_token.to_string(),
                     base,
                     allow_remote_http,
                     client.clone(),
+                    binding.clone(),
                 )
                 .expect("refreshed OpenAI-compatible registry provider should rebuild")
             }
-            ProviderApi::AnthropicMessages => providers::create_anthropic_compatible_provider(
-                &provider_prefix,
-                new_token.to_string(),
-                base.clone(),
-                allow_remote_http,
-                client.clone(),
-            )
-            .expect("refreshed Anthropic registry provider should rebuild"),
+            ProviderApi::AnthropicMessages => {
+                providers::create_anthropic_compatible_provider_and_admission(
+                    &provider_prefix,
+                    new_token.to_string(),
+                    base.clone(),
+                    allow_remote_http,
+                    client.clone(),
+                    binding.clone(),
+                )
+                .expect("refreshed Anthropic registry provider should rebuild")
+            }
             ProviderApi::GoogleGenerativeAi => unreachable!("validated before factory creation"),
         }
     })
@@ -404,12 +470,24 @@ fn validate_oauth_base_url(
     ))
 }
 
+#[cfg(test)]
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
     http_client: &reqwest::Client,
+) -> Result<Option<Arc<dyn LlmProvider>>, String> {
+    build_registry_provider_with_admission(model, _base_dir, store, refresh_fn, http_client, None)
+}
+
+fn build_registry_provider_with_admission(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    _base_dir: &std::path::Path,
+    store: &Arc<CredentialStore>,
+    refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
+    http_client: &reqwest::Client,
+    admission: Option<&AdmissionRuntimeContext>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
@@ -452,28 +530,33 @@ fn build_registry_provider(
         }
     };
 
+    let binding = bound_attempt_transport(admission, &model.provider)?;
     let inner: Arc<dyn LlmProvider> = match model.api {
         ProviderApi::OpenAiCompletions => {
             let Some(base) = api_base.clone().filter(|b| !b.trim().is_empty()) else {
                 return Ok(None);
             };
-            providers::create_openai_compatible_provider(
+            providers::create_openai_compatible_provider_and_admission(
                 &model.provider,
                 auth_key.clone(),
                 base,
                 model.allow_remote_http,
                 http_client.clone(),
+                binding.clone(),
             )
             .map_err(|e| format!("models.json provider configuration error: {}", e))?
         }
-        ProviderApi::AnthropicMessages => providers::create_anthropic_compatible_provider(
-            &model.provider,
-            auth_key.clone(),
-            api_base.clone(),
-            model.allow_remote_http,
-            http_client.clone(),
-        )
-        .map_err(|e| format!("models.json provider configuration error: {}", e))?,
+        ProviderApi::AnthropicMessages => {
+            providers::create_anthropic_compatible_provider_and_admission(
+                &model.provider,
+                auth_key.clone(),
+                api_base.clone(),
+                model.allow_remote_http,
+                http_client.clone(),
+                binding.clone(),
+            )
+            .map_err(|e| format!("models.json provider configuration error: {}", e))?
+        }
         ProviderApi::GoogleGenerativeAi => {
             return Err(format!(
                 "models.json provider '{}' uses google-generative-ai, but that wire protocol is not implemented yet",
@@ -484,12 +567,13 @@ fn build_registry_provider(
 
     if model.auth == AuthMode::OAuth {
         let oauth_provider = model.oauth_provider.clone().expect("validated above");
-        let factory = registry_provider_factory(
+        let factory = registry_provider_factory_with_admission(
             model.api,
             model.provider.clone(),
             api_base.clone(),
             model.allow_remote_http,
             http_client.clone(),
+            binding,
         );
         return Ok(Some(Arc::new(RefreshableProvider::new(
             RefreshableConfig {
@@ -506,6 +590,15 @@ fn build_registry_provider(
     Ok(Some(inner))
 }
 
+fn bound_attempt_transport(
+    context: Option<&AdmissionRuntimeContext>,
+    slot: &str,
+) -> Result<Option<AttemptTransportBinding>, String> {
+    context
+        .map(|context| context.binding(slot.trim()))
+        .transpose()
+}
+
 /// The trimmed value, or `None` when blank. Trimming here keeps the initially
 /// composed providers on exactly the base URL the post-refresh factories
 /// (which trim via this same helper) rebuild with.
@@ -519,6 +612,7 @@ pub(crate) fn non_empty(value: String) -> Option<String> {
 }
 
 /// Build a single provider from name, key, and base URL.
+#[cfg(test)]
 fn build_single_provider(
     name: &str,
     api_key: &str,
@@ -526,30 +620,56 @@ fn build_single_provider(
     http_client: &reqwest::Client,
     disable_codex_routing: bool,
 ) -> Result<Arc<dyn LlmProvider>, String> {
+    build_single_provider_with_admission(
+        name,
+        api_key,
+        api_base,
+        http_client,
+        disable_codex_routing,
+        None,
+    )
+}
+
+fn build_single_provider_with_admission(
+    name: &str,
+    api_key: &str,
+    api_base: &Option<String>,
+    http_client: &reqwest::Client,
+    disable_codex_routing: bool,
+    binding: Option<AttemptTransportBinding>,
+) -> Result<Arc<dyn LlmProvider>, String> {
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
         if let Some(acct) = account_id {
-            return providers::create_codex_provider_with_client(
+            return providers::create_codex_provider_with_client_and_admission(
                 api_key.to_string(),
                 acct,
                 api_base.clone(),
                 http_client.clone(),
+                binding.clone(),
             )
             .map_err(|e| format!("openai provider configuration error: {}", e));
         }
     }
     let base = api_base.clone();
     if name == "openai" && disable_codex_routing {
-        return providers::create_openai_provider_with_client(
+        return providers::create_openai_provider_with_client_and_admission(
             api_key.to_string(),
             base,
             http_client.clone(),
             false,
+            binding.clone(),
         )
         .map_err(|e| format!("{} provider configuration error: {}", name, e));
     }
-    providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
-        .map_err(|e| format!("{} provider configuration error: {}", name, e))
+    providers::create_provider_with_client_and_admission(
+        name,
+        api_key.to_string(),
+        base,
+        http_client.clone(),
+        binding.clone(),
+    )
+    .map_err(|e| format!("{} provider configuration error: {}", name, e))
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ pub mod logging;
 pub mod model_registry;
 pub mod persistence;
 pub mod provider_runtime;
+pub mod provider_runtime_admission;
 pub mod providers;
 pub mod reload;
 pub mod repo_local_container_config;

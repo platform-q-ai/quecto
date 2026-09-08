@@ -207,3 +207,34 @@ ADR-0012/0015/0016/0017/0019 guide boundaries but are not prerequisite migration
 Rejected alternatives: process-local budget, count live agents, lease-expiry
 reclamation without acknowledgement, use full control socket as admission proxy,
 credential-derived identity, adaptive/token/distributed expansion in MVP.
+
+### P2 leaf integration status
+
+Leaf adapters accept an explicit inward `AttemptAdmission` capability, bound before
+router/refresh type erasure. The default factory remains disabled. The optional
+runtime ingress rejects changed policy or aliases rather than resetting live
+charges; the supplying authority is responsible for issuing the trusted scope and
+same quota-group capability. `AttemptPermit` receipt/deadline/completion operations
+separate feedback from transport teardown. Dropping a receiver is not release;
+local transport destruction precedes the consuming completion acknowledgement.
+
+The domain accepts idempotent, sequence-fenced nonterminal feedback. No-hint
+escalation is group-owned and uses explicit `fallback_base_ms`, the configured
+maximum, and authority-supplied jitter. Successful completion resets the streak,
+not established cooldown. HTTP advice uses a captured wall/monotonic pair and
+checked arithmetic; excessive hints make the group unavailable. HTTP-date parsing
+accepts the three standard forms through `httpdate`; its legacy RFC850 year mapping
+is fixed1970–2069, not a moving fifty-year interpretation.
+
+P2 tests use in-process capabilities and loopback transports. They do not establish
+P3 broker durability, container/process authority or safe production activation.
+Those remain the prerequisite for enabling shared-host admission.
+
+P2 enabled transport additionally requires an explicit `SingleAttemptClient`,
+built from the caller's configured reqwest builder with automatic redirects and
+protocol retries disabled. One `send` must not hide a redirected/replayed POST.
+An already-built arbitrary client cannot prove these policies or recover its
+proxy/TLS/timeouts; callers must supply the original configured builder recipe,
+not silently substitute defaults. Disabled inference keeps its original client.
+Redirect responses are rejected; manually following redirects would require a new
+admitted attempt and is not implemented in this phase.

@@ -15,6 +15,7 @@ pub use super::catalogue_refresh::{
     RefreshableCatalogueSource,
 };
 pub use super::inference_admission::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
+pub use super::inference_attempt::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
 
 #[cfg(any(test, feature = "test-support"))]

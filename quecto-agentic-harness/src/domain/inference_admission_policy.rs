@@ -1,5 +1,6 @@
 //! Pure queue, pacing and capacity transitions for one accounting epoch.
 use super::inference_admission::*;
+use super::inference_cooldown::FallbackCooldown;
 use std::collections::{BTreeMap, VecDeque};
 
 #[derive(Debug)]
@@ -15,10 +16,14 @@ struct Request {
     group: GroupId,
     state: RequestState,
     feedback: Option<Feedback>,
+    // One fingerprint per retained attempt, never an unbounded receipt history.
+    // It survives completion and is evicted with the terminal request.
+    last_report: Option<(u64, ThrottleFeedback)>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Group {
+    fallback: FallbackCooldown,
     next_start: u64,
     cooldown: u64,
     unavailable: bool,
@@ -45,10 +50,24 @@ impl AdmissionPolicy {
         config.validate()?;
         let groups = config
             .groups
-            .keys()
-            .cloned()
-            .map(|id| (id, Group::default()))
-            .collect();
+            .iter()
+            .map(|(id, policy)| {
+                let maximum = policy.max_cooldown_ms;
+                Ok((
+                    id.clone(),
+                    Group {
+                        fallback: FallbackCooldown::new(policy.fallback_base_ms, maximum)?,
+                        next_start: 0,
+                        cooldown: 0,
+                        unavailable: false,
+                        interactive_streak: 0,
+                        contested_pacing_streak: 0,
+                        last_root: [None; 2],
+                        last_agent: BTreeMap::new(),
+                    },
+                ))
+            })
+            .collect::<Result<_, AdmissionError>>()?;
         Ok(Self {
             config,
             epoch,
@@ -227,6 +246,7 @@ impl AdmissionPolicy {
                 group,
                 state,
                 feedback: None,
+                last_report: None,
             },
         );
         self.scopes
@@ -283,6 +303,67 @@ impl AdmissionPolicy {
         Ok(self.requests[&id].state)
     }
 
+    /// Merge receipt-anchored advice without releasing transport occupancy.
+    pub fn report_feedback(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        report: u64,
+        feedback: ThrottleFeedback,
+        now: u64,
+    ) -> Result<(), AdmissionError> {
+        self.scope(scope)?;
+        self.tick(now)?;
+        let request = self.request(scope, sequence)?;
+        if let Some((last, fingerprint)) = request.last_report {
+            if report < last {
+                return Err(AdmissionError::Replay);
+            }
+            if report == last {
+                return if feedback == fingerprint {
+                    Ok(())
+                } else {
+                    Err(AdmissionError::Conflict)
+                };
+            }
+        }
+        // Only retained duplicates are valid after completion. A queued or
+        // unknown attempt has no authority to change group cooldowns.
+        if !matches!(request.state, RequestState::Active { .. }) {
+            return Err(AdmissionError::Conflict);
+        }
+        let group_id = request.group.clone();
+        let group = self.groups.get_mut(&group_id).expect("configured group");
+        // Every accepted throttle advances the group-wide streak, including
+        // hinted advice. Identity/state checks above keep duplicates inert.
+        let jitter = match feedback {
+            ThrottleFeedback::NoHint { jitter } => jitter,
+            _ => 0,
+        };
+        let fallback_delay = group.fallback.throttle(jitter);
+        match feedback {
+            ThrottleFeedback::NoHint { .. } => match now.checked_add(fallback_delay) {
+                Some(deadline) => group.cooldown = group.cooldown.max(deadline),
+                None => group.unavailable = true,
+            },
+            ThrottleFeedback::Until(deadline)
+                if deadline.saturating_sub(now)
+                    <= self.config.groups[&group_id].max_cooldown_ms =>
+            {
+                group.cooldown = group.cooldown.max(deadline);
+            }
+            // Never clamp excessive advice into an earlier retry.
+            ThrottleFeedback::Until(_) | ThrottleFeedback::Unavailable => {
+                group.unavailable = true;
+            }
+        }
+        self.requests
+            .get_mut(&RequestId { scope, sequence })
+            .expect("validated active request")
+            .last_report = Some((report, feedback));
+        Ok(())
+    }
+
     pub fn complete(
         &mut self,
         scope: ScopeId,
@@ -316,8 +397,17 @@ impl AdmissionPolicy {
             return Err(AdmissionError::Conflict);
         }
         let group_id = request.group.clone();
+        let receipt_reported = request.last_report.is_some();
         let group = self.groups.get_mut(&group_id).expect("configured group");
+        if feedback == Feedback::Success {
+            group.fallback.success();
+        }
         if let Feedback::Throttle { delay_ms } = feedback {
+            // Legacy completion-only feedback also counts as a throttle, but
+            // must not count an already reported receipt a second time.
+            if !receipt_reported {
+                group.fallback.throttle(0);
+            }
             match now.checked_add(delay_ms) {
                 Some(deadline) if delay_ms <= self.config.groups[&group_id].max_cooldown_ms => {
                     group.cooldown = group.cooldown.max(deadline)

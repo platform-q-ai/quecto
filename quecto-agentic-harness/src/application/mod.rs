@@ -24,4 +24,5 @@ mod subagent_launch_tests;
 
 pub mod inference_admission;
 
+pub mod inference_attempt;
 pub mod swarm;
