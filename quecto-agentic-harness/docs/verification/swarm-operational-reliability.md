@@ -77,3 +77,10 @@ retention, resume and completed receipt, observed-budget pause, raw evidence exp
 and terminal coordinator reporting. It passes locally; it makes no claim of actual
 PID-namespace isolation. The complete prior BDD run passed its scenarios but exposed
 a separate 72% function-coverage gap, which this production-path scenario addresses.
+
+The next CI run passed seven lanes but timed out waiting for a BDD completion
+event. Inspection found the polling client discarded buffered read-ahead at each
+poll deadline and partial frames on socket timeouts. Two deterministic framing
+regressions failed against the extracted old reader, then passed with a persistent
+reader and byte buffer, including a UTF-8 character split across timeout boundaries.
+This repairs the test consumer without weakening production completion assertions.
