@@ -1,4 +1,4 @@
-@inference-admission @wip
+@inference-admission @done
 Feature: Leaf provider attempts share admission without gating delegation
   Admission remains disabled in production until shared authority verification.
 
