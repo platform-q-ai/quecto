@@ -12,7 +12,8 @@
 //!     fn finish(self: Box<Self>, feedback: Feedback);
 //! }
 //! // All three concrete leaves (including both Responses auth constructors):
-//! pub fn with_attempt_admission(self, gate: Arc<dyn AttemptAdmission>) -> Self;
+//! pub fn with_attempt_admission(self, gate: Arc<dyn AttemptAdmission>,
+//!     client: SingleAttemptClient) -> Self;
 //! ```
 //!
 //! The gate is already bound to a trusted scope and endpoint/account alias.
@@ -71,14 +72,18 @@ impl Leaf {
     pub fn provider(self, url: &str, gate: Arc<Gate>) -> Arc<dyn LlmProvider> {
         // Bypass environment proxies; this suite must never leave loopback.
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let safe_client = quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap();
         match self {
             Self::OpenAi => Arc::new(
                 OpenAiProvider::with_client("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
             Self::Responses => Arc::new(
                 CodexProvider::with_api_key("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
             Self::CodexOAuth => Arc::new(
                 CodexProvider::with_client(
@@ -87,11 +92,11 @@ impl Leaf {
                     Some(url.into()),
                     client,
                 )
-                .with_attempt_admission(gate),
+                .with_attempt_admission(gate, safe_client),
             ),
             Self::Anthropic => Arc::new(
                 AnthropicProvider::with_client("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
         }
     }

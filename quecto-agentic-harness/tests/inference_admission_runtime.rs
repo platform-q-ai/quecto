@@ -212,7 +212,15 @@ fn runtime_factory(
         })
         .collect();
     AdmissionProviderRuntimeFactory::new(Arc::new(
-        AdmissionRuntimeContext::new(effective, gates).unwrap(),
+        AdmissionRuntimeContext::new(
+            effective,
+            gates,
+            quecto::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy(),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
     ))
 }
 

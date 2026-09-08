@@ -71,7 +71,13 @@ async fn check(code: Option<&str>, post: bool, retries: bool) {
         Some(server.uri()),
         reqwest::Client::builder().no_proxy().build().unwrap(),
     )
-    .with_attempt_admission(Arc::new(Gate));
+    .with_attempt_admission(
+        Arc::new(Gate),
+        quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(provider),
         tool_registry: Box::new(ToolRegistryImpl::new()),

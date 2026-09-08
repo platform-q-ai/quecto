@@ -37,7 +37,13 @@ async fn check(status: u16, body: &str, expected: bool) {
         .await;
     let gate = Arc::new(Gate::default());
     let provider = OpenAiProvider::new("fixture".into(), Some(server.uri()))
-        .with_attempt_admission(gate.clone());
+        .with_attempt_admission(
+            gate.clone(),
+            quecto::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy(),
+            )
+            .unwrap(),
+        );
     let request = ChatRequest {
         model: "fixture",
         messages: &[],
@@ -115,7 +121,13 @@ async fn assembled_responses_reports_sse_throttle_before_body_eof() {
         Some(url),
         reqwest::Client::new(),
     )
-    .with_attempt_admission(gate.clone());
+    .with_attempt_admission(
+        gate.clone(),
+        quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    );
     let call = tokio::spawn(async move {
         let request = ChatRequest {
             model: "fixture",

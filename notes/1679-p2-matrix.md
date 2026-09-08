@@ -87,3 +87,8 @@ name +throttle-looking JSON. Match provider event dispatch, not arbitrary JSON.
 Responses unknown event type containing error object is ignored, unlike OpenAI
 chat envelope. Test unknown extension→normal completed and unknown extension→real
 throttle (observer must neither report early nor stop and miss real feedback).
+PR-cycle corrections: redirects307/308 and transport-internal retry are additional
+physical sends, so enabled HTTP capability must prove redirect/retry disabled
+without discarding configured proxy/TLS/timeouts. Disabled remains unchanged.
+Anthropic terminal dispatch with invalidJSON still follows event-name parser stop;
+trailing advice ignored for malformed message_stop/error, HTTP EOF still validated.

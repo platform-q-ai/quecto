@@ -51,15 +51,43 @@ fn gates() -> BTreeMap<String, Arc<dyn AttemptAdmission>> {
 fn context_rejects_unknown_alias_and_missing_capability() {
     let mut unknown = proposal();
     unknown.bindings.insert("endpoint".into(), "unknown".into());
-    assert!(AdmissionRuntimeContext::new(unknown, gates()).is_err());
-    assert!(AdmissionRuntimeContext::new(proposal(), BTreeMap::new()).is_err());
+    assert!(
+        AdmissionRuntimeContext::new(
+            unknown,
+            gates(),
+            crate::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy()
+            )
+            .unwrap()
+        )
+        .is_err()
+    );
+    assert!(
+        AdmissionRuntimeContext::new(
+            proposal(),
+            BTreeMap::new(),
+            crate::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy()
+            )
+            .unwrap()
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn configured_provider_without_binding_cannot_compose() {
     let mut proposal = proposal();
     proposal.bindings.clear();
-    let context = AdmissionRuntimeContext::new(proposal.clone(), gates()).unwrap();
+    let context = AdmissionRuntimeContext::new(
+        proposal.clone(),
+        gates(),
+        crate::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let inputs = AgentRuntimeInputs {
         base_dir: tmp.path().into(),

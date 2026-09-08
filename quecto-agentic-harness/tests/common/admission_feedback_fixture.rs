@@ -52,14 +52,18 @@ pub enum Leaf {
 impl Leaf {
     pub fn provider(self, url: &str, gate: Arc<Gate>) -> Arc<dyn LlmProvider> {
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let safe_client = quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap();
         match self {
             Self::OpenAi => Arc::new(
                 OpenAiProvider::with_client("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
             Self::Responses => Arc::new(
                 CodexProvider::with_api_key("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
             Self::OAuth => Arc::new(
                 CodexProvider::with_client(
@@ -68,11 +72,11 @@ impl Leaf {
                     Some(url.into()),
                     client,
                 )
-                .with_attempt_admission(gate),
+                .with_attempt_admission(gate, safe_client),
             ),
             Self::Anthropic => Arc::new(
                 AnthropicProvider::with_client("fixture".into(), Some(url.into()), client)
-                    .with_attempt_admission(gate),
+                    .with_attempt_admission(gate, safe_client),
             ),
         }
     }

@@ -8,6 +8,8 @@ pub mod openai_endpoint_router;
 pub mod refreshable;
 pub mod retry;
 pub mod router;
+pub mod single_attempt_client;
+pub use single_attempt_client::SingleAttemptClient;
 pub mod sse_common;
 pub(crate) mod sse_limits;
 pub mod usage;
@@ -24,11 +26,18 @@ use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;
 
+/// Cohesive leaf capability: a gate never arrives without a single-send transport.
+#[derive(Clone)]
+pub(crate) struct AttemptTransportBinding {
+    pub gate: Arc<dyn crate::application::ports::AttemptAdmission>,
+    pub client: SingleAttemptClient,
+}
+
 /// Shared HTTP connection pool and optional scope-bound attempt capability.
 /// Both endpoint alternatives for a named provider use the same transport context.
 pub(crate) struct ProviderTransportContext {
     pub client: reqwest::Client,
-    pub admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    pub admission: Option<AttemptTransportBinding>,
 }
 
 // Gate binding must happen before type erasure: a provider-level wrapper is not a leaf attempt gate.
@@ -36,7 +45,7 @@ macro_rules! bind_attempt_admission {
     ($provider:expr, $admission:expr) => {{
         let provider = $provider;
         match $admission {
-            Some(gate) => provider.with_attempt_admission(gate),
+            Some(binding) => provider.with_attempt_admission(binding.gate, binding.client),
             None => provider,
         }
     }};
@@ -171,7 +180,7 @@ pub(crate) fn create_provider_with_client_and_admission(
     api_key: String,
     api_base: Option<String>,
     client: reqwest::Client,
-    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    admission: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     match name {
         "openai" | "anthropic" => {}
@@ -282,7 +291,7 @@ pub(crate) fn create_openai_provider_with_client_and_admission(
     api_base: Option<String>,
     client: reqwest::Client,
     include_oauth_headers: bool,
-    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    admission: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
@@ -326,7 +335,7 @@ pub(crate) fn create_openai_compatible_provider_and_admission(
     api_base: String,
     allow_remote_http: bool,
     client: reqwest::Client,
-    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    admission: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
@@ -379,7 +388,7 @@ pub(crate) fn create_anthropic_compatible_provider_and_admission(
     api_base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
-    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    admission: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
@@ -419,7 +428,7 @@ pub(crate) fn create_codex_provider_with_client_and_admission(
     account_id: String,
     api_base: Option<String>,
     client: reqwest::Client,
-    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+    admission: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     // A config-supplied `providers.openai.api_base` may redirect
     // OAuth-JWT-bearing requests only when it passes the same

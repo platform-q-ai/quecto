@@ -33,7 +33,13 @@ async fn check(post_text: bool, kind: &str, code: Option<&str>, throttle: bool, 
         reqwest::Client::builder().no_proxy().build().unwrap(),
     );
     let provider = if enabled {
-        provider.with_attempt_admission(gate.clone())
+        provider.with_attempt_admission(
+            gate.clone(),
+            quecto::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy(),
+            )
+            .unwrap(),
+        )
     } else {
         provider
     };

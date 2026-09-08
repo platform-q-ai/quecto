@@ -22,7 +22,7 @@ use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
 
 use super::provider_runtime_admission::AdmissionRuntimeContext;
-use crate::application::ports::AttemptAdmission;
+use crate::infrastructure::providers::AttemptTransportBinding;
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
@@ -117,7 +117,7 @@ pub(crate) fn compose_agent_provider_inner(
                 openai_base.clone(),
                 providers::ProviderTransportContext {
                     client: http_client.clone(),
-                    admission: bound_gate(admission, "openai-api")?,
+                    admission: bound_attempt_transport(admission, "openai-api")?,
                 },
                 false,
                 model_registry
@@ -146,10 +146,10 @@ pub(crate) fn compose_agent_provider_inner(
                 &openai_base,
                 http_client,
                 false,
-                bound_gate(admission, "openai-oauth")?,
+                bound_attempt_transport(admission, "openai-oauth")?,
             )?;
             let factory = if let Some(context) = admission {
-                let gate = context.gate("openai-oauth")?;
+                let binding = context.binding("openai-oauth")?;
                 let base = openai_base.clone();
                 let client = http_client.clone();
                 Arc::new(move |token: &str| {
@@ -159,7 +159,7 @@ pub(crate) fn compose_agent_provider_inner(
                         &base,
                         &client,
                         false,
-                        Some(gate.clone()),
+                        Some(binding.clone()),
                     )
                     .expect("validated OpenAI OAuth provider should rebuild")
                 }) as ProviderFactory
@@ -200,7 +200,7 @@ pub(crate) fn compose_agent_provider_inner(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_gate(admission, "anthropic-api")?,
+                bound_attempt_transport(admission, "anthropic-api")?,
             )
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
@@ -212,7 +212,7 @@ pub(crate) fn compose_agent_provider_inner(
                     config.providers.anthropic.api_key.clone(),
                     anthropic_base.clone(),
                     http_client.clone(),
-                    bound_gate(admission, "anthropic")?,
+                    bound_attempt_transport(admission, "anthropic")?,
                 )
                 .map_err(|e| format!("anthropic provider configuration error: {}", e))?,
             );
@@ -234,7 +234,7 @@ pub(crate) fn compose_agent_provider_inner(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_gate(admission, "anthropic-oauth")?,
+                bound_attempt_transport(admission, "anthropic-oauth")?,
             )
             .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
             let factory = registry_provider_factory_with_admission(
@@ -243,7 +243,7 @@ pub(crate) fn compose_agent_provider_inner(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_gate(admission, "anthropic-oauth")?,
+                bound_attempt_transport(admission, "anthropic-oauth")?,
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
@@ -314,7 +314,7 @@ pub(crate) fn compose_agent_provider_inner(
             endpoint.api_base.clone(),
             endpoint.allow_remote_http,
             http_client.clone(),
-            bound_gate(admission, &endpoint.prefix)?,
+            bound_attempt_transport(admission, &endpoint.prefix)?,
         )
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
@@ -370,7 +370,7 @@ fn registry_provider_factory_with_admission(
     base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
-    gate: Option<Arc<dyn AttemptAdmission>>,
+    binding: Option<AttemptTransportBinding>,
 ) -> crate::infrastructure::providers::refreshable::ProviderFactory {
     use crate::infrastructure::model_registry::ProviderApi;
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
@@ -385,7 +385,7 @@ fn registry_provider_factory_with_admission(
                     base,
                     allow_remote_http,
                     client.clone(),
-                    gate.clone(),
+                    binding.clone(),
                 )
                 .expect("refreshed OpenAI-compatible registry provider should rebuild")
             }
@@ -396,7 +396,7 @@ fn registry_provider_factory_with_admission(
                     base.clone(),
                     allow_remote_http,
                     client.clone(),
-                    gate.clone(),
+                    binding.clone(),
                 )
                 .expect("refreshed Anthropic registry provider should rebuild")
             }
@@ -530,7 +530,7 @@ fn build_registry_provider_with_admission(
         }
     };
 
-    let gate = bound_gate(admission, &model.provider)?;
+    let binding = bound_attempt_transport(admission, &model.provider)?;
     let inner: Arc<dyn LlmProvider> = match model.api {
         ProviderApi::OpenAiCompletions => {
             let Some(base) = api_base.clone().filter(|b| !b.trim().is_empty()) else {
@@ -542,7 +542,7 @@ fn build_registry_provider_with_admission(
                 base,
                 model.allow_remote_http,
                 http_client.clone(),
-                gate.clone(),
+                binding.clone(),
             )
             .map_err(|e| format!("models.json provider configuration error: {}", e))?
         }
@@ -553,7 +553,7 @@ fn build_registry_provider_with_admission(
                 api_base.clone(),
                 model.allow_remote_http,
                 http_client.clone(),
-                gate.clone(),
+                binding.clone(),
             )
             .map_err(|e| format!("models.json provider configuration error: {}", e))?
         }
@@ -573,7 +573,7 @@ fn build_registry_provider_with_admission(
             api_base.clone(),
             model.allow_remote_http,
             http_client.clone(),
-            gate,
+            binding,
         );
         return Ok(Some(Arc::new(RefreshableProvider::new(
             RefreshableConfig {
@@ -590,11 +590,13 @@ fn build_registry_provider_with_admission(
     Ok(Some(inner))
 }
 
-fn bound_gate(
+fn bound_attempt_transport(
     context: Option<&AdmissionRuntimeContext>,
     slot: &str,
-) -> Result<Option<Arc<dyn AttemptAdmission>>, String> {
-    context.map(|context| context.gate(slot.trim())).transpose()
+) -> Result<Option<AttemptTransportBinding>, String> {
+    context
+        .map(|context| context.binding(slot.trim()))
+        .transpose()
 }
 
 /// The trimmed value, or `None` when blank. Trimming here keeps the initially
@@ -634,7 +636,7 @@ fn build_single_provider_with_admission(
     api_base: &Option<String>,
     http_client: &reqwest::Client,
     disable_codex_routing: bool,
-    gate: Option<Arc<dyn AttemptAdmission>>,
+    binding: Option<AttemptTransportBinding>,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
@@ -644,7 +646,7 @@ fn build_single_provider_with_admission(
                 acct,
                 api_base.clone(),
                 http_client.clone(),
-                gate.clone(),
+                binding.clone(),
             )
             .map_err(|e| format!("openai provider configuration error: {}", e));
         }
@@ -656,7 +658,7 @@ fn build_single_provider_with_admission(
             base,
             http_client.clone(),
             false,
-            gate.clone(),
+            binding.clone(),
         )
         .map_err(|e| format!("{} provider configuration error: {}", name, e));
     }
@@ -665,7 +667,7 @@ fn build_single_provider_with_admission(
         api_key.to_string(),
         base,
         http_client.clone(),
-        gate.clone(),
+        binding.clone(),
     )
     .map_err(|e| format!("{} provider configuration error: {}", name, e))
 }

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner};
+use super::providers::{AttemptTransportBinding, SingleAttemptClient};
 use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;
 use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
@@ -24,12 +25,17 @@ pub struct AdmissionRuntimeProposal {
 pub struct AdmissionRuntimeContext {
     effective: AdmissionRuntimeProposal,
     gates_by_alias: BTreeMap<String, Arc<dyn AttemptAdmission>>,
+    client: SingleAttemptClient,
 }
 
 impl AdmissionRuntimeContext {
+    /// The caller constructs `client` from their configured HTTP builder recipe.
+    /// Its shared pool is retained across runtime composition and OAuth refresh;
+    /// candidate reloads cannot replace it. Disabled runtime inputs are untouched.
     pub fn new(
         proposal: AdmissionRuntimeProposal,
         gates_by_alias: BTreeMap<String, Arc<dyn AttemptAdmission>>,
+        client: SingleAttemptClient,
     ) -> Result<Self, String> {
         proposal
             .policy
@@ -48,16 +54,21 @@ impl AdmissionRuntimeContext {
         Ok(Self {
             effective: proposal,
             gates_by_alias,
+            client,
         })
     }
 
-    pub(crate) fn gate(&self, slot: &str) -> Result<Arc<dyn AttemptAdmission>, String> {
+    pub(crate) fn binding(&self, slot: &str) -> Result<AttemptTransportBinding, String> {
         let alias = self.effective.bindings.get(slot).ok_or_else(|| {
             format!("admission provider '{slot}' requires an explicit alias binding")
         })?;
         self.gates_by_alias
             .get(alias)
             .cloned()
+            .map(|gate| AttemptTransportBinding {
+                gate,
+                client: self.client.clone(),
+            })
             .ok_or_else(|| format!("admission provider '{slot}' has no bound capability"))
     }
 

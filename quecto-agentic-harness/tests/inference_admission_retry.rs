@@ -94,7 +94,13 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
                 Some(url.clone()),
                 reqwest::Client::builder().no_proxy().build().unwrap(),
             )
-            .with_attempt_admission(gate.clone()),
+            .with_attempt_admission(
+                gate.clone(),
+                quecto::infrastructure::providers::SingleAttemptClient::build(
+                    reqwest::Client::builder().no_proxy(),
+                )
+                .unwrap(),
+            ),
         ),
         store,
         provider_name: "openai".into(),
@@ -117,7 +123,13 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
                     Some(url.clone()),
                     reqwest::Client::builder().no_proxy().build().unwrap(),
                 )
-                .with_attempt_admission(bound_gate.clone()),
+                .with_attempt_admission(
+                    bound_gate.clone(),
+                    quecto::infrastructure::providers::SingleAttemptClient::build(
+                        reqwest::Client::builder().no_proxy(),
+                    )
+                    .unwrap(),
+                ),
             )
         }),
     });

@@ -57,11 +57,16 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Bind leaf attempts to an already authenticated admission capability.
+    /// Bind leaf attempts to an authenticated gate and explicit single-send client.
+    ///
+    /// The supplied safe client replaces the disabled transport intentionally;
+    /// construct it from your configured builder to retain proxy/TLS/timeouts.
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+        client: crate::infrastructure::providers::SingleAttemptClient,
     ) -> Self {
+        self.client = client.into_client();
         self.attempt_admission = Some(gate);
         self
     }

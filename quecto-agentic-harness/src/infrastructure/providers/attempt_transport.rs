@@ -341,12 +341,13 @@ impl ProtocolObserver {
             self.terminal = true;
             return;
         }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
-            return;
-        };
         if matches!(self.vendor, Vendor::Anthropic) {
+            // Both Anthropic parsers dispatch by event name and substitute a
+            // null value for malformed JSON. Terminal dispatch must not depend
+            // on successful decoding, or later ignored bytes become feedback.
             match self.event.as_str() {
                 "error" => {
+                    let value = serde_json::from_str(data).unwrap_or_default();
                     receipt.typed(&value);
                     receipt.fail();
                     self.terminal = true;
@@ -355,6 +356,9 @@ impl ProtocolObserver {
                 _ => {}
             }
         } else {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+                return;
+            };
             let (failed, completed) = match self.vendor {
                 Vendor::OpenAi => (
                     value.get("error").is_some_and(serde_json::Value::is_object),

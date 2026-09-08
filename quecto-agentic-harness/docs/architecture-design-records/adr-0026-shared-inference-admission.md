@@ -229,3 +229,12 @@ is fixed1970–2069, not a moving fifty-year interpretation.
 P2 tests use in-process capabilities and loopback transports. They do not establish
 P3 broker durability, container/process authority or safe production activation.
 Those remain the prerequisite for enabling shared-host admission.
+
+P2 enabled transport additionally requires an explicit `SingleAttemptClient`,
+built from the caller's configured reqwest builder with automatic redirects and
+protocol retries disabled. One `send` must not hide a redirected/replayed POST.
+An already-built arbitrary client cannot prove these policies or recover its
+proxy/TLS/timeouts; callers must supply the original configured builder recipe,
+not silently substitute defaults. Disabled inference keeps its original client.
+Redirect responses are rejected; manually following redirects would require a new
+admitted attempt and is not implemented in this phase.
