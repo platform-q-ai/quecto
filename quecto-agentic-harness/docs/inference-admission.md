@@ -77,7 +77,9 @@ mounted at the same path. The parent passes `QUECTO_ADMISSION_DIR` to the
 reports `"admission_capability": "shared-directory-v1"`. An admission-enabled
 parent refuses to launch a container whose script does not report that
 capability. Only admission operations are exposed through the mount; the
-journal and the admin socket stay outside it.
+journal and the admin socket stay outside it. The bundled adapter also
+identity-mounts `$HOME/.quecto`, so set `directory` outside that tree when the
+default `<base_dir>/admission` would otherwise be visible to containers.
 
 ## Failure safety and recovery
 

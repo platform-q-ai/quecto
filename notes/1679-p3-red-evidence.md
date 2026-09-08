@@ -96,3 +96,46 @@ forged token exits non-zero with zero provider attempts; SIGKILLed client ->
 uncertain=1 -> next root fails explicitly -> `admission-broker reset` epoch 2;
 SIGKILLed authority -> restart keeps epoch, orphan active/uncertain 1, uds root
 survives) plus 3 config assertions. Slice 4 mutations recorded below once run.
+
+## Slice 4 mutations (`inference_admission_processes`, 5 real-process tests)
+    === MUTANT P1 roots skip negotiation (bypass)
+      test sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients ... FAILED
+      test independent_root_processes_share_the_configured_bound ... FAILED
+      test sigkilled_client_leaves_uncertain_occupancy_until_operator_reset ... FAILED
+      test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.06s
+    === MUTANT P2 composition ignores installed binding
+      test sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients ... FAILED
+      test independent_root_processes_share_the_configured_bound ... FAILED
+      test descendant_context_waits_behind_its_root_and_a_forged_context_fails_closed ... FAILED
+      test sigkilled_client_leaves_uncertain_occupancy_until_operator_reset ... FAILED
+      test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.10s
+    === MUTANT P3 child ignores bind failure
+    === MUTANT P4 disconnect silently resets epoch
+      test sigkilled_client_leaves_uncertain_occupancy_until_operator_reset ... FAILED
+      test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.07s
+    === MUTANT P5 restart forgets ledger
+      error: function `decode` is never used
+      error: could not compile `quecto-agentic-harness` (lib) due to 1 previous error
+    === MUTANT P3b child ignores bind failure
+    === MUTANT P5b restart forgets ledger
+    test sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients ... FAILED
+    test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+    === MUTANT P3c child ignores bind failure (readiness assertion)
+    test descendant_context_waits_behind_its_root_and_a_forged_context_fails_closed ... FAILED
+    test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+P3 (child ignores a bind failure) initially SURVIVED: the one-shot forged child
+still failed at its first acquire, after startup. The descendant test now also
+launches a `--mode uds` child with the forged sidecar and asserts its control
+socket never accepts before it exits non-zero; P3c then fails that test. P5 was
+a dead-code compile error; P5b (`decode(..).map(|_| None)`) kills the authority
+SIGKILL/restart test. All slice 4 mutants killed.
+
+## Real container evidence (`tests/inference_admission_container.rs`)
+Gated on `QUECTO_ADMISSION_CONTAINER_E2E=1`; run locally with podman and
+`quecto-box:local` (2026-09-08): create.sh received `QUECTO_ADMISSION_DIR`,
+bind-mounted the client directory and reported `shared-directory-v1`; the child
+bound its capability through the mount before its control socket accepted; a
+prompt queued behind the test root (active 1 / queued 1) and was granted only
+after the root released; without the directory the adapter reports no
+capability. 1 passed in 1.54 s.

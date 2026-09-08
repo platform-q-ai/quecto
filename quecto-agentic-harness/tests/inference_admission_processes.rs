@@ -335,6 +335,44 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
         1,
         "no bypass attempt was made"
     );
+
+    // Readiness negotiates admission: a UDS child with a forged capability
+    // exits before its control socket ever accepts.
+    let socket = temp.path().join("run").join("forged.sock");
+    let mut uds = quecto(
+        temp.path(),
+        &[
+            "--config",
+            config.to_str().unwrap(),
+            "agent",
+            "--mode",
+            "uds",
+            "--no-session",
+            "--socket",
+            socket.to_str().unwrap(),
+            "--admission-context",
+            forged.to_str().unwrap(),
+        ],
+    )
+    .spawn()
+    .unwrap();
+    let deadline = Instant::now() + LIMIT;
+    loop {
+        assert!(
+            std::os::unix::net::UnixStream::connect(&socket).is_err(),
+            "forged child must not announce readiness"
+        );
+        if let Some(status) = uds.try_wait().unwrap() {
+            assert!(!status.success(), "forged UDS child exits non-zero");
+            break;
+        }
+        assert!(Instant::now() < deadline, "forged UDS child never exited");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        std::os::unix::net::UnixStream::connect(&socket).is_err(),
+        "no socket after exit"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
