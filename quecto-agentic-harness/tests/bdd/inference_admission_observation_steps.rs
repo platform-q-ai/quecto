@@ -14,9 +14,9 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub struct ObservationState {
-    recorder: Option<Arc<AdmissionRecorder>>,
+    pub(super) recorder: Option<Arc<AdmissionRecorder>>,
     observer: Option<AuthorityConnection>,
-    pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
+    pub(super) pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
 }
 impl std::fmt::Debug for ObservationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

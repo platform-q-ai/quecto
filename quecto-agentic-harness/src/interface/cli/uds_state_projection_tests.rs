@@ -31,6 +31,7 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
                 reason: "tool activity".into(),
                 ..Default::default()
             },
+            admission: None,
         }),
         sync: 0,
     }

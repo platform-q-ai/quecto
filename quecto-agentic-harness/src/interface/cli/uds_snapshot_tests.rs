@@ -645,6 +645,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
                 reason: "agent is streaming".into(),
                 ..Default::default()
             },
+            admission: None,
         }),
         model: "m".into(),
         generation: 1,

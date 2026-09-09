@@ -284,6 +284,7 @@ pub struct QuectoWorld {
     pub authority: inference_admission_authority_steps::AuthorityState,
     pub authority_ops: inference_admission_authority_steps::OperationsState,
     pub authority_observation: inference_admission_observation_steps::ObservationState,
+    pub admission_projection: inference_admission_projection_steps::ProjectionState,
     pub http_admission: inference_admission_http_steps::HttpAdmissionState,
     pub provider_admission: inference_admission_provider_steps::ProviderAdmissionState,
     /// #1572 catalogue application slice state (sources, store, resolution).
@@ -1624,5 +1625,6 @@ impl Drop for QuectoWorld {
 mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
 mod inference_admission_observation_steps;
+mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
