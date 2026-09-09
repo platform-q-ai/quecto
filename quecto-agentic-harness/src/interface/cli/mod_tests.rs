@@ -27,3 +27,19 @@ fn real_run_dispatches_non_repl_commands() {
     assert_eq!(run(args("version")), 0);
     assert_eq!(run(args("definitely-not-a-command")), 1);
 }
+
+/// The blocking pool keeps a resident thread: two sequential blocking tasks
+/// run on the same OS thread instead of each creating (and retiring) one.
+#[test]
+fn harness_runtime_keeps_a_resident_blocking_thread() {
+    let runtime = super::build_tokio_runtime().unwrap();
+    let blocking_thread = || async {
+        tokio::task::spawn_blocking(|| std::thread::current().id())
+            .await
+            .unwrap()
+    };
+    let first = runtime.block_on(blocking_thread());
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let second = runtime.block_on(blocking_thread());
+    assert_eq!(first, second, "the warm thread is reused, never retired");
+}
