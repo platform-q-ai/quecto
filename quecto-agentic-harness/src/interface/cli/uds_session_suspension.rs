@@ -43,6 +43,7 @@ impl AgentSession {
         generation: Option<u64>,
     ) {
         self.automatic_turns_allowed = false;
+        self.pending_resume_turn = false;
         self.suspension = Some(TurnSuspension {
             cause,
             generation: generation.or(self.last_control_generation),
@@ -52,7 +53,14 @@ impl AgentSession {
     /// An explicit instruction (prompt, steer) re-arms automatic turns.
     pub(crate) fn resume_automatic_turns(&mut self) {
         self.automatic_turns_allowed = true;
+        self.pending_resume_turn = false;
         self.suspension = None;
+    }
+
+    /// Whether automatic turns are suspended by a provider failure.
+    pub(crate) fn provider_suspended(&self) -> bool {
+        self.suspension
+            .is_some_and(|suspension| suspension.cause == SuspensionCause::ProviderFailure)
     }
 
     /// Consume the turn owed after a resume (true once per re-arm).

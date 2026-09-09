@@ -258,16 +258,7 @@ pub(super) async fn multi_client_loop(
     let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control),
     );
-    // #1721: know the control generation from the start so a provider-failure
-    // suspension can be dated before any wake arrives.
-    if let Some(control) = &turn_control.swarm_control
-        && let Ok(receipt) = control
-            .apply(crate::domain::swarm::RunControlAction::Status)
-            .await
-    {
-        turn_control.observe_control_generation(receipt.generation);
-        agent_session.observe_control_generation(Some(receipt.generation));
-    }
+    super::uds_swarm_control::seed_control_generation(&turn_control);
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();

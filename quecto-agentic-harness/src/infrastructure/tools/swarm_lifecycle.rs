@@ -71,8 +71,30 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
     else {
         return vec!["swarm notification summary unavailable; inspect durable inbox".into()];
     };
+    send_wake_hints(context, &members, generation).await
+}
+
+/// #1721: a resume is not an actionable board change, so the store's
+/// notification fan-out never targets anyone for it. Wake every live member
+/// with an endpoint (the resumer wakes itself) so a member suspended by a
+/// provider failure learns the new control generation and re-arms.
+pub async fn wake_after_resume(context: &SwarmContext, generation: u64) -> Vec<String> {
+    let ctx = context.clone();
+    let Ok(Ok(snapshot)) = tokio::task::spawn_blocking(move || ctx.snapshot()).await else {
+        return vec![
+            "swarm membership unavailable after resume; members re-arm on their next wake".into(),
+        ];
+    };
+    send_wake_hints(context, &snapshot.members, generation).await
+}
+
+async fn send_wake_hints(
+    context: &SwarmContext,
+    members: &[Member],
+    generation: u64,
+) -> Vec<String> {
     let mut warnings = Vec::new();
-    for member in &members {
+    for member in members {
         let Some(socket) = &member.endpoint else {
             continue;
         };
@@ -276,7 +298,9 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
     ) -> LaunchFuture<'_, Result<crate::domain::swarm::RunControlReceipt, DomainError>> {
         let context = self.clone();
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
+            let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
+            let fan_out = context.clone();
+            let receipt = tokio::task::spawn_blocking(move || {
                 use crate::domain::swarm::RunControlAction;
                 let mut wake_allowed = false;
                 let value = match action {
@@ -298,7 +322,13 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
                 SwarmContext::decode_control_receipt(value, wake_allowed)
             })
             .await
-            .map_err(|error| DomainError::Tool(error.to_string()))?
+            .map_err(|error| DomainError::Tool(error.to_string()))??;
+            if resuming {
+                for warning in wake_after_resume(&fan_out, receipt.generation).await {
+                    tracing::warn!("{warning}");
+                }
+            }
+            Ok(receipt)
         })
     }
 }

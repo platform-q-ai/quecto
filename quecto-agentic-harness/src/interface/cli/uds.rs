@@ -396,6 +396,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         super::protocol::ControlStatus::Started,
     );
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
+    super::uds_swarm_control::date_provider_suspension(ctx).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);

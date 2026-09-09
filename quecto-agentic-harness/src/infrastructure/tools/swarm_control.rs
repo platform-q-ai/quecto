@@ -33,6 +33,7 @@ pub async fn control_with_workflow(
         "create" | "reconcile" | "pause" | "resume" | "cancel_run" | "usage_budget"
     );
     let ctx = context.clone();
+    let resuming = op == "resume";
     let op = op.to_owned();
     let participation = participation.clone();
     let result = tokio::task::spawn_blocking(move || match op.as_str() {
@@ -97,6 +98,11 @@ pub async fn control_with_workflow(
     })
     .await
     .map_err(|e| DomainError::Tool(e.to_string()))??;
+    let result = if resuming {
+        with_resume_wakes(&context, result).await
+    } else {
+        result
+    };
     if settles
         && matches!(
             result["status"].as_str(),
@@ -107,6 +113,19 @@ pub async fn control_with_workflow(
     } else {
         Ok(result)
     }
+}
+
+/// #1721: a resume wakes every live member so provider-failure suspensions
+/// re-arm; delivery problems ride the receipt as warnings.
+async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value {
+    let Some(generation) = receipt["generation"].as_u64() else {
+        return receipt;
+    };
+    let warnings = super::swarm_lifecycle::wake_after_resume(context, generation).await;
+    if !warnings.is_empty() {
+        receipt["wake_warnings"] = Value::from(warnings);
+    }
+    receipt
 }
 
 pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {

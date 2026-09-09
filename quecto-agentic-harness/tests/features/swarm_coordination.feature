@@ -118,7 +118,6 @@ Feature: Container swarm coordination
 
   @done @swarm-supervision
   Scenario: A resume restores a member suspended by a provider failure
-    Given a swarm workspace
     When a provider failure suspends the coordinator and the parent resumes the run
     Then the coordinator is re-armed by the resume alone and continues its work
 
