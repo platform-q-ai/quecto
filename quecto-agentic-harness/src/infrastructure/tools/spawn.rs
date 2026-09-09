@@ -177,8 +177,9 @@ impl SpawnTool {
 
     /// Children of a swarm participant are swarm-local workers; any other
     /// launch, containerized or not, keeps workflow eligibility (#1715).
+    /// Participation is only ever recorded for a process with a swarm context.
     fn launches_swarm_worker(&self) -> bool {
-        self.swarm_context.is_some() && self.swarm_participation.participating()
+        self.swarm_participation.participating()
     }
 
     pub fn new(allowed_agents: Vec<String>) -> Self {
