@@ -351,3 +351,24 @@ fn subscription_usage_limit_is_terminal_but_transient_throttle_still_retries() {
         ProviderErrorClass::RateLimit
     );
 }
+
+#[test]
+fn synthetic_empty_stream_retains_retryability_without_http_attribution() {
+    let error = DomainError::Provider(
+        "stream completed without assistant output: synthetic=empty_stream".into(),
+    );
+    assert_eq!(
+        classify_provider_error(&error),
+        ProviderErrorClass::EmptyStream
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert!(classify_provider_error(&error).is_retryable());
+    for status in [200, 429, 503] {
+        let wire_error = DomainError::Provider(format!("HTTP {status} from provider"));
+        assert_eq!(provider_http_status(&wire_error), Some(status));
+        assert_eq!(
+            classify_provider_error(&wire_error),
+            ProviderErrorClass::from_status(status)
+        );
+    }
+}

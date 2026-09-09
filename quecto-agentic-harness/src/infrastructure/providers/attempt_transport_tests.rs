@@ -40,6 +40,9 @@ fn observe(ready: bool) -> Vec<Event> {
         permit: Some(Box::new(Permit(events.clone()))),
         failure: false,
         hinted: false,
+        trace: None,
+        diagnostics: Default::default(),
+        started: std::time::Instant::now(),
     })));
     let mut owner = OwnedTransport {
         operation: Some(Box::pin(Transport {
@@ -168,6 +171,9 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             permit: Some(Box::new(Permit(events))),
             failure: false,
             hinted: false,
+            trace: None,
+            diagnostics: Default::default(),
+            started: std::time::Instant::now(),
         })));
         let mut observer = ProtocolObserver::new(Profile::new(vendor, Surface::Assembled));
         observer.observe(&format!("event: {event}"), &receipt);
@@ -177,5 +183,72 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             (terminal, failure),
             "event={event} data={data}"
         );
+    }
+}
+
+#[test]
+fn supported_error_and_reasoning_events_retain_truthful_metadata() {
+    let receipt = diagnostic_receipt();
+    let mut openai = ProtocolObserver::new(Profile::new(
+        Vendor::OpenAi,
+        super::super::attempt_profile::Surface::Incremental,
+    ));
+    openai.observe(
+        r#"data: {"error":{"code":"rate_limit_exceeded","message":"SECRET"}}"#,
+        &receipt,
+    );
+    let d = &receipt.0.lock().unwrap().diagnostics;
+    assert_eq!(d.terminal_event, Some(TerminalEvent::Error));
+    assert_eq!(d.termination, Termination::Completed);
+}
+
+fn diagnostic_receipt() -> Receipt {
+    Receipt(Arc::new(Mutex::new(State {
+        permit: Some(Box::new(Permit(Arc::new(Mutex::new(Vec::new()))))),
+        failure: false,
+        hinted: false,
+        trace: None,
+        diagnostics: Default::default(),
+        started: std::time::Instant::now(),
+    })))
+}
+
+#[test]
+fn supported_dotted_reasoning_remains_visible_on_read_failure() {
+    let receipt = diagnostic_receipt();
+    let mut protocol = ProtocolObserver::new(Profile::new(
+        Vendor::Codex,
+        super::super::attempt_profile::Surface::Incremental,
+    ));
+    protocol.observe(
+        r#"data: {"type":"response.reasoning.summary_text.delta","delta":"SECRET"}"#,
+        &receipt,
+    );
+    receipt.termination(Termination::ReadError);
+    let d = &receipt.0.lock().unwrap().diagnostics;
+    assert!(d.generated_thinking);
+    assert_eq!(d.unknown_events, 0);
+    assert_eq!(d.termination, Termination::ReadError);
+    assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
+}
+
+#[test]
+fn malformed_anthropic_terminal_retains_event_without_payload_content() {
+    for (event, terminal) in [
+        ("error", TerminalEvent::Error),
+        ("message_stop", TerminalEvent::MessageStop),
+    ] {
+        let receipt = diagnostic_receipt();
+        let mut protocol = ProtocolObserver::new(Profile::new(
+            Vendor::Anthropic,
+            super::super::attempt_profile::Surface::Incremental,
+        ));
+        protocol.observe(&format!("event: {event}"), &receipt);
+        protocol.observe("data: {SECRET", &receipt);
+        let d = &receipt.0.lock().unwrap().diagnostics;
+        assert_eq!(d.terminal_event, Some(terminal));
+        assert_eq!(d.termination, Termination::Completed);
+        assert_eq!(d.parse_errors, 1);
+        assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
     }
 }

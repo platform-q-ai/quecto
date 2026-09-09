@@ -1,13 +1,30 @@
 //! Request diagnostics contain measurements and availability, never prompt content or billing claims.
+use super::attempt_diagnostics::AttemptDiagnostics;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Default)]
 pub struct RequestTrace {
     attempts: AtomicU32,
     oauth_retries: AtomicU32,
+    diagnostics: Mutex<Vec<AttemptDiagnostics>>,
 }
 impl RequestTrace {
+    /// Retain a bounded prefix of actual transport attempts, in completion order.
+    pub fn record_attempt(&self, record: AttemptDiagnostics) {
+        let mut records = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+        if records.len() < 16 {
+            records.push(record);
+        }
+    }
+    pub fn attempt_diagnostics(&self) -> Vec<AttemptDiagnostics> {
+        self.diagnostics
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     pub fn start(&self) {
         self.attempts.fetch_max(1, Ordering::Relaxed);
     }
@@ -29,6 +46,13 @@ impl RequestTrace {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestObservation {
     pub request_id: String,
+    #[serde(default)]
+    pub started_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub finished_unix_ms: Option<u64>,
+    /// Empty means unavailable, not evidence of a healthy transport.
+    #[serde(default)]
+    pub attempt_diagnostics: Vec<AttemptDiagnostics>,
     pub model: String,
     pub provider: String,
     pub outcome: String,
@@ -106,3 +130,7 @@ pub struct RuntimeIdentity {
     pub build_dirty: Option<bool>,
     pub executable_sha256: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "request_observation_tests.rs"]
+mod tests;

@@ -83,6 +83,10 @@ async fn retries_streaming_provider_failures_before_any_output() {
 
     assert_eq!(result.response, "stream recovered");
     assert_eq!(provider.request_count(), 2);
+    let observations = agent.take_request_observations();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].instrumented_attempts, 2);
+    assert!(observations[0].attempt_diagnostics.is_empty());
 }
 
 #[tokio::test]
@@ -273,6 +277,10 @@ async fn retries_empty_streaming_done_before_success() {
 
     assert_eq!(result.response, "stream recovered");
     assert_eq!(provider.request_count(), 2);
+    let observations = agent.take_request_observations();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].instrumented_attempts, 2);
+    assert!(observations[0].attempt_diagnostics.is_empty());
 }
 
 #[tokio::test]

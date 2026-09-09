@@ -17,7 +17,7 @@ pub struct AuditIssue {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum AuditEvent {
     RequestObserved {
-        observation: super::request_observation::RequestObservation,
+        observation: Box<super::request_observation::RequestObservation>,
     },
     ToolCall {
         tool: String,

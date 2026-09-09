@@ -400,6 +400,7 @@ impl LlmProvider for OpenAiProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
@@ -415,6 +416,7 @@ impl LlmProvider for OpenAiProvider {
             if let Some(gate) = &self.attempt_admission {
                 return super::attempt_transport::text(
                     gate,
+                    trace.clone(),
                     cancel.as_ref(),
                     request_builder,
                     Profile::new(Vendor::OpenAi, Surface::Chat),
@@ -467,6 +469,7 @@ impl LlmProvider for OpenAiProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
         let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
@@ -481,7 +484,7 @@ impl LlmProvider for OpenAiProvider {
                 let (tx, rx) = tokio::sync::mpsc::channel(64);
                 let pump = super::attempt_transport::stream(
                     gate,
-                    cancel.as_ref(),
+                    (trace.clone(), cancel.as_ref()),
                     builder,
                     Profile::new(Vendor::OpenAi, Surface::Assembled),
                     tx,
@@ -499,6 +502,7 @@ impl LlmProvider for OpenAiProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
         let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
@@ -514,7 +518,7 @@ impl LlmProvider for OpenAiProvider {
                         provider.apply_auth_headers(provider.client.post(&url).json(&body));
                     super::attempt_transport::stream(
                         gate,
-                        cancel.as_ref(),
+                        (trace.clone(), cancel.as_ref()),
                         builder,
                         Profile::new(Vendor::OpenAi, Surface::Incremental),
                         tx,

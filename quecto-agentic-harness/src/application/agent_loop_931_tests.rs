@@ -254,3 +254,13 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         "terminal error should name the server/overload class: {err}"
     );
 }
+
+#[test]
+fn synthetic_empty_stream_guidance_does_not_claim_http_failure_or_overload() {
+    let message = "stream completed without assistant output: synthetic=empty_stream";
+    let out = enhance_provider_error(DomainError::Provider(message.into())).to_string();
+    assert!(out.contains("synthetic classification"));
+    assert!(out.contains("no HTTP failure or overload is established"));
+    assert!(!out.contains("provider is overloaded"));
+    assert!(!out.contains("HTTP 503"));
+}
