@@ -31,7 +31,9 @@ async fn client_guard_drop_decrements_and_sends_disconnect() {
     assert_eq!(live.load(Ordering::SeqCst), 0);
     match rx.recv().await.unwrap() {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 42),
-        ClientMessage::Command(_) => panic!("expected disconnect sentinel"),
+        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected disconnect sentinel")
+        }
     }
 }
 
@@ -126,11 +128,15 @@ fn client_message_variants_carry_client_ids() {
     let disc = ClientMessage::Disconnected(ClientDisconnected { client_id: 12 });
     match cmd {
         ClientMessage::Command(command) => assert_eq!(command.client_id, 11),
-        ClientMessage::Disconnected(_) => panic!("expected command"),
+        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected command")
+        }
     }
     match disc {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 12),
-        ClientMessage::Command(_) => panic!("expected disconnect"),
+        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected disconnect")
+        }
     }
 }
 
@@ -202,16 +208,22 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
             assert_eq!(command.client_id, 77);
             assert!(command.line.contains("abort"));
         }
-        ClientMessage::Disconnected(_) => panic!("expected abort command first"),
+        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected abort command first")
+        }
     }
     assert!(turn_control.is_abort_pending());
     match cmd_rx.recv().await.unwrap() {
         ClientMessage::Command(command) => assert!(command.line.contains("get_state")),
-        ClientMessage::Disconnected(_) => panic!("expected get_state command second"),
+        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected get_state command second")
+        }
     }
     match cmd_rx.recv().await.unwrap() {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 77),
-        ClientMessage::Command(_) => panic!("expected disconnect sentinel"),
+        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected disconnect sentinel")
+        }
     }
     assert_eq!(live.load(Ordering::SeqCst), 0);
     task.await.unwrap();
@@ -256,7 +268,9 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     assert_eq!(live.load(Ordering::SeqCst), 0);
     match cmd_rx.recv().await.unwrap() {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 88),
-        ClientMessage::Command(_) => panic!("expected disconnect only"),
+        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
+            panic!("expected disconnect only")
+        }
     }
     assert!(cmd_rx.try_recv().is_err());
 }

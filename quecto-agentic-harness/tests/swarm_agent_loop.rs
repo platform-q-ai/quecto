@@ -69,17 +69,16 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .await
         .unwrap();
     assert!(result.response.contains("Verified completion"));
-    let summary = SwarmContext {
+    let context = SwarmContext {
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
-    }
-    .summary()
-    .unwrap();
+    };
+    let summary = context.summary().unwrap();
     assert_eq!(summary["status"], "succeeded");
     assert_eq!(summary["counts"]["completed"], 2);
     assert!(
-        summary["events"]
+        context.events(0, 100).unwrap()["events"]
             .as_array()
             .unwrap()
             .iter()

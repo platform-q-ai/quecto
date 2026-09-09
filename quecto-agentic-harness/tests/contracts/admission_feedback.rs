@@ -202,6 +202,7 @@ fn queued_receipt_cannot_change_accounting() {
         GroupSnapshot {
             active: 1,
             queued: 1,
+            uncertain: 0,
             cooldown_until: 0,
             unavailable: false,
             observed_at: 2,
@@ -218,6 +219,7 @@ fn unknown_receipt_cannot_change_accounting() {
         GroupSnapshot {
             active: 1,
             queued: 0,
+            uncertain: 0,
             cooldown_until: 0,
             unavailable: false,
             observed_at: 2,
@@ -235,6 +237,7 @@ fn new_terminal_receipt_cannot_change_accounting() {
         GroupSnapshot {
             active: 0,
             queued: 0,
+            uncertain: 0,
             cooldown_until: 0,
             unavailable: false,
             observed_at: 2,

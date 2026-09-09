@@ -36,6 +36,10 @@ pub enum StreamEvent {
 /// Parameters for a chat request to an LLM provider.
 #[derive(Debug, Clone)]
 pub struct ChatRequest<'a> {
+    /// Local retry diagnostics shared across request wrappers.
+    pub trace: Option<std::sync::Arc<super::request_observation::RequestTrace>>,
+    /// Local execution policy, rechecked before retries; never sent to providers.
+    pub admission: Option<std::sync::Arc<dyn RequestAdmission>>,
     pub messages: &'a [Message],
     pub tools: &'a [ToolDefinition],
     pub model: &'a str,
@@ -291,6 +295,20 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// Admission policy evaluated before each model request. Implementations may
+/// consult durable execution state without exposing its storage to the agent.
+pub trait RequestAdmission: std::fmt::Debug + Send + Sync {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    >;
+}
+
 #[cfg(test)]
 #[path = "provider_cov_tests.rs"]
 mod cov_tests;
@@ -327,6 +345,8 @@ mod default_surface_cov_tests {
 
     fn req<'a>() -> ChatRequest<'a> {
         ChatRequest {
+            trace: None,
+            admission: None,
             messages: &[],
             tools: &[],
             model: "m",

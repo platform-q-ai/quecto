@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 pub(super) fn snapshot() -> Snapshot {
     Snapshot {
+        control_generation: 0,
         status: RunStatus::Running,
         coordinator: "worker".into(),
         deadline: 100.,
@@ -25,6 +26,10 @@ pub(super) fn snapshot() -> Snapshot {
 }
 pub(super) struct Effects(pub Mutex<Vec<&'static str>>);
 impl ProcessControl for Effects {
+    fn suspend_local_executions(&self, _: &Snapshot) {
+        self.0.lock().unwrap().push("suspend");
+    }
+    fn suspend_local_inference(&self, _: &Snapshot) {}
     fn cancel_local_executions(&self) {
         self.0.lock().unwrap().push("cancel");
     }
@@ -83,6 +88,7 @@ impl CoordinationPort for Board {
 async fn injected_application_service_runs_through_its_public_contract() {
     let service: &dyn SwarmLifecycle = &LifecycleService;
     let mut snapshot = snapshot();
+    snapshot.coordinator = "parent".into();
     let effects = Effects(Mutex::new(vec![]));
     service.settle(&snapshot, "parent", &effects).await.unwrap();
     assert!(effects.0.lock().unwrap().is_empty());

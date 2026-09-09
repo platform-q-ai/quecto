@@ -20,6 +20,8 @@ const LIMIT: Duration = Duration::from_secs(3);
 
 fn request() -> ChatRequest<'static> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test-model",

@@ -1,3 +1,4 @@
+mod admission_broker;
 mod agent;
 mod auth;
 mod commands;
@@ -7,6 +8,10 @@ pub mod provider_reload;
 #[cfg(test)]
 mod provider_reload_tests;
 pub mod uds;
+mod uds_admission_projection;
+#[cfg(test)]
+#[path = "uds_admission_projection_tests.rs"]
+mod uds_admission_projection_tests;
 mod uds_busy_get_message;
 mod uds_busy_subagents;
 #[cfg(test)]
@@ -31,6 +36,64 @@ pub fn live_execution_state_for_events(
         state.observe(event);
     }
     serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
+}
+
+/// Test-support (#1679 P4): the `get_state` projection of a process whose
+/// admission activity comes from `source`, polled the way a supervisor does.
+#[cfg(any(test, feature = "test-support"))]
+pub struct AdmissionStateProbe {
+    execution: uds_execution_state::ExecutionState,
+    session: protocol::SessionState,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AdmissionStateProbe {
+    pub fn new(
+        source: std::sync::Arc<dyn crate::application::ports::AdmissionObservation>,
+    ) -> Self {
+        let mut execution = uds_execution_state::ExecutionState::default();
+        execution.set_admission_source(source);
+        Self {
+            execution,
+            session: protocol::SessionState {
+                model: "probe".into(),
+                generation: 0,
+                is_streaming: false,
+                session_key: "probe".into(),
+                message_count: 0,
+                pending_message_count: 0,
+                max_context_tokens: 0,
+                effort: None,
+                effort_levels: vec![],
+                workflow: None,
+                execution: None,
+                sync: 0,
+                control_receipts: vec![],
+                automatic_turns_suspended: false,
+                repeated_failure_notifications: Default::default(),
+            },
+        }
+    }
+    pub fn start_run(&mut self) {
+        self.execution.start_run();
+    }
+    pub fn finish_run(&mut self) {
+        self.execution.finish_run();
+    }
+    /// The slim `get_state` response data for an optional `since` cursor.
+    pub fn poll(&mut self, since: Option<u64>) -> serde_json::Value {
+        self.session.generation = self.execution.observe_visible_revisions(0, 0);
+        self.session.execution = Some(self.execution.snapshot());
+        uds_state_projection::slim_state_response_data(&self.session, since)
+    }
+}
+
+/// Test-support (#1679 P4): the production `admission_state_changed` hook.
+#[cfg(any(test, feature = "test-support"))]
+pub fn admission_broadcast_hook(
+    broadcast_tx: tokio::sync::broadcast::Sender<String>,
+) -> crate::infrastructure::admission::ActivityHook {
+    uds_admission_projection::admission_event_hook(broadcast_tx)
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -123,6 +186,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
 mod uds_extensions;
+mod uds_latest_report;
 mod uds_lifecycle;
 pub mod uds_models;
 mod uds_multi;
@@ -138,6 +202,7 @@ mod uds_socket;
 mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
+mod uds_swarm_control;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
@@ -369,6 +434,9 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
+            "admission-broker" => {
+                admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
                 0
@@ -488,6 +556,8 @@ fn help_text(out: &mut String) {
         "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
     );
     out.push_str("\nCommands:\n");
+    out.push_str("  admission-broker run|status|reset\n");
+    out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
@@ -520,3 +590,5 @@ mod leading_config_dispatch_tests;
 
 #[cfg(test)]
 mod mod_tests;
+
+mod swarm_composition;

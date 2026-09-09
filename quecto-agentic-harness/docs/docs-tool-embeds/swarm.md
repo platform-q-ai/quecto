@@ -19,7 +19,7 @@ Use the existing **bash** tool for Git, tests and external commands, subject to
 its configured policy. Read the resulting artifacts with normal file tools and
 record their references on the board. Only the integrator may change branches,
 commit or integrate. `tools.swarm.max_processes` is operator configuration; do
-not raise limits or route around policy from agent code. There is no token cap.
+not raise limits or route around policy from agent code. An optional observed-token budget is described below.
 
 ## Create once
 
@@ -51,12 +51,14 @@ content in artifacts, not messages or evidence fields.
 
 | Call | Input and behavior |
 |---|---|
-| `summary()` | Goal, members, counts, first 50 tasks/files, evidence and latest 100 audit events |
+| `summary(since=None)` | Current goal, members, counts, first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response |
+| `events(after=0, limit=25)` | Explicit chronological history; limit 1–100 |
 | `tasks(offset=0, limit=50)` / `file_owners(offset=0, limit=50)` | Integer offset ≥0; integer limit 1–100 |
 | `task_create(request, title, acceptance, dependencies=None)` | Stable request string, title string, **nonempty `list[str]` acceptance**, optional `list[int]` dependency IDs; returns a task |
 | `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming |
 | `claim(id)` | Returns owned task with a new claim `token`; unmet dependencies reject |
 | `block(id, token, reason)` | Nonempty string reason |
+| `unblock(id, token, reason)` | Resume your blocked claim, preserving token and reservations; submitted work cannot be reopened |
 | `release(id, token)` | Release own claim/files; future claim gets a new token |
 | `submit(id, token, evidence)` | Submit `Evidence` for coordinator verification; submission is not completion |
 | `reserve(id, token, paths)` | `list[str]`, 1–100 checkout-contained paths, all-or-nothing; returns reservation token |
@@ -110,12 +112,12 @@ best-effort; durable inbox/task state is authoritative. **First use op=summary**
 when receiving a hint. If running, inspect inbox/ready tasks and acknowledge read
 messages. If terminal, do not call `op=run` for inbox/ack: Python execution is
 closed. Report the final summary and remain available for supervisor requests,
-including exporting artifacts. A queued hint can arrive after completion.
+with export handled through the supervisor channel. A queued hint can arrive after completion.
 Do not repeatedly poll, sleep or acknowledge an empty inbox.
 
 `op=summary` remains available after completion. An external master retrieves the
-coordinator's report with `agent_cmd.get_messages`; there is no host board API or
-automatic final-report export yet. Preserve evidence before environment disposal.
+coordinator's latest report with `agent_cmd.get_report`; add `export_raw:true`
+to export retained records. Export is explicit, not automatic. Preserve evidence before environment disposal.
 
 Returned artifact paths use **workspace-relative** references. `artifact_base`
 names the execution workspace inside the container; join it with each
@@ -149,3 +151,58 @@ with `get_messages` to verify handling. A full/closed dispatch queue returns an
 explicit failure instead of falsely accepting the clarification. A terminal run
 cannot be revived by steering: preserve its report and start a fresh environment
 when further implementation is authorized.
+
+Ordinary Bash build/test commands strip swarm launch-context variables, so their test runtimes do not enroll in this live pool. Launch participating agents with managed `spawn`. Wake delivery checks current unread messages and claimable tasks, but queued hints can become stale; inspect the board before acting. Steering takes priority over buffered idle work. Forwarded controls return `data.status: "accepted"` on queue admission and retain that response ID through dispatch; inspect the report for actual acknowledgment and results.
+
+## Durable supervisor controls and reports
+
+The master can call `agent_cmd` with `command:"swarm_control"` and
+`action:"pause"`, `"resume"`, or `"status"`. Pause needs no model turn and bypasses
+the prompt queue. It preserves claims, artifacts and agents, cancels current
+execution, suppresses automatic wakes and freezes the wall-clock deadline until
+resume. Use this for a whole-run approval wait. `stop("blocked", ...)` remains
+terminal. Native coordinator operations `swarm {"op":"pause","reason":"..."}`
+and `swarm {"op":"resume"}` offer the same durable state transition.
+
+After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by
+command ID. `queued`, `started`, `completed`, `failed`, `cancelled`, and `rejected`
+describe handling. These receipts retain the latest 64 commands in the live
+session. `completed` means the turn completed; verify the coordinator's explicit
+acknowledgment and resulting work in `get_report`.
+
+`agent_cmd {"agent_id":"...","command":"get_report"}` returns the latest
+substantive assistant report independently of unread transcript backlog. Long
+reports include stable `get_message` recovery parameters. Add `export_raw:true`
+to write retained message/spill JSONL and a checksum manifest to artifacts; the
+response contains paths, not the raw transcript. Paths belong to the target
+agent's filesystem. Exports cannot reconstruct data already cleared or evicted.
+Unpersisted messages have a null ordinal; do not invent cursors from list indices.
+
+## Observed usage budget
+
+The coordinator uses `swarm {"op":"usage"}` for per-member totals and recent
+request diagnostics. Configure `swarm {"op":"usage_budget","token_limit":1000000,
+"strict_unknown":true}` or master `agent_cmd` `swarm_control` with
+`action:"usage_budget"` and the same fields. Explicit `token_limit:null` disables
+it; budgets are disabled by default. An 80% warning is recorded once per budget
+configuration. Reaching the limit durably pauses the run. Strict mode also pauses
+when attempted requests have no usage receipt. Raise/disable the budget before
+resuming, or admission will pause again.
+
+The limit counts reported context-input plus output tokens. It is an observed
+usage guard, not a provider quota or billing limit: in-flight requests can finish
+and exceed it, and unavailable usage is not zero. Retry counters measure
+instrumented call attempts, cache-prefix hashes compare logical system/tool
+prefixes, and reported costs are estimates. `get_session_stats` includes request
+diagnostics and runtime identity; unknown build revision/digest stays unknown.
+Quota failures suspend automatic turns. Send an explicit prompt after resolving
+the cause. Do not repeatedly wake or retry ahead of a provider's reset horizon.
+
+Terminal coordinators remain available for reports. Their tool execution is
+restricted to native read-only swarm `summary`, `events`, and `usage`; Python,
+Bash, spawning and board mutations are unavailable. Export through the supervisor
+channel and preserve the container until the user authorizes teardown.
+
+After resuming, send an explicit prompt to continue work. Paused instructions remain
+queued; resume restores admission and the deadline without forcing a model turn.
+Terminal completion notices do not trigger automatic report turns.

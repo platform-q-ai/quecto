@@ -103,7 +103,7 @@ Interrupt the current agent run and deliver a new message. If the agent is idle,
 - **Agent running:** Fires the cancellation signal (interrupts after the current tool completes), then prepends this message to the pending queue so it runs next
 - **Agent idle:** Queues the message. It will execute after the next `prompt` completes
 
-**Response:** `success: true` acknowledges the steer, not proof that the model has acted on it or that the prior run was cancelled. Forwarded controls carrying `ack: "accept"` are acknowledged only after admission to the dispatch queue. A full or closed queue returns `success: false` with an explicit delivery error; `agent_cmd` propagates that as a tool error. Retrieve the coordinator’s report to verify clarification handling.
+**Response:** `success: true` acknowledges the steer, not proof that the model has acted on it or that the prior run was cancelled. Forwarded controls carrying `ack: "accept"` are acknowledged only after admission to the dispatch queue. A full or closed queue returns `success: false` with an explicit delivery error; `agent_cmd` propagates that as a tool error. Forwarded prompt, steer and follow-up commands retain the request ID through dispatch. The immediate admission response includes `data.status: "accepted"`; later dispatch responses retain that ID (a prompt may dispatch as `follow_up`). A pending-buffer response carries `data.status: "queued"`; a full pending buffer returns `success: false`. Buffered idle work and earlier queued follow-ups yield while steering awaits dispatch; unrelated follow-ups cannot clear its priority. Each admitted steer retains priority until its own handler begins. Malformed steering commands are rejected by the typed command parser before they can cancel a turn or create pending intent. Retrieve the coordinator’s report to verify clarification handling; a completed dispatch response is not proof of successful task execution.
 
 **Example:**
 
@@ -281,6 +281,11 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 
 ---
 
+> Descendant queries (`get_state`/`get_report` with `agent_id`) are forwarded
+> concurrently: their replies may arrive before earlier queued commands, and at
+> most eight are in flight per process; beyond that the query is answered with
+> an explicit capacity error rather than queued.
+
 ### `get_state`
 
 Return the slim live supervision projection for the active session. This is the
@@ -336,6 +341,58 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 | `progress` | object | Evidence-based progress verdict with only `state` and `reason` |
 | `generation` | integer | Activity cursor for `since` comparisons |
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
+| `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
+
+**Admission (`admission`, #1679 P4).** When the process shares an inference
+authority ([inference-admission.md](inference-admission.md)) the projection
+carries its own attempts' admission activity beside the phase. Admission is
+never a `state` value: a process whose next attempt is queued at the authority
+stays in `thinking` (or whatever phase it is in) and its `progress` becomes
+`waiting`, which supervisors must treat as neither idle nor stalled.
+
+```json
+{
+  "state": "thinking",
+  "progress": {
+    "state": "waiting",
+    "reason": "2 inference attempts waiting for admission in group anthropic for 12s; cooldown 30s remaining"
+  },
+  "admission": {
+    "waiting": 2,
+    "admitted": 0,
+    "longestWaitSeconds": 12,
+    "groups": [
+      {"group": "anthropic", "cooldown": {"state": "until", "remainingSeconds": 30}}
+    ],
+    "counters": {"completed": 7, "refused": 0, "cancelled": 1, "abandoned": 0},
+    "hidden": 0,
+    "revision": 41
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `waiting` / `admitted` | integer | Live attempts of this process queued at / granted by the authority (exact counts) |
+| `longestWaitSeconds` | integer \| omitted | Longest sampled wait; omitted when nothing waits or every waiting attempt is beyond the sample (`hidden`), never `0` for "unknown" |
+| `groups[].group` | string | Quota group |
+| `groups[].cooldown` | object \| omitted | `state` is `until` (with `remainingSeconds`), `unknown` (throttled without a deadline) or `unavailable` (authority marked the group unavailable) |
+| `groups[].lastRefusal` | string \| omitted | Most recent refusal reason, bounded to 200 bytes |
+| `counters` | object | Lifetime `completed`, `refused`, `cancelled` (wait given up, e.g. `abort`) and `abandoned` (permit dropped without completion) |
+| `hidden` | integer | Live attempts beyond the 64-attempt sample that `longestWaitSeconds` is derived from; when non-zero the longest wait may be under-reported |
+| `revision` | integer | Advances on every admission transition (queued, granted, completed, refused, cancelled, abandoned, cooldown learned); time-derived values are not transitions |
+
+The `waiting` verdict takes precedence over the tool-window verdicts
+(`advancing`, `active`, `quiet`) while any attempt is queued. A changed
+admission `revision` advances `generation` once per observation (several
+transitions between two polls advance it once); the revision moves in the
+same critical section as the view, so a `since` poll never returns the
+unchanged marker across a transition (ADR-0024 freshness and delta bounds). `revision` and `generation` track transitions only: elapsed waits,
+`remainingSeconds` and the `reason` text are re-derived on every full read and
+keep moving while a `since` poll answers `unchanged`; poll without `since` to
+watch a wait grow or a cooldown run out. `abort` while an attempt waits
+cancels the wait at the authority; the next `get_state` no longer reports
+`waiting` and counts the wait under `counters.cancelled`.
 
 `get_state` intentionally does not include static vocabularies, transcript
 counts, sync/history state, context-window metadata, available workflow
@@ -1018,6 +1075,20 @@ Broadcast replacement snapshot of all spawned subagent statuses (clients do a si
 {"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","agentUuid":"f47ac10b-58cc-4372-a567-0e02b2c3d479","displayName":"reviewer","status":"idle","pid":1234,"readOnly":true}]}
 ```
 
+### `admission_state_changed`
+
+Broadcast after every inference-admission transition of this process (#1679
+P4): an attempt queued, granted, completed, refused, cancelled or abandoned,
+or a group's cooldown learned. Carries the full bounded `admission` object
+described under [`get_state`](#get_state). Events are delivered in
+`revision` order, so clients do a simple replace. Emitted only when the
+process joined an admission authority; the same transition also advances the
+`get_state` generation.
+
+```json
+{"type":"admission_state_changed","admission":{"waiting":1,"admitted":0,"longestWaitSeconds":3,"groups":[{"group":"anthropic"}],"counters":{"completed":0,"refused":0,"cancelled":0,"abandoned":0},"hidden":0,"revision":1}}
+```
+
 ### `subagent_messages_appended`
 
 Emitted when a (sub)agent completes a turn, carrying stable refs for messages appended during that turn. A child emits this on its own stream; the parent's monitor may re-stamp `agent_id` and forward it so inspectors can stream child output turn-by-turn without re-carrying full bodies (#1060).
@@ -1258,3 +1329,29 @@ All flags for `quecto agent` that affect UDS mode:
 - Extensions (`docs {"name":"extensions"}`) — adding custom tools via native config or UDS registration
 - Subagents (`docs {"name":"subagents"}`) — spawning child agent processes from within a session
 - Workflow Automation (`docs {"name":"workflow"}`) — configurable step-by-step development process
+
+## Swarm supervision additions
+
+`{"type":"swarm_control","id":"pause-1","action":"pause","reason":"approval"}`
+applies a durable pause independently of the prompt queue. Actions are `pause`,
+`resume`, `status`, and `usage_budget`; the latter requires `token_limit` (positive
+integer or explicit null) and optionally `strict_unknown` (default true). Add
+`agent_id` to route to a descendant. Successful responses include `applied`,
+`status`, `generation`, and `budget`. The internal `wake` action carries a durable
+event generation and is rechecked for actionability at dispatch; it answers
+`{"status":"accepted"}` when a wake turn is queued, `{"status":"coalesced"}` when
+the generation joined an already pending wake, or an error (`wake unavailable`,
+`wake queue full`) when nothing would drain it — the durable inbox remains
+authoritative in every case.
+
+`get_state` adds bounded `controlReceipts` identified by command ID, with queued,
+started, completed, failed, cancelled or rejected status. Completed means a model
+turn completed, not that its instructions were semantically fulfilled.
+
+`{"type":"get_report","id":"report-1","agent_id":"...","export_raw":true}`
+returns the latest assistant report and optional retained raw export paths plus
+checksum. Omit `agent_id` for the connected agent and `export_raw` for report-only
+inspection. It is available while busy, does not advance unread history cursors,
+and includes `get_message` recovery for truncated content. Artifact paths are
+local to the responding runtime. See [swarm diagnostics](swarm.md#operational-diagnostics-and-budgets)
+for retention, accounting availability, provenance and export consistency.

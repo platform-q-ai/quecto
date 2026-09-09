@@ -17,6 +17,9 @@ pub(super) struct ReaderDispatchCtx<'a> {
 
 /// Dispatch one decoded client command. Returns false when the command channel closed.
 pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
+    if super::uds_swarm_control::intercept(&ctx).await {
+        return true;
+    }
     // Explicit abort is independent of queue admission. Steering is a
     // replacement instruction and may interrupt only after capacity is held.
     if super::uds::is_abort_command(&ctx.line) {

@@ -431,6 +431,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -463,6 +464,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     flags.persist = true;
     stderr.clear();

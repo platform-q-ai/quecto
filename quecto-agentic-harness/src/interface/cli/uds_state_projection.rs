@@ -61,6 +61,15 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
     if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
         data["workflow"] = workflow;
     }
+    if let [_, ..] = state.control_receipts.as_slice() {
+        data["controlReceipts"] = serde_json::json!(state.control_receipts);
+    }
+    data["automaticTurnsSuspended"] = serde_json::json!(state.automatic_turns_suspended);
+    data["repeatedFailureNotifications"] = serde_json::json!(state.repeated_failure_notifications);
+    // #1679 P4: admission rides beside the phase, never inside `state`.
+    if let Some(admission) = state.execution.as_ref().and_then(|e| e.admission.as_ref()) {
+        data["admission"] = serde_json::to_value(admission).unwrap_or_default();
+    }
     data["generation"] = serde_json::json!(state.generation);
     data
 }

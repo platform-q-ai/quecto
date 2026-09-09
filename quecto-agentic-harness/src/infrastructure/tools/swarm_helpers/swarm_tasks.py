@@ -118,9 +118,25 @@ class Tasks:
     def block(self, task_id, token, reason):
         bounded(reason, 'blocker')
         with self.store.operation() as (db, _):
-            require_unsubmitted(self._owned(db, task_id, token))
+            task = self._owned(db, task_id, token)
+            require_unsubmitted(task)
+            if task['status'] == 'blocked' and task['blocker'] == reason:
+                return
             db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE id=?", (reason, task_id))
             self.store.event(db, 'blocked', {'task': task_id, 'reason': reason})
+
+    def unblock(self, task_id, token, reason):
+        """Resume the existing owner's blocked claim after its blocker is resolved."""
+        bounded(reason, 'resolution')
+        with self.store.operation() as (db, _):
+            task = self._owned(db, task_id, token)
+            if task['status'] == 'claimed':
+                return
+            if task['status'] == 'blocked':
+                db.execute("UPDATE tasks SET status='claimed',blocker=NULL WHERE id=?", (task_id,))
+                self.store.event(db, 'unblocked', {'task': task_id, 'reason': reason})
+                return
+            raise SwarmError('only blocked or claimed work may resume')
 
     def submit(self, task_id: int, token: str, evidence: list[dict]):
         """Submit nonempty artifact/revision references; coordinator verification follows."""

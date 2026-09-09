@@ -12,6 +12,8 @@ fn test_build_request_body_omits_effort_when_unconfigured_1066() {
     let messages = vec![Message::system("Be concise."), Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.6-sol",
@@ -43,6 +45,8 @@ fn test_build_request_body_transmits_openai_documented_efforts_1066() {
         let messages = vec![Message::system("Be concise."), Message::user("Hi")];
         let tools = vec![];
         let request = ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &tools,
             model: "gpt-5.6-sol",
@@ -71,6 +75,8 @@ fn test_build_request_body_clamps_max_effort_to_xhigh_1066() {
     let messages = vec![Message::system("Be concise."), Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.6-sol",
@@ -99,6 +105,8 @@ fn test_build_request_body_omits_verbosity_when_unconfigured_1066() {
     let messages = vec![Message::system("Be concise."), Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.6-sol",

@@ -3,12 +3,73 @@ use super::*;
 impl AgentLoopImpl {
     pub(super) async fn request_provider_response(
         &self,
+        mut request: ChatRequest<'_>,
+        turn: u32,
+        estimate: usize,
+    ) -> Result<LlmResponse, DomainError> {
+        self.flush_request_accounting().await?;
+        let prefix = super::super::request_observation::prefix(&request);
+        let unchanged = self
+            .request_prefix
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(prefix.0.clone())
+            .map(|previous| previous == prefix.0);
+        let trace = Arc::new(crate::domain::request_observation::RequestTrace::default());
+        request.trace = Some(trace.clone());
+        let mut observation = super::super::request_observation::ObservationGuard::new(
+            super::super::request_observation::ObservationSinks {
+                log: &self.request_observations,
+                outbox: self
+                    .request_accounting
+                    .as_ref()
+                    .map(|_| &self.accounting_outbox),
+            },
+            &request,
+            self.provider.name(),
+            estimate,
+            super::super::request_observation::PrefixObservation {
+                sha256: prefix.0,
+                bytes: prefix.1,
+                unchanged,
+            },
+            trace,
+        );
+        let result = self.request_provider_response_inner(request).await;
+        if let Ok(response) = &result {
+            if let Some(usage) = &response.usage {
+                self.unreported_usage
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .record(usage);
+            }
+        }
+        let record = observation.finish(&result);
+        self.audit(
+            turn,
+            AuditEvent::RequestObserved {
+                observation: record.clone(),
+            },
+        )
+        .await;
+        self.flush_request_accounting().await?;
+        result
+    }
+
+    async fn request_provider_response_inner(
+        &self,
         request: ChatRequest<'_>,
     ) -> Result<LlmResponse, DomainError> {
+        if let Some(admission) = &self.request_admission {
+            admission.check().await?;
+        }
         // Transient-error retry is owned by the `RetryingProvider` decorator, so
         // the non-streaming path makes a single call and passes the error
         // through (only enhancing it); re-retrying here would double the budget.
         if !self.streaming {
+            if let Some(trace) = &request.trace {
+                trace.start();
+            }
             return self
                 .provider
                 .chat(request)
@@ -19,6 +80,20 @@ impl AgentLoopImpl {
         // Streaming initiation *is* retried here: the decorator forwards
         // `chat_stream` without retry, so this loop owns stream re-initiation.
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
+            // The logical request was admitted above; only re-initiations
+            // re-check, so streaming never pays a second first-attempt check.
+            if attempt > 1 {
+                if let Some(admission) = &self.request_admission {
+                    admission.check().await?;
+                }
+            }
+            if let Some(trace) = &request.trace {
+                if attempt == 1 {
+                    trace.start();
+                } else {
+                    trace.retry();
+                }
+            }
             let result = match self.stream_chat_once(request.clone()).await {
                 Ok(response) => Ok(response),
                 Err(stream_error) if stream_error.emitted_event => {
@@ -42,10 +117,16 @@ impl AgentLoopImpl {
                         error_class = %class,
                         "retrying stream initiation after transient failure"
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
-                    ))
-                    .await;
+                    let Some(delay) = crate::domain::provider_retry::bounded_delay(
+                        &err,
+                        std::time::Duration::from_millis(
+                            PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
+                        ),
+                        std::time::Duration::from_secs(30),
+                    ) else {
+                        return Err(enhance_provider_error(err));
+                    };
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
@@ -115,6 +196,14 @@ impl AgentLoopImpl {
             self.audit(
                 current_turn,
                 AuditEvent::LlmTurnEnd {
+                    usage_source: Some(
+                        if response.usage.is_some() {
+                            "provider_usage_object"
+                        } else {
+                            "context_estimate"
+                        }
+                        .into(),
+                    ),
                     input_tokens: input_toks,
                     output_tokens: output_toks,
                     stop_reason: stop,

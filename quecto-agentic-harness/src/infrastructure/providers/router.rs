@@ -80,6 +80,8 @@ impl ProviderRouter {
     ) -> Result<(&'a Arc<dyn LlmProvider>, ChatRequest<'a>), DomainError> {
         let (provider, effective_model) = self.resolve(request.model)?;
         let req = ChatRequest {
+            trace: request.trace,
+            admission: request.admission,
             messages: request.messages,
             tools: request.tools,
             model: effective_model,

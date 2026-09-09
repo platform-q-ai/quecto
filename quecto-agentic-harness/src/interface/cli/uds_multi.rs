@@ -119,6 +119,7 @@ pub(super) struct ClientDisconnected {
 
 /// Messages from client reader tasks to the dispatch loop.
 pub(super) enum ClientMessage {
+    SwarmWake { generation: u64 },
     Command(ClientCommand),
     Disconnected(ClientDisconnected),
 }
@@ -186,6 +187,7 @@ pub(super) async fn multi_client_loop(
     // immediately — even while the dispatch loop is busy mid-turn.
     let mut initial_conversation_snapshot =
         super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
+    initial_conversation_snapshot.export_root = Some(base_dir.join("artifacts/session-exports"));
     initial_conversation_snapshot
         .set_spill_store(agent.spill_store().cloned(), session_key.clone());
     let conversation_snapshot: ConversationSnapshot =
@@ -227,8 +229,21 @@ pub(super) async fn multi_client_loop(
     // is already wired to it), otherwise create a fresh one (#598).
     let broadcast_tx = pre_broadcast_tx
         .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(BROADCAST_CHANNEL_CAPACITY).0);
+    // #1679 P4: admission activity rides on `get_state` (revision folded into
+    // the public cursor) and is pushed as `admission_state_changed`.
+    if let Some(process) = crate::infrastructure::admission::process::current() {
+        super::uds_admission_projection::attach_process_admission(
+            &execution_state,
+            &process,
+            &broadcast_tx,
+        );
+    }
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
+    super::swarm_composition::bind_suspension(
+        &cancel_handle,
+        crate::interface::tool_runtime::swarm_context(),
+    );
     // SIGTERM/SIGINT: tear down every subagent and container environment
     // before this process goes away (a container is outside the parent's
     // process group, so nothing else can reach it), then exit the loop.
@@ -237,7 +252,12 @@ pub(super) async fn multi_client_loop(
         Some(broadcast_tx.clone()),
         cancel_handle.clone(),
     );
-    let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::default();
+    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
+        std::sync::Arc::new(context) as std::sync::Arc<dyn crate::domain::swarm::SwarmRunControl>
+    });
+    let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
+        super::uds_cancel::TurnControl::with_swarm_control(swarm_control),
+    );
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
@@ -463,6 +483,9 @@ async fn handle_client_msg(
     live_clients: &std::sync::atomic::AtomicU32,
 ) -> bool {
     match client_msg {
+        ClientMessage::SwarmWake { generation } => {
+            super::uds_swarm_control::handle_wake(ctx, generation).await
+        }
         ClientMessage::Command(cmd) => {
             ctx.current_client_id = cmd.client_id;
             match parse_line(&cmd.line) {

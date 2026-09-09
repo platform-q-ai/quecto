@@ -46,6 +46,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
+    let mut admission_context: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
@@ -135,6 +136,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 parent_id = Some(val.to_string());
                 i += 2;
             }
+            "--admission-context" => {
+                let val = next_arg(args, i, "--admission-context requires a path", stderr)?;
+                admission_context = Some(std::path::PathBuf::from(val));
+                i += 2;
+            }
             "--inherited-tool-policy-snapshot" => {
                 inherited_tool_policy_path =
                     Some(flag_private::parse_snapshot_path(args, i, stderr)?);
@@ -193,30 +199,14 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context,
     };
-    flags = validate_agent_flags(flags, stderr)?;
+    flags = flag_parse::validate_agent_flags(flags, stderr)?;
 
     if let Some(path) = inherited_tool_policy_path {
         flag_private::load_inherited_tool_policy_for_valid_child(&path, stderr, &mut flags)?;
     }
 
-    Some(flags)
-}
-
-/// Post-parse validation of mutually exclusive / dependent flags.
-fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentFlags> {
-    if flags.no_session && flags.session_name.is_some() {
-        stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
-        return None;
-    }
-    if flags.persist && !flags.uds_mode {
-        stderr.push_str("agent: --persist requires --mode uds\n");
-        return None;
-    }
-    if flags.workflow_guards && flags.workflow_disabled {
-        stderr.push_str("agent: --workflow-guards cannot be used with --no-workflow\n");
-        return None;
-    }
     Some(flags)
 }
 
@@ -275,7 +265,9 @@ pub(crate) fn cmd_agent(
         &build.extension_prompt_snippets,
     ));
     let mut out = AgentOutput { stdout, stderr };
-    run_agent_session(&base_dir, build.agent, &flags, &mut out)
+    let code = run_agent_session(&base_dir, build.agent, &flags, &mut out);
+    admission_startup::shutdown();
+    code
 }
 
 pub(crate) struct AgentBuildResult {
@@ -318,6 +310,10 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
+    let config = config.with_admission_base_dir(base_dir);
+    if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
+        return None;
+    }
     let http_client = crate::interface::shared::build_http_client();
     let provider = match build_agent_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
@@ -429,6 +425,10 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
+    let agent = super::swarm_composition::wire_agent(
+        agent,
+        crate::interface::tool_runtime::swarm_context(),
+    );
     Some(AgentBuildResult {
         agent,
         workflow_config: wf_config,
@@ -563,15 +563,9 @@ use crate::interface::shared::scrub_ephemeral_spill;
 /// per-tool and HTTP client timeouts), then the scope exits.
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
 /// Resolve UDS persistence key.
-fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {
-    if ephemeral {
-        String::new()
-    } else if let Some(name) = session_name {
-        crate::domain::session::Session::build_key("cli", name)
-    } else {
-        crate::interface::shared::generate_chat_key()
-    }
-}
+#[path = "agent_session_identity.rs"]
+mod session_identity;
+use session_identity::resolve_uds_session_key;
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
@@ -704,11 +698,14 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         provider_reload: Some(&mut provider_reload),
         provider_reload_inputs: Some(&build.provider_reload_inputs),
     });
+    admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
     scrub_ephemeral_spill(&base_dir, ephemeral);
     code
 }
 
+#[path = "agent/admission_startup.rs"]
+mod admission_startup;
 #[path = "agent_provider.rs"]
 mod agent_provider;
 pub use agent_provider::build_agent_provider;

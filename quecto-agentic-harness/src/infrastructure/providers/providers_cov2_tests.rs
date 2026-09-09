@@ -57,6 +57,8 @@ impl LlmProvider for DowncastInnerProvider {
 
 fn test_request() -> ChatRequest<'static> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "stub",

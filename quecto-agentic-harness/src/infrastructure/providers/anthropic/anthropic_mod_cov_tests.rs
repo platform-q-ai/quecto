@@ -17,6 +17,8 @@ fn base_req<'a>(
     model: &'a str,
 ) -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools,
         model,

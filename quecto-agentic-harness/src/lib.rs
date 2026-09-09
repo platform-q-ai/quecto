@@ -19,6 +19,20 @@ mod admission_client_contracts;
 #[path = "../tests/contracts/admission_dispatcher.rs"]
 mod admission_dispatcher_contracts;
 #[cfg(test)]
+#[path = "../tests/contracts/admission_journal.rs"]
+mod admission_journal_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_observation.rs"]
+mod admission_observation_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_recovery.rs"]
+mod admission_recovery_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_secret_source.rs"]
+mod admission_secret_source_contracts;
+// The authority process adapters are proven over real sockets/files; run that
+// suite in the library gate too so its adapters count toward coverage.
+#[cfg(test)]
 #[path = "../tests/contracts/admission_fallback.rs"]
 mod admission_fallback_contracts;
 #[cfg(test)]
@@ -42,3 +56,37 @@ mod attempt_admission_contracts;
 #[cfg(test)]
 #[path = "../tests/contracts/attempt_permit.rs"]
 mod attempt_permit_contracts;
+#[cfg(all(test, unix))]
+#[path = "../tests/inference_admission_broker.rs"]
+mod inference_admission_broker_cov;
+
+#[cfg(test)]
+#[path = "../tests/contracts/coordination_port.rs"]
+mod coordination_port;
+#[cfg(test)]
+#[path = "../tests/contracts/process_control.rs"]
+mod process_control;
+#[cfg(test)]
+#[path = "../tests/contracts/request_accounting.rs"]
+mod request_accounting_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/request_admission.rs"]
+mod request_admission_contracts;
+#[cfg(test)]
+#[path = "../tests/swarm_agent_loop.rs"]
+mod swarm_agent_loop;
+#[cfg(test)]
+#[path = "../tests/common/swarm_control_fixture.rs"]
+mod swarm_control_fixture;
+#[cfg(test)]
+#[path = "../tests/contracts/swarm_lifecycle.rs"]
+mod swarm_lifecycle;
+#[cfg(test)]
+#[path = "../tests/swarm_product_contract.rs"]
+mod swarm_product_contract;
+#[cfg(test)]
+#[path = "../tests/contracts/swarm_run_control.rs"]
+mod swarm_run_control_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/tool_execution_admission.rs"]
+mod tool_execution_admission_contracts;

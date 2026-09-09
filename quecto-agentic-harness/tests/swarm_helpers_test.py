@@ -38,6 +38,182 @@ class WorkbenchBehavior(unittest.TestCase):
     def task(self, request='task', dependencies=None):
         return self.worker.task_create(request, 'implement behavior', ['tests pass'], dependencies or [])
 
+    def test_notification_batch_carries_atomic_board_generation(self):
+        self.parent.send('wake-batch', 'worker', 'action')
+        batch = self.parent._notifications(True)
+        self.assertEqual(batch['generation'], self.parent.summary()['event_cursor'])
+        self.assertTrue(any(member['id'] == 'worker' for member in batch['members']))
+        self.assertEqual(self.parent._notifications(True)['members'], [])
+
+    def test_rejected_request_without_attempt_does_not_pause_usage_budget(self):
+        self.parent.usage_budget(100, strict_unknown=True)
+        self.worker._record_request({'request_id': 'rejected', 'instrumented_attempts': 0,
+                                     'outcome': 'rejected'})
+        self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 0)
+        self.assertEqual(self.parent.summary()['status'], 'running')
+
+    def test_request_redelivery_accepts_runtime_digest_becoming_available(self):
+        record = {'request_id': 'digest', 'instrumented_attempts': 1, 'outcome': 'failed',
+                  'runtime': {'process_instance_id': 'same', 'executable_digest_pending': True}}
+        self.worker._record_request(record)
+        record['runtime'] = {'process_instance_id': 'same', 'executable_digest_pending': False,
+                             'executable_sha256': 'abc'}
+        self.worker._record_request(record)
+        self.assertEqual(self.parent.usage_report()['totals']['requests'], 1)
+        record['runtime']['executable_sha256'] = 'different'
+        with self.assertRaises(SwarmError):
+            self.worker._record_request(record)
+        record['runtime']['executable_sha256'] = 'abc'
+        record['runtime']['process_instance_id'] = 'different'
+        with self.assertRaises(SwarmError):
+            self.worker._record_request(record)
+
+    def test_usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.parent.usage_budget(100)
+        first = {'request_id': 'r1', 'context_input_tokens': 70, 'input_tokens': 50,
+                 'output_tokens': 10, 'cache_read_tokens': 20, 'cache_write_tokens': 0,
+                 'instrumented_attempts': 2, 'outcome': 'succeeded'}
+        self.worker._record_request(first)
+        self.client('worker')._record_request(first)
+        report = self.parent.usage_report()
+        self.assertEqual(report['totals']['observed_tokens'], 80)
+        self.assertEqual(report['totals']['requests'], 1)
+        self.assertEqual(report['totals']['attempts'], 2)
+        warnings = [event for event in self.parent.events(limit=100)['events'] if event['action'] == 'usage-warning']
+        self.assertEqual(len(warnings), 1)
+        self.worker._record_request(dict(first, request_id='r2', context_input_tokens=20, output_tokens=5))
+        self.assertEqual(self.parent.summary()['status'], 'paused')
+        self.assertEqual(self.worker.task(task['id'])['token'], claim['token'])
+        self.parent.resume()
+        self.assertEqual(self.parent._request_admission()['status'], 'paused')
+        self.parent.usage_budget(200)
+        self.parent.resume()
+        self.assertEqual(self.parent._request_admission()['status'], 'running')
+
+    def test_unknown_usage_is_explicit_and_strict_budget_suspends(self):
+        self.parent.usage_budget(100, strict_unknown=True)
+        self.worker._record_request({'request_id': 'unknown', 'context_input_tokens': None,
+                                     'input_tokens': None, 'output_tokens': None,
+                                     'instrumented_attempts': 1, 'outcome': 'failed'})
+        report = self.parent.usage_report()
+        self.assertEqual(report['totals']['unknown_usage_requests'], 1)
+        self.assertEqual(report['totals']['observed_tokens'], 0)
+        self.assertEqual(self.parent.summary()['status'], 'paused')
+        with self.assertRaises(SwarmError):
+            self.worker.usage_budget(200)
+
+    def test_pause_is_durable_freezes_budget_and_rejects_mutation(self):
+        from unittest.mock import patch
+        now = time.time()
+        deadline = self.parent.summary()['deadline']
+        self.parent.coordination.clock = lambda: time.time()
+        with patch('time.time', return_value=now):
+            self.parent.pause('operator requested preservation')
+        paused = self.client('coordinator')
+        paused.coordination.clock = lambda: time.time()
+        with patch('time.time', return_value=deadline + 500):
+            self.assertEqual(paused.summary()['status'], 'paused')
+            self.assertEqual(self.worker._notifications(), [])
+            with self.assertRaises(SwarmError):
+                self.task('cannot start during pause')
+            with self.assertRaises(SwarmError):
+                self.worker.resume()
+            paused.resume()
+            resumed = paused.summary()
+            self.assertEqual(resumed['status'], 'running')
+            self.assertAlmostEqual(resumed['deadline'] - (deadline + 500), deadline - now, places=3)
+
+    def test_summary_cursor_avoids_unchanged_payload_and_history_cursor_is_validated(self):
+        cursor = self.parent.summary()['event_cursor']
+        self.assertEqual(self.parent.summary(since=cursor), {'unchanged': True, 'event_cursor': cursor, 'status': 'running'})
+        self.task('new change')
+        self.assertFalse(self.parent.summary(since=cursor).get('unchanged', False))
+        for invalid in [-1, True, '1']:
+            with self.assertRaises(SwarmError):
+                self.parent.events(after=invalid)
+
+    def test_wake_generation_is_consumed_once_and_rechecks_current_work(self):
+        message = self.worker.send('wake', 'coordinator', 'review this')
+        generation = self.parent.summary()['event_cursor']
+        self.assertTrue(self.parent._accept_wake(generation))
+        self.assertFalse(self.client('coordinator')._accept_wake(generation))
+        self.parent.ack(message['id'])
+        self.assertFalse(self.parent._accept_wake(self.parent.summary()['event_cursor']))
+        self.worker.send('wake-2', 'coordinator', 'new work')
+        generation = self.parent.summary()['event_cursor']
+        self.parent.pause('pause takes priority over queued hint')
+        self.assertFalse(self.parent._accept_wake(generation))
+
+    def test_cancelled_attempt_does_not_keep_a_strict_budget_paused(self):
+        self.parent.usage_budget(100, strict_unknown=True)
+        self.worker._record_request({'request_id': 'cancelled', 'instrumented_attempts': 1,
+                                     'outcome': 'cancelled'})
+        self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 0)
+        self.parent.pause('supervisor pause')
+        self.parent.resume()
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.worker._record_request({'request_id': 'hidden', 'instrumented_attempts': 1,
+                                     'outcome': 'failed'})
+        self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 1)
+        self.assertEqual(self.parent.summary()['status'], 'paused')
+
+    def test_paused_run_retains_the_wake_frontier_until_resume(self):
+        self.worker.send('wake-paused', 'coordinator', 'work')
+        generation = self.parent.summary()['event_cursor']
+        self.parent.pause('hold')
+        self.assertFalse(self.parent._accept_wake(generation))
+        self.parent.resume()
+        self.assertTrue(self.parent._accept_wake(generation), 'the generation was not consumed while paused')
+        with self.assertRaises(SwarmError):
+            self.parent._accept_wake(self.parent.summary()['event_cursor'] + 1)
+
+    def test_request_diagnostic_ledger_bounds_are_explicit(self):
+        self.worker._record_request({'request_id': 'first', 'instrumented_attempts': 1, 'outcome': 'failed'})
+        with self.assertRaises(SwarmError):
+            self.worker._record_request({'request_id': 'huge', 'instrumented_attempts': 1, 'outcome': 'failed',
+                                         'error_class': 'x' * 32768})
+        with closing(sqlite3.connect(self.db)) as db:
+            db.executemany('INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)',
+                           [(f'fill-{index}', 'worker', '{}', 0, 0, 1, None, None, None, None) for index in range(9999)])
+            db.commit()
+        with self.assertRaises(SwarmError) as refused:
+            self.worker._record_request({'request_id': 'overflow', 'instrumented_attempts': 1, 'outcome': 'failed'})
+        self.assertIn('ledger full', str(refused.exception))
+        self.assertEqual(self.parent.summary()['status'], 'running', 'a full ledger never blocks the run itself')
+
+    def test_default_summary_does_not_replay_historical_contract_payloads(self):
+        original = self.parent.summary()
+        for index in range(12):
+            self.parent.amend(original['goal'], ['x' * 6000], original['criteria'], f'change {index}')
+        summary = self.parent.summary()
+        self.assertLess(len(json.dumps(summary)), 20000)
+        self.assertNotIn('events', summary)
+        self.assertGreater(summary['event_cursor'], 0)
+        page = self.parent.events(after=0, limit=2)
+        self.assertEqual(len(page['events']), 2)
+        self.assertTrue(page['has_more'])
+        next_page = self.parent.events(after=page['cursor'], limit=2)
+        self.assertGreater(next_page['events'][0]['id'], page['cursor'])
+        self.assertEqual(self.parent.events(after=summary['event_cursor'])['events'], [])
+
+    def test_resolved_blocker_resumes_original_claim_without_releasing_files(self):
+        claim = self.worker.claim(self.task()['id'])
+        self.worker.block(claim['id'], claim['token'], 'awaiting approval')
+        self.worker.reserve(claim['id'], claim['token'], ['owned.rs'])
+        self.worker.unblock(claim['id'], claim['token'], 'approval received')
+        resumed = self.worker.task(claim['id'])
+        self.assertEqual(resumed['status'], 'claimed')
+        self.assertEqual(resumed['token'], claim['token'])
+        self.assertIsNone(resumed['blocker'])
+        self.assertEqual(self.worker.file_owners()[0]['path'], 'owned.rs')
+        with self.assertRaises(SwarmError):
+            self.parent.unblock(claim['id'], claim['token'], 'not the owner')
+        self.worker.submit(claim['id'], claim['token'], [{'artifact': 'tests', 'revision': 'R1'}])
+        with self.assertRaises(SwarmError):
+            self.worker.unblock(claim['id'], claim['token'], 'cannot reopen submitted evidence')
+
     def test_reviewed_submission_cannot_be_replaced_under_the_same_claim(self):
         claim = self.worker.claim(self.task()['id'])
         a = [{'artifact': 'reviewed-A', 'revision': 'R1'}]
@@ -66,7 +242,7 @@ class WorkbenchBehavior(unittest.TestCase):
         original = self.parent.summary()
         changed = [{'id': 'tests', 'kind': 'command', 'description': 'replacement test'}]
         self.parent.amend(original['goal'], ['replacement constraint'], changed, 'approved change')
-        events = self.parent.summary()['events']
+        events = self.parent.events(limit=100)['events']
         created = json.loads(next(e['detail'] for e in events if e['action'] == 'created'))
         amended = json.loads(next(e['detail'] for e in events if e['action'] == 'amended'))
         before = {key: original[key] for key in ('goal', 'constraints', 'criteria')}
@@ -94,6 +270,49 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.revalidate_task(a['id'], 'R2', evidence)
         self.parent.complete('R2')
         self.assertEqual(self.parent.summary()['status'], 'succeeded')
+
+    def test_unchanged_blocker_does_not_repeat_idle_wake_cycles(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.block(task['id'], claim['token'], 'awaiting approval')
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'])
+        for _ in range(5):
+            self.parent.summary()
+            self.assertEqual(self.parent.inbox(), [])
+            self.worker.block(task['id'], claim['token'], 'awaiting approval')
+            self.assertEqual(self.worker._notifications(), [])
+        self.worker.block(task['id'], claim['token'], 'new blocker')
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'])
+
+    def test_identical_evidence_does_not_repeat_review_wake(self):
+        for expected in (['coordinator'], []):
+            self.worker.evidence('tests', 'tests.log', 'R1', 'command', True)
+            self.assertEqual([m['id'] for m in self.worker._notifications()], expected)
+
+    def test_dependency_work_only_wakes_when_claimable(self):
+        first = self.task('dependency')
+        claim = self.worker.claim(first['id'])
+        self.worker._notifications()
+        self.task('dependent', [first['id']])
+        self.assertEqual(self.worker._notifications(), [])
+        self.worker.submit(first['id'], claim['token'], [{'artifact':'tests.log','revision':'R1'}])
+        self.parent.verify_task(first['id'], claim['token'], 'R1')
+        self.assertEqual(self.worker._notifications(), [], 'already verified submission is stale')
+        self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
+
+    def test_consumed_work_does_not_emit_stale_wake_hints(self):
+        self.parent._notifications()
+        self.worker._notifications()
+        message = self.worker.send('already-read', 'coordinator', 'Please review')
+        self.parent.ack(message['id'])
+        self.assertEqual(self.worker._notifications(), [])
+
+    def test_claimed_work_does_not_wake_idle_peers(self):
+        self.parent._notifications()
+        self.worker._notifications()
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.assertEqual(self.worker._notifications(), [])
 
     def test_wake_hints_are_targeted_deduplicated_and_terminal_safe(self):
         # Drain any startup hints before the behavior under test.
@@ -134,7 +353,7 @@ class WorkbenchBehavior(unittest.TestCase):
             self.worker.amend('wrong', [], [], 'silent change')
         self.parent.amend('new goal', [], [{'id': 'tests', 'kind': 'command', 'description': 'pass'}], 'scope agreed')
         self.assertEqual(self.worker.summary()['goal'], 'new goal')
-        self.assertEqual(self.worker.summary()['events'][-1]['actor'], 'coordinator')
+        self.assertEqual(self.worker.events(limit=100)['events'][-1]['actor'], 'coordinator')
 
     def test_invalid_limits_and_deadlines_are_rejected(self):
         for limit in (0, 11, True):

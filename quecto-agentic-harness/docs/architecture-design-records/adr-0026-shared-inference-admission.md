@@ -238,3 +238,26 @@ proxy/TLS/timeouts; callers must supply the original configured builder recipe,
 not silently substitute defaults. Disabled inference keeps its original client.
 Redirect responses are rejected; manually following redirects would require a new
 admitted attempt and is not implemented in this phase.
+
+### P3 authority and descendant status
+
+The same-user authority exists as `quecto admission-broker run`: an owner-only
+directory (`client/` for the socket a container may see; journal, lock and admin
+socket outside it), an exclusive `flock` taken before any socket is bound, a
+ledger written with file and directory fsync before every grant and before every
+completion acknowledgement, and a versioned framed JSON protocol with one bound
+connection per scope. Roots register on the private socket; descendants are
+registered by their parent and receive endpoint/epoch/scope/capability through a
+0600 sidecar (`--admission-context`), bound before socket readiness. Abandonment
+(connection loss, SIGKILL) keeps active attempts as uncertain occupancy and
+quarantines the group until the same capability completes them or an operator
+reset starts a successor epoch. Authority restart restores the epoch and orphans
+outstanding work; a corrupt ledger fails closed. Docker/Podman adapters mount the
+client directory by path and report `shared-directory-v1`; an enabled parent
+refuses containers without it.
+
+Real multi-process evidence (`tests/inference_admission_processes.rs`) covers two
+independent roots plus a third bounded at C=2 against a fake HTTP provider, a
+control burst without admission, descendant wait/forged-capability refusal,
+SIGKILL of a client and of the authority. Waiting/freshness observation, the full
+fairness/recovery end-to-end matrix and rollout runbooks remain P4.

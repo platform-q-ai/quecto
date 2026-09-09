@@ -42,6 +42,7 @@ impl AgentSession {
             && let Some(oldest) = self.last_subagent_notification.keys().next().cloned()
         {
             self.last_subagent_notification.remove(&oldest);
+            self.last_failure_notifications.remove(&oldest);
         }
         self.last_subagent_notification.insert(agent_id, sequence);
         true
@@ -86,6 +87,16 @@ impl AgentSession {
         {
             return NotificationEnqueueOutcome::Duplicate;
         }
+        if is_completion {
+            self.last_failure_notifications.remove(&agent_id);
+        } else if self.last_failure_notifications.get(&agent_id) == Some(&content) {
+            self.repeated_failure_notifications =
+                self.repeated_failure_notifications.saturating_add(1);
+            self.record_subagent_notification(agent_id, sequence);
+            self.bump_visible_generation();
+            return NotificationEnqueueOutcome::Duplicate;
+        }
+        let failure = (!is_completion).then(|| content.clone());
         // Coalesce: if a still-pending note for this same agent has not yet been
         // drained, replace it in place (latest wins) instead of queuing a second
         // turn — a noisy child must not cost N extra LLM turns. The pending
@@ -117,7 +128,10 @@ impl AgentSession {
                 content,
                 is_completion,
             );
-            self.record_subagent_notification(agent_id, sequence);
+            self.record_subagent_notification(agent_id.clone(), sequence);
+            if let Some(failure) = failure {
+                self.last_failure_notifications.insert(agent_id, failure);
+            }
             return NotificationEnqueueOutcome::Retained;
         }
         let note = PendingMessage::subagent_notification(
@@ -141,7 +155,10 @@ impl AgentSession {
             // so the identical sequence remains retryable (#1082 review).
             return NotificationEnqueueOutcome::Dropped;
         }
-        self.record_subagent_notification(agent_id, sequence);
+        self.record_subagent_notification(agent_id.clone(), sequence);
+        if let Some(failure) = failure {
+            self.last_failure_notifications.insert(agent_id, failure);
+        }
         NotificationEnqueueOutcome::Retained
     }
 }

@@ -324,6 +324,20 @@ through the production script adapter and strict parser:
 - [`scripts/container-runtime/inspect.sh`](../scripts/container-runtime/inspect.sh)
 - [`scripts/container-runtime/kill.sh`](../scripts/container-runtime/kill.sh)
 
+### Shared inference admission (#1679)
+
+When the parent runs with an `admission` section, `create` and `exec` receive
+`QUECTO_ADMISSION_DIR`: the authority's client directory. A script that can
+expose that directory to the child **at the same path** must do so and add
+`"admission_capability": "shared-directory-v1"` to its JSON result; the bundled
+Docker/Podman adapter bind-mounts the directory and reports the capability
+(joins report it only when the environment was created with the same
+directory). An admission-enabled parent refuses to launch when the capability
+is missing, so a script that cannot expose the directory simply omits the
+field and the launch fails before any inference. Nothing else in the contract
+changes for parents without admission.
+
+
 The reference runtime is **host-local**: it needs no Docker and runs
 everywhere (including CI). Each script takes `--state-dir <dir>` — a trusted
 root under which it keeps one directory per environment (checkout workspace,

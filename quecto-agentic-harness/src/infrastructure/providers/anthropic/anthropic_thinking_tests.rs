@@ -16,6 +16,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel};
 fn test_build_request_body_with_thinking_adds_thinking_param() {
     let messages = vec![Message::user("Think hard")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",
@@ -43,6 +45,8 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
 fn test_build_request_body_without_thinking_includes_temperature_for_older_models() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",
@@ -68,6 +72,8 @@ fn test_build_request_body_without_thinking_includes_temperature_for_older_model
 fn test_46_model_auto_enables_adaptive_thinking_when_level_is_none() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -105,6 +111,8 @@ fn test_46_model_auto_enables_adaptive_thinking_when_level_is_none() {
 fn test_sonnet_46_auto_enables_adaptive_thinking_when_level_is_none() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -127,6 +135,8 @@ fn test_sonnet_46_auto_enables_adaptive_thinking_when_level_is_none() {
 fn test_build_request_body_thinking_bumps_max_tokens() {
     let messages = vec![Message::user("Think")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-3-5-sonnet-20241022",
@@ -212,6 +222,8 @@ fn test_thinking_budget_tokens_adaptive_returns_none() {
 fn test_opus_4_6_adaptive_thinking_emits_correct_json() {
     let messages = vec![Message::user("Think hard")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -245,6 +257,8 @@ fn test_opus_4_6_adaptive_thinking_emits_correct_json() {
 fn test_sonnet_4_6_adaptive_thinking_emits_correct_json() {
     let messages = vec![Message::user("Reason please")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -267,6 +281,8 @@ fn test_sonnet_4_6_adaptive_thinking_emits_correct_json() {
 fn test_older_model_manual_thinking_still_uses_budget_tokens() {
     let messages = vec![Message::user("Think")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-5-20251101",
@@ -298,6 +314,8 @@ fn test_older_model_manual_thinking_still_uses_budget_tokens() {
 fn test_effort_emitted_in_output_config() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -333,6 +351,8 @@ fn test_effort_emitted_in_output_config() {
 fn test_effort_low_emitted_correctly() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -353,6 +373,8 @@ fn test_effort_low_emitted_correctly() {
 fn test_effort_high_emitted_correctly() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -373,6 +395,8 @@ fn test_effort_high_emitted_correctly() {
 fn test_effort_max_emitted_correctly() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -395,6 +419,8 @@ fn test_effort_max_emitted_correctly() {
 fn test_no_effort_defaults_to_low_for_46_models() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -431,6 +457,8 @@ fn test_no_effort_defaults_to_low_for_46_models() {
 fn test_no_effort_omits_output_config_for_non_46_models() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-5",
@@ -456,6 +484,8 @@ fn test_no_effort_omits_output_config_for_non_46_models() {
 fn test_adaptive_thinking_with_effort_combined() {
     let messages = vec![Message::user("Complex task")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",
@@ -612,6 +642,8 @@ async fn test_api_key_auth_sends_correct_beta_headers() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         // 4.6 model: interleaved-thinking should be OMITTED (built-in)
@@ -651,71 +683,5 @@ async fn test_api_key_auth_sends_correct_beta_headers() {
 }
 
 /// API-key auth for non-4.6 models sends both beta headers.
-#[tokio::test]
-async fn test_api_key_auth_sends_interleaved_thinking_for_non_46_models() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    let response_body = serde_json::json!({
-        "id": "msg_ga2",
-        "type": "message",
-        "role": "assistant",
-        "content": [{"type": "text", "text": "ok"}],
-        "stop_reason": "end_turn",
-        "usage": {"input_tokens": 5, "output_tokens": 2}
-    });
-    Mock::given(method("POST"))
-        .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-    let messages = vec![Message::user("Hi")];
-    let req = ChatRequest {
-        messages: &messages,
-        tools: &[],
-        // Non-4.6 model: interleaved-thinking should be present
-        model: "claude-sonnet-4-5",
-        max_tokens: 1024,
-        temperature: 0.7,
-        session_id: None,
-        tool_choice: None,
-        metadata: None,
-        thinking_level: None,
-        cancel_flag: None,
-        effort: None,
-    };
-    let result = provider.chat(req).await;
-    assert!(result.is_ok(), "chat should succeed: {:?}", result);
-
-    let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1);
-    let req = &requests[0];
-    let beta = req
-        .headers
-        .get("anthropic-beta")
-        .map(|v| v.to_str().unwrap_or(""))
-        .unwrap_or("");
-
-    assert!(
-        beta.contains("fine-grained-tool-streaming-2025-05-14"),
-        "fine-grained-tool-streaming should be present, got: {:?}",
-        beta
-    );
-    assert!(
-        beta.contains("interleaved-thinking-2025-05-14"),
-        "interleaved-thinking should be present for non-4.6 models, got: {:?}",
-        beta
-    );
-    // Should NOT have identity or oauth betas (API key auth)
-    assert!(
-        !beta.contains("claude-code"),
-        "identity beta should only appear for OAuth, got: {:?}",
-        beta
-    );
-}
-
-// ===========================================================================
+#[path = "anthropic_thinking_headers_tests.rs"]
+mod headers_tests;

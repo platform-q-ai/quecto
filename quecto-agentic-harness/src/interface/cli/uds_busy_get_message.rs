@@ -10,6 +10,9 @@ pub(super) struct BusyCommandCtx<'a> {
 
 /// Handle commands that must bypass the dispatch loop while a prompt is active.
 pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
+    if super::uds_latest_report::intercept(&ctx).await {
+        return true;
+    }
     if let Some(result) = super::uds_tool_intercept::try_intercept_tool_result(ctx.line) {
         super::uds_ext_protocol::handle_tool_result(super::uds_ext_protocol::ToolResultArgs {
             client_id: ctx.client_id,

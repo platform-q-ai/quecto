@@ -15,7 +15,9 @@ pub mod ids;
 pub mod message;
 pub mod provider;
 pub mod provider_error;
+pub mod provider_retry;
 pub mod redaction;
+pub mod request_observation;
 pub mod session;
 pub mod subagent;
 pub mod subagent_launch;
@@ -33,6 +35,7 @@ pub mod workflow;
 
 pub mod inference_admission;
 pub mod inference_admission_policy;
+pub mod inference_admission_view;
 
 pub mod inference_cooldown;
 pub mod swarm;

@@ -14,6 +14,7 @@ pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), Domai
 pub enum RunStatus {
     Setup,
     Running,
+    Paused,
     Succeeded,
     Blocked,
     Failed,
@@ -23,7 +24,27 @@ pub enum RunStatus {
 
 impl RunStatus {
     pub fn terminal(self) -> bool {
-        !matches!(self, Self::Setup | Self::Running)
+        matches!(
+            self,
+            Self::Succeeded
+                | Self::Blocked
+                | Self::Failed
+                | Self::Cancelled
+                | Self::BudgetExhausted
+        )
+    }
+
+    /// Terminal tools remain read-only; the coordinator can still explain the result.
+    pub fn admits_inference(self, coordinator: bool) -> bool {
+        match self {
+            Self::Setup | Self::Running => true,
+            Self::Paused => false,
+            Self::Succeeded
+            | Self::Blocked
+            | Self::Failed
+            | Self::Cancelled
+            | Self::BudgetExhausted => coordinator,
+        }
     }
 
     pub fn abort_coordinator(self) -> bool {
@@ -54,6 +75,7 @@ pub struct Member {
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
+    pub control_generation: u64,
     pub status: RunStatus,
     pub coordinator: String,
     pub deadline: f64,
@@ -83,6 +105,10 @@ pub trait ProcessObservation {
 pub trait ProcessControl: Sync {
     /// Cancel this member's detached execution registry independently of turn abort.
     fn cancel_local_executions(&self);
+    /// Cancel current jobs while retaining admission for a later resume.
+    fn suspend_local_executions(&self, snapshot: &Snapshot);
+    /// Suspend only this process; never signal a future turn or another member.
+    fn suspend_local_inference(&self, snapshot: &Snapshot);
     fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
     /// Adapters must validate the process identity before signalling it.
     fn terminate<'a>(
@@ -109,4 +135,45 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         processes: &'a dyn ProcessControl,
     ) -> LaunchFuture<'a, Result<(), DomainError>>;
     fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
+}
+
+#[derive(Clone, Debug)]
+pub enum RunControlAction {
+    Wake {
+        generation: u64,
+    },
+    UsageBudget {
+        token_limit: Option<u64>,
+        strict_unknown: bool,
+    },
+    Pause {
+        reason: String,
+    },
+    Resume,
+    Status,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunControlReceipt {
+    pub budget: Option<UsageBudgetStatus>,
+    pub wake_allowed: bool,
+    pub status: RunStatus,
+    pub generation: u64,
+}
+
+/// Supervisor operations remain available without model execution or turn-queue admission.
+pub trait SwarmRunControl: Send + Sync {
+    fn apply(
+        &self,
+        action: RunControlAction,
+    ) -> LaunchFuture<'_, Result<RunControlReceipt, DomainError>>;
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct UsageBudgetStatus {
+    pub token_limit: Option<u64>,
+    pub strict_unknown: bool,
+    pub warned: bool,
+    pub observed_tokens: u64,
+    pub unknown_usage_requests: u64,
 }

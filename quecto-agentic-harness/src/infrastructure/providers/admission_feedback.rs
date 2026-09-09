@@ -110,7 +110,9 @@ pub fn is_typed_throttle(value: &serde_json::Value) -> bool {
     for error in errors.into_iter().flatten() {
         for field in ["type", "code"] {
             match error.get(field).and_then(serde_json::Value::as_str) {
-                Some("insufficient_quota" | "billing_hard_limit_reached") => return false,
+                Some(
+                    "insufficient_quota" | "billing_hard_limit_reached" | "usage_limit_reached",
+                ) => return false,
                 Some("rate_limit_error" | "overloaded_error" | "rate_limit_exceeded") => {
                     throttle = true
                 }

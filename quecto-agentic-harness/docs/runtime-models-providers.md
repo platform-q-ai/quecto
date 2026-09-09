@@ -203,3 +203,11 @@ When a user asks you to add or change a provider/model, follow this exactly:
 3. OAuth references must be one of the kernel-known identities (`openai`, `anthropic`); otherwise the provider must be an API-key/sidecar provider.
 4. Changes are hot-loaded on consume; no restart is required.
 5. When in doubt about the schema, read this doc with `docs {"name": "models-providers"}` rather than guessing.
+
+## Retry-After hints and the wait budget
+
+A provider `retry-after` (seconds) or `retry-after-ms` hint is honoured up to
+the session's retry wait budget (30 seconds by default). A hint above that
+budget is not clamped: the request fails immediately with the provider error so
+the caller can decide, instead of silently waiting longer than the budget. This
+applies to every session, not only swarm runs.

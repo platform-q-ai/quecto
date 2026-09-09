@@ -16,6 +16,8 @@ use crate::domain::provider::ChatRequest;
 fn test_oauth_prepends_identity_system_prompt() {
     let messages = vec![Message::system("Be helpful"), Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",
@@ -45,6 +47,8 @@ fn test_oauth_prepends_identity_system_prompt() {
 fn test_oauth_without_system_prompt_still_has_identity() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",
@@ -70,6 +74,8 @@ fn test_oauth_without_system_prompt_still_has_identity() {
 fn test_api_key_does_not_prepend_identity_system_prompt() {
     let messages = vec![Message::system("Be helpful"), Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",
@@ -183,6 +189,8 @@ fn test_tool_defs_remapped_in_oauth_mode() {
     }];
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-5",
@@ -212,6 +220,8 @@ fn test_tool_defs_not_remapped_in_api_key_mode() {
     }];
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-5",
@@ -361,6 +371,8 @@ async fn test_accept_header_is_sent() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-5",

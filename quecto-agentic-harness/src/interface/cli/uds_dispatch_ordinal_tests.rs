@@ -39,3 +39,13 @@ async fn same_process_persist_then_prune_keeps_live_ordinals_durable_and_monoton
         43
     );
 }
+
+#[test]
+fn unpersisted_history_never_fabricates_an_ordinal_from_vector_position() {
+    let mut durable = Message::user("durable");
+    durable.ordinal = Some(100);
+    let pending = Message::assistant("current report", vec![]);
+    let page = messages_page_json(&[durable, pending.clone()], HISTORY_PAGE_SIZE, None);
+    assert_eq!(page["messages"][1]["ordinal"], serde_json::Value::Null);
+    assert_eq!(page["messages"][1]["id"], pending.id().to_string());
+}

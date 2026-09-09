@@ -103,6 +103,37 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             .await;
             true
         }
+        Some("get_report" | "get_state") if value.get("agent_id").is_some() => {
+            let Ok(command) = serde_json::from_str::<super::protocol::AgentCommand>(line) else {
+                return false;
+            };
+            let Some(agent_id) = value["agent_id"].as_str().map(str::to_owned) else {
+                return false;
+            };
+            let command_type = command.type_name().to_owned();
+            // Forwarders run concurrently (replies may reorder relative to
+            // queued commands) but are bounded per process so a client cannot
+            // fan out unlimited in-flight descendant queries.
+            static FORWARDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+            let Ok(permit) = FORWARDERS.try_acquire() else {
+                let event = super::protocol::AgentEvent::err(
+                    id.as_deref(),
+                    &command_type,
+                    "descendant query capacity exhausted; retry after in-flight queries return",
+                );
+                write_event(clients, client_id, id.as_deref(), &command_type, &event).await;
+                return true;
+            };
+            let subagents = subagents.clone();
+            let clients = clients.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let event =
+                    forward_child_command(&subagents, id.as_deref(), &agent_id, value).await;
+                write_event(&clients, client_id, id.as_deref(), &command_type, &event).await;
+            });
+            true
+        }
         Some("sync") if value.get("agent_id").is_some() => {
             let (Some(agent_id), Some(epoch), Some(since_rev)) = (
                 value.get("agent_id").and_then(|v| v.as_str()),
@@ -140,6 +171,26 @@ async fn forward_child_sync(
     epoch: u64,
     since_rev: u64,
 ) -> AgentEvent {
+    forward_child_command(
+        subagents,
+        id,
+        agent_id,
+        serde_json::json!({ "type":"sync", "epoch":epoch, "sinceRev":since_rev }),
+    )
+    .await
+}
+
+/// Forward an already validated command to its owning descendant without running a model turn.
+pub(super) async fn forward_child_command(
+    subagents: &Option<SubagentRegistry>,
+    id: Option<&str>,
+    agent_id: &str,
+    mut cmd: serde_json::Value,
+) -> AgentEvent {
+    let command_type = cmd["type"]
+        .as_str()
+        .expect("validated command type")
+        .to_owned();
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
@@ -147,13 +198,16 @@ async fn forward_child_sync(
         InspectionRoute, resolve_inspection_route,
     };
     let Some(registry) = subagents.as_ref() else {
-        return AgentEvent::err(id, "sync", "no sub-agent registry available");
+        return AgentEvent::err(id, &command_type, "no sub-agent registry available");
     };
     let route = match resolve_inspection_route(registry, agent_id) {
         Ok(route) => route,
-        Err(e) => return AgentEvent::err(id, "sync", e),
+        Err(e) => return AgentEvent::err(id, &command_type, e),
     };
-    let mut cmd = serde_json::json!({ "type": "sync", "epoch": epoch, "sinceRev": since_rev });
+    cmd.as_object_mut()
+        .expect("validated command object")
+        .remove("agent_id");
+    cmd["id"] = serde_json::json!(id);
     if let InspectionRoute::ViaAncestor { target_id, .. } = &route {
         cmd["agent_id"] = serde_json::json!(target_id);
     }
@@ -168,18 +222,19 @@ async fn forward_child_sync(
     match send_subagent_uds_command_with_timeout(socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => match super::uds::uds_forward_response::parse_forwarded_response(&line, "sync")
-        {
-            Ok(data) => AgentEvent::ok(id, "sync", Some(data)),
-            Err(error) => AgentEvent::err(id, "sync", error),
-        },
-        Err(e) => AgentEvent::err(id, "sync", e.to_string()),
+        Ok(line) => {
+            match super::uds::uds_forward_response::parse_forwarded_response(&line, &command_type) {
+                Ok(data) => AgentEvent::ok(id, &command_type, Some(data)),
+                Err(error) => AgentEvent::err(id, &command_type, error),
+            }
+        }
+        Err(e) => AgentEvent::err(id, &command_type, e.to_string()),
     }
 }
 
 /// Write a response line to this client's targeted writer channel, guarding
 /// the protocol frame limit the same way the dispatch path does.
-async fn write_event(
+pub(super) async fn write_event(
     clients: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
     id: Option<&str>,

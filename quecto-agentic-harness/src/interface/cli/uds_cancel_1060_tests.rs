@@ -108,6 +108,8 @@ async fn scripted_provider_trait_surface_methods_are_invoked() {
     assert!(provider.as_any().is::<ScriptedProvider>());
 
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test",
@@ -143,6 +145,8 @@ async fn scripted_provider_trait_surface_methods_are_invoked() {
     assert_eq!(streaming.name(), "streaming-1060");
     assert!(streaming.as_any().is::<StreamingProvider>());
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test",
@@ -214,6 +218,8 @@ fn tool_call_response(name: &str) -> LlmResponse {
 
 fn provider_request<'a>(messages: &'a [Message]) -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools: &[],
         model: "stub",

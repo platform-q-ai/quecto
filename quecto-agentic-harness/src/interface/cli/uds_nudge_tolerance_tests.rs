@@ -67,6 +67,8 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
     assert!(provider.as_any().is::<()>());
 
     let request = crate::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test",
@@ -90,6 +92,8 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
     );
 
     let request = crate::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test",

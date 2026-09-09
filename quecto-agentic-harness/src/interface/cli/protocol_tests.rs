@@ -548,6 +548,9 @@ fn test_response_without_id_omits_id_field() {
 #[test]
 fn test_session_state_serializes() {
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: None,
         model: "gpt-5".to_string(),
         generation: 1,
@@ -570,6 +573,9 @@ fn test_session_state_serializes() {
 #[test]
 fn test_session_state_with_workflow_serializes() {
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: None,
         model: "gpt-5".to_string(),
         generation: 1,
@@ -596,6 +602,9 @@ fn test_session_state_with_workflow_serializes() {
 #[test]
 fn test_session_state_without_workflow_omits_field() {
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: None,
         model: "gpt-5".to_string(),
         generation: 1,
@@ -638,6 +647,8 @@ fn test_workflow_state_event_serializes() {
 #[test]
 fn test_session_stats_serializes() {
     let stats = SessionStats {
+        runtime: None,
+        request_diagnostics: Default::default(),
         session_key: "cli:test".to_string(),
         user_messages: 2,
         assistant_messages: 2,
@@ -732,19 +743,5 @@ fn build_subagent_info_list_includes_parent_and_workflow() {
     assert_eq!(info.workflow.as_ref().unwrap().steps_completed, 1);
 }
 
-#[test]
-fn unit_tree_parent_of_unknown_agent_is_none() {
-    let tree = UnitTree::from_events(&[serde_json::json!({"agent_id":"root","parent_id":null})]);
-    assert_eq!(tree.parent_of("nope"), None);
-    assert_eq!(tree.parent_of("root"), None);
-}
-
-#[test]
-fn workspace_event_serializes_1350() {
-    let event = AgentEvent::Workspace {
-        path: "/tmp/ws".into(),
-    };
-    let json = event.to_json_line();
-    assert!(json.contains("\"type\":\"workspace\""), "{json}");
-    assert!(json.contains("\"path\":\"/tmp/ws\""), "{json}");
-}
+#[path = "protocol_workspace_tests.rs"]
+mod workspace_tests;

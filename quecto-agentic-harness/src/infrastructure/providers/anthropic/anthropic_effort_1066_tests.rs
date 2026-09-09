@@ -12,6 +12,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel};
 fn body_with_effort(effort: Option<EffortLevel>) -> serde_json::Value {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-4-6",

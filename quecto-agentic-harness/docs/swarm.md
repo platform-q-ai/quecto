@@ -193,7 +193,7 @@ invalidates prior overall evidence. The creation event preserves the original
 contract. Existing audit events from older versions are not retroactively reconstructed.
 
 `op=summary` reports goal, status, membership usage/limit, task counts and the first 50 task/file details,
-blockers, evidence and recent actor/timestamp audit events. Total counts include
+blockers and evidence. History is opt-in through `op=events` (`after`, `limit` 1–100); `since=event_cursor` suppresses unchanged summary payloads. Total counts include
 entries beyond the first page. File reservations are bounded to 1000 per run. The full
 audit remains in SQLite. `stop(status, reason)` distinguishes `blocked`, `failed`,
 `cancelled`, and `budget-exhausted`; success is `succeeded`. `op=cancel_run` is the
@@ -202,7 +202,7 @@ settlement cancels local foreground and background Python processes before attem
 then terminates workers through the process adapter. Every member's watcher checks
 for remote terminal outcomes at 500 ms intervals, including while idle, and cancels
 its own execution registry, including coordinator Python. The coordinator harness
-remains available for reporting after success or cancellation; put final report
+remains available for reporting after every terminal outcome; put final report
 data on the board before calling `complete` or `stop`, since the interpreter may
 be killed as soon as the watcher observes the outcome. The registry closes against concurrent new launches. Each Python invocation owns
 its ordinary process group until cleanup: even if Python returns first, remaining
@@ -217,7 +217,7 @@ Reconciliation preserves readable partial progress and retains uncertain ownersh
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
 even when agents are idle, and Python execution timeouts cannot exceed the remaining
-run time (one-second timeout granularity). No turn or token hard caps are promised.
+run time (one-second timeout granularity). There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
 The helper holds no SQLite transaction across model/tool execution or lifecycle
 notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
@@ -297,16 +297,77 @@ For a clarification or approval, keep the run **running**, mark the affected tas
 with `board.block(task_id, claim_token, reason)`, report the exact question to the
 master and yield the turn. Do not sleep/poll or use `board.stop('blocked', ...)`
 as a pause: a blocked **run** is terminal, closes Python execution and settles
-workers. A blocked **task** retains its claim and can be submitted after the
-answer arrives and work is completed. The original deadline continues to apply.
+workers. A blocked **task** retains its claim; use `unblock(id, token, reason)` after the answer arrives. For a whole-run wait, use durable `pause`/`resume`: the deadline is extended by the paused interval.
 
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
 it must interrupt a busy coordinator. A queued `follow_up` waits for the current
 turn to finish. The coordinator should explicitly acknowledge the answer and
 apply it to the task before optional inbox work. Transport acceptance means the
 command was queued, not that the model read or acted on it; retrieve the report
-with `get_messages` to verify handling. A full/closed dispatch queue returns an
+with `get_report` to verify handling. `get_state.controlReceipts` correlates queue/start/completion/failure/cancellation with the command ID; turn completion is not proof of semantic compliance. A full/closed dispatch queue returns an
 explicit failure without cancelling the current turn or recording pending steering.
 Explicit `abort` remains effective even when the dispatch queue is full. A terminal run
 cannot be revived by steering: preserve its report and start a fresh environment
 when further implementation is authorized.
+
+### Local trial regression handling
+
+Wake recipients are selected against the current transactional board state: consumed messages and already-claimed tasks do not generate stale hints, and dependency work wakes peers only when it is claimable. Identical blocker and evidence updates are no-ops; changed blockers still notify the coordinator. Contract amendments still notify members. Hints already accepted by a recipient may become stale before execution; always inspect the summary and durable inbox before acting.
+
+Reusable tool-runtime construction receives swarm context explicitly from the production entrypoint; it does not discover or join a pool from ambient environment variables. Ordinary Bash commands strip the six `QUECTO_SWARM_*` launch-context variables. Consequently test binaries and harness subprocesses started by build/test commands do not enroll in the live pool. Use managed `spawn` for actual swarm members; do not use Bash to launch participating agents. This separation is cooperative environment hygiene, not a security boundary.
+
+An accepted steering request takes priority over buffered follow-up work at the idle boundary. Forwarded prompt/steer/follow-up requests retain their correlation ID; the immediate response carries `data.status: "accepted"`. Acceptance is queue admission. A subsequent `queued` response confirms pending retention; a full pending queue returns a correlated failure instead of dropping work silently. Inspect the agent transcript to verify actual handling; neither acceptance nor turn completion proves that requested work succeeded. For busy agents with no final answer in the unread report, bounded report selection favors the newest progress. Explicit history pages remain available for omitted older entries.
+
+## Operational diagnostics and budgets
+
+The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
+contains supervisor command examples, receipt semantics, raw export and budget
+configuration. `swarm_control` pause/resume/status/usage_budget bypass the model
+queue and route through ancestors to the addressed member. Swarm creation and a
+general dashboard event API remain separate follow-on work.
+
+Each attempted logical request records available provider input/output/cache
+usage, unavailable values as null, retry and OAuth-refresh counters, outcome,
+duration, context estimate, and a hash of the logical system/tool prefix. The
+prefix comparison includes rejected logical requests and does not prove provider
+cache eligibility. Counters describe instrumented orchestration calls, not
+independently observed HTTP transactions or billing. Audit fallback usage is
+labelled `context_estimate`; provider objects are labelled `provider_usage_object`.
+Session diagnostics retain the latest 64 requests plus cumulative counts. The
+swarm SQLite ledger retains up to 10,000 request observations and fails explicitly
+at capacity. Duplicate request IDs are counted once. An accounting outbox retains
+cancelled and unacknowledged observations for idempotent retry at turn boundaries;
+persistence failure stops automatic work.
+
+`op=usage` exposes per-member totals and the latest 10 observations. Budget limits
+count observed context-input plus output tokens, warn once at 80%, and pause at
+the limit. Strict unknown-usage handling pauses on an attempted request lacking
+usage. Budgets default off; explicit null disables them. Concurrent requests can
+overshoot before their usage arrives. This is not a provider billing guarantee.
+
+Runtime provenance reports process identity, package version, optional build-time
+revision/dirty status, and a background-computed executable SHA-256. A workload
+checkout revision is never substituted for the harness build revision. Digest
+collection can be pending or unavailable and does not block session inspection.
+
+`get_report` is cursor-neutral and bounded to 8,192 content bytes. Its explicit
+`export_raw:true` option produces retained message/spill JSONL and a SHA-256
+manifest under the target runtime's `artifacts/session-exports` directory. Exports
+are retained until user cleanup; each is limited to 256 MiB. Message state is
+captured at an epoch/revision; spill reads follow that snapshot and may exclude
+concurrent appends. The manifest states this scope. Previously cleared/evicted
+messages are not reconstructed. Use normal container artifact transport to copy
+these files to the host.
+
+Resume restores admission and extends the deadline. A run paused because a
+strict budget saw an answered request without usage re-pauses on the next
+admission until `strict_unknown` is disabled (or the budget removed); raising
+the limit alone does not clear it. Cancelled and rejected attempts never count
+as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
+turn suspends that turn: the pause receipt is durable on the board but the
+calling turn ends without a tool result. Send an explicit prompt to
+continue processing retained instructions. Paused queued instructions remain
+retained without an inference attempt. Terminal completion notices do not start
+automatic report turns. Raw exports contain retained wire message records, run
+with at most two concurrent exports, and release the multi-client reader so
+supervisor controls remain available during spill reads.

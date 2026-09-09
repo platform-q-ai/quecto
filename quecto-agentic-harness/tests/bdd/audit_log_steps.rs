@@ -90,6 +90,7 @@ fn given_llm_turn_end(
     duration_ms: u64,
 ) {
     let event = AuditEvent::LlmTurnEnd {
+        usage_source: None,
         input_tokens,
         output_tokens,
         stop_reason,
@@ -620,6 +621,7 @@ fn when_llm_end_emitted(world: &mut QuectoWorld, turn: u32) {
         log,
         turn,
         AuditEvent::LlmTurnEnd {
+            usage_source: None,
             input_tokens: 5000,
             output_tokens: 500,
             stop_reason: "end_turn".into(),

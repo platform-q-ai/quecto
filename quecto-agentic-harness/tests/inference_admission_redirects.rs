@@ -50,6 +50,8 @@ fn request() -> ChatRequest<'static> {
             )]
         });
     ChatRequest {
+        trace: None,
+        admission: None,
         model: "fixture",
         messages: &MESSAGES,
         tools: &[],

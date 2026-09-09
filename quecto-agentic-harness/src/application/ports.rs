@@ -14,8 +14,15 @@ pub use super::catalogue_refresh::{
     RefreshBounds, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
     RefreshableCatalogueSource,
 };
-pub use super::inference_admission::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
+pub use super::inference_admission::{
+    AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
+};
 pub use super::inference_attempt::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
+pub use super::inference_authority::{
+    AdmissionAuthority, AuthorityError, AuthorityStatus, Credential,
+};
+pub use super::inference_authority_ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
+pub use super::inference_observation::AdmissionObservation;
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
 
 #[cfg(any(test, feature = "test-support"))]

@@ -16,6 +16,9 @@ pub struct AuditIssue {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum AuditEvent {
+    RequestObserved {
+        observation: super::request_observation::RequestObservation,
+    },
     ToolCall {
         tool: String,
         call_id: String,
@@ -33,6 +36,8 @@ pub enum AuditEvent {
         message_count: usize,
     },
     LlmTurnEnd {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage_source: Option<String>,
         input_tokens: usize,
         output_tokens: usize,
         stop_reason: String,

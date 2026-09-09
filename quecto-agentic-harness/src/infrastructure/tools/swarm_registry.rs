@@ -107,6 +107,21 @@ pub(crate) fn register_context_jobs(
 }
 
 pub(crate) fn cancel_context_jobs(context: &super::super::swarm_bridge::SwarmContext) {
+    cancel_context(context, true, None);
+}
+
+pub(crate) fn suspend_context_jobs(
+    context: &super::super::swarm_bridge::SwarmContext,
+    generation: u64,
+) {
+    cancel_context(context, false, Some(generation));
+}
+
+fn cancel_context(
+    context: &super::super::swarm_bridge::SwarmContext,
+    close: bool,
+    through_generation: Option<u64>,
+) {
     let jobs: Vec<_> = CONTEXT_JOBS
         .lock()
         .unwrap()
@@ -115,7 +130,7 @@ pub(crate) fn cancel_context_jobs(context: &super::super::swarm_bridge::SwarmCon
         .filter_map(|(_, _, weak)| weak.upgrade())
         .collect();
     for registry in jobs {
-        super::cancel_jobs(&registry);
+        cancel_jobs_with_admission(&registry, close, through_generation);
     }
 }
 
@@ -168,11 +183,19 @@ impl Drop for ForegroundRegistration {
 }
 
 pub(crate) fn cancel_jobs(jobs: &JobRegistry) {
+    cancel_jobs_with_admission(jobs, true, None);
+}
+
+fn cancel_jobs_with_admission(jobs: &JobRegistry, close: bool, through_generation: Option<u64>) {
     if let Ok(mut jobs) = jobs.lock() {
-        jobs.stopped = true;
+        if close {
+            jobs.stopped = true;
+        }
         for job in jobs.values() {
             if let Ok(mut job) = job.lock() {
-                if !is_terminal(&job.status) {
+                if through_generation.is_none_or(|generation| job.admitted_generation <= generation)
+                    && matches!(job.status.as_str(), "running" | "cancelling")
+                {
                     job.cancel_requested = true;
                     if let Some(pid) = job.pid {
                         super::terminate_member(pid);

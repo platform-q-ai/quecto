@@ -295,7 +295,7 @@ pub(super) async fn handle_new_session(
     sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
-    ctx.session.drain_pending();
+    ctx.session.discard_pending();
     if let Some(registry) = &ctx.subagent_registry {
         registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -447,7 +447,7 @@ pub(super) async fn handle_resume_session(
         ctx.session.bump_visible_generation();
     }
     ctx.session.clear_usage();
-    ctx.session.drain_pending();
+    ctx.session.discard_pending();
     let workflow_run = loaded.workflow_run;
     restore_persisted_subagent_roster(&ctx.subagent_registry, loaded.subagent_roster);
     *ctx.messages = loaded.messages;
@@ -497,7 +497,7 @@ pub(super) async fn handle_clear_history(
     emit_ledger_advanced(ctx, advance).await;
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
-    ctx.session.drain_pending();
+    ctx.session.discard_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
     if let Some(spill) = ctx.agent.spill_store()
         && let Err(e) = spill.clear(ctx.session_key).await
@@ -547,7 +547,7 @@ pub(super) async fn handle_rewind_to(
 
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
-    ctx.session.drain_pending();
+    ctx.session.discard_pending();
     // Reset the stable-ref ledger to the truncated conversation so a
     // rewound-away message is no longer recoverable via get_message (same
     // intent as the spill clear below — truncated content must not be

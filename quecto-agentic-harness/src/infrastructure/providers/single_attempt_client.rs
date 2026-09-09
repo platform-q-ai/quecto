@@ -15,6 +15,15 @@
 ///
 /// Clones share a connection pool. Redirect responses are returned to the leaf
 /// and rejected as non-200 responses; retry wrappers remain the attempt owners.
+/// The one builder recipe shared by the ordinary provider client and the
+/// admission-owned single-attempt client, so both carry the same timeouts.
+pub fn default_client_builder() -> reqwest::ClientBuilder {
+    // No overall timeout: SSE streams legitimately run for minutes. The
+    // connect timeout gates the handshake; per-request timeouts are set at
+    // the call site when needed.
+    reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10))
+}
+
 #[derive(Debug, Clone)]
 pub struct SingleAttemptClient(reqwest::Client);
 

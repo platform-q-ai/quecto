@@ -50,6 +50,7 @@ pub struct SwarmTool {
 
 #[derive(Debug)]
 pub(crate) struct JobState {
+    pub(crate) admitted_generation: u64,
     pub(crate) execution_id: String,
     pub(crate) background: bool,
     pub(crate) status: String,
@@ -155,7 +156,8 @@ impl Tool for SwarmTool {
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
-                op @ ("create" | "summary" | "reconcile" | "cancel_run") => {
+                op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
+                | "events" | "usage" | "usage_budget") => {
                     match super::swarm_control::control(context, op, v.clone()).await {
                         Ok(value) => {
                             if value["status"] == "cancelled" {
@@ -269,7 +271,11 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     }
     let stdout_path = artifact_dir.join("stdout.txt");
     let stderr_path = artifact_dir.join("stderr.txt");
+    let admitted_generation = summary["event_cursor"]
+        .as_u64()
+        .ok_or_else(|| DomainError::Tool("swarm execution generation unavailable".into()))?;
     let state = Arc::new(Mutex::new(JobState {
+        admitted_generation,
         execution_id: exec_id.clone(),
         background: spec.background,
         status: "running".into(),

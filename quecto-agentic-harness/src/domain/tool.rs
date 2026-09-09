@@ -554,3 +554,14 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tests;
+
+/// Dynamic execution admission, evaluated immediately before every tool effect.
+pub trait ToolExecutionAdmission: Send + Sync {
+    fn check<'a>(
+        &'a self,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), super::error::DomainError>> + Send + 'a>,
+    >;
+}

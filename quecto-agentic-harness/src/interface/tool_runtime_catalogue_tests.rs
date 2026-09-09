@@ -34,6 +34,7 @@ fn build_runtime_with_entrypoint(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
+        swarm_context: None,
         entrypoint,
         profile_context,
         base_dir: tmp.path(),

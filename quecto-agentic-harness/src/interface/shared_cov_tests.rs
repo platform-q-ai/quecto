@@ -456,6 +456,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         let mut stderr = String::new();
         crate::interface::shared::build_tool_runtime(
             crate::interface::shared::ToolRuntimeBuildArgs {
+                swarm_context: None,
                 profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
                 entrypoint,
                 base_dir: tmp.path(),

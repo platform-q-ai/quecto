@@ -11,8 +11,16 @@ mod admission_fallback;
 mod admission_feedback;
 #[path = "contracts/admission_group_fallback.rs"]
 mod admission_group_fallback;
+#[path = "contracts/admission_journal.rs"]
+mod admission_journal;
+#[path = "contracts/admission_observation.rs"]
+mod admission_observation;
+#[path = "contracts/admission_recovery.rs"]
+mod admission_recovery;
 #[path = "contracts/admission_registry.rs"]
 mod admission_registry;
+#[path = "contracts/admission_secret_source.rs"]
+mod admission_secret_source;
 #[path = "contracts/admission_typed_feedback.rs"]
 mod admission_typed_feedback;
 #[path = "contracts/admission_typed_feedback_cases.rs"]
@@ -82,3 +90,14 @@ mod process_control;
 mod process_observation;
 #[path = "contracts/swarm_lifecycle.rs"]
 mod swarm_lifecycle;
+
+#[path = "contracts/request_accounting.rs"]
+mod request_accounting;
+#[path = "contracts/request_admission.rs"]
+mod request_admission;
+#[path = "common/swarm_control_fixture.rs"]
+mod swarm_control_fixture;
+#[path = "contracts/swarm_run_control.rs"]
+mod swarm_run_control;
+#[path = "contracts/tool_execution_admission.rs"]
+mod tool_execution_admission;

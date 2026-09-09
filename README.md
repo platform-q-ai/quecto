@@ -159,6 +159,7 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 - Extensions and external tools: [quecto-agentic-harness/docs/extensions.md](quecto-agentic-harness/docs/extensions.md)
 - Model providers and runtime configuration: [quecto-agentic-harness/docs/runtime-models-providers.md](quecto-agentic-harness/docs/runtime-models-providers.md)
 - UDS wire protocol: [quecto-agentic-harness/docs/uds-protocol.md](quecto-agentic-harness/docs/uds-protocol.md)
+- Shared inference admission (bounding provider requests across sessions): [quecto-agentic-harness/docs/inference-admission.md](quecto-agentic-harness/docs/inference-admission.md)
 - HTTP/WebSocket gateway: [quecto-api/README.md](quecto-api/README.md)
 - Terminal UI: [quecto-tui/README.md](quecto-tui/README.md)
 - MCP bridge: [quecto-mcp/README.md](quecto-mcp/README.md)

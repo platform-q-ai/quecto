@@ -122,6 +122,8 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let request = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: &model,
@@ -185,6 +187,8 @@ fn when_provider_builds_responses_request(world: &mut QuectoWorld) {
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let request = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: &model,
@@ -214,6 +218,8 @@ fn given_codex_request_body_with_session_id(
 ) {
     let messages = vec![Message::user("Hi")];
     let request = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,
@@ -239,6 +245,8 @@ fn given_codex_request_body_with_session_id(
 fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: String) {
     let messages = vec![Message::user("Hi")];
     let request = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,

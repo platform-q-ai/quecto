@@ -83,3 +83,32 @@ Feature: Container swarm coordination
       | mode       |
       | foreground |
       | background |
+
+  Scenario: Claimed work does not wake an idle peer
+    Given an idle swarm peer with an unavailable endpoint
+    When the coordinator creates and immediately claims a task
+    Then no swarm wake delivery is attempted
+
+  Scenario: Resolved approval keeps the original claim and reservations
+    When an owned blocked swarm task is unblocked
+    Then the resumed swarm task retains its claim and reserved file
+
+  Scenario: Durable pause retains the board and allows explicit resume
+    When a swarm member creates an acceptance task
+    And the supervisor durably pauses the swarm
+    Then the swarm run status is "paused"
+    And the swarm summary retains one task
+    When the supervisor resumes the swarm
+    Then the swarm run status is "running"
+    And a later swarm execution sees the acceptance task
+
+  Scenario: Repeated paused inspection returns a compact delta
+    When the supervisor durably pauses the swarm
+    And the supervisor inspects the unchanged swarm cursor
+    Then the swarm inspection is unchanged without task history
+
+  @done @swarm-supervision
+  Scenario: Supervisor pauses active work and receives approval handling and retained evidence
+    When the supervisor pauses active work then delivers approval and exports evidence
+    Then the swarm approval has a completed receipt and a retained terminal report
+    And the observed usage budget pauses the run and request accounting is available

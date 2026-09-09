@@ -56,6 +56,8 @@ fn test_messages() -> Vec<Message> {
 
 fn test_request(messages: &[Message]) -> ChatRequest<'_> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools: &[],
         model: "gpt-4",
@@ -72,6 +74,8 @@ fn test_request(messages: &[Message]) -> ChatRequest<'_> {
 
 fn make_request<'a>(messages: &'a [Message], model: &'a str) -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools: &[],
         model,
@@ -399,6 +403,8 @@ async fn test_chat_forwards_tools_without_cloning() {
         parameters_schema: "{}".into(),
     }];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-4",

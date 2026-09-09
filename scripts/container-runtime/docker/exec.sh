@@ -116,5 +116,14 @@ jq -cn --arg container "$container" --arg socket "$socket_path" \
   '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"
 printf '%s\n' "$id" >>"$state_dir/execs.log"
 
+# Joiners can only claim the admission capability the environment was created
+# with: the client directory mounted at create time (#1679 P3).
+admission_capability=""
+admission_dir="${QUECTO_ADMISSION_DIR:-}"
+if [ -n "$admission_dir" ] && [ -f "$env_dir/admission-dir" ] \
+  && [ "$(cat "$env_dir/admission-dir")" = "$admission_dir" ]; then
+  admission_capability="shared-directory-v1"
+fi
 jq -cn --arg cli "$cli" --arg socket "$socket_path" --arg container "$container" \
-  '{metadata: {runtime: $cli, container: $container}, socket_path: $socket}'
+  --arg admission "$admission_capability" \
+  '{metadata: {runtime: $cli, container: $container}, socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

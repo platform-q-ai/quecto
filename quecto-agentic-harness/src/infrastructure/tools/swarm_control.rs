@@ -5,6 +5,10 @@ use crate::domain::swarm::ProcessIdentity;
 use serde_json::Value;
 
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
+    let settles = matches!(
+        op,
+        "create" | "reconcile" | "pause" | "resume" | "cancel_run" | "usage_budget"
+    );
     let ctx = context.clone();
     let op = op.to_owned();
     let result = tokio::task::spawn_blocking(move || match op.as_str() {
@@ -24,7 +28,38 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
             super::swarm_lifecycle::supervise(ctx.clone(), snapshot);
             ctx.summary()
         }
-        "summary" | "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
+        "usage" => ctx.usage_report(),
+        "usage_budget" => {
+            let strict = match input.get("strict_unknown") {
+                None => true,
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| DomainError::Tool("strict_unknown must be boolean".into()))?,
+            };
+            if input.get("token_limit").is_some() {
+                ctx.usage_budget(optional_cursor(&input, "token_limit")?, strict)
+            } else {
+                Err(DomainError::Tool(
+                    "token_limit is required (null disables the budget)".into(),
+                ))
+            }
+        }
+        "summary" => ctx.summary_since(optional_cursor(&input, "since")?),
+        "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
+        "pause" => ctx.pause(
+            input["reason"]
+                .as_str()
+                .unwrap_or("operator requested pause"),
+        ),
+        "resume" => ctx.resume(),
+        "events" => {
+            let limit = optional_cursor(&input, "limit")?.unwrap_or(25);
+            if (1..=100).contains(&limit) {
+                ctx.events(optional_cursor(&input, "after")?.unwrap_or(0), limit as u32)
+            } else {
+                Err(DomainError::Tool("event limit must be 1..100".into()))
+            }
+        }
         "cancel_run" => {
             ctx.cancel_run()?;
             ctx.summary()
@@ -33,7 +68,12 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
     })
     .await
     .map_err(|e| DomainError::Tool(e.to_string()))??;
-    if result["status"] != "running" {
+    if settles
+        && matches!(
+            result["status"].as_str(),
+            Some("paused" | "cancelled" | "failed" | "succeeded" | "blocked" | "budget-exhausted")
+        )
+    {
         super::swarm_lifecycle::settle(context).await
     } else {
         Ok(result)
@@ -57,10 +97,22 @@ pub async fn after_execution(
         super::swarm_lifecycle::settle(context).await?;
         return Ok(Vec::new());
     }
-    if after["events"].as_array().and_then(|e| e.last())
-        != before["events"].as_array().and_then(|e| e.last())
-    {
+    if after["event_cursor"] != before["event_cursor"] {
         return Ok(super::swarm_lifecycle::notify(&context).await);
     }
     Ok(Vec::new())
 }
+
+fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainError> {
+    match input.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| DomainError::Tool(format!("{field} must be a nonnegative integer"))),
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_control_tests.rs"]
+mod tests;

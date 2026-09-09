@@ -137,6 +137,12 @@ pub enum AgentEvent {
     /// Broadcast when a subagent's status changes (#524).
     /// Contains the full list of subagents (clients do a simple replace).
     SubagentStateChanged { subagents: Vec<SubagentInfo> },
+    /// Broadcast after every admission transition of this process (#1679 P4):
+    /// the full bounded admission view (clients do a simple replace). Never a
+    /// lifecycle state; `get_state` folds the same revision into `generation`.
+    AdmissionStateChanged {
+        admission: super::uds_admission_projection::AdmissionSnapshot,
+    },
     /// Emitted when an agent completes a turn, carrying the messages appended
     /// during that turn (assistant message + any tool results). A sub-agent
     /// emits this on its own stream with an empty `agent_id`; the parent's
@@ -564,9 +570,33 @@ pub use crate::infrastructure::line_cap::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_
 
 // ─── Session state snapshot ──────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlStatus {
+    Queued,
+    Started,
+    Completed,
+    Failed,
+    Cancelled,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlReceipt {
+    pub id: String,
+    pub command: String,
+    pub status: ControlStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub control_receipts: Vec<ControlReceipt>,
+    #[serde(default)]
+    pub automatic_turns_suspended: bool,
+    #[serde(default)]
+    pub repeated_failure_notifications: u64,
     pub model: String,
     #[serde(default)]
     pub generation: u64,
@@ -601,6 +631,10 @@ pub struct SessionState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStats {
+    #[serde(default)]
+    pub runtime: Option<crate::domain::request_observation::RuntimeIdentity>,
+    #[serde(default)]
+    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
     pub session_key: String,
     pub user_messages: usize,
     pub assistant_messages: usize,

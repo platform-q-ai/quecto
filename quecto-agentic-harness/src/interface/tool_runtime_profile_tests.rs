@@ -17,6 +17,7 @@ fn runtime(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
+        swarm_context: None,
         entrypoint: ToolEntrypoint::CliAgent,
         profile_context,
         base_dir: tmp.path(),
@@ -174,5 +175,58 @@ fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
         snapshot.get("agent_cmd"),
         Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
         "child-to-grandchild spawn must inherit child-visible agent_cmd policy"
+    );
+}
+
+#[test]
+fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
+    use crate::domain::swarm::{CoordinationPort, ProcessIdentity};
+    let tmp = tempfile::tempdir().unwrap();
+    let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: tmp.path().into(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    };
+    std::fs::create_dir(tmp.path().join(".quecto")).unwrap();
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    context
+        .create_run(
+            &serde_json::json!({"goal":"test isolation","constraints":[],
+        "criteria":[{"id":"test","kind":"command","description":"pass"}],
+        "member_limit":1,"deadline":deadline}),
+            &ProcessIdentity {
+                pid: std::process::id(),
+                started: crate::infrastructure::tools::swarm_bridge::process_start(
+                    std::process::id(),
+                )
+                .unwrap(),
+            },
+            None,
+        )
+        .unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "interface::tool_runtime::profile_tests::tool_visibility_is_selected_by_runtime_profile_not_spawned_role_bit", "--nocapture"])
+        .env("QUECTO_SWARM_CHECKOUT", tmp.path())
+        .env("QUECTO_SWARM_CONTAINER", "isolated-pid-v1")
+        // Emulate inherited container metadata without changing the test host's namespace.
+        .env("QUECTO_SWARM_HOST_PID_NS", "pid:[0]")
+        .env("QUECTO_SWARM_MEMBER", "ordinary-test-runtime")
+        .env_remove("QUECTO_SWARM_RESERVATION")
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "isolated runtime enrolled in live pool:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        context
+            .reserve_member("real-extra-member", "new-reservation")
+            .is_err(),
+        "actual managed admission must still enforce the full pool"
     );
 }

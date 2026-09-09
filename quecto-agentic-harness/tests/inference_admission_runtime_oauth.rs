@@ -91,6 +91,8 @@ fn request() -> ChatRequest<'static> {
             )]
         });
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &MESSAGES,
         tools: &[],
         model: "openai-oauth/retained-model",

@@ -2,15 +2,14 @@ use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 #[cfg(test)]
 use super::uds_cancel::CancelSlot;
 use super::uds_cancel::{
-    CancelHandle, EventSink, PromptOutcome, PromptRun, TurnControlHandle, arm_cancel,
-    disarm_cancel, run_agent_message,
+    CancelHandle, EventSink, PromptOutcome, PromptRun, TurnControlHandle, disarm_cancel,
+    run_agent_message,
 };
 use super::uds_session::AgentSession;
 #[cfg(test)]
-use super::uds_session::{clear_conversation, resolve_rewind_target, rewind_to_message_index};
-#[cfg(test)]
 use super::uds_session::{
-    compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
+    clear_conversation, compute_session_stats, compute_session_stats_with_usage,
+    messages_tail_json, resolve_rewind_target, rewind_to_message_index,
 };
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
@@ -44,12 +43,14 @@ pub(super) fn is_abort_command(trimmed: &str) -> bool {
 }
 
 pub(super) fn is_steer_command(trimmed: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return false;
-    };
-    v.get("type").and_then(|t| t.as_str()) == Some("steer")
-        || (v.get("type").and_then(|t| t.as_str()) == Some("prompt")
-            && v.get("streamingBehavior").and_then(|b| b.as_str()) == Some("steer"))
+    matches!(
+        serde_json::from_str::<AgentCommand>(trimmed),
+        Ok(AgentCommand::Steer { .. }
+            | AgentCommand::Prompt {
+                streaming_behavior: Some(StreamingBehavior::Steer),
+                ..
+            })
+    )
 }
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
@@ -343,32 +344,35 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         streaming_behavior,
     } = cmd;
     if ctx.session.is_streaming() {
-        match streaming_behavior {
-            Some(StreamingBehavior::FollowUp) => {
-                ctx.session.enqueue_pending(message);
-                let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            }
-            Some(StreamingBehavior::Steer) => {
-                ctx.session.prepend_pending(message);
-                ctx.turn_control.clear_steer();
-                let ev = AgentEvent::ok(id.as_deref(), "steer", None);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            }
-            None => {
-                let msg = "agent is running; provide streamingBehavior";
-                let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            }
-        }
+        prompt_admission::handle_busy_prompt(
+            ctx,
+            id.as_deref(),
+            &type_name,
+            message,
+            streaming_behavior,
+        )
+        .await;
         return false;
     }
+    if ctx.turn_control.is_steer_pending()
+        && !matches!(streaming_behavior, Some(StreamingBehavior::Steer))
+    {
+        pending::queue_prompt(ctx, id.as_deref(), &type_name, message, false).await;
+        return false;
+    }
+    ctx.session.automatic_turns_allowed = true;
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     let cancel_rx = arm_prompt_cancel(
         ctx,
         matches!(streaming_behavior, Some(StreamingBehavior::Steer)),
-    );
+    )
+    .await;
     let Some(cancel_rx) = cancel_rx else {
+        ctx.session.record_control(
+            id.as_deref(),
+            &type_name,
+            super::protocol::ControlStatus::Cancelled,
+        );
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;
         return false;
@@ -381,7 +385,14 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // to the durable (system-stripped) length. Do not overwrite with live len+1: live
     // messages may include an injected system prompt, which skews clean-delta appends
     // and freezes load()/resume history (#1322).
+    ctx.session.record_control(
+        id.as_deref(),
+        &type_name,
+        super::protocol::ControlStatus::Started,
+    );
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
+    ctx.session
+        .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
     // #1072: persist_current_session drains the durable-prefix dirty latch after every outcome.
     if matches!(outcome, PromptOutcome::Success) {
@@ -398,19 +409,9 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     false
 }
 
-fn arm_prompt_cancel(
-    ctx: &mut DispatchCtx<'_>,
-    is_steer_prompt: bool,
-) -> Option<tokio::sync::oneshot::Receiver<()>> {
-    match arm_cancel(&ctx.cancel_handle) {
-        Some(rx) => Some(rx),
-        None if is_steer_prompt => {
-            ctx.turn_control.clear_steer();
-            arm_cancel(&ctx.cancel_handle)
-        }
-        None => None,
-    }
-}
+#[path = "uds_prompt_admission.rs"]
+mod prompt_admission;
+use prompt_admission::{arm_prompt_cancel, control_status, emit_pre_cancelled};
 
 /// Hard bound on nudged turns per idle drain, so a misbehaving model isn't
 /// nudged forever. With the no-progress tolerance below, this cap is the only
@@ -465,7 +466,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // it stays stopped until re-driven by a fresh prompt. Abort beats any steer.
     if ctx.turn_control.take_abort() {
         ctx.turn_control.clear_steer();
-        ctx.session.drain_pending();
+        ctx.session.discard_pending();
         // #1082 review: an explicit abort is a requested stop, not a stall —
         // the reason keeps supervising monitors from raising a stall alert.
         emit_event_to_broadcast_or_writer(
@@ -479,6 +480,9 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     }
 
     drain_and_run_pending(ctx).await;
+    if !ctx.session.automatic_turns_allowed {
+        return;
+    }
 
     // Consecutive no-progress nudged turns tolerated before giving up: two
     // corrective retries, the third consecutive no-progress turn breaks.
@@ -488,6 +492,9 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
 
     let mut no_progress_turns = 0usize;
     for _ in 0..MAX_WORKFLOW_NUDGES {
+        if !ctx.session.automatic_turns_allowed {
+            break;
+        }
         // #930: an abort that lands WHILE this auto-continue loop is mid-flight is
         // a full stop, exactly like one at the idle-drain entry above — discard
         // queued work and stop nudging. The entry guard only catches an abort that
@@ -496,7 +503,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         // because the loop only broke on a pending steer or a no-progress turn.
         if ctx.turn_control.take_abort() {
             ctx.turn_control.clear_steer();
-            ctx.session.drain_pending();
+            ctx.session.discard_pending();
             emit_event_to_broadcast_or_writer(
                 ctx,
                 &AgentEvent::WorkflowIdle {
@@ -594,33 +601,9 @@ async fn run_prompt_dispatch(
     })
     .await
 }
-async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
-    emit_event_to_broadcast_or_writer(
-        ctx,
-        &AgentEvent::AgentEnd {
-            messages: vec![],
-            message_refs: vec![],
-        },
-    )
-    .await;
-}
-async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
-    let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
-    loop {
-        // Coalesce a burst of buffered sub-agent completion notes into ONE
-        // informational note at the idle flush (#894) — K separate notes would
-        // send the parent into a catch-up loop. Per-agent dedup already happened
-        // at enqueue; #816 deferral is preserved (this only runs at idle).
-        let pending = super::uds_session::coalesce_pending(ctx.session.drain_pending());
-        if pending.is_empty() {
-            break;
-        }
-        for pending_msg in pending {
-            run_drained_message(ctx, pending_msg.into_message()).await;
-        }
-    }
-}
+#[path = "uds_pending.rs"]
+mod pending;
+use pending::drain_and_run_pending;
 
 /// Run one drained or injected message through the agent: arm cancel, run,
 /// disarm, refresh busy snapshots. A stale abort (#483) skips the run without
@@ -634,22 +617,23 @@ enum TurnAdmissionGuard {
     NoActiveWorkflowDescendant,
 }
 
-async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
-    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None).await;
+async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) -> PromptOutcome {
+    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None).await
 }
 
 async fn run_drained_message_guarded(
     ctx: &mut DispatchCtx<'_>,
     msg: Message,
     guard: TurnAdmissionGuard,
-) {
+) -> PromptOutcome {
     #[cfg(test)]
     run_before_guarded_turn_admission_test_hook();
-    let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
+    let Some(rx) = super::uds_cancel::arm_swarm_cancel(&ctx.cancel_handle, &ctx.turn_control).await
+    else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
-        return;
+        return PromptOutcome::Cancelled;
     };
-    {
+    let outcome = {
         let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
         let run = run_agent_message(PromptRun {
             agent: ctx.agent,
@@ -683,7 +667,7 @@ async fn run_drained_message_guarded(
             ) {
                 drop(entries);
                 disarm_cancel(&ctx.cancel_handle);
-                return;
+                return PromptOutcome::Cancelled;
             }
                 let result = run.as_mut().now_or_never();
                 drop(entries);
@@ -694,10 +678,11 @@ async fn run_drained_message_guarded(
         } else {
             run.as_mut().now_or_never()
         };
-        if admitted.is_none() {
-            run.as_mut().await;
+        match admitted {
+            Some(outcome) => outcome,
+            None => run.as_mut().await,
         }
-    }
+    };
     disarm_cancel(&ctx.cancel_handle);
     // #1072: drained runs (steer follow-ups, workflow auto-continue,
     // coalesced sub-agent notes) can prune too. Their dirty latch is
@@ -706,6 +691,7 @@ async fn run_drained_message_guarded(
     // #899: keep busy-child snapshots fresh across auto-continue nudges
     // instead of frozen at the pre-turn snapshot until dispatch returns.
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;
+    outcome
 }
 #[cfg(test)]
 #[path = "uds_abort_steer_tests.rs"]
@@ -735,12 +721,14 @@ mod nudge_tolerance_tests;
 #[path = "uds_parse_tests.rs"]
 mod parse_tests;
 #[cfg(test)]
+#[path = "uds_pending_swarm_tests.rs"]
+mod pending_swarm_tests;
+#[cfg(test)]
+#[path = "uds_swarm_feedback_tests.rs"]
+mod swarm_feedback_tests;
+#[cfg(test)]
 #[path = "uds_tests.rs"]
 mod tests;
 #[cfg(test)]
 #[path = "uds_workflow_automation_tests.rs"]
 mod workflow_automation_tests;
-
-#[cfg(test)]
-#[path = "uds_swarm_feedback_tests.rs"]
-mod swarm_feedback_tests;

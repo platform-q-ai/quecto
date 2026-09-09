@@ -1,7 +1,6 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::application::context_pruning::messages::message_stub_without_recall;
-use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
@@ -13,6 +12,7 @@ pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
+    pub(crate) automatic_turns_allowed: bool,
     /// Session-local killing barrier; routine/final saves must not undo it.
     pub(crate) killing_exit: bool,
     generation: u64,
@@ -23,7 +23,10 @@ pub struct AgentSession {
     context_tokens: usize,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
+    control_receipts: Vec<super::protocol::ControlReceipt>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
+    last_failure_notifications: std::collections::HashMap<String, String>,
+    repeated_failure_notifications: u64,
     /// Subagent notes that arrived while `pending` was full (#1082 review
     /// round 2). Retained here — with their dedupe sequence recorded — and
     /// appended by [`Self::drain_pending`], so supervision-critical notes
@@ -32,6 +35,7 @@ pub struct AgentSession {
 }
 #[derive(Debug, Clone, Default)]
 pub struct SessionUsage {
+    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
     pub tokens: TokenStats,
     pub cost_micro_usd: u64,
 }
@@ -51,6 +55,11 @@ impl SessionUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingMessage {
     User(String),
+    Control {
+        id: String,
+        command: String,
+        content: String,
+    },
     SubagentNotification {
         agent_id: String,
         sequence: u64,
@@ -96,7 +105,7 @@ impl PendingMessage {
     /// harness-injected so clients can render it distinctly from user input.
     pub fn into_message(self) -> Message {
         match self {
-            Self::User(content) => Message::user(content),
+            Self::User(content) | Self::Control { content, .. } => Message::user(content),
             Self::SubagentNotification {
                 agent_id,
                 sequence,
@@ -204,12 +213,16 @@ impl AgentSession {
             model,
             session_key,
             streaming: false,
+            automatic_turns_allowed: true,
             killing_exit: false,
             generation: 1,
             usage: SessionUsage::default(),
             context_tokens: 0,
             pending: std::collections::VecDeque::new(),
+            control_receipts: Vec::new(),
             last_subagent_notification: std::collections::HashMap::new(),
+            last_failure_notifications: std::collections::HashMap::new(),
+            repeated_failure_notifications: 0,
             overflow_notifications: std::collections::VecDeque::new(),
         }
     }
@@ -242,7 +255,10 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
-    pub fn record_agent_result(&mut self, result: &AgentResult) {
+    /// Whole-result accumulator kept for tests; production records usage
+    /// through `record_usage` on the UDS run path.
+    #[cfg(test)]
+    pub fn record_agent_result(&mut self, result: &crate::domain::agent::AgentResult) {
         self.context_tokens = result.context_tokens;
         self.record_usage(
             result.billed_input_tokens,
@@ -251,27 +267,6 @@ impl AgentSession {
             result.cache_write_tokens,
             result.cost_micro_usd,
         );
-        if result.billed_input_tokens > 0
-            || result.billed_output_tokens > 0
-            || result.cache_read_tokens > 0
-            || result.cache_write_tokens > 0
-            || result.cost_micro_usd > 0
-        {
-            let ratio = self.usage.cache_hit_ratio();
-            tracing::info!(
-                target: "session_usage",
-                session_key = %self.session_key,
-                input = self.usage.tokens.input,
-                output = self.usage.tokens.output,
-                cacheRead = self.usage.tokens.cache_read,
-                cacheWrite = self.usage.tokens.cache_write,
-                total = self.usage.tokens.total,
-                contextTokens = self.context_tokens,
-                costMicroUsd = self.usage.cost_micro_usd,
-                cacheHitRatio = ratio,
-                "normalized session usage recorded"
-            );
-        }
     }
     pub fn context_tokens(&self) -> usize {
         self.context_tokens
@@ -305,7 +300,38 @@ impl AgentSession {
             .input
             .saturating_add(self.usage.tokens.output);
         self.usage.cost_micro_usd = self.usage.cost_micro_usd.saturating_add(cost_micro_usd);
+        // The normalized usage log (#1567) rides every production usage path,
+        // not only the legacy whole-result accumulator.
+        if input_tokens > 0
+            || output_tokens > 0
+            || cache_read_tokens > 0
+            || cache_write_tokens > 0
+            || cost_micro_usd > 0
+        {
+            let ratio = self.usage.cache_hit_ratio();
+            tracing::info!(
+                target: "session_usage",
+                session_key = %self.session_key,
+                input = self.usage.tokens.input,
+                output = self.usage.tokens.output,
+                cacheRead = self.usage.tokens.cache_read,
+                cacheWrite = self.usage.tokens.cache_write,
+                total = self.usage.tokens.total,
+                contextTokens = self.context_tokens,
+                costMicroUsd = self.usage.cost_micro_usd,
+                cacheHitRatio = ratio,
+                "normalized session usage recorded"
+            );
+        }
     }
+    pub(crate) fn record_request_diagnostics(
+        &mut self,
+        diagnostics: crate::domain::request_observation::RequestDiagnostics,
+    ) {
+        self.usage.request_diagnostics.merge(diagnostics);
+        self.bump_visible_generation();
+    }
+
     pub fn usage_snapshot(&self) -> SessionUsage {
         self.usage.clone()
     }
@@ -317,19 +343,20 @@ impl AgentSession {
     /// Prevents OOM from a flood of pending messages from a misbehaving client.
     pub const MAX_PENDING: usize = 64;
     pub(crate) const MAX_DEDUPE_AGENTS: usize = 1024;
-    pub fn enqueue_pending(&mut self, msg: String) {
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_back(PendingMessage::user(msg));
+    pub fn enqueue_pending(&mut self, msg: String) -> bool {
+        if self.pending.len() >= Self::MAX_PENDING {
+            return false;
         }
-        // Silently drop if the queue is full — caller already got a success ack.
+        self.pending.push_back(PendingMessage::user(msg));
+        true
     }
-    /// Prepend a message to the front of the pending queue so it runs before
-    /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
-    /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
-    pub fn prepend_pending(&mut self, msg: String) {
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_front(PendingMessage::user(msg));
+    /// Retain a steering message before earlier follow-ups, if capacity permits.
+    pub fn prepend_pending(&mut self, msg: String) -> bool {
+        if self.pending.len() >= Self::MAX_PENDING {
+            return false;
         }
+        self.pending.push_front(PendingMessage::user(msg));
+        true
     }
     /// Test-only: simulate dedupe-watermark eviction at the
     /// `MAX_DEDUPE_AGENTS` cap (#1082 review round 2).
@@ -337,6 +364,25 @@ impl AgentSession {
     pub fn clear_subagent_notification_watermarks_for_test(&mut self) {
         self.last_subagent_notification.clear();
     }
+    /// Return already-admitted work after steering interrupts a pending batch.
+    pub fn restore_pending(&mut self, messages: impl DoubleEndedIterator<Item = PendingMessage>) {
+        for message in messages.rev() {
+            self.pending.push_front(message);
+        }
+    }
+
+    pub(crate) fn discard_pending(&mut self) {
+        for message in self.drain_pending() {
+            if let PendingMessage::Control { id, command, .. } = message {
+                self.record_control(
+                    Some(&id),
+                    &command,
+                    super::protocol::ControlStatus::Cancelled,
+                );
+            }
+        }
+    }
+
     pub fn drain_pending(&mut self) -> Vec<PendingMessage> {
         // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
         // deque's head != 0 — O(n) in the number of elements, same as the
@@ -360,6 +406,7 @@ impl AgentSession {
         effort: Option<String>,
     ) -> SessionState {
         SessionState {
+            control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
             generation: self.generation,
             is_streaming: self.streaming,
@@ -374,53 +421,15 @@ impl AgentSession {
             workflow,
             execution: None,
             sync: 1,
+            automatic_turns_suspended: !self.automatic_turns_allowed,
+            repeated_failure_notifications: self.repeated_failure_notifications,
         }
     }
 }
 // ─── Session statistics ───────────────────────────────────────────────────────
-/// Compute session statistics from the current message history.
-pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
-    compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0, 0)
-}
-/// Compute session statistics with cumulative provider usage collected by the UDS session.
-/// `max_context_tokens` is the active model's context-window ceiling (0 = unknown).
-pub fn compute_session_stats_with_usage(
-    session_key: &str,
-    messages: &[Message],
-    usage: SessionUsage,
-    context_tokens: usize,
-    max_context_tokens: usize,
-) -> SessionStats {
-    let mut user_messages = 0usize;
-    let mut assistant_messages = 0usize;
-    let mut tool_calls_count = 0usize;
-    let mut tool_results_count = 0usize;
-    for msg in messages {
-        match msg.role {
-            Role::User => user_messages += 1,
-            Role::Assistant => {
-                assistant_messages += 1;
-                tool_calls_count += msg.tool_calls.len();
-            }
-            Role::Tool => tool_results_count += 1,
-            Role::System => {}
-        }
-    }
-    SessionStats {
-        session_key: session_key.to_owned(),
-        user_messages,
-        assistant_messages,
-        tool_calls: tool_calls_count,
-        tool_results: tool_results_count,
-        total_messages: messages.len(),
-        cost: usage.cost_usd(),
-        cost_micro_usd: usage.cost_micro_usd,
-        cache_hit_ratio: usage.cache_hit_ratio(),
-        tokens: usage.tokens,
-        context_tokens,
-        max_context_tokens,
-    }
-}
+#[path = "uds_session_usage.rs"]
+mod usage_projection;
+pub use usage_projection::{compute_session_stats, compute_session_stats_with_usage};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
 pub(crate) use uds_session_history::{
@@ -428,6 +437,7 @@ pub(crate) use uds_session_history::{
     messages_page_json_for_id, position_by_message_id, position_by_wire_id,
 };
 pub use uds_session_history::{messages_page_json, messages_tail_json};
+
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
 pub(crate) fn role_wire_name(role: &Role) -> &'static str {
@@ -722,3 +732,10 @@ mod rewind_collapsed_message_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "uds_session_failure_tests.rs"]
+mod failure_tests;
+
+#[path = "uds_session_controls.rs"]
+mod controls;

@@ -17,12 +17,16 @@ mod environment_control_tests;
 pub mod extension_tool;
 pub mod ports;
 pub mod provider_runtime;
+mod request_observation;
 pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]
 mod subagent_launch_tests;
 
 pub mod inference_admission;
+pub mod inference_authority;
+pub mod inference_authority_ports;
+pub mod inference_observation;
 
 pub mod inference_attempt;
 pub mod swarm;

@@ -281,6 +281,10 @@ impl std::fmt::Debug for DebugSwarm {
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
+    pub authority: inference_admission_authority_steps::AuthorityState,
+    pub authority_ops: inference_admission_authority_steps::OperationsState,
+    pub authority_observation: inference_admission_observation_steps::ObservationState,
+    pub admission_projection: inference_admission_projection_steps::ProjectionState,
     pub http_admission: inference_admission_http_steps::HttpAdmissionState,
     pub provider_admission: inference_admission_provider_steps::ProviderAdmissionState,
     /// #1572 catalogue application slice state (sources, store, resolution).
@@ -957,6 +961,7 @@ pub struct QuectoWorld {
     /// Live multi-client: agent thread handle.
     pub _mc_live_handle: Option<std::thread::JoinHandle<i32>>,
     /// Live multi-client: open client streams.
+    pub _mc_event_readers: HashMap<u32, uds_event_reader::EventReader>,
     pub _mc_live_streams: std::collections::HashMap<u32, std::os::unix::net::UnixStream>,
     /// Live multi-client: use phased live driver instead of batch execute.
     pub _mc_live_busy: bool,
@@ -1427,6 +1432,8 @@ mod tui_architecture_steps;
 mod tui_context_usage_steps;
 mod uds_1093_steps;
 mod uds_bounded_events_steps;
+#[path = "../common/uds_event_reader.rs"]
+mod uds_event_reader;
 mod uds_framing_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
@@ -1615,6 +1622,9 @@ impl Drop for QuectoWorld {
     }
 }
 
+mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
+mod inference_admission_observation_steps;
+mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;

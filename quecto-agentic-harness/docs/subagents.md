@@ -379,7 +379,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
     "command": {
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
-               "get_state", "get_messages",
+               "get_state", "get_messages", "get_message", "get_report", "swarm_control",
                "get_session_stats", "get_subagents", "get_subagents_all",
                "get_containers", "kill_container",
                "set_model", "set_effort", "clear_history"],
@@ -389,6 +389,15 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
       "type": "string",
       "description": "Message for prompt/steer/follow_up commands"
     },
+    "export_raw": {"type": "boolean", "description": "With get_report, export retained wire records and spills"},
+    "action": {"type": "string", "enum": ["pause", "resume", "status", "usage_budget"]},
+    "reason": {"type": "string"},
+    "token_limit": {"type": ["integer", "null"], "minimum": 1},
+    "strict_unknown": {"type": "boolean"},
+    "messageId": {"type": "string", "description": "Stable ID for get_message recovery"},
+    "toolCallId": {"type": "string"},
+    "offset": {"type": "integer", "minimum": 0},
+    "limit": {"type": "integer", "minimum": 0},
     "count": {
       "type": "integer",
       "description": "Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"
@@ -435,6 +444,9 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 
 | Command | Description | Requires `message` |
 |---------|-------------|--------------------|
+| `swarm_control` | Durable pause/resume/status/usage_budget control, independent of the model queue; supports descendant routing | No |
+| `get_report` | Latest substantive assistant report without advancing unread cursors; optional export_raw writes retained records and a checksum manifest | No |
+| `get_message` | Recover content by stable messageId, with optional toolCallId, byte offset and limit | No |
 | `prompt` | Send a task/message to the subagent | Yes |
 | `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |
 | `follow_up` | Queue a message for after the current run | Yes |
@@ -639,3 +651,6 @@ top-level agent; on a child, use spawn `disable_tools` / `read_only` (above).
 ## Interactive interfaces
 
 The setup/configuration REPL does not operate agents or subagents. Use `quecto agent`, UDS, or `quecto-tui` for subagent capabilities.
+
+For swarm control receipts, pause/resume behavior, observed budgets and retained
+export scope, see [swarm operational diagnostics](swarm.md#operational-diagnostics-and-budgets).

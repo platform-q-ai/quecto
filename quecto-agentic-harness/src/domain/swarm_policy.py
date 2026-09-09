@@ -62,19 +62,28 @@ def revalidation(task, revision, evidence):
     return evidence
 
 
-def notification_targets(run, actor, members, events):
+def notification_targets(run, actor, members, events, state):
     """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
     if run['status'] != 'running':
         return []
     targets = set()
+    tasks = {task['id']: task for task in state['tasks']}
+    unread = {message['id'] for message in state['messages']}
+    ready = any(task['status'] == 'ready' and all(
+        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
+        for task in tasks.values())
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
     for event in events:
         action, detail = event['action'], event['detail']
-        if action == 'message_accepted':
+        if action == 'message_accepted' and detail['message'] in unread:
             targets.add(detail['recipient'])
-        elif action in ('submitted', 'blocked', 'evidence'):
+        elif action in ('submitted', 'blocked'):
+            if tasks.get(detail['task'], {}).get('status') == action:
+                targets.add(run['coordinator'])
+        elif action == 'evidence':
             targets.add(run['coordinator'])
-        elif action in ('task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'amended'):
+        elif action == 'amended' or (ready and action in (
+                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered')):
             targets.update(live)
     return [live[identity] for identity in sorted(targets) if identity in live]
 
@@ -82,3 +91,35 @@ def notification_targets(run, actor, members, events):
 def require_unsubmitted(task):
     if task['status'] == 'submitted':
         raise SwarmError('submitted evidence is immutable; release and reclaim before revising')
+
+
+def usage_budget_decision(budget, totals):
+    limit = budget['token_limit']
+    if limit is None:
+        return 'allow'
+    if budget['strict_unknown'] and totals['unknown_usage_requests'] > 0:
+        return 'pause'
+    if totals['observed_tokens'] >= limit:
+        return 'pause'
+    if totals['observed_tokens'] * 5 >= limit * 4:
+        return 'warn'
+    return 'allow'
+
+
+def request_measurement(record):
+    if isinstance(record, dict) and isinstance(record.get('request_id'), str) and 0 < len(record['request_id']) <= 128:
+        fields = ('input_tokens', 'context_input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+        for field in fields:
+            value = record.get(field)
+            if value is None or (type(value) is int and 0 <= value <= 2**32 - 1):
+                continue
+            raise SwarmError(f'invalid request usage {field}')
+        attempts = record.get('instrumented_attempts')
+        if type(attempts) is int and 0 <= attempts <= 2**32 - 1 and record.get('outcome') in ('succeeded', 'failed', 'cancelled', 'rejected'):
+            known = record.get('context_input_tokens') is not None and record.get('output_tokens') is not None
+            # Only a request the provider answered can hide usage; a cancelled
+            # or rejected attempt never had usage to report, so it must not
+            # keep a strict budget paused after resume.
+            answered = record.get('outcome') in ('succeeded', 'failed')
+            return ((record['context_input_tokens'] + record['output_tokens']) if known else 0, int(answered and attempts > 0 and not known), attempts)
+    raise SwarmError('invalid request observation')

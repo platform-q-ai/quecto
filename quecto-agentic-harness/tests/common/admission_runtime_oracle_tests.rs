@@ -8,6 +8,7 @@ fn runtime_oracles_accept_control_observations_and_reject_counterexamples() {
     let state = GroupSnapshot {
         active: 1,
         queued: 1,
+        uncertain: 0,
         cooldown_until: 91,
         unavailable: false,
         observed_at: 90,
@@ -57,6 +58,7 @@ fn runtime_oracles_accept_control_observations_and_reject_counterexamples() {
             GroupSnapshot {
                 active: 0,
                 queued: 1,
+                uncertain: 0,
                 cooldown_until: 0,
                 ..state
             },

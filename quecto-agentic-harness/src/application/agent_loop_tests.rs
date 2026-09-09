@@ -283,6 +283,8 @@ pub(super) fn make_agent(
 
 fn empty_chat_request() -> ChatRequest<'static> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test",
@@ -678,6 +680,8 @@ async fn mock_provider_trait_surface_chat_stream_defaults_to_chat() {
     let messages = [];
     let tools = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "test-model",
@@ -695,55 +699,5 @@ async fn mock_provider_trait_surface_chat_stream_defaults_to_chat() {
     assert_eq!(provider.request_count(), 1);
 }
 
-#[tokio::test]
-async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
-    let provider =
-        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
-            text_response("done"),
-        )]]);
-    let messages = [];
-    let tools = [];
-    let request = ChatRequest {
-        messages: &messages,
-        tools: &tools,
-        model: "test-model",
-        max_tokens: 9,
-        temperature: 0.0,
-        session_id: None,
-        tool_choice: None,
-        metadata: None,
-        thinking_level: None,
-        cancel_flag: None,
-        effort: None,
-    };
-    assert_eq!(provider.name(), "mock-streaming");
-    assert!(provider.as_any().is::<()>());
-    let mut rx = provider.chat_stream_incremental(request).await;
-    assert!(matches!(
-        rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(_))
-    ));
-    assert_eq!(provider.request_count(), 1);
-
-    let provider =
-        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
-            text_response("chat done"),
-        )]]);
-    let messages = [];
-    let tools = [];
-    let request = ChatRequest {
-        messages: &messages,
-        tools: &tools,
-        model: "test-model",
-        max_tokens: 9,
-        temperature: 0.0,
-        session_id: None,
-        tool_choice: None,
-        metadata: None,
-        thinking_level: None,
-        cancel_flag: None,
-        effort: None,
-    };
-    let response = provider.chat(request).await.unwrap();
-    assert_eq!(response.content.as_deref(), Some("chat done"));
-}
+#[path = "agent_loop_reliability_tests.rs"]
+mod reliability_tests;

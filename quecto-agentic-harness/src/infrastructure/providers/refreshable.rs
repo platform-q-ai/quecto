@@ -215,6 +215,8 @@ impl LlmProvider for RefreshableProvider {
 /// provider needs its own copy of the request data because the new provider
 /// `Arc` has a different lifetime than the original borrow.
 struct OwnedRequest {
+    trace: Option<Arc<crate::domain::request_observation::RequestTrace>>,
+    admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
     messages: Vec<crate::domain::message::Message>,
     tools: Vec<crate::domain::tool::ToolDefinition>,
     model: String,
@@ -231,6 +233,8 @@ struct OwnedRequest {
 impl OwnedRequest {
     fn from(r: &ChatRequest<'_>) -> Self {
         Self {
+            trace: r.trace.clone(),
+            admission: r.admission.clone(),
             messages: r.messages.to_vec(),
             tools: r.tools.to_vec(),
             model: r.model.to_string(),
@@ -247,6 +251,8 @@ impl OwnedRequest {
 
     fn as_request(&self) -> ChatRequest<'_> {
         ChatRequest {
+            trace: self.trace.clone(),
+            admission: self.admission.clone(),
             messages: &self.messages,
             tools: &self.tools,
             model: &self.model,
@@ -309,9 +315,17 @@ impl RefreshableProvider {
                             "token refreshed — rebuilding provider"
                         );
                         let new_inner = (self.factory)(&new_token);
-                        let result = call(&new_inner, owned.as_request()).await;
-                        *self.inner.write().await = new_inner;
-                        result
+                        // Keep the refreshed provider even if admission denies
+                        // the resend: a paused run must not force another
+                        // 401 + refresh when it resumes.
+                        *self.inner.write().await = new_inner.clone();
+                        if let Some(admission) = &owned.admission {
+                            admission.check().await?;
+                        }
+                        if let Some(trace) = &owned.trace {
+                            trace.oauth_retry();
+                        }
+                        call(&new_inner, owned.as_request()).await
                     }
                     Err(refresh_err) => {
                         tracing::warn!(
