@@ -1,6 +1,5 @@
 use super::*;
 use tempfile::TempDir;
-
 fn make_message(role: Role, content: &str) -> Message {
     match role {
         Role::System => Message::system(content),
@@ -112,11 +111,9 @@ fn test_session_build_key() {
     assert_eq!(Session::build_key("telegram", "12345"), "telegram:12345");
     assert_eq!(Session::build_key("cli", "default"), "cli:default");
 }
-
 #[tokio::test]
 async fn test_persistence_across_store_instances() {
     let tmp = TempDir::new().unwrap();
-
     // Save with one store instance
     let store1 = FileSessionStore::new(tmp.path());
     let session = Session {
@@ -128,24 +125,19 @@ async fn test_persistence_across_store_instances() {
         subagent_roster: Vec::new(),
     };
     store1.save(&session).await.unwrap();
-
     // Load with a new store instance pointing to the same directory
     let store2 = FileSessionStore::new(tmp.path());
     let loaded = store2.load("telegram:persist").await.unwrap();
     assert!(loaded.is_some());
     assert_eq!(loaded.unwrap().messages[0].content, "persisted message");
 }
-
 // --- Pruning metadata round-trip tests ---
-
 #[tokio::test]
 async fn test_turn_field_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut tool_msg = Message::tool("call_1", "tool output");
     tool_msg.turn = Some(3);
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -162,15 +154,12 @@ async fn test_turn_field_survives_round_trip() {
         "turn field should survive save/load"
     );
 }
-
 #[tokio::test]
 async fn test_is_collapsed_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut tool_msg = Message::tool("call_1", "[bash: echo hello (100 tokens)]");
     tool_msg.is_collapsed = true;
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -186,16 +175,13 @@ async fn test_is_collapsed_survives_round_trip() {
         "is_collapsed should survive save/load"
     );
 }
-
 #[tokio::test]
 async fn test_is_manifest_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut manifest = Message::system("[Session memory: 5 spilled entries]");
     manifest.is_manifest = true;
     manifest.is_pinned = true;
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -211,15 +197,12 @@ async fn test_is_manifest_survives_round_trip() {
         "is_manifest should survive save/load"
     );
 }
-
 #[tokio::test]
 async fn test_is_pinned_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut user_msg = Message::user("first message");
     user_msg.is_pinned = true;
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -235,15 +218,12 @@ async fn test_is_pinned_survives_round_trip() {
         "is_pinned should survive save/load for non-system messages"
     );
 }
-
 #[tokio::test]
 async fn test_tool_name_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut tool_msg = Message::tool("call_1", "output");
     tool_msg.tool_name = Some("bash".to_string());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -260,15 +240,12 @@ async fn test_tool_name_survives_round_trip() {
         "tool_name should survive save/load"
     );
 }
-
 #[tokio::test]
 async fn test_input_preview_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut tool_msg = Message::tool("call_1", "output");
     tool_msg.input_preview = Some("echo hello".to_string());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -285,15 +262,12 @@ async fn test_input_preview_survives_round_trip() {
         "input_preview should survive save/load"
     );
 }
-
 #[tokio::test]
 async fn test_spill_id_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut tool_msg = Message::tool("call_1", "output");
     tool_msg.spill_id = Some("turn1:bash:0".to_string());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -310,7 +284,6 @@ async fn test_spill_id_survives_round_trip() {
         "spill_id should survive save/load"
     );
 }
-
 fn persisted_workflow_run() -> WorkflowRunPersisted {
     WorkflowRunPersisted {
         template_id: Some("fix".to_string()),
@@ -318,12 +291,10 @@ fn persisted_workflow_run() -> WorkflowRunPersisted {
         active_issue: Some((42, "login bug".to_string())),
     }
 }
-
 #[tokio::test]
 async fn test_workflow_run_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -341,12 +312,10 @@ async fn test_workflow_run_survives_round_trip() {
     assert_eq!(wf.done, vec![true, true, false, false, false, false]);
     assert_eq!(wf.active_issue, Some((42, "login bug".to_string())));
 }
-
 #[tokio::test]
 async fn workflow_only_session_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     store
         .save(&Session {
             origin_location: None,
@@ -358,7 +327,6 @@ async fn workflow_only_session_survives_round_trip() {
         })
         .await
         .unwrap();
-
     let loaded = store.load("test:wf_only").await.unwrap().unwrap();
     assert!(
         loaded.messages.is_empty(),
@@ -372,12 +340,10 @@ async fn workflow_only_session_survives_round_trip() {
         vec![true, true, false, false, false, false]
     );
 }
-
 #[tokio::test]
 async fn workflow_only_delta_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     store
         .save_delta("test:wf_only_delta", &[], 0, Some(persisted_workflow_run()))
         .await
@@ -394,7 +360,6 @@ async fn workflow_only_delta_survives_round_trip() {
             .active_issue,
         Some((42, "login bug".to_string()))
     );
-
     store
         .save_clean_delta(
             "test:wf_only_clean_delta",
@@ -418,12 +383,10 @@ async fn workflow_only_delta_survives_round_trip() {
         Some("fix")
     );
 }
-
 #[tokio::test]
 async fn test_workflow_run_none_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -436,12 +399,10 @@ async fn test_workflow_run_none_survives_round_trip() {
     let loaded = store.load("test:wf_none").await.unwrap().unwrap();
     assert!(loaded.workflow_run.is_none());
 }
-
 #[tokio::test]
 async fn appended_delta_can_clear_previous_workflow_run() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let mut session = Session {
         origin_location: None,
         latest_location: None,
@@ -455,7 +416,6 @@ async fn appended_delta_can_clear_previous_workflow_run() {
         subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
-
     session.workflow_run = None;
     store
         .save_delta(
@@ -466,16 +426,13 @@ async fn appended_delta_can_clear_previous_workflow_run() {
         )
         .await
         .unwrap();
-
     let loaded = store.load("test:wf_clear").await.unwrap().unwrap();
     assert!(loaded.workflow_run.is_none());
 }
-
 #[tokio::test]
 async fn test_workflow_run_unknown_template_persists_raw_fields() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let session = Session {
         origin_location: None,
         latest_location: None,
@@ -489,13 +446,11 @@ async fn test_workflow_run_unknown_template_persists_raw_fields() {
         subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
-
     let loaded = store.load("test:wf_compat").await.unwrap().unwrap();
     let wf = loaded.workflow_run.expect("persisted run should load");
     assert_eq!(wf.template_id.as_deref(), Some("deleted_template"));
     assert_eq!(wf.done, vec![true, false]);
 }
-
 #[tokio::test]
 async fn test_list_sessions_returns_cli_names_and_message_counts() {
     let tmp = TempDir::new().unwrap();

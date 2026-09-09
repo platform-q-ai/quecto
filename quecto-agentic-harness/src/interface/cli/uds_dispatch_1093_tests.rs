@@ -63,7 +63,6 @@ impl ContextSpillStore for MemSpillStore {
             .insert((session_key.to_string(), entry.id.clone()), entry.clone());
         Box::pin(async { Ok(()) })
     }
-
     fn recall(
         &self,
         session_key: &str,
@@ -93,7 +92,6 @@ impl ContextSpillStore for MemSpillStore {
             .cloned();
         Box::pin(async move { Ok(hit) })
     }
-
     fn list_entries(
         &self,
         _session_key: &str,
@@ -107,7 +105,6 @@ impl ContextSpillStore for MemSpillStore {
     > {
         Box::pin(async { Ok(Arc::new(Vec::new())) })
     }
-
     fn clear(
         &self,
         _session_key: &str,

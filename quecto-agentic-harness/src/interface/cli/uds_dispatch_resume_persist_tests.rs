@@ -1,9 +1,5 @@
 //! Resume/prompt persistence dispatch regression tests split from
 //! `uds_dispatch_cov_tests.rs` to keep coverage files below the line-count gate.
-
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
 use super::cov_tests::Fixture;
 use super::{dispatch_command, handle_resume_session, persist_current_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -18,7 +14,8 @@ use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registr
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
-
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 fn prompt(message: &str) -> AgentCommand {
     AgentCommand::Prompt {
         id: None,
@@ -26,7 +23,6 @@ fn prompt(message: &str) -> AgentCommand {
         streaming_behavior: None,
     }
 }
-
 fn durable_contents(messages: &[Message]) -> Vec<&str> {
     messages
         .iter()
@@ -34,7 +30,6 @@ fn durable_contents(messages: &[Message]) -> Vec<&str> {
         .map(|m| m.content.as_str())
         .collect()
 }
-
 #[tokio::test]
 async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
     let mut fx = Fixture::new();
@@ -58,7 +53,6 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
             .await
             .unwrap();
     }
-
     let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "run after spawn");
@@ -69,7 +63,6 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
         SubagentLiveness::Detached
     );
 }
-
 #[tokio::test]
 async fn prompt_persists_user_message_before_assistant_reply() {
     // Regression: if a TUI/session is closed or interrupted before the provider
@@ -84,7 +77,6 @@ async fn prompt_persists_user_message_before_assistant_reply() {
             .unwrap();
         ctx.messages.push(prompt);
     }
-
     let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].role, crate::domain::message::Role::User);

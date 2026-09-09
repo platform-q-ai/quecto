@@ -10,20 +10,16 @@ use crate::components::select_overlay::{
 use crate::components::theme;
 use crate::protocol::session_payloads;
 use crate::shell::app_session_stats_text;
-
 // Wall-clock formatting helpers live in `app_time` (this module is at the
 // source line cap); re-exported so `app_methods::format_utc_minutes` and the
 // internal `format_unix_minutes` call sites stay put.
 use super::app_time::format_unix_minutes;
-
 // Only the unit tests reference these through `app_methods::…`; production reads
 // go straight to `app_time` (via `format_unix_minutes`), so gate the re-export.
 #[cfg(test)]
 pub(super) use super::app_time::{civil_from_days, format_utc_minutes};
-
 impl App {
     // ── Slash command handlers ─────────────────────────────────────────
-
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
         self.ac_mut()
             .master_session
@@ -35,7 +31,6 @@ impl App {
             });
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
-
     /// Ctrl+Z: leave the alternate screen, stop the process, and restore raw
     /// mode + kitty protocol with a full repaint once resumed with `fg`.
     pub(super) fn suspend_and_resume(&mut self) {
@@ -48,7 +43,6 @@ impl App {
         self.kitty.query();
         self.render_full();
     }
-
     pub(super) fn show_help(&mut self) {
         // Slash commands first, keyboard shortcuts last: compose_frame follows the
         // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
@@ -100,7 +94,6 @@ impl App {
             .chat
             .add_entry(ChatEntry::Status { text });
     }
-
     pub(super) fn show_workflow_status(&mut self) {
         let wf = &self.ac().master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
@@ -126,7 +119,6 @@ impl App {
             .chat
             .add_entry(ChatEntry::Status { text });
     }
-
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
         let next = !self.ac().workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
@@ -135,7 +127,6 @@ impl App {
             completion_nudge: None,
         });
     }
-
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
         let next = !self.ac().workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
@@ -144,13 +135,11 @@ impl App {
             completion_nudge: Some(next),
         });
     }
-
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
             id: Some(self.ac().namespaced_id("stats")),
         });
     }
-
     /// Request session stats for a quiet footer-only refresh (no chat Status
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
@@ -158,7 +147,6 @@ impl App {
             id: Some(self.ac().namespaced_id("stats-footer")),
         });
     }
-
     /// Update the footer's context/cost indicators from a session-stats
     /// payload without emitting a chat entry.
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
@@ -172,13 +160,11 @@ impl App {
             .footer
             .apply_session_stats(&stats);
     }
-
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
             id: Some(self.ac().namespaced_id("resume-list")),
         });
     }
-
     pub(super) fn send_resume_session(&mut self, session: &str) {
         if session.trim().is_empty() {
             self.send_list_sessions();
@@ -189,7 +175,6 @@ impl App {
             session: session.trim().to_string(),
         });
     }
-
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
@@ -201,16 +186,13 @@ impl App {
                 text: app_session_stats_text::session_stats_text(&stats),
             });
     }
-
     // ── Resume selector ─────────────────────────────────────────────
-
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
         self.open_resume_selector_at(
             data,
             &crate::shell::workspace_manifest::default_manifest_path(),
         );
     }
-
     /// Testable resume selector open with an explicit manifest path (#1465 AC5).
     pub(super) fn open_resume_selector_at(
         &mut self,
@@ -228,13 +210,11 @@ impl App {
             }
         };
         if scoped.status() == session_payloads::ResumeScopeStatus::CurrentFolderUnavailable {
+            let reason = scoped
+                .explanation()
+                .unwrap_or("Unable to resolve the current folder.");
             self.notify(
-                &format!(
-                    "Current folder unavailable: {}",
-                    scoped
-                        .explanation()
-                        .unwrap_or("Unable to resolve the current folder.")
-                ),
+                &format!("Current folder unavailable: {reason}"),
                 NotifyLevel::Error,
             );
             return;
@@ -269,17 +249,14 @@ impl App {
             .collect::<Vec<_>>();
         self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
-
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
         if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
             self.apply_resume_selection(&choice);
         }
     }
-
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
         self.replace_chat_with_messages_with_empty_status(data, "Session resumed");
     }
-
     pub(super) fn replace_chat_with_messages_with_empty_status(
         &mut self,
         data: &serde_json::Value,
@@ -297,7 +274,6 @@ impl App {
                 return false;
             }
         };
-
         let has_displayable_messages = !messages.is_empty();
         self.ac_mut().master_session.chat.clear();
         for entry in Self::resumed_chat_entries(messages) {
@@ -313,13 +289,10 @@ impl App {
         }
         has_displayable_messages
     }
-
     // ── Notifications ─────────────────────────────────────────────────
-
     pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {
         self.notifications.push(Notification::new(message, level));
     }
-
     // ── Rendering ─────────────────────────────────────────────────────
 
     /// Diagnostic: append one frame (ANSI-stripped) to the render log.
