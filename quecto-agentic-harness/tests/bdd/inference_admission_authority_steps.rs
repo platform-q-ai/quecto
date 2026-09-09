@@ -11,7 +11,7 @@ use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-const LIMIT: Duration = Duration::from_secs(5);
+pub(super) const LIMIT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct AuthorityState {
@@ -20,7 +20,7 @@ pub struct AuthorityState {
     server: Option<AuthorityServer>,
     roots: Vec<AuthorityConnection>,
     credential: Option<Credential>,
-    permits: Vec<Box<dyn AttemptPermit>>,
+    pub(super) permits: Vec<Box<dyn AttemptPermit>>,
     pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
     refusal: Option<String>,
     epoch_before: u64,
@@ -32,7 +32,7 @@ impl std::fmt::Debug for AuthorityState {
     }
 }
 
-fn group() -> GroupId {
+pub(super) fn group() -> GroupId {
     GroupId::new("g").unwrap()
 }
 
@@ -64,7 +64,7 @@ fn state(world: &mut QuectoWorld) -> &mut AuthorityState {
     &mut world.authority
 }
 
-fn rt(state: &AuthorityState) -> &tokio::runtime::Runtime {
+pub(super) fn rt(state: &AuthorityState) -> &tokio::runtime::Runtime {
     state.runtime.as_ref().expect("authority runtime")
 }
 
@@ -88,7 +88,7 @@ fn start(world: &mut QuectoWorld, capacity: usize, queue_timeout_ms: u64) {
     s.server = Some(server);
 }
 
-fn new_root(s: &AuthorityState) -> AuthorityConnection {
+pub(super) fn new_root(s: &AuthorityState) -> AuthorityConnection {
     let socket = s.server.as_ref().unwrap().directory().client_socket();
     rt(s).block_on(async {
         let connection = AuthorityConnection::connect(&socket).await.unwrap();
@@ -744,98 +744,5 @@ fn then_slot_released(world: &mut QuectoWorld) {
         quecto::domain::inference_admission::RequestState::Terminal(
             quecto::domain::inference_admission::TerminalOutcome::Finished
         )
-    );
-}
-
-// ---- P4 observation ----------------------------------------------------------
-
-use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
-use quecto::infrastructure::admission::{AdmissionRecorder, ObservedAdmission};
-
-#[derive(Default)]
-pub struct ObservationState {
-    recorder: Option<Arc<AdmissionRecorder>>,
-    observer: Option<AuthorityConnection>,
-    pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
-    first_wait_ms: u64,
-}
-impl std::fmt::Debug for ObservationState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<admission observation scenario>")
-    }
-}
-
-#[when("an observed process attempt queues behind the holder")]
-fn when_observed_attempt_queues(world: &mut QuectoWorld) {
-    let recorder = Arc::new(AdmissionRecorder::new());
-    let s = &mut world.authority;
-    let observer = new_root(s);
-    let gate = Arc::new(ObservedAdmission::new(
-        observer.gate("acct").unwrap(),
-        "acct",
-        group(),
-        recorder.clone(),
-    ));
-    let pending = rt(s).spawn(async move { gate.acquire().await.map_err(|e| e.to_string()) });
-    std::thread::sleep(Duration::from_millis(40));
-    let o = &mut world.authority_observation;
-    o.recorder = Some(recorder);
-    o.observer = Some(observer);
-    o.pending = Some(pending);
-}
-
-#[then(expr = "the process observes one waiting attempt in group {string} with a growing wait")]
-fn then_waiting_observed(world: &mut QuectoWorld, expected_group: String) {
-    let o = &mut world.authority_observation;
-    let recorder = o.recorder.as_ref().unwrap();
-    let first = recorder.snapshot();
-    assert_eq!(first.waiting, 1, "{first:?}");
-    let attempt = first.attempts.values().next().unwrap();
-    assert_eq!(attempt.group, GroupId::new(&expected_group).unwrap());
-    assert!(matches!(
-        attempt.phase,
-        quecto::domain::inference_admission::AdmissionPhase::Waiting { .. }
-    ));
-    std::thread::sleep(Duration::from_millis(30));
-    let second = recorder.snapshot();
-    let later = second.attempts.values().next().unwrap();
-    assert!(later.elapsed_ms > attempt.elapsed_ms, "wait keeps growing");
-    assert!(
-        second.observed_at_ms > first.observed_at_ms,
-        "freshness advances"
-    );
-    o.first_wait_ms = later.elapsed_ms;
-}
-
-#[when("the holding root completes its attempt")]
-fn when_holder_completes(world: &mut QuectoWorld) {
-    let s = &mut world.authority;
-    let permit = s.permits.pop().expect("held permit");
-    let _guard = rt(s).enter();
-    permit.finish(Feedback::Success);
-}
-
-#[then("the process observes the attempt admitted and then completed")]
-fn then_admitted_then_completed(world: &mut QuectoWorld) {
-    let pending = world.authority_observation.pending.take().unwrap();
-    let permit = rt(&world.authority)
-        .block_on(async { tokio::time::timeout(LIMIT, pending).await })
-        .unwrap()
-        .unwrap()
-        .expect("granted after the holder released");
-    let recorder = world.authority_observation.recorder.clone().unwrap();
-    let admitted = recorder.snapshot();
-    assert_eq!(
-        (admitted.waiting, admitted.admitted),
-        (0, 1),
-        "{admitted:?}"
-    );
-    let _guard = rt(&world.authority).enter();
-    permit.finish(Feedback::Success);
-    let done = recorder.snapshot();
-    assert_eq!((done.admitted, done.completed), (0, 1), "{done:?}");
-    assert!(
-        done.attempts.is_empty(),
-        "released attempts leave the live view"
     );
 }

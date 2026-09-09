@@ -9,18 +9,28 @@ use crate::application::ports::{
     AdmissionObservation, AttemptAcquisition, AttemptAdmission, AttemptPermit,
 };
 use crate::domain::inference_admission::{
-    AdmissionActivity, AdmissionPhase, AttemptObservation, Feedback, GroupId, ThrottleFeedback,
+    AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, Feedback, GroupActivity,
+    GroupId, ThrottleFeedback,
 };
+
+#[derive(Debug, Clone)]
+struct Live {
+    alias: String,
+    group: GroupId,
+    phase: AdmissionPhase,
+}
 
 #[derive(Debug, Default)]
 struct RecorderState {
     next: u64,
-    live: BTreeMap<u64, AttemptObservation>,
+    /// Every live attempt (exact counts). Bounded in practice by the
+    /// authority's per-group capacity plus queue capacity.
+    live: BTreeMap<u64, Live>,
     completed: u64,
     refused: u64,
     cancelled: u64,
-    cooldown_until_ms: Option<u64>,
-    last_refusal: Option<String>,
+    abandoned: u64,
+    groups: BTreeMap<GroupId, GroupActivity>,
 }
 
 /// Process-wide admission activity; clock is monotonic from construction.
@@ -33,6 +43,28 @@ pub struct AdmissionRecorder {
 impl Default for AdmissionRecorder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Keep at most `limit` bytes, never splitting a character.
+fn truncate_bytes(reason: &str, limit: usize) -> String {
+    if reason.len() <= limit {
+        return reason.to_owned();
+    }
+    let mut end = limit;
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    reason[..end].to_owned()
+}
+
+fn merge_until(current: Option<CooldownState>, until_ms: u64) -> Option<CooldownState> {
+    match current {
+        Some(CooldownState::Unavailable) => Some(CooldownState::Unavailable),
+        Some(CooldownState::Until { until_ms: existing }) => Some(CooldownState::Until {
+            until_ms: existing.max(until_ms),
+        }),
+        _ => Some(CooldownState::Until { until_ms }),
     }
 }
 
@@ -59,37 +91,33 @@ impl AdmissionRecorder {
         let mut state = self.lock();
         state.next = state.next.wrapping_add(1);
         let id = state.next;
-        // Bounded live view: a leaked attempt can never grow it unboundedly.
-        while state.live.len() >= AdmissionActivity::MAX_LIVE_ATTEMPTS {
-            let Some(oldest) = state.live.keys().next().copied() else {
-                break;
-            };
-            state.live.remove(&oldest);
-        }
         state.live.insert(
             id,
-            AttemptObservation {
+            Live {
                 alias: alias.to_owned(),
                 group: group.clone(),
                 phase: AdmissionPhase::Waiting { since_ms: now },
-                elapsed_ms: 0,
             },
         );
+        state.groups.entry(group.clone()).or_default();
         id
     }
 
     fn admitted(&self, id: u64) {
         let now = self.now_ms();
-        if let Some(attempt) = self.lock().live.get_mut(&id) {
-            attempt.phase = AdmissionPhase::Admitted { since_ms: now };
+        if let Some(live) = self.lock().live.get_mut(&id) {
+            live.phase = AdmissionPhase::Admitted { since_ms: now };
         }
     }
 
     fn refused(&self, id: u64, reason: &str) {
         let mut state = self.lock();
-        state.live.remove(&id);
+        let Some(live) = state.live.remove(&id) else {
+            return;
+        };
         state.refused = state.refused.saturating_add(1);
-        state.last_refusal = Some(reason.chars().take(200).collect());
+        state.groups.entry(live.group).or_default().last_refusal =
+            Some(truncate_bytes(reason, AdmissionActivity::MAX_REFUSAL_BYTES));
     }
 
     fn cancelled(&self, id: u64) {
@@ -99,29 +127,67 @@ impl AdmissionRecorder {
         }
     }
 
-    fn completed(&self, id: u64, feedback: Feedback) {
-        let now = self.now_ms();
+    fn abandoned(&self, id: u64) {
         let mut state = self.lock();
-        state.live.remove(&id);
-        state.completed = state.completed.saturating_add(1);
-        if let Feedback::Throttle { delay_ms } = feedback {
-            let until = now.saturating_add(delay_ms);
-            state.cooldown_until_ms = Some(state.cooldown_until_ms.map_or(until, |c| c.max(until)));
+        if state.live.remove(&id).is_some() {
+            state.abandoned = state.abandoned.saturating_add(1);
         }
     }
 
-    fn cooldown(&self, receipt_ms: u64, feedback: ThrottleFeedback) {
-        // `Until` deadlines are on the authority's clock; translate through the
-        // permit's receipt so the local view stays comparable with `observed_at`.
+    fn completed(&self, id: u64, feedback: Feedback) {
         let now = self.now_ms();
-        let until = match feedback {
-            ThrottleFeedback::Until(deadline) => {
-                now.saturating_add(deadline.saturating_sub(receipt_ms))
-            }
-            ThrottleFeedback::NoHint { .. } | ThrottleFeedback::Unavailable => return,
-        };
         let mut state = self.lock();
-        state.cooldown_until_ms = Some(state.cooldown_until_ms.map_or(until, |c| c.max(until)));
+        let Some(live) = state.live.remove(&id) else {
+            return;
+        };
+        state.completed = state.completed.saturating_add(1);
+        let group = state.groups.entry(live.group).or_default();
+        match feedback {
+            Feedback::Throttle { delay_ms } => {
+                group.cooldown = merge_until(group.cooldown, now.saturating_add(delay_ms));
+            }
+            Feedback::Success => {
+                // A confirmed success ends an open-ended throttle; a dated one
+                // expires on its own.
+                if matches!(group.cooldown, Some(CooldownState::Unknown { .. })) {
+                    group.cooldown = None;
+                }
+            }
+            Feedback::Failure => {}
+        }
+    }
+
+    /// Receipt advice for the attempt `id`, anchored at its grant: the
+    /// authority's deadline is `receipt_ms + offset`, so locally it becomes
+    /// `admitted_since + offset`. Advice beyond the permit's maximum is what the
+    /// authority treats as unavailable.
+    fn cooldown(&self, id: u64, receipt_ms: u64, maximum_ms: u64, feedback: ThrottleFeedback) {
+        let now = self.now_ms();
+        let mut state = self.lock();
+        let Some(live) = state.live.get(&id).cloned() else {
+            return;
+        };
+        let anchor = match live.phase {
+            AdmissionPhase::Admitted { since_ms } => since_ms,
+            AdmissionPhase::Waiting { .. } => now,
+        };
+        let group = state.groups.entry(live.group).or_default();
+        group.cooldown = match feedback {
+            ThrottleFeedback::Until(deadline) => {
+                let offset = deadline.saturating_sub(receipt_ms);
+                if offset > maximum_ms {
+                    Some(CooldownState::Unavailable)
+                } else {
+                    merge_until(group.cooldown, anchor.saturating_add(offset))
+                }
+            }
+            ThrottleFeedback::NoHint { .. } => match group.cooldown {
+                Some(CooldownState::Until { until_ms }) if until_ms > now => group.cooldown,
+                Some(CooldownState::Unavailable) => group.cooldown,
+                _ => Some(CooldownState::Unknown { since_ms: now }),
+            },
+            ThrottleFeedback::Unavailable => Some(CooldownState::Unavailable),
+        };
     }
 }
 
@@ -129,10 +195,10 @@ impl AdmissionObservation for AdmissionRecorder {
     fn snapshot(&self) -> AdmissionActivity {
         let now = self.now_ms();
         let state = self.lock();
-        let mut attempts = BTreeMap::new();
         let (mut waiting, mut admitted) = (0usize, 0usize);
-        for (id, attempt) in &state.live {
-            let since = match attempt.phase {
+        let mut attempts = BTreeMap::new();
+        for (id, live) in &state.live {
+            let since = match live.phase {
                 AdmissionPhase::Waiting { since_ms } => {
                     waiting += 1;
                     since_ms
@@ -142,18 +208,45 @@ impl AdmissionObservation for AdmissionRecorder {
                     since_ms
                 }
             };
-            let mut view = attempt.clone();
-            view.elapsed_ms = now.saturating_sub(since);
-            attempts.insert(*id, view);
+            // The sample keeps the oldest (longest-waiting) attempts.
+            if attempts.len() < AdmissionActivity::MAX_LIVE_ATTEMPTS {
+                attempts.insert(
+                    *id,
+                    AttemptObservation {
+                        alias: live.alias.clone(),
+                        group: live.group.clone(),
+                        phase: live.phase,
+                        elapsed_ms: now.saturating_sub(since),
+                    },
+                );
+            }
         }
+        let groups = state
+            .groups
+            .iter()
+            .map(|(group, activity)| {
+                let cooldown = match activity.cooldown {
+                    Some(CooldownState::Until { until_ms }) if until_ms <= now => None,
+                    other => other,
+                };
+                (
+                    group.clone(),
+                    GroupActivity {
+                        cooldown,
+                        last_refusal: activity.last_refusal.clone(),
+                    },
+                )
+            })
+            .collect();
         AdmissionActivity {
             waiting,
             admitted,
             completed: state.completed,
             refused: state.refused,
             cancelled: state.cancelled,
-            cooldown_until_ms: state.cooldown_until_ms.filter(|until| *until > now),
-            last_refusal: state.last_refusal.clone(),
+            abandoned: state.abandoned,
+            groups,
+            hidden: state.live.len().saturating_sub(attempts.len()),
             attempts,
             observed_at_ms: now,
         }
@@ -255,13 +348,23 @@ impl AttemptPermit for ObservedPermit {
         self.inner().maximum_cooldown_ms()
     }
     fn throttle_without_hint(&mut self) {
+        let (receipt_ms, _) = self.receipt_clock();
+        let maximum = self.maximum_cooldown_ms();
+        self.recorder.cooldown(
+            self.id,
+            receipt_ms,
+            maximum,
+            ThrottleFeedback::NoHint { jitter: 0 },
+        );
         if let Some(inner) = self.inner.as_mut() {
             inner.throttle_without_hint();
         }
     }
     fn feedback(&mut self, feedback: ThrottleFeedback) {
         let (receipt_ms, _) = self.receipt_clock();
-        self.recorder.cooldown(receipt_ms, feedback);
+        let maximum = self.maximum_cooldown_ms();
+        self.recorder
+            .cooldown(self.id, receipt_ms, maximum, feedback);
         if let Some(inner) = self.inner.as_mut() {
             inner.feedback(feedback);
         }
@@ -276,10 +379,10 @@ impl AttemptPermit for ObservedPermit {
 
 impl Drop for ObservedPermit {
     fn drop(&mut self) {
-        // Drop is not release (ADR-0026); the attempt is no longer this
-        // process's to report, so it leaves the live view as cancelled.
+        // Drop is not release (ADR-0026): the authority keeps this occupancy
+        // as uncertain, so locally it is an abandonment, not a cancellation.
         if self.inner.is_some() {
-            self.recorder.cancelled(self.id);
+            self.recorder.abandoned(self.id);
         }
     }
 }

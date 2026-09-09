@@ -15,3 +15,19 @@ transitions; the attempt transport, permit semantics and lifecycle enums are
 untouched (ADR-0024/0026). Aggregates saturate; live attempts are capped at 64;
 authority cooldown deadlines are translated onto the process clock through the
 permit receipt. Mutation and review records are appended below.
+
+## Adversarial review 1 (2026-09-09) and fixes
+
+Nine findings (4 medium, 5 low/info), all fixed test-first:
+
+|Finding|Fix|Proof|
+|---|---|---|
+|M1 cooldown anchored at feedback time, drifting by the transport duration|`Until` advice is anchored at the attempt's grant instant (authority `deadline - receipt` offset added to the local admitted time)|`cooldown_is_anchored_at_the_grant_and_kept_per_group`|
+|M2 cooldown/refusal process-global|per-group `GroupActivity { cooldown, last_refusal }`|same test + `refusals_and_cancellations_are_observed_per_group_with_reasons`|
+|M3 no-hint / unavailable throttles invisible|`CooldownState::{Until, Unknown, Unavailable}`; `throttle_without_hint` recorded; advice beyond the permit maximum reads as unavailable; success clears an open-ended throttle|`no_hint_and_unavailable_throttles_are_visible_states`|
+|M4 oldest-entry eviction miscounted|counts are exact over every live attempt; the view is a bounded sample of the oldest with a `hidden` count; `cancelled`/`abandoned` count whenever the attempt existed|`counts_stay_exact_beyond_the_bounded_sample`|
+|L5 dropped permit conflated with cancelled wait|`abandoned` counter (authority keeps that occupancy uncertain)|`dropped_permit_is_abandonment_and_finish_is_completion`|
+|L6 truncation unit/test|byte-bounded (200) at a char boundary, tested with multibyte input|`refusal_reason_is_recorded_per_group_and_byte_bounded`|
+|L7 sleeps as oracles|contract and BDD poll until the attempt is waiting; elapsed asserted strictly increasing|contract + `inference_admission_observation_steps.rs`|
+|L8 trivial/dead assertions, untested claims|removed; two-group, unavailable and clamp cases added|—|
+|I9 steps file over 750 lines|P4 steps moved to `inference_admission_observation_steps.rs`|—|

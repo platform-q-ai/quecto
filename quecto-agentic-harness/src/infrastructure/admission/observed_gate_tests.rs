@@ -1,5 +1,6 @@
-//! Recorder invariants that do not need an authority: bounded live view,
-//! saturating counters, cooldown translation and cancellation on drop.
+//! Recorder invariants that do not need an authority: exact counts with a
+//! bounded sample, byte-bounded refusal reasons, grant-anchored cooldown
+//! translation per group, and the cancellation/abandonment distinction.
 use super::*;
 use crate::domain::error::DomainError;
 use std::future::Future;
@@ -14,98 +15,230 @@ impl AttemptAdmission for Never {
 }
 
 #[derive(Debug)]
-struct Refuse;
+struct Refuse(String);
 impl AttemptAdmission for Refuse {
     fn acquire(&self) -> AttemptAcquisition<'_> {
-        Box::pin(async { Err(DomainError::Provider("admission: Quarantined".into())) })
+        let reason = self.0.clone();
+        Box::pin(async move { Err(DomainError::Provider(reason)) })
     }
 }
 
+/// Grants immediately; the permit reports a fixed authority receipt clock.
 #[derive(Debug)]
-struct Grant;
+struct Grant {
+    receipt_ms: u64,
+    maximum_ms: u64,
+}
 #[derive(Debug)]
-struct Plain;
+struct Plain {
+    receipt_ms: u64,
+    maximum_ms: u64,
+}
 impl AttemptPermit for Plain {
+    fn receipt_clock(&self) -> (u64, SystemTime) {
+        (self.receipt_ms, SystemTime::UNIX_EPOCH)
+    }
+    fn maximum_cooldown_ms(&self) -> u64 {
+        self.maximum_ms
+    }
     fn feedback(&mut self, _: ThrottleFeedback) {}
     fn finish(self: Box<Self>, _: Feedback) {}
 }
 impl AttemptAdmission for Grant {
     fn acquire(&self) -> AttemptAcquisition<'_> {
-        Box::pin(async { Ok(Box::new(Plain) as Box<dyn AttemptPermit>) })
+        let permit = Plain {
+            receipt_ms: self.receipt_ms,
+            maximum_ms: self.maximum_ms,
+        };
+        Box::pin(async move { Ok(Box::new(permit) as Box<dyn AttemptPermit>) })
     }
+}
+
+fn g(name: &str) -> GroupId {
+    GroupId::new(name).unwrap()
 }
 
 fn observed(
     inner: Arc<dyn AttemptAdmission>,
+    alias: &str,
+    group: &str,
     recorder: &Arc<AdmissionRecorder>,
 ) -> ObservedAdmission {
-    ObservedAdmission::new(inner, "acct", GroupId::new("g").unwrap(), recorder.clone())
+    ObservedAdmission::new(inner, alias, g(group), recorder.clone())
 }
 
 #[tokio::test]
-async fn live_view_is_bounded_and_waits_are_never_leaked() {
+async fn counts_stay_exact_beyond_the_bounded_sample() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(Arc::new(Never), &recorder);
+    let gate = observed(Arc::new(Never), "acct", "g", &recorder);
+    let total = AdmissionActivity::MAX_LIVE_ATTEMPTS + 8;
     let mut waits: Vec<Pin<Box<dyn Future<Output = _> + Send + '_>>> = Vec::new();
-    for _ in 0..(AdmissionActivity::MAX_LIVE_ATTEMPTS + 8) {
+    for _ in 0..total {
         let mut wait = gate.acquire();
-        // Register the attempt without completing it.
         let _ = futures::poll!(wait.as_mut());
         waits.push(wait);
     }
     let view = recorder.snapshot();
+    assert_eq!(view.waiting, total, "counts are exact");
     assert_eq!(view.attempts.len(), AdmissionActivity::MAX_LIVE_ATTEMPTS);
-    assert_eq!(view.waiting, AdmissionActivity::MAX_LIVE_ATTEMPTS);
+    assert_eq!(view.hidden, 8, "the rest is reported as hidden");
+    assert_eq!(
+        *view.attempts.keys().next().unwrap(),
+        1,
+        "the sample keeps the oldest"
+    );
     drop(waits);
     let after = recorder.snapshot();
+    assert_eq!((after.waiting, after.hidden), (0, 0));
     assert_eq!(
-        after.waiting, 0,
-        "dropped waits are cancellations, not live attempts"
+        after.cancelled, total as u64,
+        "every dropped wait is counted"
     );
-    assert_eq!(after.cancelled, AdmissionActivity::MAX_LIVE_ATTEMPTS as u64);
 }
 
 #[tokio::test]
-async fn refusal_reason_is_recorded_and_truncated() {
+async fn refusal_reason_is_recorded_per_group_and_byte_bounded() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(Arc::new(Refuse), &recorder);
+    let long = "é".repeat(150); // 300 bytes, 150 chars
+    let gate = observed(Arc::new(Refuse(long)), "acct", "g", &recorder);
     assert!(gate.acquire().await.is_err());
+    let other = observed(Arc::new(Never), "b", "h", &recorder);
+    let mut wait = other.acquire();
+    let _ = futures::poll!(wait.as_mut());
     let view = recorder.snapshot();
     assert_eq!(view.refused, 1);
+    let reason = view.groups[&g("g")].last_refusal.as_deref().unwrap();
+    assert!(reason.len() <= AdmissionActivity::MAX_REFUSAL_BYTES);
     assert!(
-        view.last_refusal
-            .as_deref()
-            .unwrap()
-            .contains("Quarantined")
+        reason.len() >= AdmissionActivity::MAX_REFUSAL_BYTES - 1,
+        "cut at a char boundary"
     );
-    assert!(view.last_refusal.as_deref().unwrap().len() <= 200);
+    assert!(
+        reason.ends_with('é'),
+        "the multibyte tail survived intact: {reason:?}"
+    );
+    assert!(reason.chars().filter(|c| *c == 'é').count() >= 60);
+    assert_eq!(
+        view.groups[&g("h")].last_refusal,
+        None,
+        "other groups untouched"
+    );
 }
 
 #[tokio::test]
-async fn a_dropped_permit_is_a_cancellation_and_a_finished_one_a_completion() {
+async fn dropped_permit_is_abandonment_and_finish_is_completion() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(Arc::new(Grant), &recorder);
+    let gate = observed(
+        Arc::new(Grant {
+            receipt_ms: 1_000,
+            maximum_ms: 10_000,
+        }),
+        "acct",
+        "g",
+        &recorder,
+    );
     let permit = gate.acquire().await.unwrap();
     assert_eq!(recorder.snapshot().admitted, 1);
     drop(permit);
     let dropped = recorder.snapshot();
     assert_eq!(
-        (dropped.admitted, dropped.cancelled, dropped.completed),
-        (0, 1, 0)
+        (
+            dropped.admitted,
+            dropped.abandoned,
+            dropped.cancelled,
+            dropped.completed
+        ),
+        (0, 1, 0, 0),
+        "a dropped permit is not a cancelled wait"
     );
-    let mut permit = gate.acquire().await.unwrap();
-    permit.feedback(ThrottleFeedback::NoHint { jitter: 1 });
-    assert_eq!(
-        recorder.snapshot().cooldown_until_ms,
-        None,
-        "no hint, no visible deadline"
-    );
+    let permit = gate.acquire().await.unwrap();
     permit.finish(Feedback::Throttle { delay_ms: 5_000 });
     let finished = recorder.snapshot();
     assert_eq!((finished.admitted, finished.completed), (0, 1));
-    assert!(
-        finished
-            .cooldown_until_ms
-            .is_some_and(|until| until > finished.observed_at_ms)
+    assert!(matches!(
+        finished.groups[&g("g")].cooldown,
+        Some(CooldownState::Until { until_ms }) if until_ms > finished.observed_at_ms
+    ));
+}
+
+#[tokio::test]
+async fn cooldown_is_anchored_at_the_grant_and_kept_per_group() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let gate = observed(
+        Arc::new(Grant {
+            receipt_ms: 5_000,
+            maximum_ms: 10_000,
+        }),
+        "acct",
+        "g",
+        &recorder,
     );
+    let mut permit = gate.acquire().await.unwrap();
+    let granted_at = recorder.snapshot().observed_at_ms;
+    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    // Authority says "until receipt + 3000": locally that is grant + 3000, not
+    // "now + 3000" (which would drift later by the transport duration).
+    permit.feedback(ThrottleFeedback::Until(5_000 + 3_000));
+    let view = recorder.snapshot();
+    let Some(CooldownState::Until { until_ms }) = view.groups[&g("g")].cooldown else {
+        panic!("{view:?}");
+    };
+    assert!(
+        until_ms >= granted_at + 3_000 && until_ms < granted_at + 3_000 + 30,
+        "{until_ms} vs {granted_at}"
+    );
+    // Another group is unaffected.
+    let other = observed(Arc::new(Never), "b", "h", &recorder);
+    let mut wait = other.acquire();
+    let _ = futures::poll!(wait.as_mut());
+    assert_eq!(recorder.snapshot().groups[&g("h")].cooldown, None);
+    permit.finish(Feedback::Success);
+}
+
+#[tokio::test]
+async fn no_hint_and_unavailable_throttles_are_visible_states() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let gate = observed(
+        Arc::new(Grant {
+            receipt_ms: 0,
+            maximum_ms: 1_000,
+        }),
+        "acct",
+        "g",
+        &recorder,
+    );
+    let mut permit = gate.acquire().await.unwrap();
+    permit.throttle_without_hint();
+    assert!(matches!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unknown { .. })
+    ));
+    permit.finish(Feedback::Success);
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        None,
+        "success ends an open-ended throttle"
+    );
+    let mut permit = gate.acquire().await.unwrap();
+    // Advice beyond the maximum is what the authority treats as unavailable.
+    permit.feedback(ThrottleFeedback::Until(5_000));
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable)
+    );
+    permit.feedback(ThrottleFeedback::Until(10));
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable),
+        "unavailable is sticky against shorter advice"
+    );
+    permit.finish(Feedback::Failure);
+    let permit = gate.acquire().await.unwrap();
+    let mut permit = permit;
+    permit.feedback(ThrottleFeedback::Unavailable);
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable)
+    );
+    permit.finish(Feedback::Failure);
 }

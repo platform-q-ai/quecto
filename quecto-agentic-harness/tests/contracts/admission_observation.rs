@@ -3,8 +3,8 @@
 //! bounded, fresh aggregate. Proven over the real remote gate and authority.
 use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
 use quecto::domain::inference_admission::{
-    AdmissionConfig, AdmissionPhase, Feedback, GroupId, GroupPolicy, ThrottleFeedback,
-    WorkloadClass,
+    AdmissionActivity, AdmissionConfig, AdmissionPhase, CooldownState, Feedback, GroupId,
+    GroupPolicy, ThrottleFeedback, WorkloadClass,
 };
 use quecto::infrastructure::admission::{
     AdmissionRecorder, AuthorityConnection, AuthorityDirectory, AuthorityServer, ObservedAdmission,
@@ -14,29 +14,37 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+const LIMIT: Duration = Duration::from_secs(5);
+
 fn proposal() -> AdmissionRuntimeProposal {
     let g = GroupId::new("g").unwrap();
+    let h = GroupId::new("h").unwrap();
+    let policy = |capacity| GroupPolicy {
+        capacity,
+        reserve: 0,
+        min_interval_ms: 1,
+        queue_capacity: 4,
+        queue_timeout_ms: 400,
+        attempt_timeout_ms: 60_000,
+        fallback_base_ms: 100,
+        max_cooldown_ms: 10_000,
+    };
     AdmissionRuntimeProposal {
         policy: AdmissionConfig {
-            groups: BTreeMap::from([(
-                g.clone(),
-                GroupPolicy {
-                    capacity: 1,
-                    reserve: 0,
-                    min_interval_ms: 1,
-                    queue_capacity: 4,
-                    queue_timeout_ms: 400,
-                    attempt_timeout_ms: 60_000,
-                    fallback_base_ms: 100,
-                    max_cooldown_ms: 10_000,
-                },
-            )]),
-            aliases: BTreeMap::from([("acct".into(), g)]),
+            groups: BTreeMap::from([(g.clone(), policy(1)), (h.clone(), policy(1))]),
+            aliases: BTreeMap::from([("acct".into(), g), ("other".into(), h)]),
             max_scopes: 8,
             terminal_capacity: 16,
         },
-        bindings: BTreeMap::from([("openai".into(), "acct".into())]),
+        bindings: BTreeMap::from([
+            ("openai".into(), "acct".into()),
+            ("anthropic".into(), "other".into()),
+        ]),
     }
+}
+
+fn group(name: &str) -> GroupId {
+    GroupId::new(name).unwrap()
 }
 
 async fn root(server: &AuthorityServer) -> AuthorityConnection {
@@ -46,6 +54,26 @@ async fn root(server: &AuthorityServer) -> AuthorityConnection {
     let credential = c.register_root(WorkloadClass::Interactive).await.unwrap();
     c.bind(credential).await.unwrap();
     c
+}
+
+/// Poll the recorder until `expected` holds (bounded), returning that view.
+async fn view_when(
+    recorder: &AdmissionRecorder,
+    what: &str,
+    expected: impl Fn(&AdmissionActivity) -> bool,
+) -> AdmissionActivity {
+    let deadline = tokio::time::Instant::now() + LIMIT;
+    loop {
+        let view = recorder.snapshot();
+        if expected(&view) {
+            return view;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "never observed {what}: {view:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -64,11 +92,11 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
     let gate = Arc::new(ObservedAdmission::new(
         observer.gate("acct").unwrap(),
         "acct",
-        GroupId::new("g").unwrap(),
+        group("g"),
         recorder.clone(),
     ));
     let idle = recorder.snapshot();
-    assert_eq!((idle.waiting, idle.admitted), (0, 0));
+    assert_eq!((idle.waiting, idle.admitted, idle.hidden), (0, 0, 0));
     assert!(
         idle.attempts.is_empty(),
         "nothing to observe before an attempt"
@@ -76,20 +104,20 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
 
     let waiting_gate = gate.clone();
     let pending = tokio::spawn(async move { waiting_gate.acquire().await });
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let waiting = recorder.snapshot();
-    assert_eq!(waiting.waiting, 1, "queued attempt counted as waiting");
-    let attempt = waiting.attempts.values().next().unwrap();
+    let first = view_when(&recorder, "a waiting attempt", |v| v.waiting == 1).await;
+    let attempt = first.attempts.values().next().unwrap();
     assert_eq!(attempt.alias, "acct");
-    assert_eq!(attempt.group, GroupId::new("g").unwrap());
+    assert_eq!(attempt.group, group("g"));
     assert!(matches!(attempt.phase, AdmissionPhase::Waiting { .. }));
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let later = recorder.snapshot();
     assert!(
-        attempt.elapsed_ms >= 50,
-        "elapsed wait is reported: {attempt:?}"
+        later.attempts.values().next().unwrap().elapsed_ms > attempt.elapsed_ms,
+        "elapsed wait keeps growing"
     );
     assert!(
-        waiting.observed_at_ms >= attempt.elapsed_ms,
-        "freshness is monotonic"
+        later.observed_at_ms > first.observed_at_ms,
+        "freshness advances"
     );
 
     held.finish(Feedback::Success);
@@ -104,13 +132,16 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
     let (receipt_ms, _) = permit.receipt_clock();
     permit.feedback(ThrottleFeedback::Until(receipt_ms + 3_000));
     let cooling = recorder.snapshot();
-    // The authority's deadline is translated onto the process clock through
-    // the permit receipt, so it reads as roughly three seconds ahead of now.
+    // Anchored at the grant (which happened within the last few ms), so the
+    // deadline reads as roughly three seconds ahead of now, for group g only.
     assert!(
-        matches!(cooling.cooldown_until_ms, Some(until) if until >= cooling.observed_at_ms + 2_900),
-        "group cooldown is visible on the process clock: {cooling:?}"
+        matches!(cooling.groups[&group("g")].cooldown, Some(CooldownState::Until { until_ms }) if until_ms >= cooling.observed_at_ms + 2_900 && until_ms <= cooling.observed_at_ms + 3_000),
+        "group cooldown on the process clock: {cooling:?}"
     );
-    let _ = receipt_ms;
+    assert_eq!(
+        cooling.groups.get(&group("h")).and_then(|g| g.cooldown),
+        None
+    );
     permit.finish(Feedback::Throttle { delay_ms: 3_000 });
     let released = recorder.snapshot();
     assert_eq!((released.waiting, released.admitted), (0, 0));
@@ -123,7 +154,7 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn refusals_are_observed_with_their_reason_and_the_view_stays_bounded() {
+async fn refusals_and_cancellations_are_observed_per_group_with_reasons() {
     let temp = tempfile::tempdir().unwrap();
     let server = AuthorityServer::start(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
@@ -138,31 +169,37 @@ async fn refusals_are_observed_with_their_reason_and_the_view_stays_bounded() {
     let gate = ObservedAdmission::new(
         observer.gate("acct").unwrap(),
         "acct",
-        GroupId::new("g").unwrap(),
+        group("g"),
+        recorder.clone(),
+    );
+    let free = ObservedAdmission::new(
+        observer.gate("other").unwrap(),
+        "other",
+        group("h"),
         recorder.clone(),
     );
     // Queue deadline (400 ms) elapses: an explicit refusal, never a bypass.
-    let refused = gate.acquire().await;
-    assert!(refused.is_err());
+    assert!(gate.acquire().await.is_err());
     let after = recorder.snapshot();
-    assert_eq!((after.waiting, after.admitted), (0, 0));
-    assert_eq!(after.refused, 1);
+    assert_eq!((after.waiting, after.admitted, after.refused), (0, 0, 1));
     assert!(
-        after
+        after.groups[&group("g")]
             .last_refusal
             .as_deref()
             .is_some_and(|r| r.contains("deadline")),
         "refusal reason names the cause: {after:?}"
     );
-    // A dropped wait is a cancellation, also counted and never left live.
+    // A dropped wait is a cancellation, counted and never left live.
     let dropped = tokio::time::timeout(Duration::from_millis(30), gate.acquire()).await;
     assert!(dropped.is_err());
-    tokio::time::sleep(Duration::from_millis(20)).await;
     let cancelled = recorder.snapshot();
-    assert_eq!(cancelled.waiting, 0, "a dropped wait is not a live attempt");
-    assert_eq!(cancelled.cancelled, 1);
-    // The live view is bounded: at most 64 attempts are retained per process.
-    assert!(cancelled.attempts.len() <= 64);
+    assert_eq!((cancelled.waiting, cancelled.cancelled), (0, 1));
+    // The other group is independent and untouched by g's refusal.
+    let permit = free.acquire().await.expect("group h has capacity");
+    let both = recorder.snapshot();
+    assert_eq!(both.admitted, 1);
+    assert_eq!(both.groups[&group("h")].last_refusal, None);
+    permit.finish(Feedback::Success);
     held.finish(Feedback::Success);
     server.shutdown().await;
 }
