@@ -11,14 +11,18 @@ use super::cov_tests::Fixture;
 async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let mut fx = Fixture::new();
     let persisted_key = crate::domain::session::Session::build_key("cli", "default");
+    let current = crate::interface::cli::uds_lifecycle::capture_execution_metadata(
+        fx._tmp.path(),
+        Some("agent"),
+    );
     fx.store
         .save(&Session {
             key: persisted_key.clone(),
             messages: vec![Message::user("persisted message that /resume must offer")],
             workflow_run: None,
             subagent_roster: Vec::new(),
-            origin_execution_metadata: None,
-            latest_execution_metadata: None,
+            origin_execution_metadata: Some(current.clone()),
+            latest_execution_metadata: Some(current),
         })
         .await
         .unwrap();

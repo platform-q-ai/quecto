@@ -42,14 +42,18 @@ async fn set_effort_accepts_provider_vocabulary_and_rejects_invalid() {
 #[tokio::test]
 async fn dispatch_fieldless_list_sessions_get_messages_and_() {
     let mut fx = Fixture::new();
+    let current = crate::interface::cli::uds_lifecycle::capture_execution_metadata(
+        fx._tmp.path(),
+        Some("agent"),
+    );
     fx.store
         .save(&Session {
-            key: "chat:one".into(),
+            key: "chat-1700000000-2a".into(),
             messages: vec![Message::user("hello")],
             workflow_run: None,
             subagent_roster: Vec::new(),
-            origin_execution_metadata: None,
-            latest_execution_metadata: None,
+            origin_execution_metadata: Some(current.clone()),
+            latest_execution_metadata: Some(current),
         })
         .await
         .unwrap();
