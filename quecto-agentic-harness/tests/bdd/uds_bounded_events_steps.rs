@@ -1598,6 +1598,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            activation_agent_name: None,
         })
     });
     let deadline = Instant::now() + Duration::from_secs(5);

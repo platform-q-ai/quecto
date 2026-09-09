@@ -1232,6 +1232,8 @@ fn when_session_saved_and_reloaded(world: &mut QuectoWorld) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
 
     let tmp = tempfile::TempDir::new().unwrap();

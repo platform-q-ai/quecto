@@ -570,6 +570,8 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
@@ -612,6 +614,8 @@ fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
         messages: vec![message],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
     let store = FileSessionStore::new(base_path(world));
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -644,6 +648,8 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { store.save(&session).await.expect("save seeded session") });
@@ -726,6 +732,8 @@ fn seed_stub_session(world: &mut QuectoWorld) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
     rt.block_on(async { store.save(&session).await.expect("save stub session") });
     world.no_session = false;

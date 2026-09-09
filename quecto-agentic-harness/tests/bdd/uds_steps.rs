@@ -417,6 +417,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            activation_agent_name: None,
         })
     });
 
@@ -1845,6 +1846,8 @@ fn given_session_has_stale_persisted_subagent_roster_row(
                 delivered_message_ordinal: None,
                 pending_message_reports: std::collections::VecDeque::new(),
             }],
+            origin_location: None,
+            latest_location: None,
         },
     );
 }
@@ -1878,6 +1881,8 @@ fn given_session_already_contains_messages(
             messages: vec![Message::user(user), Message::assistant(assistant, vec![])],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_location: None,
+            latest_location: None,
         },
     );
 }
@@ -1900,6 +1905,8 @@ fn given_session_has_workflow_progress(
                 active_issue: None,
             }),
             subagent_roster: Vec::new(),
+            origin_location: None,
+            latest_location: None,
         },
     );
     world._workflow_enabled = true;
@@ -2088,6 +2095,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            activation_agent_name: None,
         })
     });
 
@@ -2502,6 +2510,7 @@ fn mc_spawn_agent(
             broadcast_tx,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            activation_agent_name: None,
         })
     });
 
