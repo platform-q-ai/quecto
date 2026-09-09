@@ -184,20 +184,51 @@ async fn dropped_permit_is_abandonment_and_finish_is_completion() {
 #[tokio::test]
 async fn cooldown_is_anchored_at_the_grant_and_kept_per_group() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(Arc::new(Grant::new(5_000, 10_000)), "acct", "g", &recorder);
+    let inner = Arc::new(Grant::new(5_000, 10_000));
+    let forwarded = inner.forwarded.clone();
+    let gate = observed(inner, "acct", "g", &recorder);
     let mut permit = gate.acquire().await.unwrap();
-    let granted_at = recorder.snapshot().observed_at_ms;
+    let AdmissionPhase::Admitted { since_ms } = recorder.snapshot().attempts[&1].phase else {
+        panic!("granted")
+    };
     tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-    // Authority says "until receipt + 3000": locally that is grant + 3000, not
-    // "now + 3000" (which would drift later by the transport duration).
+    // Authority says "until receipt + 3000": locally that is exactly grant +
+    // 3000, not "now + 3000" (which would drift later by the transport time).
     permit.feedback(ThrottleFeedback::Until(5_000 + 3_000));
     let view = recorder.snapshot();
-    let Some(CooldownState::Until { until_ms }) = view.groups[&g("g")].cooldown else {
-        panic!("{view:?}");
-    };
-    assert!(
-        until_ms >= granted_at + 3_000 && until_ms < granted_at + 3_000 + 30,
-        "{until_ms} vs {granted_at}"
+    assert_eq!(
+        view.groups[&g("g")].cooldown,
+        Some(CooldownState::Until {
+            until_ms: since_ms + 3_000
+        }),
+        "{view:?}"
+    );
+    // Shorter advice never shortens; longer advice extends (max-merge).
+    permit.feedback(ThrottleFeedback::Until(5_000 + 1_000));
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Until {
+            until_ms: since_ms + 3_000
+        })
+    );
+    permit.feedback(ThrottleFeedback::Until(5_000 + 4_000));
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Until {
+            until_ms: since_ms + 4_000
+        })
+    );
+    // Advice is judged by the delay remaining when it arrives, as the
+    // authority does: 40 ms into the grant, "max + 10 ms" is still acceptable.
+    permit.feedback(ThrottleFeedback::Until(5_000 + 10_010));
+    assert!(matches!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Until { .. })
+    ));
+    assert_eq!(
+        forwarded.lock().unwrap().feedback.len(),
+        4,
+        "every advice reached the inner permit"
     );
     // Another group is unaffected.
     let other = observed(Arc::new(Never), "b", "h", &recorder);
