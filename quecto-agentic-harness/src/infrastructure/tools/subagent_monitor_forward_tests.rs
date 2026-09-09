@@ -564,10 +564,12 @@ fn forwarded_admission_identity_cannot_be_spoofed() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     // A registered sibling (same parent) is not a descendant of the child.
+    let mut sibling = test_entry();
+    sibling.parent_id = Some("root".to_string());
     registry
         .lock()
         .unwrap()
-        .insert("sibling".to_string(), test_entry());
+        .insert("sibling".to_string(), sibling);
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     for spoofed in ["root", "stranger", "sibling", ""] {
         let line = format!(

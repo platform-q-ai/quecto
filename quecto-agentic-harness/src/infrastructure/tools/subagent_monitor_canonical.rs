@@ -211,3 +211,37 @@ pub fn forward_child_admission_event(
         "admission",
     )
 }
+
+/// #1679 P4: a descendant waiting for admission is visible from the parent's
+/// socket. Not a status change, so it never touches the registry state: the
+/// line is gated on its exact `type`, and an embedded identity is honoured
+/// only for a descendant of THIS child (walking the registry's parent links),
+/// never the parent or a sibling. `None` for any other line, which then
+/// continues through the ordinary lifecycle handling.
+pub fn forward_child_admission_line(
+    line: &str,
+    child_id: &str,
+    parent_id: Option<&str>,
+    registry: &super::subagent_registry::SubagentRegistry,
+) -> Option<String> {
+    if !line.contains("\"type\":\"admission_state_changed\"") {
+        return None;
+    }
+    let descendant = |id: &str| {
+        registry.lock().is_ok_and(|entries| {
+            let mut current = id.to_string();
+            for _ in 0..entries.len() {
+                match entries
+                    .get(&current)
+                    .and_then(|entry| entry.parent_id.clone())
+                {
+                    Some(parent) if parent == child_id => return true,
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            }
+            false
+        })
+    };
+    forward_child_admission_event(line, child_id, parent_id, &descendant)
+}

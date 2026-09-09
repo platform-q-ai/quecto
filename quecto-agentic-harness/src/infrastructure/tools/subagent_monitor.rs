@@ -3,7 +3,7 @@ use std::time::Instant;
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_canonical::{
     bounded_forward, canonical_messages_appended_forward, canonical_workflow_forward,
-    forward_child_admission_event, forward_child_messages_appended, forward_child_workflow_event,
+    forward_child_admission_line, forward_child_messages_appended, forward_child_workflow_event,
 };
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
@@ -485,27 +485,9 @@ fn handle_monitor_line(
         }
         // #1679 P4: a descendant waiting for admission is visible from the
         // parent's socket; not a status change, so it bypasses the registry.
-        if line.contains("\"type\":\"admission_state_changed\"") {
-            // An embedded identity is honoured only for a descendant of THIS
-            // child (walking the registry's parent links), never a sibling.
-            let descendant = |id: &str| {
-                registry.lock().is_ok_and(|r| {
-                    let mut current = id.to_string();
-                    for _ in 0..r.len() {
-                        match r.get(&current).and_then(|entry| entry.parent_id.clone()) {
-                            Some(parent) if parent == agent_id => return true,
-                            Some(parent) => current = parent,
-                            None => return false,
-                        }
-                    }
-                    false
-                })
-            };
-            if let Some(fwd) = forward_child_admission_event(line, agent_id, parent_id, &descendant)
-            {
-                let _ = tx.send(fwd);
-                return;
-            }
+        if let Some(fwd) = forward_child_admission_line(line, agent_id, parent_id, registry) {
+            let _ = tx.send(fwd);
+            return;
         }
     }
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
