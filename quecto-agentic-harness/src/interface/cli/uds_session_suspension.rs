@@ -21,6 +21,9 @@ pub enum SuspensionCause {
 pub struct TurnSuspension {
     pub cause: SuspensionCause,
     pub generation: Option<u64>,
+    /// Whether the generation was read after the failure (not a pre-turn
+    /// fallback), so the post-turn dating pass leaves it alone.
+    pub dated: bool,
 }
 
 impl AgentSession {
@@ -46,6 +49,7 @@ impl AgentSession {
         self.pending_resume_turn = false;
         self.suspension = Some(TurnSuspension {
             cause,
+            dated: generation.is_some(),
             generation: generation.or(self.last_control_generation),
         });
     }
@@ -57,10 +61,12 @@ impl AgentSession {
         self.suspension = None;
     }
 
-    /// Whether automatic turns are suspended by a provider failure.
-    pub(crate) fn provider_suspended(&self) -> bool {
-        self.suspension
-            .is_some_and(|suspension| suspension.cause == SuspensionCause::ProviderFailure)
+    /// Whether a provider-failure suspension still carries a pre-turn
+    /// fallback generation and needs dating from the store.
+    pub(crate) fn needs_provider_dating(&self) -> bool {
+        self.suspension.is_some_and(|suspension| {
+            suspension.cause == SuspensionCause::ProviderFailure && !suspension.dated
+        })
     }
 
     /// Consume the turn owed after a resume (true once per re-arm).

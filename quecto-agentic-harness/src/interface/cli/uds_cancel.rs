@@ -46,6 +46,8 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 ///   so the steered instruction is obeyed next instead of being overridden.
 pub struct TurnControl {
     pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
+    deferred_swarm_wake: std::sync::atomic::AtomicU64,
     pub(crate) swarm_control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
     abort_requested: std::sync::atomic::AtomicBool,
     pending_steers: std::sync::atomic::AtomicUsize,

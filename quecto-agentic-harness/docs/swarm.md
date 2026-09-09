@@ -373,9 +373,14 @@ member whose automatic turns were suspended by a provider failure: the
 suspension is dated by the control generation current after the failed turn
 (a pause and a resume each bump it), a resume wakes every live member with
 its new generation (the store's notification policy targets nobody for a
-resume, so the resumer sends these wakes itself and wakes its own process),
-and a member that sees a newer generation than its suspension re-arms and
-runs one turn to continue its interrupted work. Neither a prompt nor a steer
+resume, so the resuming process sends these wakes itself; a `swarm_control`
+resume also wakes its own process, while a coordinator resuming through the
+`swarm` tool is mid-turn and needs no wake), and a member that sees a newer
+generation than its suspension re-arms and runs one turn to continue its
+interrupted work. Resuming an already running run repeats the fan-out with
+the unchanged generation: nobody re-arms or gains a turn from it, so it is
+safe but costs one wake round trip per member. Members a resume could not
+reach are listed as `wake_warnings` on the receipt. Neither a prompt nor a steer
 is needed after a resume. A durable store rejection is not re-armed this
 way; it waits for an explicit prompt. Do not pause a run because one member
 failed: pause is a whole-run wait. Resume the run (the parent may send

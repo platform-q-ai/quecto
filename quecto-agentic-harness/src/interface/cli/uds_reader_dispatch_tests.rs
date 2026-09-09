@@ -114,6 +114,7 @@ impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
         Box::pin(async {
             Ok(crate::domain::swarm::RunControlReceipt {
                 budget: None,
+                wake_warnings: Vec::new(),
                 wake_allowed: false,
                 status: crate::domain::swarm::RunStatus::Paused,
                 generation: 42,

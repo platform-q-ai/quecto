@@ -7,6 +7,7 @@ impl Default for TurnControl {
     fn default() -> Self {
         Self {
             pending_swarm_wake: std::sync::Mutex::new(None),
+            deferred_swarm_wake: std::sync::atomic::AtomicU64::new(0),
             swarm_control: None,
             abort_requested: std::sync::atomic::AtomicBool::new(false),
             pending_steers: std::sync::atomic::AtomicUsize::new(0),

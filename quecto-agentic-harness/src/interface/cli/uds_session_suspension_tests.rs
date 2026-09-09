@@ -61,7 +61,7 @@ fn an_undated_suspension_takes_the_first_wake_as_its_baseline() {
 fn the_owed_resume_turn_does_not_outlive_a_prompt_or_a_later_suspension() {
     let mut s = session();
     s.suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
-    assert!(s.provider_suspended());
+    assert!(!s.needs_provider_dating(), "dated at suspension time");
     assert!(s.resume_after_control_change(2));
     // An explicit prompt does the work the resume turn was owed for.
     s.resume_automatic_turns();
@@ -72,12 +72,18 @@ fn the_owed_resume_turn_does_not_outlive_a_prompt_or_a_later_suspension() {
     s.suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(2));
     assert!(s.resume_after_control_change(3));
     s.suspend_automatic_turns(SuspensionCause::StoreRejection, Some(3));
-    assert!(!s.provider_suspended());
+    assert!(!s.needs_provider_dating());
     assert!(
         !s.take_pending_resume_turn(),
         "a later suspension cancels the owed turn"
     );
-    assert!(!session().provider_suspended());
+    assert!(!session().needs_provider_dating());
+    let mut undated = session();
+    undated.suspend_automatic_turns(SuspensionCause::ProviderFailure, None);
+    assert!(
+        undated.needs_provider_dating(),
+        "a pre-turn fallback needs dating"
+    );
 }
 
 #[test]

@@ -96,6 +96,7 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     context.pause("member failed").unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
+    assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
     context.pause("again").unwrap();
     let tool =
         super::super::swarm_control::control(context.clone(), "resume", serde_json::json!({}))
@@ -104,20 +105,24 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     let tool_generation = tool["generation"].as_u64().unwrap();
     assert!(tool_generation > receipt.generation, "{tool}");
     assert!(tool.get("wake_warnings").is_none(), "{tool}");
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     let generations = sink.await.unwrap();
     assert_eq!(generations, [receipt.generation, tool_generation]);
     // A member that cannot be reached is reported, not fatal.
     std::fs::remove_file(&socket).unwrap();
     context.pause("once more").unwrap();
-    let tool = super::super::swarm_control::control(context, "resume", serde_json::json!({}))
-        .await
-        .unwrap();
+    let tool =
+        super::super::swarm_control::control(context.clone(), "resume", serde_json::json!({}))
+            .await
+            .unwrap();
     assert_eq!(tool["status"], "running", "{tool}");
     assert_eq!(
         tool["wake_warnings"].as_array().map(Vec::len),
         Some(1),
         "{tool}"
     );
+    context.pause("and again").unwrap();
+    let receipt = context.apply(RunControlAction::Resume).await.unwrap();
+    assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
+    assert!(receipt.wake_warnings[0].contains("worker"), "{receipt:?}");
 }

@@ -300,7 +300,7 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
         Box::pin(async move {
             let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
             let fan_out = context.clone();
-            let receipt = tokio::task::spawn_blocking(move || {
+            let mut receipt = tokio::task::spawn_blocking(move || {
                 use crate::domain::swarm::RunControlAction;
                 let mut wake_allowed = false;
                 let value = match action {
@@ -324,9 +324,7 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
             .await
             .map_err(|error| DomainError::Tool(error.to_string()))??;
             if resuming {
-                for warning in wake_after_resume(&fan_out, receipt.generation).await {
-                    tracing::warn!("{warning}");
-                }
+                receipt.wake_warnings = wake_after_resume(&fan_out, receipt.generation).await;
             }
             Ok(receipt)
         })

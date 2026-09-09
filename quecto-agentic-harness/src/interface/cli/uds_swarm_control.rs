@@ -163,6 +163,9 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             if resuming && let Some(warning) = self_wake(ctx, receipt.generation) {
                 data["warning"] = serde_json::Value::from(warning);
             }
+            if !receipt.wake_warnings.is_empty() {
+                data["wake_warnings"] = serde_json::Value::from(receipt.wake_warnings);
+            }
             super::protocol::AgentEvent::ok(id.as_deref(), "swarm_control", Some(data))
         }
         Err(error) => {
@@ -186,13 +189,16 @@ fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
             }
             None
         }
-        Err(_) => {
+        Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
             if ctx.turn_control.queue_swarm_wake(generation) {
                 ctx.turn_control.take_swarm_wake(0);
                 Some("self-wake queue full; suspended members re-arm on their next wake".into())
             } else {
                 None
             }
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+            Some("this agent is shutting down; no self-wake".into())
         }
     }
 }
@@ -243,7 +249,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 // way the suspended member says why it stayed suspended.
                 let deferred = store_failure(&error) == StoreFailure::Transient;
                 if deferred {
-                    ctx.turn_control.queue_swarm_wake(generation);
+                    ctx.turn_control.defer_swarm_wake(generation);
                 }
                 let event = AgentEvent::err(
                     None,
@@ -288,7 +294,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         Err(error) => match store_failure(&error) {
             // Contention: keep the generation for the next wake.
             StoreFailure::Transient => {
-                ctx.turn_control.queue_swarm_wake(generation);
+                ctx.turn_control.defer_swarm_wake(generation);
                 let event = AgentEvent::err(
                     None,
                     "swarm_wake",
@@ -335,10 +341,13 @@ pub(super) fn seed_control_generation(turn_control: &super::uds_cancel::TurnCont
 /// #1721: a provider-failure suspension is dated by the control generation
 /// current *after* the failure, so a pause/resume that happened during the
 /// failed turn cannot re-arm it; only a later resume can. Without a swarm,
-/// or when the store cannot answer, the pre-turn generation stands.
+/// or when the store cannot answer, the pre-turn generation stands. Runs
+/// after every turn path (prompt, drained, nudged) and only touches a
+/// suspension not yet dated this way, so a later idle drain cannot re-date
+/// an older suspension past a resume it should honour.
 pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'_>) {
     use crate::domain::swarm::RunControlAction;
-    if !ctx.session.provider_suspended() {
+    if !ctx.session.needs_provider_dating() {
         return;
     }
     let Some(control) = ctx.turn_control.swarm_control.clone() else {

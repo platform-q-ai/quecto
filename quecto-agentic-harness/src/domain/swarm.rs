@@ -182,6 +182,8 @@ pub struct RunControlReceipt {
     pub wake_allowed: bool,
     pub status: RunStatus,
     pub generation: u64,
+    /// Members a resume could not wake (#1721); empty for other actions.
+    pub wake_warnings: Vec<String>,
 }
 
 /// Supervisor operations remain available without model execution or turn-queue admission.
