@@ -62,6 +62,12 @@ fn persisted_folder_key_round_trips_without_consulting_the_filesystem() {
     assert_eq!(restored.encoded_key(), persisted);
     assert!(FolderIdentity::from_encoded_key("unix:0").is_none());
     assert!(FolderIdentity::from_encoded_key("unix:gg").is_none());
+    assert_eq!(
+        FolderIdentity::from_encoded_key("unix:AF")
+            .unwrap()
+            .encoded_key(),
+        "unix:af"
+    );
     assert!(FolderIdentity::from_encoded_key("unknown:00").is_none());
     assert!(FolderIdentity::from_encoded_key(&format!("unix:{}", "00".repeat(4096))).is_none());
     assert!(FolderIdentity::from_encoded_key("windows-u16le:00").is_none());
