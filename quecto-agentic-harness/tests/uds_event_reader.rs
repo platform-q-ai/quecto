@@ -17,6 +17,21 @@ mod tests {
     }
 
     #[test]
+    fn reports_end_of_stream_so_drains_can_stop_early() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        writer.write_all(b"agent_end\n").unwrap();
+        let mut reader = EventReader::new(reader).unwrap();
+        assert!(!reader.at_eof());
+        assert_eq!(reader.poll().unwrap().as_deref(), Some("agent_end"));
+        drop(writer);
+        assert_eq!(reader.poll().unwrap(), None);
+        assert!(
+            reader.at_eof(),
+            "a closed peer is distinguishable from a quiet one"
+        );
+    }
+
+    #[test]
     fn retains_partial_utf8_frame_across_socket_timeout() {
         let (mut writer, reader) = UnixStream::pair().unwrap();
         let mut reader = EventReader::new(reader).unwrap();
