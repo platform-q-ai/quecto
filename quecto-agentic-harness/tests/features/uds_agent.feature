@@ -28,6 +28,18 @@ Feature: UDS mode for headless agent operation
     And a [session] file for "sys-persist-test" should exist
     And the session for "sys-persist-test" should not contain a system message
 
+  @done
+  Scenario: session discovery is scoped by the server execution folder
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    When I start the UDS agent with no [session]
+    And I send command "list_sessions" with id "scoped-list"
+    And I close the UDS connection
+    Then the agent output should contain a response with id "scoped-list"
+    And the list_sessions response "scoped-list" should report available current-folder scope
+    And the UDS agent exits with code 0
+
   # ─── Flag parsing ───────────────────────────────────────────────────────────
 
   @done

@@ -1163,6 +1163,15 @@ pub fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_j
     })
 }
 
+#[then(expr = "the list_sessions response {string} should report available current-folder scope")]
+fn then_list_sessions_scope_is_available(world: &mut QuectoWorld, id: String) {
+    let response = find_agent_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("missing list_sessions response {id}"));
+    assert_eq!(response["command"], "list_sessions");
+    assert_eq!(response["data"]["scopeStatus"], "available");
+    assert!(response["data"]["sessions"].is_array());
+}
+
 pub fn find_agent_response_by_id(world: &QuectoWorld, id: &str) -> Option<serde_json::Value> {
     world.agent_events.iter().find_map(|l| {
         let v: serde_json::Value = serde_json::from_str(l).ok()?;
