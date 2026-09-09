@@ -92,3 +92,11 @@ Architecture ratchets (pre-push): the admission mapper deserializes a typed
 `AdmissionView` DTO (no raw `serde_json` sites), `client_result_text.rs` is
 allowlisted as a pure `client.rs` relocation, the wire-DTO total records the
 one new dispatch arm, and the owner map lists the four new files.
+
+## Mutations (slice 3, round 2, after review 2)
+    T1–T14 (TUI: label logic, bounds, master/child routing, run-end/agent-error/disconnect clearing,
+    spinner ownership incl. tool end, footer and panel row painting) and H1–H6 (harness: forwarded
+    group bound, identity re-stamping, oversized drop, spoofed parent/sibling identity, quoted
+    lifecycle line not swallowed): 25 mutants, all killed. Local gates: pre-push green, harness lib
+    4295 / TUI lib 2168 green, admission lane 25/25, TUI lane 214/214, function coverage harness
+    92.17% / TUI 95.32%.
