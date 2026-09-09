@@ -181,6 +181,20 @@ fn presentation_metadata_enforces_utf8_byte_limits_independently() {
 }
 
 #[test]
+fn presentation_metadata_serde_is_transparent() {
+    let agent = AgentDisplayName::new("agent".to_string()).unwrap();
+    let branch = GitBranchDisplay::new("branch".to_string()).unwrap();
+    let folder = FolderDisplayLabel::new("/folder".to_string()).unwrap();
+    for (value, expected) in [
+        (serde_json::to_string(&agent).unwrap(), "\"agent\""),
+        (serde_json::to_string(&branch).unwrap(), "\"branch\""),
+        (serde_json::to_string(&folder).unwrap(), "\"/folder\""),
+    ] {
+        assert_eq!(value, expected);
+    }
+}
+
+#[test]
 fn execution_metadata_keeps_optional_components_independent() {
     let identity = FolderIdentity::from_unix_bytes(b"/work".to_vec()).unwrap();
     let label = FolderDisplayLabel::new("/work").unwrap();
