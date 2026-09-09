@@ -146,7 +146,12 @@ impl App {
         let newer = state
             .admission_children
             .get(id)
-            .is_none_or(|(previous, _)| view.revision > previous.revision);
+            .is_none_or(|(previous, _)| {
+                view.revision > previous.revision
+                    || (view.revision == previous.revision
+                        && view.waiting > 0
+                        && state.admission_unversioned_clears.contains(id))
+            });
         if tracked
             .get(id)
             .is_some_and(|child| child.exited_at.is_none())
@@ -161,6 +166,7 @@ impl App {
             state
                 .admission_children
                 .insert(id.to_string(), (view.clone(), tokio::time::Instant::now()));
+            state.admission_unversioned_clears.remove(id);
             match view.compact_label() {
                 Some(label) => {
                     state.roster.admission_labels.insert(id.to_string(), label);
@@ -226,10 +232,16 @@ impl App {
     }
 
     pub(in crate::shell::app) fn clear_child_admission_wait(&mut self, id: &str) {
-        if let Some((view, _)) = self.ac_mut().admission_children.get_mut(id) {
-            view.waiting = 0;
-            view.longest_wait_seconds = None;
-            let label = view.compact_label();
+        if let Some((view, _)) = self.ac().admission_children.get(id) {
+            // Terminals are unversioned projections. Keep the authoritative view
+            // intact so a same-revision state event can repair cross-feed order.
+            let mut terminal_view = view.clone();
+            terminal_view.waiting = 0;
+            terminal_view.longest_wait_seconds = None;
+            let label = terminal_view.compact_label();
+            self.ac_mut()
+                .admission_unversioned_clears
+                .insert(id.to_string());
             match label {
                 Some(label) => {
                     self.ac_mut()
@@ -281,7 +293,8 @@ impl App {
                 .admission_labels
                 .retain(|id, _| state.roster.tracked.contains_key(id));
             for (id, (view, observed)) in &state.admission_children {
-                if let Some(label) = elapsed_view(view, *observed, now).compact_label()
+                if !state.admission_unversioned_clears.contains(id)
+                    && let Some(label) = elapsed_view(view, *observed, now).compact_label()
                     && state.roster.admission_labels.get(id) != Some(&label)
                 {
                     state.roster.admission_labels.insert(id.clone(), label);

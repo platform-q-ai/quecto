@@ -17,6 +17,8 @@ pub struct GetStateFooterFields {
 /// Full `get_state` fields the App response path consumes beyond the footer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GetStateSnapshot {
+    /// True only for full snapshots that may authoritatively clear omitted fields.
+    pub authoritative: bool,
     pub footer: GetStateFooterFields,
     /// Provider effort vocabulary (empty when absent or empty after sanitize).
     pub effort_levels: Vec<String>,
@@ -77,6 +79,8 @@ pub fn parse_get_state(
     let admission =
         crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
     GetStateSnapshot {
+        authoritative: crate::protocol::presentation_payloads::bool_field(data, "unchanged")
+            != Some(true),
         footer,
         effort_levels,
         session_key,

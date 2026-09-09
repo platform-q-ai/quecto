@@ -74,7 +74,10 @@ async fn duplicate_child_events_preserve_elapsed_clock_and_terminal_clears_wait(
     );
     app.route_subagent_event("child", direct(view(1, 1)));
     app.tick_admission_labels();
-    assert!(app.ac().roster.admission_labels.is_empty());
+    assert!(
+        app.ac().roster.admission_labels.contains_key("child"),
+        "same-revision authoritative state repairs an unversioned terminal clear"
+    );
     app.route_subagent_event("child", direct(view(2, 1)));
     assert!(app.ac().roster.admission_labels.contains_key("child"));
     app.route_subagent_event("child", snapshot(serde_json::json!({})));
@@ -157,7 +160,11 @@ async fn child_turn_end_clears_wait_but_preserves_cooldown() {
             message: serde_json::json!({}),
         },
     );
-    assert_eq!(app.ac().admission_children["child"].0.waiting, 0);
+    assert_eq!(
+        app.ac().admission_children["child"].0.waiting,
+        1,
+        "unversioned terminal must not mutate the authoritative snapshot"
+    );
     assert_eq!(
         app.ac()
             .roster
@@ -167,7 +174,54 @@ async fn child_turn_end_clears_wait_but_preserves_cooldown() {
         Some("cooldown 30s")
     );
     app.route_subagent_event("child", direct(view(4, 1)));
-    assert_eq!(app.ac().admission_children["child"].0.waiting, 0);
+    assert_eq!(
+        app.ac().admission_children["child"].0.waiting,
+        1,
+        "same-revision authoritative state repairs an unversioned terminal clear"
+    );
+}
+
+#[tokio::test]
+async fn metadata_only_unchanged_snapshot_preserves_wait_and_same_revision_repair() {
+    let mut app = test_app().await;
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "child", "running", None, None,
+    )]));
+    app.route_subagent_event("child", direct(view(10, 1)));
+    app.route_subagent_event(
+        "child",
+        snapshot(serde_json::json!({"unchanged": true, "generation": 42})),
+    );
+    assert!(app.ac().roster.admission_labels.contains_key("child"));
+    app.route_subagent_event(
+        "child",
+        snapshot(serde_json::json!({"admission": view(10, 1)})),
+    );
+    assert!(app.ac().roster.admission_labels.contains_key("child"));
+}
+
+#[tokio::test]
+async fn delayed_direct_terminal_allows_same_revision_authoritative_repair() {
+    let mut app = test_app().await;
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "child", "running", None, None,
+    )]));
+    app.handle_event(Event::AdmissionStateChanged {
+        agent_id: Some("child".into()),
+        admission: view(12, 1),
+    });
+    app.route_subagent_event(
+        "child",
+        Event::TurnEnd {
+            message: serde_json::json!({}),
+        },
+    );
+    assert!(app.ac().roster.admission_labels.is_empty());
+    app.route_subagent_event("child", direct(view(12, 1)));
+    assert!(
+        app.ac().roster.admission_labels.contains_key("child"),
+        "same-revision direct state must repair an unversioned terminal clear"
+    );
 }
 
 #[tokio::test]

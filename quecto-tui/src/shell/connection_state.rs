@@ -42,6 +42,8 @@ pub(crate) struct ConnectionState {
             tokio::time::Instant,
         ),
     >,
+    /// Children whose latest wait clear came from an unversioned terminal event.
+    pub(crate) admission_unversioned_clears: std::collections::BTreeSet<String>,
     /// Last admission view; absent without an authority or after disconnect.
     pub(crate) admission_view: Option<crate::protocol::admission_payloads::AdmissionView>,
     /// The spinner message this module last wrote, so a tool message set by
@@ -143,6 +145,7 @@ impl ConnectionState {
             connected_agent_id: None,
             admission_observed_at: tokio::time::Instant::now(),
             admission_children: Default::default(),
+            admission_unversioned_clears: Default::default(),
             admission_view: None,
             admission_spinner_message: None,
             agent_connected: true,

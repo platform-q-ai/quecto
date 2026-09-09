@@ -526,7 +526,9 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
-        self.apply_get_state_admission(snap.admission.as_ref());
+        if snap.authoritative {
+            self.apply_get_state_admission(snap.admission.as_ref());
+        }
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {

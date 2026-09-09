@@ -1,7 +1,6 @@
 use super::*;
 /// Defensive cap on deferred sub-agent notes; oldest notes are evicted.
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
-
 /// Routing flags for whether a child stream event updates the visible chat
 /// and/or the retained live_inflight buffer (#1259).
 struct LiveChatRoute {
@@ -12,8 +11,7 @@ struct LiveChatRoute {
 }
 
 impl App {
-    /// Is `id` still rendered (live-tracked or retained post-exit)? The drop-stale
-    /// invariant (#800): stale/untracked frames must never resurrect sessions.
+    /// Is `id` still rendered? Stale frames must never resurrect sessions (#800).
     pub(super) fn is_retained_or_tracked_agent(&self, id: &str) -> bool {
         self.ac().roster.sessions.contains_key(id) || self.ac().roster.tracked.contains_key(id)
     }
@@ -286,7 +284,9 @@ impl App {
             data,
             &crate::components::ansi::sanitize_control,
         );
-        self.apply_child_get_state_admission(agent_id, snap.admission.as_ref());
+        if snap.authoritative {
+            self.apply_child_get_state_admission(agent_id, snap.admission.as_ref());
+        }
         if let Some(wf) = snap.workflow.as_ref() {
             let bar = workflow_bar::parse_workflow_event(wf);
             self.record_subagent_workflow(agent_id, &bar);
