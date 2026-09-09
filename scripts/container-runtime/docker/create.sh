@@ -203,6 +203,21 @@ fi
 # until the SIGKILL escalation). The child is still the container's liveness:
 # the init exits when it does.
 run_as+=(--init)
+# Threads count against the container's pid cgroup, and the runtime default
+# (Podman `pids_limit = 2048`) is exhausted by an in-container `cargo test`
+# or a parallel build. Once the cgroup is full every fork and thread spawn
+# fails with EAGAIN, worker agents lose their subprocesses and the founding
+# agent cannot even tear down cleanly, so the whole environment dies and
+# every member disconnects at once. Keep a fence, but a generous one;
+# QUECTO_CONTAINER_PIDS_LIMIT overrides it (-1 defers to the user slice).
+# `0` is refused: Docker reads it as "daemon default" and Podman ignores it
+# (falling back to the 2048 this fence exists to replace).
+pids_limit="${QUECTO_CONTAINER_PIDS_LIMIT:-16384}"
+case "$pids_limit" in
+  -1) ;;
+  ''|0|*[!0-9]*) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a positive integer" ;;
+esac
+run_as+=(--pids-limit "$pids_limit")
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
 # `run -e KEY=value` — that bakes them into the container config,
 # readable for the container's whole lifetime via `inspect` and

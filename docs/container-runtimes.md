@@ -440,6 +440,12 @@ Design properties:
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
   (`quecto-box:local`).
+- **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;
+  `QUECTO_CONTAINER_PIDS_LIMIT` overrides, `-1` defers to the user slice,
+  `0` is refused). Threads count against the container's pid cgroup and the
+  runtime default of 2048 is exhausted by an in-container `cargo test`,
+  after which every fork fails and the environment dies with all its
+  members.
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes
   partial state and `docker rm -f`s any container it managed to start; every
   destructive operation proves the environment id contains no path

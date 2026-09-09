@@ -108,3 +108,42 @@ async fn no_signal_means_no_teardown() {
     assert_eq!(subagents.lock().unwrap().len(), 1);
     assert!(matches!(*cancel.lock().unwrap(), CancelSlot::Idle));
 }
+
+/// A full pid cgroup denies the teardown its own thread; the teardown must
+/// still run (inline) and the loop still exit, instead of the process
+/// panicking and taking the container's other agents down with it.
+#[tokio::test]
+async fn teardown_without_a_spare_thread_runs_inline_instead_of_panicking() {
+    let dir = tempfile::tempdir().unwrap();
+    let (environments, env_ref) = environment_with_kill_script(dir.path(), "worker");
+    let subagents: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/worker.sock"), 0);
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some(env_ref.clone());
+    subagents.lock().unwrap().insert("worker".into(), entry);
+    let cancel: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
+    let notify = Arc::new(tokio::sync::Notify::new());
+    fn no_thread(_job: super::TeardownJob) -> std::io::Result<()> {
+        Err(std::io::Error::from_raw_os_error(11))
+    }
+
+    let removed = super::shutdown_on_with(
+        std::future::ready(()),
+        no_thread,
+        subagents.clone(),
+        None,
+        cancel.clone(),
+        notify.clone(),
+    )
+    .await;
+
+    assert_eq!(removed, 1);
+    assert!(subagents.lock().unwrap().is_empty());
+    let killed = std::fs::read_to_string(dir.path().join("killed"))
+        .expect("the kill argv still runs when no thread is available");
+    assert_eq!(killed.trim(), "env-termination");
+    assert!(matches!(*cancel.lock().unwrap(), CancelSlot::Fired));
+    tokio::time::timeout(std::time::Duration::from_millis(200), notify.notified())
+        .await
+        .expect("loop exit still requested");
+}
