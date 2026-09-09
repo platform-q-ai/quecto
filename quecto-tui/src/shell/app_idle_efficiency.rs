@@ -16,7 +16,8 @@ impl App {
     }
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
-        kitty_fallback_pending
+        self.tabs.values().any(|state| state.admission_view.as_ref().is_some_and(|view| view.waiting > 0) || state.admission_children.values().any(|(view, _)| view.waiting > 0))
+            || kitty_fallback_pending
             || self.ac().spinner.is_some()
             || self.ac().agent_state.is_running()
             || self.active_session().footer.is_streaming()
@@ -38,7 +39,7 @@ impl App {
         kitty_fallback_done: &mut bool,
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
-        let mut needs_render = false;
+        let mut needs_render = self.tick_admission_labels();
         // Tick EVERY tab's spinner (#1466 fix pass item 6): a busy BACKGROUND
         // tab must keep the tab-bar spinner animating. The resulting repaint
         // is the bar-cadence tick only — background tokens still schedule no

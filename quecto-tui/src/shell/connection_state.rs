@@ -32,8 +32,17 @@ pub(crate) struct ConnectionState {
     pub(crate) spinner: Option<Spinner>,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     pub(crate) connected_agent_id: Option<String>,
-    /// Last admission view of the connected agent (#1679 P4); `None` when
-    /// the agent shares no authority or is disconnected.
+    /// Local monotonic receipt time of the authoritative master snapshot.
+    pub(crate) admission_observed_at: tokio::time::Instant,
+    /// Bounded by the tracked roster; snapshots retain their original clock anchor.
+    pub(crate) admission_children: std::collections::BTreeMap<
+        String,
+        (
+            crate::protocol::admission_payloads::AdmissionView,
+            tokio::time::Instant,
+        ),
+    >,
+    /// Last admission view; absent without an authority or after disconnect.
     pub(crate) admission_view: Option<crate::protocol::admission_payloads::AdmissionView>,
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
@@ -132,6 +141,8 @@ impl ConnectionState {
             agent_state: AgentRunState::new(),
             spinner: None,
             connected_agent_id: None,
+            admission_observed_at: tokio::time::Instant::now(),
+            admission_children: Default::default(),
             admission_view: None,
             admission_spinner_message: None,
             agent_connected: true,
