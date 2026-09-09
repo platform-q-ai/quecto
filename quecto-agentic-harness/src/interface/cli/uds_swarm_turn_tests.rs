@@ -8,12 +8,12 @@ fn delayed_pause_does_not_cancel_resumed_turn() {
         RunStatus::Running,
         12,
     )));
-    suspend_swarm_turn(&handle, 10, || true);
+    suspend_swarm_turn(&handle, 10, &|| true);
     assert_eq!(
         receiver.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
     );
-    suspend_swarm_turn(&handle, 13, || true);
+    suspend_swarm_turn(&handle, 13, &|| true);
     assert_eq!(
         receiver.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Closed)
@@ -28,7 +28,7 @@ fn verification_runs_without_the_cancel_lock_and_rechecks_the_generation() {
         10,
     )));
     let probe = handle.clone();
-    suspend_swarm_turn(&handle, 10, || {
+    suspend_swarm_turn(&handle, 10, &|| {
         // A blocked abort/steer would need this lock: it must be free here.
         assert!(
             probe.try_lock().is_ok(),
@@ -57,7 +57,7 @@ fn delayed_terminal_settlement_preserves_fresh_report() {
         RunStatus::Failed,
         10,
     )));
-    suspend_swarm_turn(&handle, 10, || true);
+    suspend_swarm_turn(&handle, 10, &|| true);
     assert_eq!(
         receiver.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
@@ -73,4 +73,37 @@ fn pending_swarm_wakes_coalesce_to_highest_generation() {
     assert_eq!(control.take_swarm_wake(10), 12);
     assert!(control.queue_swarm_wake(13));
     assert_eq!(control.take_swarm_wake(13), 13);
+}
+
+/// A panic while a turn helper held its lock must not wedge cancellation or
+/// wake coalescing: every helper recovers a poisoned lock.
+#[test]
+fn poisoned_locks_are_recovered_by_every_turn_helper() {
+    let (sender, mut receiver) = tokio::sync::oneshot::channel();
+    let handle = Arc::new(std::sync::Mutex::new(CancelSlot::ScopedArmed(
+        sender,
+        RunStatus::Running,
+        4,
+    )));
+    let poison = handle.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poison.lock().unwrap();
+        panic!("poison the cancel slot");
+    })
+    .join();
+    assert!(handle.is_poisoned());
+    suspend_swarm_turn(&handle, 4, &|| true);
+    assert_eq!(
+        receiver.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Closed),
+        "suspension still applies through a poisoned lock"
+    );
+    let control = TurnControl::default();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = control.pending_swarm_wake.lock().unwrap();
+        panic!("poison the wake slot");
+    }));
+    assert!(control.pending_swarm_wake.is_poisoned());
+    assert!(control.queue_swarm_wake(7));
+    assert_eq!(control.take_swarm_wake(0), 7);
 }

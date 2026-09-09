@@ -1,10 +1,12 @@
 use super::*;
 
 /// Apply an observed lifecycle transition only to the work turn it governs.
+// `still_current` is a trait object on purpose: one instantiation serves every
+// caller instead of one monomorphized copy per closure.
 pub(in crate::interface::cli) fn suspend_swarm_turn(
     handle: &CancelHandle,
     generation: u64,
-    still_current: impl FnOnce() -> bool,
+    still_current: &dyn Fn() -> bool,
 ) {
     use crate::domain::swarm::RunStatus;
     // Decide under the lock, verify with the lock released (the verification

@@ -38,7 +38,7 @@ pub(super) fn suspension_callback(
 ) -> Arc<dyn Fn(crate::domain::swarm::RunStatus, u64) + Send + Sync> {
     let cancel = cancel.clone();
     Arc::new(move |status, generation| {
-        super::uds_cancel::suspend_swarm_turn(&cancel, generation, || {
+        super::uds_cancel::suspend_swarm_turn(&cancel, generation, &|| {
             context
                 .control_status()
                 .and_then(|value| SwarmContext::decode_control_receipt(value, false))

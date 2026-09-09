@@ -136,3 +136,9 @@ guards are affirmative with typed classification (`StoreFailure`,
 `AccountingFailure`); poison-tolerant locks in the turn helpers; any durable
 store rejection of a diagnostic record drops it with a warning so diagnostics
 never block inference, while contention keeps it pending.
+
+Coverage follow-up: the fixes added poison-recovery closures that the lib
+gate counts as functions; `suspend_swarm_turn` now takes a `&dyn Fn` so it is
+instantiated once, and poison paths of the turn helpers and accounting state
+are tested (`poisoned_locks_are_recovered_by_every_turn_helper`,
+`poisoned_accounting_locks_are_recovered`). Local lib gate 92.21%.
