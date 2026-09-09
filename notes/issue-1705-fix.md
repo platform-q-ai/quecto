@@ -28,3 +28,5 @@ Residual scope: the historical aborted calls are not reproduced or causally attr
 
 ## Refactor and review
 Extracted registry transport into `subagent_transport.rs` to retain repository's 750-line source limit while keeping public reexports stable (registry now 556 lines). Final full library run: 4306/4306; final BDD run: 74/74 scenarios, 330/330 steps. Independent read-only adversarial review found no actionable bugs after checking issue acceptance, schema shapes, routing, deadlines and test boundaries. Repository quality, BDD quality/tag checks pass (existing nonblocking BDD warnings remain).
+
+First push gate caught a source-location architecture assertion still pointing at the registry after extraction. Updated its expected consumer path to `subagent_transport.rs`, retaining the shared-frame-reader assertion (not weakening it). All other first-push gates passed.
