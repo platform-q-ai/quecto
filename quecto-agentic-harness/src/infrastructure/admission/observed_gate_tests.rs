@@ -377,3 +377,39 @@ async fn transitions_bump_the_revision_and_notify_the_hook() {
         "the hook sees every transition in order with a fresh view"
     );
 }
+
+/// Transitions on many workers still reach the hook in revision order, so a
+/// client that simply replaces its view never ends up holding a stale one.
+#[test]
+fn concurrent_transitions_reach_the_hook_in_revision_order() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    recorder.set_hook(Arc::new(move |activity| {
+        // Widen the window in which an unordered delivery would show.
+        std::thread::yield_now();
+        sink.lock().unwrap().push(activity.revision);
+    }));
+    let group = GroupId::new("g").unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let recorder = recorder.clone();
+            let group = group.clone();
+            std::thread::spawn(move || {
+                for _ in 0..25 {
+                    let id = recorder.begin("acct", &group);
+                    recorder.cancelled(id);
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 400);
+    assert!(
+        seen.windows(2).all(|w| w[1] == w[0] + 1),
+        "deliveries are in revision order"
+    );
+}

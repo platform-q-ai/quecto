@@ -106,7 +106,16 @@ pub(crate) fn waiting_progress(activity: &AdmissionActivity) -> Option<(&'static
     } else {
         "inference attempts"
     };
-    let cause = match verdict.cause {
+    let Some((group, cause)) = verdict.attribution else {
+        return Some((
+            "waiting",
+            format!(
+                "{} {noun} waiting for admission beyond the sampled attempts",
+                verdict.waiting
+            ),
+        ));
+    };
+    let cause = match cause {
         WaitCause::Occupancy => String::new(),
         WaitCause::Cooldown { remaining_ms } => {
             format!("; cooldown {}s remaining", seconds(remaining_ms))
@@ -119,10 +128,25 @@ pub(crate) fn waiting_progress(activity: &AdmissionActivity) -> Option<(&'static
         format!(
             "{} {noun} waiting for admission in group {} for {}s{cause}",
             verdict.waiting,
-            verdict.group.as_str(),
+            group.as_str(),
             seconds(verdict.longest_wait_ms)
         ),
     ))
+}
+
+/// Wire a process admission binding into the socket loop: its view rides on
+/// `get_state` and every transition is pushed. The hook keeps a sender alive
+/// for the life of the process-wide binding; a later loop replaces it.
+pub(crate) fn attach_process_admission(
+    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    process: &crate::infrastructure::admission::ProcessAdmission,
+    broadcast_tx: &tokio::sync::broadcast::Sender<String>,
+) {
+    execution_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .set_admission_source(process.observation());
+    process.on_transition(admission_event_hook(broadcast_tx.clone()));
 }
 
 /// Hook that broadcasts one `admission_state_changed` event per transition.

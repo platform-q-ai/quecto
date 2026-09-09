@@ -42,12 +42,16 @@ struct RecorderState {
 pub struct AdmissionRecorder {
     start: Instant,
     state: Mutex<RecorderState>,
+    /// Held across snapshot + hook so views reach the hook in revision order
+    /// (never held together with `state`).
+    notify: Mutex<()>,
 }
 
 impl std::fmt::Debug for AdmissionRecorder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let revision = self.state.try_lock().map(|state| state.revision).ok();
         f.debug_struct("AdmissionRecorder")
-            .field("revision", &self.lock().revision)
+            .field("revision", &revision)
             .finish_non_exhaustive()
     }
 }
@@ -85,6 +89,7 @@ impl AdmissionRecorder {
         Self {
             start: Instant::now(),
             state: Mutex::new(RecorderState::default()),
+            notify: Mutex::new(()),
         }
     }
 
@@ -103,8 +108,15 @@ impl AdmissionRecorder {
         self.lock().hook = Some(hook);
     }
 
-    /// Bump the revision and, outside the lock, hand the hook a fresh view.
+    /// Bump the revision and, outside the state lock, hand the hook a fresh
+    /// view. Deliveries are serialized so two transitions on different
+    /// workers cannot reach the hook with their revisions swapped (clients do
+    /// a simple replace).
     fn transitioned(&self) {
+        let _ordered = self
+            .notify
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hook = {
             let mut state = self.lock();
             state.revision = state.revision.wrapping_add(1);

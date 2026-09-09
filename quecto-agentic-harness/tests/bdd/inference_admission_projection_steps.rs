@@ -6,7 +6,9 @@
 use super::inference_admission_authority_steps::{LIMIT, rt};
 use super::*;
 use quecto::application::ports::AdmissionObservation;
+use quecto::infrastructure::admission::AdmissionRecorder;
 use quecto::interface::cli::{AdmissionStateProbe, admission_broadcast_hook};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Default)]
@@ -115,7 +117,6 @@ fn when_aborted(world: &mut QuectoWorld) {
         assert!(start.elapsed() < LIMIT, "abort never cancelled the wait");
         std::thread::sleep(Duration::from_millis(5));
     }
-    probe(world).finish_run();
 }
 
 #[then(expr = "the admission view counts {int} cancelled attempt and nothing waiting")]
@@ -135,8 +136,9 @@ fn then_cancelled(world: &mut QuectoWorld, cancelled: u64) {
 #[when("the process pushes admission transitions to its socket clients")]
 fn when_hook_installed(world: &mut QuectoWorld) {
     let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
-    let recorder = world.authority_observation.recorder.clone().unwrap();
+    let recorder = Arc::new(AdmissionRecorder::new());
     recorder.set_hook(admission_broadcast_hook(tx));
+    world.authority_observation.recorder = Some(recorder);
     world.admission_projection.events = Some(rx);
 }
 
@@ -144,14 +146,24 @@ fn when_hook_installed(world: &mut QuectoWorld) {
 fn then_events(world: &mut QuectoWorld, completed: u64) {
     let rx = world.admission_projection.events.as_mut().unwrap();
     let mut revisions = Vec::new();
+    let mut first = None;
     let mut last = None;
     while let Ok(line) = rx.try_recv() {
         let event: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(event["type"], "admission_state_changed", "{event}");
         revisions.push(event["admission"]["revision"].as_u64().unwrap());
+        first.get_or_insert_with(|| event.clone());
         last = Some(event);
     }
     assert!(revisions.windows(2).all(|w| w[1] > w[0]), "{revisions:?}");
+    let first = first.expect("the queued transition was pushed");
+    assert_eq!(first["admission"]["waiting"], 1, "{first}");
+    assert_eq!(first["admission"]["revision"], 1, "{first}");
+    assert_eq!(
+        revisions.len(),
+        3,
+        "queued, granted, completed: {revisions:?}"
+    );
     let last = last.expect("at least one transition was pushed");
     assert_eq!(
         last["admission"]["counters"]["completed"], completed,

@@ -40,14 +40,14 @@ Feature: Admission activity is projected to socket clients beside the lifecycle
     Then the state is "thinking" with progress "waiting" naming group "g"
     When the waiting run is aborted
     And a supervisor polls the process state
-    Then the state is "idle" with progress "quiet" naming group ""
+    Then the state is "thinking" with progress "active" naming group ""
     And the admission view counts 1 cancelled attempt and nothing waiting
 
   Scenario: Every admission transition is pushed to socket clients
     Given a running admission authority with capacity one
     And a root session holding an active attempt
-    When an observed process attempt queues behind the holder
-    And the process pushes admission transitions to its socket clients
+    When the process pushes admission transitions to its socket clients
+    And an observed process attempt queues behind the holder
     And the holding root completes its attempt
     Then the process observes the attempt admitted and then completed
     And the clients receive admission_state_changed events ending with 1 completed

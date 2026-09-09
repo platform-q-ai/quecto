@@ -1,4 +1,6 @@
-use super::uds_admission_projection::{admission_event_hook, project, waiting_progress};
+use super::uds_admission_projection::{
+    admission_event_hook, attach_process_admission, project, waiting_progress,
+};
 use super::uds_execution_state::ExecutionState;
 use super::uds_state_projection::{slim_state_projection, slim_state_response_data};
 use crate::application::ports::AdmissionObservation;
@@ -193,7 +195,7 @@ fn a_waiting_attempt_is_reported_as_waiting_never_quiet_or_active() {
 }
 
 #[test]
-fn admission_transitions_advance_the_public_cursor_exactly_once_each() {
+fn a_changed_admission_revision_advances_the_public_cursor_once_per_observation() {
     let source = Arc::new(ScriptedObservation::default());
     let mut state = ExecutionState::default();
     let base = state.observe_visible_revisions(0, 0);
@@ -307,4 +309,100 @@ fn execution_state_debug_names_the_phase_and_admission_presence() {
     state.set_admission_source(Arc::new(ScriptedObservation::default()));
     let text = format!("{state:?}");
     assert!(text.contains("admission: true") && text.contains("phase: \"idle\""));
+}
+
+#[test]
+fn a_fully_hidden_queue_is_reported_without_a_guessed_group() {
+    let mut activity = AdmissionActivity {
+        waiting: 3,
+        hidden: 3,
+        ..AdmissionActivity::default()
+    };
+    activity.groups.insert(g("g"), GroupActivity::default());
+    let (state, reason) = waiting_progress(&activity).unwrap();
+    assert_eq!(state, "waiting");
+    assert_eq!(
+        reason,
+        "3 inference attempts waiting for admission beyond the sampled attempts"
+    );
+    assert_eq!(project(&activity).longest_wait_seconds, Some(0));
+}
+
+/// The production wiring over a real in-process authority: the socket loop's
+/// execution state reads the binding's view and every transition is pushed.
+#[test]
+fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
+    use crate::domain::inference_admission::{AdmissionConfig, Feedback, GroupPolicy};
+    use crate::infrastructure::admission::{
+        AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
+    };
+    use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let proposal = AdmissionRuntimeProposal {
+        policy: AdmissionConfig {
+            groups: std::collections::BTreeMap::from([(
+                g("g"),
+                GroupPolicy {
+                    capacity: 1,
+                    reserve: 0,
+                    min_interval_ms: 1,
+                    queue_capacity: 4,
+                    queue_timeout_ms: 5_000,
+                    attempt_timeout_ms: 60_000,
+                    fallback_base_ms: 100,
+                    max_cooldown_ms: 10_000,
+                },
+            )]),
+            aliases: std::collections::BTreeMap::from([("acct".into(), g("g"))]),
+            max_scopes: 4,
+            terminal_capacity: 8,
+        },
+        bindings: std::collections::BTreeMap::from([("openai".into(), "acct".into())]),
+    };
+    let server = rt
+        .block_on(AuthorityServer::start(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal,
+        ))
+        .unwrap();
+    let process = negotiate(Negotiation::Root { directory }).unwrap();
+    let execution_state: super::uds_execution_state::ExecutionStateHandle =
+        Arc::new(Mutex::new(ExecutionState::default()));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
+    attach_process_admission(&execution_state, &process, &tx);
+    let gate = process.runtime_context().binding("openai").unwrap().gate;
+    let permit = rt.block_on(gate.acquire()).unwrap();
+    let live = execution_state.lock().unwrap().snapshot();
+    let admission = live
+        .admission
+        .expect("the binding's view rides on the snapshot");
+    assert_eq!((admission.waiting, admission.admitted), (0, 1));
+    let _guard = rt.enter();
+    permit.finish(Feedback::Success);
+    let mut types = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+        types.push((
+            event["type"].as_str().unwrap().to_owned(),
+            event["admission"]["revision"].as_u64().unwrap(),
+        ));
+    }
+    assert_eq!(
+        types,
+        vec![
+            ("admission_state_changed".to_owned(), 1),
+            ("admission_state_changed".to_owned(), 2),
+            ("admission_state_changed".to_owned(), 3),
+        ],
+        "queued, granted, completed were pushed in order"
+    );
+    let (drained, retired) = process.shutdown(std::time::Duration::from_secs(3));
+    assert!(drained && retired.is_ok());
+    rt.block_on(server.shutdown());
 }

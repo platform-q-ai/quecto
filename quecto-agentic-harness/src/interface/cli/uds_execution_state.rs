@@ -151,11 +151,11 @@ impl ExecutionState {
         session_generation: u64,
         workflow_revision: u64,
     ) -> u64 {
-        if let Some(activity) = self.admission_activity() {
-            if activity.revision != self.observed_admission_revision {
-                self.observed_admission_revision = activity.revision;
-                self.visible_generation = self.visible_generation.saturating_add(1);
-            }
+        if let Some(activity) = self.admission_activity()
+            && activity.revision != self.observed_admission_revision
+        {
+            self.observed_admission_revision = activity.revision;
+            self.visible_generation = self.visible_generation.saturating_add(1);
         }
         if session_generation > self.observed_session_generation {
             self.observed_session_generation = session_generation;

@@ -117,8 +117,11 @@ are sampled, the rest are counted as `hidden`; refusal reasons are bounded to
 Over the socket the view rides on `get_state` as the `admission` object next
 to the execution phase, and the progress verdict becomes `waiting` (with the
 count, group, longest wait and cause) for as long as any attempt is queued.
-Every transition advances the `get_state` generation and is pushed as an
-`admission_state_changed` event; see [uds-protocol.md](uds-protocol.md).
+A changed admission revision advances the `get_state` generation once per
+observation, and every transition is pushed in order as an
+`admission_state_changed` event; elapsed waits and cooldown remainders are
+re-derived on each full read rather than being transitions. See
+[uds-protocol.md](uds-protocol.md).
 `abort` while an attempt waits cancels the wait at the authority and counts
 it under `counters.cancelled`.
 

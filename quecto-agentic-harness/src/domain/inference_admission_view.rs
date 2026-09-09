@@ -19,14 +19,15 @@ pub enum WaitCause {
     Unavailable,
 }
 
-/// The waiting verdict: how many attempts are queued, the longest wait and
-/// the group and cause of that longest wait.
+/// The waiting verdict: how many attempts are queued, the longest wait and,
+/// when a waiting attempt is visible, the group and cause of that wait.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaitingVerdict {
     pub waiting: usize,
     pub longest_wait_ms: u64,
-    pub group: GroupId,
-    pub cause: WaitCause,
+    /// `None` when every waiting attempt is beyond the sample bound: the
+    /// wait is then not attributed to any group rather than to a guess.
+    pub attribution: Option<(GroupId, WaitCause)>,
 }
 
 fn cause_for(activity: &AdmissionActivity, group: &GroupId) -> WaitCause {
@@ -43,7 +44,7 @@ fn cause_for(activity: &AdmissionActivity, group: &GroupId) -> WaitCause {
 /// `Some` exactly when at least one attempt is waiting. The sampled attempts
 /// are the oldest, so the longest wait among them is the longest overall;
 /// when every waiting attempt is hidden by the sample bound the wait is
-/// reported as unknown (0) rather than invented.
+/// reported as unknown (0) and unattributed rather than invented.
 pub fn waiting_verdict(activity: &AdmissionActivity) -> Option<WaitingVerdict> {
     if activity.waiting == 0 {
         return None;
@@ -53,16 +54,13 @@ pub fn waiting_verdict(activity: &AdmissionActivity) -> Option<WaitingVerdict> {
         .values()
         .filter(|attempt| matches!(attempt.phase, AdmissionPhase::Waiting { .. }))
         .max_by_key(|attempt| attempt.elapsed_ms);
-    let (longest_wait_ms, group) = match longest {
-        Some(attempt) => (attempt.elapsed_ms, attempt.group.clone()),
-        None => (0, activity.groups.keys().next().cloned()?),
-    };
-    let cause = cause_for(activity, &group);
     Some(WaitingVerdict {
         waiting: activity.waiting,
-        longest_wait_ms,
-        group,
-        cause,
+        longest_wait_ms: longest.map_or(0, |attempt| attempt.elapsed_ms),
+        attribution: longest.map(|attempt| {
+            let cause = cause_for(activity, &attempt.group);
+            (attempt.group.clone(), cause)
+        }),
     })
 }
 

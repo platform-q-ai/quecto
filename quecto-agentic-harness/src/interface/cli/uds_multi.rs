@@ -232,13 +232,11 @@ pub(super) async fn multi_client_loop(
     // #1679 P4: admission activity rides on `get_state` (revision folded into
     // the public cursor) and is pushed as `admission_state_changed`.
     if let Some(process) = crate::infrastructure::admission::process::current() {
-        execution_state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .set_admission_source(process.observation());
-        process.on_transition(super::uds_admission_projection::admission_event_hook(
-            broadcast_tx.clone(),
-        ));
+        super::uds_admission_projection::attach_process_admission(
+            &execution_state,
+            &process,
+            &broadcast_tx,
+        );
     }
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));

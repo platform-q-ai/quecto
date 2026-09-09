@@ -55,8 +55,7 @@ fn the_longest_waiting_attempt_names_the_group_and_cause() {
     let verdict = waiting_verdict(&view).unwrap();
     assert_eq!(verdict.waiting, 2);
     assert_eq!(verdict.longest_wait_ms, 800);
-    assert_eq!(verdict.group, g("slow"));
-    assert_eq!(verdict.cause, WaitCause::Occupancy);
+    assert_eq!(verdict.attribution, Some((g("slow"), WaitCause::Occupancy)));
 }
 
 #[test]
@@ -93,8 +92,8 @@ fn cooldown_states_become_causes_with_remaining_time() {
             },
         );
         assert_eq!(
-            waiting_verdict(&view).unwrap().cause,
-            expected,
+            waiting_verdict(&view).unwrap().attribution,
+            Some((g("g"), expected)),
             "{cooldown:?}"
         );
     }
@@ -109,7 +108,8 @@ fn a_fully_hidden_queue_reports_an_unknown_wait_without_inventing_one() {
     let verdict = waiting_verdict(&view).unwrap();
     assert_eq!(verdict.waiting, 3);
     assert_eq!(verdict.longest_wait_ms, 0);
-    assert_eq!(verdict.group, g("g"));
-    view.groups.clear();
-    assert_eq!(waiting_verdict(&view), None, "no group to attribute to");
+    assert_eq!(
+        verdict.attribution, None,
+        "never attributed to a guessed group"
+    );
 }
