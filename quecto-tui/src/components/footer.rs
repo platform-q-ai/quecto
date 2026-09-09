@@ -21,10 +21,10 @@ pub struct Footer {
     is_streaming: bool,
     /// Active reasoning-effort level (#1067); `None` = effective default.
     effort: Option<String>,
-    /// Inference-admission label (#1679 P4): "waiting for admission 12s",
+    /// Inference-admission label (#1679 P4): "12s",
     /// "anthropic cooldown 30s"; `None` when nothing is worth showing.
     admission: Option<String>,
-    /// The panel-row form of the same label ("waiting 12s").
+    /// The panel-row form of the same label ("12s").
     admission_compact: Option<String>,
     /// Cached working directory (read once at construction).
     pwd: String,

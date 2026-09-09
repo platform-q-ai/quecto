@@ -9,8 +9,8 @@ Feature: Waiting for inference admission is visible without becoming a lifecycle
     Given a fresh TUI harness for admission scenarios
     When the agent starts a run
     And the agent reports its admission view as waiting for 12 seconds in group "anthropic"
-    Then the master footer shows "waiting for admission 12s"
-    And the working spinner says "Waiting for admission 12s (Esc to interrupt)"
+    Then the master footer shows "12s"
+    And the working spinner says "⏳ 12s (Esc to interrupt)"
     When the agent reports its admission view as admitted
     Then the master footer shows no admission label
     And the working spinner says "Working... (Esc to interrupt)"
@@ -30,7 +30,7 @@ Feature: Waiting for inference admission is visible without becoming a lifecycle
     Given a fresh TUI harness for admission scenarios
     And a running sub-agent "reviewer" is on the roster
     When the parent forwards "reviewer" waiting for admission for 4 seconds
-    Then the sub-agent panel row for "reviewer" shows "waiting 4s"
+    Then the sub-agent panel row for "reviewer" shows "4s"
     And the master footer shows no admission label
     When the parent forwards "reviewer" with nothing waiting
     Then the sub-agent panel row for "reviewer" shows no admission label
@@ -38,4 +38,4 @@ Feature: Waiting for inference admission is visible without becoming a lifecycle
   Scenario: The slim state carries the admission view like the pushed event
     Given a fresh TUI harness for admission scenarios
     When a get_state response arrives with a waiting admission view of 7 seconds
-    Then the master footer shows "waiting for admission 7s"
+    Then the master footer shows "7s"
