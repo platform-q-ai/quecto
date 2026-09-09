@@ -121,7 +121,7 @@ fn then_second_root_first(world: &mut QuectoWorld) {
     );
     let status = inspect(&world.authority);
     let g = status.groups[&group()];
-    assert_eq!((g.active, g.queued), (1, 1), "{refusal}: {g:?}");
+    assert_eq!((g.active, g.queued), (1, 1), "{g:?}");
 }
 
 #[then("the child is granted once the second root completes")]
@@ -254,13 +254,8 @@ fn then_queue_full(world: &mut QuectoWorld) {
     let refusal = world.admission_matrix.refusal.as_deref().expect("refused");
     assert!(refusal.to_ascii_lowercase().contains("queue"), "{refusal}");
     let status = inspect(&world.authority);
-    assert_eq!(
-        (
-            status.groups[&group()].active,
-            status.groups[&group()].queued
-        ),
-        (1, 1)
-    );
+    let g = status.groups[&group()];
+    assert_eq!((g.active, g.queued), (1, 1), "{refusal}: {g:?}");
 }
 
 #[then("the second root's wait ends with an explicit deadline error and no grant")]
