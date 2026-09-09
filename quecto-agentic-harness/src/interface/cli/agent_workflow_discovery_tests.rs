@@ -36,6 +36,7 @@ fn workflow_flags() -> AgentFlags {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     }
 }
 

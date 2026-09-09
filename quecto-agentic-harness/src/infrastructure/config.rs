@@ -23,6 +23,12 @@ pub struct Config {
     /// validated at load time, not at spawn time.
     #[serde(default)]
     pub container_configs: HashMap<String, ContainerConfig>,
+    /// Shared inference admission (#1679). Absent keeps admission disabled.
+    #[serde(default)]
+    pub admission: Option<super::config_admission::AdmissionSection>,
+    /// Not serialized: base directory for the default authority directory.
+    #[serde(skip)]
+    pub(super) admission_base_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -365,6 +371,7 @@ impl Config {
         };
         config.validate_effort()?;
         config.validate_container_configs()?;
+        config.validate_admission()?;
         Ok(config)
     }
 
@@ -691,6 +698,8 @@ pub enum ConfigError {
     InvalidEffort(String),
     /// Invalid `container_configs` default labeling (#1410).
     ContainerConfigs(String),
+    /// Invalid `admission` section (#1679).
+    Admission(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -713,12 +722,16 @@ impl std::fmt::Display for ConfigError {
             ConfigError::ContainerConfigs(err) => {
                 write!(f, "invalid container_configs: {err}")
             }
+            ConfigError::Admission(err) => write!(f, "invalid admission config: {err}"),
         }
     }
 }
 
 impl std::error::Error for ConfigError {}
 
+#[cfg(test)]
+#[path = "config_admission_tests.rs"]
+mod admission_tests;
 #[cfg(test)]
 #[path = "config_effort_1066_tests.rs"]
 mod effort_1066_tests;

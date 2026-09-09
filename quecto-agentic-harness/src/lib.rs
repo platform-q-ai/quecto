@@ -19,6 +19,17 @@ mod admission_client_contracts;
 #[path = "../tests/contracts/admission_dispatcher.rs"]
 mod admission_dispatcher_contracts;
 #[cfg(test)]
+#[path = "../tests/contracts/admission_journal.rs"]
+mod admission_journal_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_recovery.rs"]
+mod admission_recovery_contracts;
+#[cfg(test)]
+#[path = "../tests/contracts/admission_secret_source.rs"]
+mod admission_secret_source_contracts;
+// The authority process adapters are proven over real sockets/files; run that
+// suite in the library gate too so its adapters count toward coverage.
+#[cfg(test)]
 #[path = "../tests/contracts/admission_fallback.rs"]
 mod admission_fallback_contracts;
 #[cfg(test)]
@@ -42,3 +53,6 @@ mod attempt_admission_contracts;
 #[cfg(test)]
 #[path = "../tests/contracts/attempt_permit.rs"]
 mod attempt_permit_contracts;
+#[cfg(all(test, unix))]
+#[path = "../tests/inference_admission_broker.rs"]
+mod inference_admission_broker_cov;

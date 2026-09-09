@@ -636,8 +636,7 @@ pub fn build_http_client() -> reqwest::Client {
     // long LLM generations. The connect_timeout gates the initial handshake;
     // per-request timeouts are set at the call site when needed (e.g.
     // web_fetch uses its own 10s timeout).
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
+    crate::infrastructure::providers::default_client_builder()
         .build()
         .unwrap_or_default()
 }

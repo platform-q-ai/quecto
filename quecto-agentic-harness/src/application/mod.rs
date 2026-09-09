@@ -23,6 +23,8 @@ pub mod subagent_launch;
 mod subagent_launch_tests;
 
 pub mod inference_admission;
+pub mod inference_authority;
+pub mod inference_authority_ports;
 
 pub mod inference_attempt;
 pub mod swarm;

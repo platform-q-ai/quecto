@@ -1,7 +1,10 @@
 //! Pure queue, pacing and capacity transitions for one accounting epoch.
 use super::inference_admission::*;
 use super::inference_cooldown::FallbackCooldown;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+#[path = "inference_admission_recovery.rs"]
+mod recovery;
 
 #[derive(Debug)]
 struct Scope {
@@ -31,6 +34,10 @@ struct Group {
     contested_pacing_streak: u8,
     last_root: [Option<ScopeId>; 2],
     last_agent: BTreeMap<(u8, ScopeId), ScopeId>,
+    /// Active attempts whose client vanished before acknowledgement.
+    uncertain: BTreeSet<RequestId>,
+    /// Outstanding attempts inherited from a previous authority process.
+    orphans: Vec<OutstandingAttempt>,
 }
 
 /// In-memory policy, deliberately without persistence or transport assumptions.
@@ -39,6 +46,8 @@ pub struct AdmissionPolicy {
     config: AdmissionConfig,
     epoch: u64,
     now: u64,
+    /// Monotonic: a serial is never reused, even after retirement.
+    next_serial: u64,
     scopes: BTreeMap<ScopeId, Scope>,
     requests: BTreeMap<RequestId, Request>,
     terminals: VecDeque<RequestId>,
@@ -64,6 +73,8 @@ impl AdmissionPolicy {
                         contested_pacing_streak: 0,
                         last_root: [None; 2],
                         last_agent: BTreeMap::new(),
+                        uncertain: BTreeSet::new(),
+                        orphans: Vec::new(),
                     },
                 ))
             })
@@ -72,6 +83,7 @@ impl AdmissionPolicy {
             config,
             epoch,
             now: 0,
+            next_serial: 0,
             scopes: BTreeMap::new(),
             requests: BTreeMap::new(),
             terminals: VecDeque::new(),
@@ -93,13 +105,17 @@ impl AdmissionPolicy {
         root: Option<ScopeId>,
         class: WorkloadClass,
     ) -> Result<ScopeId, AdmissionError> {
-        if self.scopes.len() >= self.config.max_scopes {
+        // The limit bounds live scopes; retired scopes free their slot while
+        // their serial stays burned so identity is never recycled.
+        let live = self.scopes.values().filter(|scope| !scope.retired).count();
+        if live >= self.config.max_scopes {
             return Err(AdmissionError::ScopeLimit);
         }
-        let serial = u64::try_from(self.scopes.len())
-            .ok()
-            .and_then(|n| n.checked_add(1))
+        let serial = self
+            .next_serial
+            .checked_add(1)
             .ok_or(AdmissionError::ScopeLimit)?;
+        self.next_serial = serial;
         let id = ScopeId {
             epoch: self.epoch,
             serial,
@@ -186,6 +202,12 @@ impl AdmissionPolicy {
         let request = self.requests.get_mut(&id).expect("live request");
         request.state = RequestState::Terminal(outcome);
         request.feedback = feedback;
+        // A terminal transition is verified (client-acknowledged) evidence.
+        self.groups
+            .get_mut(&request.group)
+            .expect("configured group")
+            .uncertain
+            .remove(&id);
         self.terminals.push_back(id);
         while self.terminals.len() > self.config.terminal_capacity {
             if let Some(old) = self.terminals.pop_front() {
@@ -374,18 +396,10 @@ impl AdmissionPolicy {
         self.scope(scope)?;
         self.tick(now)?;
         let id = RequestId { scope, sequence };
-        let request = match self.request(scope, sequence) {
-            Ok(r) => r,
-            Err(AdmissionError::UnknownRequest) => {
-                // No group can be inferred from an unknown grant. Fail closed for
-                // every group this scope could access, never free another attempt.
-                for group in self.groups.values_mut() {
-                    group.unavailable = true;
-                }
-                return Err(AdmissionError::UnknownRequest);
-            }
-            Err(error) => return Err(error),
-        };
+        // A sequence above the high-water mark was never enqueued, so no grant
+        // can exist for it: refuse without touching any group's availability.
+        // Replays below the mark are fenced separately and cannot free work.
+        let request = self.request(scope, sequence)?;
         if let RequestState::Terminal(_) = request.state {
             return if request.feedback == Some(feedback) {
                 Ok(request.state)
@@ -423,8 +437,9 @@ impl AdmissionPolicy {
         self.tick(now)?;
         let group = self.groups.get(id).ok_or(AdmissionError::UnknownGroup)?;
         let mut snapshot = GroupSnapshot {
-            active: 0,
+            active: group.orphans.len(),
             queued: 0,
+            uncertain: group.uncertain.len() + group.orphans.len(),
             cooldown_until: group.cooldown,
             unavailable: group.unavailable,
             observed_at: now,
@@ -445,6 +460,9 @@ impl AdmissionPolicy {
         let group = &self.groups[id];
         if group.unavailable {
             return Err(AdmissionError::Unavailable);
+        }
+        if snapshot.uncertain > 0 {
+            return Err(AdmissionError::Quarantined);
         }
         if snapshot.active >= policy.capacity || now < group.next_start || now < group.cooldown {
             return Ok(None);

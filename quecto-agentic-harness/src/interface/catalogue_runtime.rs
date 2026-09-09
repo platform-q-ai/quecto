@@ -17,6 +17,9 @@ use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};
+use crate::infrastructure::provider_runtime_admission::{
+    AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate,
+};
 
 /// Compose the concrete provider runtime for `base_dir` via the shared use
 /// case and publish runtime + catalogue as one coherent generation into the
@@ -44,18 +47,49 @@ pub fn compose_and_publish_runtime(
     };
     let catalogue_store = snapshot_store_for(base_dir);
     let runtime_store = runtime_store_for(base_dir);
-    let composed = ComposeProviderRuntimeUseCase::new().compose_and_publish(
-        &AgentProviderRuntimeFactory,
-        config,
-        &inputs,
-        &CompositionPorts {
-            sources: &catalogue_inputs.sources(),
-            credentials: &catalogue_inputs.credentials,
-            catalogue_store: &catalogue_store,
-            runtime_store: &runtime_store,
-        },
-    )?;
+    let ports = CompositionPorts {
+        sources: &catalogue_inputs.sources(),
+        credentials: &catalogue_inputs.credentials,
+        catalogue_store: &catalogue_store,
+        runtime_store: &runtime_store,
+    };
+    // An installed admission binding makes every composition (startup and
+    // reload) go through the restart-only admission factory: a changed policy
+    // or binding set is rejected instead of replacing live budgets (#1679).
+    let composed = match crate::infrastructure::admission::process::current() {
+        Some(admission) => {
+            let proposal = admission_candidate(config);
+            ComposeProviderRuntimeUseCase::new().compose_and_publish(
+                &AdmissionProviderRuntimeFactory::new(admission.runtime_context().clone()),
+                &AdmissionRuntimeCandidate {
+                    providers: config,
+                    admission: proposal.as_ref(),
+                },
+                &inputs,
+                &ports,
+            )?
+        }
+        None => ComposeProviderRuntimeUseCase::new().compose_and_publish(
+            &AgentProviderRuntimeFactory,
+            config,
+            &inputs,
+            &ports,
+        )?,
+    };
     Ok(composed.snapshot)
+}
+
+/// The configured proposal offered to the restart-only admission factory. An
+/// invalid or removed section yields `None`, which the factory rejects as a
+/// change rather than replacing live budgets.
+pub fn admission_candidate(
+    config: &Config,
+) -> Option<crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal> {
+    config
+        .admission_proposal()
+        .ok()
+        .flatten()
+        .map(|(_, proposal)| proposal)
 }
 
 /// Delegates to the factory's own blank/trim helper so the initially composed

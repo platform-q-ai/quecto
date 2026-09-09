@@ -9,7 +9,7 @@ pub mod refreshable;
 pub mod retry;
 pub mod router;
 pub mod single_attempt_client;
-pub use single_attempt_client::SingleAttemptClient;
+pub use single_attempt_client::{SingleAttemptClient, default_client_builder};
 pub mod sse_common;
 pub(crate) mod sse_limits;
 pub mod usage;

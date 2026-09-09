@@ -431,6 +431,7 @@ fn test_build_agent_from_config_no_config_file() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -483,6 +484,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -520,6 +522,7 @@ fn test_build_agent_from_config_invalid_json() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -559,6 +562,7 @@ fn test_build_agent_from_config_no_providers() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -598,6 +602,7 @@ fn test_build_agent_from_config_with_model_override() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        admission_context: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

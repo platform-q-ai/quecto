@@ -98,6 +98,29 @@ pub(super) struct ChildCommand<'a> {
     pub binary: &'a Path,
     pub cli_args: &'a [std::ffi::OsString],
     pub base_dir: &'a Path,
+    /// Client directory of the shared admission authority when this process
+    /// is admission-enabled (#1679 P3). Script-managed runtimes must expose
+    /// it to the child by path and report the capability, or the launch fails.
+    pub admission_dir: Option<&'a Path>,
+}
+
+/// The only container admission capability P3 supports: the authority's
+/// client directory is bind-mounted at the same path inside the container.
+pub const ADMISSION_CAPABILITY_SHARED_DIRECTORY: &str = "shared-directory-v1";
+
+fn require_admission_capability(
+    admission_dir: Option<&Path>,
+    reported: Option<&str>,
+    operation: &str,
+) -> Result<(), DomainError> {
+    match (admission_dir, reported) {
+        (None, _) => Ok(()),
+        (Some(_), Some(ADMISSION_CAPABILITY_SHARED_DIRECTORY)) => Ok(()),
+        (Some(dir), other) => Err(DomainError::Tool(format!(
+            "script-managed {operation} did not report admission capability '{ADMISSION_CAPABILITY_SHARED_DIRECTORY}' for {} (reported {other:?}); admission-enabled launches never bypass the authority",
+            dir.display()
+        ))),
+    }
 }
 
 pub(super) async fn spawn_prepared_child(
@@ -150,6 +173,7 @@ async fn join_script_managed_child(
     cmd.env("QUECTO_CONTAINER_CONFIG", &record.script_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
     apply_common_child_env(&mut cmd, child.base_dir);
+    apply_admission_env(&mut cmd, child.admission_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
         .output()
@@ -161,7 +185,7 @@ async fn join_script_managed_child(
             output.status
         )));
     }
-    let endpoint = parse_exec_result(&output.stdout)?;
+    let endpoint = parse_exec_result(&output.stdout, child.admission_dir)?;
     Ok(PreparedChild {
         swarm_reservation: None,
         child: None,
@@ -185,6 +209,8 @@ struct ExecResultWire {
     socket_path: Option<std::path::PathBuf>,
     #[serde(default)]
     socket_proxy: Option<SocketProxyWire>,
+    #[serde(default)]
+    admission_capability: Option<String>,
 }
 
 /// Wire shape of a validated proxy endpoint (#1369 slice 3): an argv the
@@ -255,8 +281,12 @@ fn endpoint_from_wire(
     }
 }
 
-fn parse_exec_result(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
+fn parse_exec_result(
+    stdout: &[u8],
+    admission_dir: Option<&Path>,
+) -> Result<ParentEndpoint, DomainError> {
     let wire: ExecResultWire = parse_strict_wire(stdout, "exec").map_err(DomainError::Tool)?;
+    require_admission_capability(admission_dir, wire.admission_capability.as_deref(), "exec")?;
     endpoint_from_wire(wire.socket_path, wire.socket_proxy, &wire.metadata, "exec")
 }
 
@@ -398,6 +428,7 @@ async fn spawn_script_managed_child(
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
+    apply_admission_env(&mut cmd, child.admission_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
         .output()
@@ -409,7 +440,7 @@ async fn spawn_script_managed_child(
             output.status
         )));
     }
-    let result = match parse_create_result(&output.stdout) {
+    let result = match parse_create_result(&output.stdout, child.admission_dir) {
         Ok(result) => result,
         Err(e) => {
             let mut cleanup_argv = container.cleanup.clone();
@@ -462,6 +493,8 @@ struct CreateResultWire {
     socket_path: Option<std::path::PathBuf>,
     #[serde(default)]
     socket_proxy: Option<SocketProxyWire>,
+    #[serde(default)]
+    admission_capability: Option<String>,
 }
 
 #[derive(Debug)]
@@ -497,8 +530,16 @@ fn salvage_environment_id(stdout: &[u8]) -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
-fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
+fn parse_create_result(
+    stdout: &[u8],
+    admission_dir: Option<&Path>,
+) -> Result<CreateResult, DomainError> {
     let wire: CreateResultWire = parse_strict_wire(stdout, "create").map_err(DomainError::Tool)?;
+    require_admission_capability(
+        admission_dir,
+        wire.admission_capability.as_deref(),
+        "create",
+    )?;
     if wire.environment_id.is_empty() || wire.workspace_path.as_os_str().is_empty() {
         return Err(DomainError::Tool(
             "script-managed create result must contain environment_id and workspace_path".into(),
@@ -642,6 +683,12 @@ fn cleanup_command(env_ref: Option<&str>, argv: &[String]) -> Option<tokio::proc
     Some(cmd)
 }
 
+fn apply_admission_env(cmd: &mut tokio::process::Command, admission_dir: Option<&Path>) {
+    if let Some(dir) = admission_dir {
+        cmd.env("QUECTO_ADMISSION_DIR", dir);
+    }
+}
+
 fn apply_common_child_env(cmd: &mut tokio::process::Command, base_dir: &Path) {
     if !base_dir.as_os_str().is_empty() {
         cmd.env("QUECTO_BASE_DIR", base_dir);
@@ -657,3 +704,7 @@ mod tests;
 #[cfg(test)]
 #[path = "spawn_container_slice3_tests.rs"]
 mod slice3_tests;
+
+#[cfg(test)]
+#[path = "spawn_container_admission_tests.rs"]
+mod admission_tests;
