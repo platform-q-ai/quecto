@@ -46,6 +46,8 @@ pub mod subagent_identity;
 mod subagent_lifecycle;
 pub mod subagent_monitor;
 mod subagent_monitor_canonical;
+#[cfg(test)]
+mod subagent_monitor_canonical_tests;
 pub mod subagent_monitor_merge;
 mod subagent_monitor_registry;
 mod subagent_monitor_stall;
