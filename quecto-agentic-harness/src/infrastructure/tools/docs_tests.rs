@@ -167,3 +167,49 @@ async fn embedded_swarm_manual_teaches_types_limits_and_terminal_reporting() {
         assert!(result.content.contains(required), "manual lacks {required}");
     }
 }
+
+/// #1707: admission help is discoverable and embedded for every agent role.
+#[tokio::test]
+async fn admission_broker_manual_is_discoverable_and_actionable() {
+    for tool in [DocsTool::new(), DocsTool::for_child_content()] {
+        let toc = tool.execute("{}").await.unwrap();
+        assert!(toc.content.contains("admission-broker — Admission broker"));
+        for name in ["admission-broker", "docs/admission-broker.md"] {
+            let result = tool
+                .execute(&format!(r#"{{"name":"{name}"}}"#))
+                .await
+                .unwrap();
+            assert!(!result.is_error, "{}", result.content);
+            assert_eq!(Some(result.content.as_str()), lookup_doc(name));
+            for required in [
+                "disabled by default",
+                "max_scopes",
+                "1024",
+                "terminal_capacity",
+                "4096",
+                "openai-api",
+                "openai-oauth",
+                "queue_timeout_ms",
+                "attempt_timeout_ms",
+                "quecto admission-broker run",
+                "quecto admission-broker status",
+                "quecto admission-broker reset",
+                "journal_healthy",
+                "uncertain",
+                "get_state",
+                "timer",
+                "parallel",
+                "get_messages",
+                "min_interval_ms",
+                "\"tool_uses\"",
+                "\"recipient_name\": \"functions.spawn\"",
+                "left-panel",
+                "monotonic",
+                "rebases",
+                "#1708",
+            ] {
+                assert!(result.content.contains(required), "manual lacks {required}");
+            }
+        }
+    }
+}

@@ -21,6 +21,10 @@ use std::pin::Pin;
 /// cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
     (
+        "admission-broker",
+        include_str!("../../../docs/docs-tool-embeds/admission-broker.md"),
+    ),
+    (
         "swarm",
         include_str!("../../../docs/docs-tool-embeds/swarm.md"),
     ),

@@ -234,3 +234,110 @@ async fn agent_error_ends_the_wait_and_the_panel_row_paints_a_child_label() {
         "master row uses the compact label"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn queued_panel_timers_advance_without_another_admission_event_and_clear_on_grant() {
+    let mut app = test_app().await;
+    app.handle_event(Event::AgentStart);
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "reviewer", "running", None, None,
+    )]));
+    app.handle_event(event(None, waiting(0)));
+    app.handle_event(event(Some("reviewer"), waiting(0)));
+    tokio::time::advance(std::time::Duration::from_secs(3)).await;
+    let mut kitty_done = true;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission_compact(),
+        Some("waiting 3s")
+    );
+    assert_eq!(
+        app.ac()
+            .roster
+            .admission_labels
+            .get("reviewer")
+            .map(String::as_str),
+        Some("waiting 3s")
+    );
+    for id in [None, Some("reviewer")] {
+        app.handle_event(event(id, serde_json::json!({"waiting": 0, "admitted": 1})));
+    }
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(app.ac().master_session.footer.admission_compact(), None);
+    assert!(app.ac().roster.admission_labels.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn timer_rebases_from_fresh_snapshots_preserves_unknown_and_saturates() {
+    let mut app = test_app().await;
+    let mut kitty_done = true;
+    app.handle_event(event(None, waiting(12)));
+    tokio::time::advance(std::time::Duration::from_secs(3)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission_compact(),
+        Some("waiting 15s")
+    );
+    app.handle_event(event(None, waiting(1)));
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission_compact(),
+        Some("waiting 3s")
+    );
+    app.handle_event(event(None, serde_json::json!({"waiting": 1})));
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission_compact(),
+        Some("waiting")
+    );
+    app.handle_event(event(None, waiting(u64::MAX)));
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission_compact(),
+        Some(format!("waiting {}s", u64::MAX).as_str())
+    );
+    app.handle_event(agent_end());
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut kitty_done, tokio::time::Instant::now());
+    assert_eq!(app.ac().master_session.footer.admission_compact(), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn disconnected_feed_stops_forwarded_wait_timers() {
+    let mut app = test_app().await;
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "reviewer", "running", None, None,
+    )]));
+    app.handle_event(event(Some("reviewer"), waiting(0)));
+    app.mark_agent_disconnected_for_test();
+    tokio::time::advance(std::time::Duration::from_secs(3)).await;
+    app.service_animation_tick(&mut true, tokio::time::Instant::now());
+    assert!(app.ac().roster.admission_labels.is_empty());
+    assert!(app.ac().admission_children.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn rekeyed_child_keeps_wait_clock_without_another_transition() {
+    let mut app = test_app().await;
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "reviewer", "running", None, None,
+    )]));
+    app.handle_event(event(Some("reviewer"), waiting(0)));
+    let child = app.ac_mut().roster.tracked.remove("reviewer").unwrap();
+    app.ac_mut().roster.tracked.insert("uuid".into(), child);
+    app.rekey_agent_collections("reviewer", "uuid");
+    tokio::time::advance(std::time::Duration::from_secs(3)).await;
+    app.service_animation_tick(&mut true, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac()
+            .roster
+            .admission_labels
+            .get("uuid")
+            .map(String::as_str),
+        Some("waiting 3s")
+    );
+}

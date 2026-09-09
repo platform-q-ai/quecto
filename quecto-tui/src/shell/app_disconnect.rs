@@ -59,6 +59,8 @@ impl App {
         self.ac_mut().master_session.chat.finalize_assistant();
         // No connection, no admission view: a stale wait must not outlive it.
         self.clear_master_admission();
+        self.ac_mut().admission_children.clear();
+        self.ac_mut().roster.admission_labels.clear();
     }
 
     #[cfg(test)]

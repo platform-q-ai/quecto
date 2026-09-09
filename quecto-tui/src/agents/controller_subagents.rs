@@ -44,6 +44,20 @@ impl App {
             return;
         }
 
+        if let Some(snapshot) = self.ac_mut().admission_children.remove(from) {
+            self.ac_mut()
+                .admission_children
+                .entry(to.to_string())
+                .or_insert(snapshot);
+        }
+        if let Some(label) = self.ac_mut().roster.admission_labels.remove(from) {
+            self.ac_mut()
+                .roster
+                .admission_labels
+                .entry(to.to_string())
+                .or_insert(label);
+        }
+
         if let Some(session) = self.ac_mut().roster.sessions.remove(from) {
             self.ac_mut()
                 .roster

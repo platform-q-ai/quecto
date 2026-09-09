@@ -45,6 +45,7 @@ impl App {
     pub(in crate::shell::app) fn apply_master_admission(&mut self, view: &AdmissionView) {
         let label = view.status_label();
         let waiting = view.waiting > 0;
+        self.ac_mut().admission_observed_at = tokio::time::Instant::now();
         self.ac_mut().admission_view = Some(view.clone());
         self.ac_mut()
             .master_session
@@ -102,23 +103,92 @@ impl App {
     /// ignored (a peer cannot grow the map) and labels of children that left
     /// the roster are pruned on every update.
     fn apply_child_admission(&mut self, id: &str, view: &AdmissionView) {
-        let roster = &mut self.ac_mut().roster;
-        let tracked = &roster.tracked;
-        roster
+        let state = self.ac_mut();
+        let tracked = &state.roster.tracked;
+        state
+            .admission_children
+            .retain(|child, _| tracked.contains_key(child));
+        state
+            .roster
             .admission_labels
             .retain(|child, _| tracked.contains_key(child));
-        if !tracked.contains_key(id) {
-            return;
-        }
-        match view.compact_label() {
-            Some(label) => {
-                roster.admission_labels.insert(id.to_string(), label);
-            }
-            None => {
-                roster.admission_labels.remove(id);
+        if tracked.contains_key(id) {
+            match view.compact_label() {
+                Some(label) => {
+                    state
+                        .admission_children
+                        .insert(id.to_string(), (view.clone(), tokio::time::Instant::now()));
+                    state.roster.admission_labels.insert(id.to_string(), label);
+                }
+                None => {
+                    state.admission_children.remove(id);
+                    state.roster.admission_labels.remove(id);
+                }
             }
         }
     }
+
+    /// Transition events are snapshots, not clock ticks. Project elapsed local
+    /// monotonic time without mutating the authoritative admission snapshot.
+    pub(in crate::shell::app) fn tick_admission_labels(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        let mut changed = false;
+        for state in self.tabs.values_mut() {
+            if let Some(view) = &state.admission_view {
+                let view = elapsed_view(view, state.admission_observed_at, now);
+                let label = view.status_label();
+                if state.master_session.footer.admission() != label.as_deref() {
+                    if view.waiting > 0 {
+                        if let Some(label) = &label {
+                            let message = format!("{} (Esc to interrupt)", capitalize(label));
+                            if let Some(spinner) = &mut state.spinner
+                                && state.admission_spinner_message.as_deref()
+                                    == Some(spinner.message())
+                            {
+                                spinner.set_message(&message);
+                            }
+                            state.admission_spinner_message = Some(message);
+                        }
+                    }
+                    state
+                        .master_session
+                        .footer
+                        .set_admission(label, view.compact_label());
+                    changed = true;
+                }
+            }
+            state
+                .admission_children
+                .retain(|id, _| state.roster.tracked.contains_key(id));
+            state
+                .roster
+                .admission_labels
+                .retain(|id, _| state.roster.tracked.contains_key(id));
+            for (id, (view, observed)) in &state.admission_children {
+                if let Some(label) = elapsed_view(view, *observed, now).compact_label()
+                    && state.roster.admission_labels.get(id) != Some(&label)
+                {
+                    state.roster.admission_labels.insert(id.clone(), label);
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+}
+
+fn elapsed_view(
+    view: &AdmissionView,
+    observed: tokio::time::Instant,
+    now: tokio::time::Instant,
+) -> AdmissionView {
+    let mut projected = view.clone();
+    if view.waiting > 0 {
+        projected.longest_wait_seconds = view.longest_wait_seconds.map(|seconds| {
+            seconds.saturating_add(now.saturating_duration_since(observed).as_secs())
+        });
+    }
+    projected
 }
 
 fn capitalize(label: &str) -> String {
