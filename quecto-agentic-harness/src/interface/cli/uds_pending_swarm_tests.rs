@@ -510,6 +510,88 @@ async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
     .await;
     assert_eq!(user_prompts(&ctx), ["continue the work"]);
     assert!(ctx.session.automatic_turns_allowed);
+    assert_eq!(
+        ctx.session.control_receipt_status("p1"),
+        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+    );
+}
+
+/// #1712: the re-arm belongs to an admitted instruction. While the run is
+/// paused (or the store cannot answer) the follow-up and the suspension
+/// are both kept; a harness wake nudge parked behind a steer never counts
+/// as an instruction.
+#[tokio::test]
+async fn only_an_admitted_explicit_instruction_re_arms() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(CountingProvider(calls.clone())),
+    );
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::StoreRejection, Some(3));
+    super::pending::queue_prompt(&mut ctx, Some("f2"), "follow_up", "carry on".into(), false).await;
+    with_control(&mut ctx, Answer(Ok((RunStatus::Paused, 3))));
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "paused: nothing admitted"
+    );
+    with_control(&mut ctx, Answer(Err("database is locked")));
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "probe failed: nothing admitted"
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        ctx.session.control_receipt_status("f2"),
+        Some(crate::interface::cli::protocol::ControlStatus::Queued)
+    );
+    // A swarm wake nudge queued behind a steer is automatic, not explicit.
+    ctx.turn_control.mark_steer();
+    super::pending::queue_prompt(
+        &mut ctx,
+        None,
+        "swarm_wake",
+        "Swarm work changed.".into(),
+        false,
+    )
+    .await;
+    ctx.turn_control.clear_steer();
+    with_control(&mut ctx, Answer(Ok((RunStatus::Running, 3))));
+    drain_and_run_pending(&mut ctx).await;
+    let prompts = user_prompts(&ctx);
+    assert!(
+        ctx.session.automatic_turns_allowed,
+        "the follow-up was admitted"
+    );
+    assert_eq!(
+        prompts.first().map(String::as_str),
+        Some("carry on"),
+        "{prompts:?}"
+    );
+    assert_eq!(
+        prompts.len(),
+        2,
+        "the nudge drains after the instruction: {prompts:?}"
+    );
+    // A nudge alone never re-arms.
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(3));
+    super::pending::queue_prompt(
+        &mut ctx,
+        None,
+        "swarm_wake",
+        "Swarm work changed.".into(),
+        false,
+    )
+    .await;
+    drain_and_run_pending(&mut ctx).await;
+    assert!(!ctx.session.automatic_turns_allowed);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(ctx.session.drain_pending().len(), 1, "the nudge is kept");
 }
 
 /// A provider that succeeds and counts its requests.

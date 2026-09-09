@@ -57,6 +57,8 @@ impl AgentSession {
                     command: command.into(),
                     content,
                 },
+                // A harness nudge carries no id and no human intent.
+                None if command == "swarm_wake" => PendingMessage::Automatic(content),
                 None => PendingMessage::User(content),
             };
             if steer {

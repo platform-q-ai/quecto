@@ -54,6 +54,9 @@ pub enum PendingMessage {
         command: String,
         content: String,
     },
+    /// A harness-generated prompt (a swarm wake nudge parked behind a steer):
+    /// runs like a user prompt but never re-arms a suspended member (#1712).
+    Automatic(String),
     SubagentNotification {
         agent_id: String,
         sequence: u64,
@@ -99,7 +102,9 @@ impl PendingMessage {
     /// harness-injected so clients can render it distinctly from user input.
     pub fn into_message(self) -> Message {
         match self {
-            Self::User(content) | Self::Control { content, .. } => Message::user(content),
+            Self::User(content) | Self::Control { content, .. } | Self::Automatic(content) => {
+                Message::user(content)
+            }
             Self::SubagentNotification {
                 agent_id,
                 sequence,

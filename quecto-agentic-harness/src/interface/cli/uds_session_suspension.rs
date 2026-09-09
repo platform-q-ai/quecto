@@ -7,11 +7,11 @@ use super::AgentSession;
 /// Why a session stopped taking automatic turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuspensionCause {
-    /// A terminal provider failure; an explicit prompt or a swarm resume
-    /// after the failure re-arms it.
+    /// A terminal provider failure; an explicit instruction (prompt, steer,
+    /// queued follow-up) or a swarm resume after the failure re-arms it.
     ProviderFailure,
-    /// The coordination store durably rejected a wake; only a human prompt
-    /// re-arms it.
+    /// The coordination store durably rejected a wake; only an explicit
+    /// instruction re-arms it.
     StoreRejection,
 }
 
@@ -54,7 +54,8 @@ impl AgentSession {
         });
     }
 
-    /// An explicit instruction (prompt, steer) re-arms automatic turns.
+    /// An explicit instruction (prompt, steer, admitted follow-up) re-arms
+    /// automatic turns.
     pub(crate) fn resume_automatic_turns(&mut self) {
         self.automatic_turns_allowed = true;
         self.pending_resume_turn = false;

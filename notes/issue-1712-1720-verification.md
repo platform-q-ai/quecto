@@ -15,10 +15,14 @@
 
 ## Change
 - `drain_and_run_pending`: while suspended, explicit instructions (user
-  prompts, queued controls) are taken out of the pending queue, the member
-  re-arms and runs them; automatic notes are put back and wait. A pending
+  prompts, queued controls) are taken out of the pending queue and offered
+  to the run; the member re-arms only when the run admits one (a paused run
+  or a failed status probe keeps both the suspension and the instruction),
+  then runs it and drains the automatic notes it had put back. A pending
   steer still outranks the drain. A failed explicit turn re-suspends as
-  before.
+  before. A swarm wake nudge parked behind a steer is queued as
+  `PendingMessage::Automatic`: it runs like a prompt but never counts as an
+  instruction.
 - Disconnect sentinels travel on their own unbounded channel
   (`ClientGuard::disconnect_tx`), drained by the dispatch loop ahead of
   commands, so they never consume command-channel capacity. The receipts
@@ -33,7 +37,12 @@
   the drain; the explicit follow-up then runs, re-arms, drains the kept note
   and its receipt completes.
 - `an_idle_suspended_member_executes_a_forwarded_follow_up`: the fast-ack
-  path (`handle_follow_up`) executes on an idle suspended member.
+  path (`handle_follow_up`) executes on an idle suspended member and its
+  receipt completes.
+- `only_an_admitted_explicit_instruction_re_arms`: paused run and failed
+  probe keep the suspension and the queued follow-up (receipt stays
+  queued, no provider request); a wake nudge parked behind a steer drains
+  after the instruction and never re-arms on its own.
 - `disconnect_sentinels_never_consume_command_capacity`: 300 dropped client
   guards against a 1-slot command channel leave a steer's `try_reserve`
   succeeding and every sentinel still reaches the dispatcher ahead of the

@@ -18,11 +18,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         } else {
             // #1712: a suspended member still obeys explicit instructions
             // (a parent's fast-acked prompt arrives as a queued follow-up);
-            // they re-arm it, while buffered automatic notes wait.
+            // an admitted one re-arms it, while buffered automatic notes wait.
             let Some(explicit) = take_explicit_instructions(ctx) else {
                 return;
             };
-            ctx.session.resume_automatic_turns();
             explicit
         };
         if pending.is_empty() {
@@ -30,7 +29,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         let mut remaining = pending.into_iter();
         while let Some(pending_msg) = remaining.next() {
-            if !ctx.session.automatic_turns_allowed || ctx.turn_control.is_steer_pending() {
+            let explicit = is_explicit(&pending_msg);
+            if ctx.turn_control.is_steer_pending()
+                || (!ctx.session.automatic_turns_allowed && !explicit)
+            {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
@@ -75,6 +77,12 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     }
                 }
             }
+            // #1712: only an explicit instruction the run admits re-arms a
+            // suspended member; a paused run or a failed probe keeps both the
+            // suspension and the instruction.
+            if !ctx.session.automatic_turns_allowed {
+                ctx.session.resume_automatic_turns();
+            }
             let correlation = match &pending_msg {
                 crate::interface::cli::uds_session::PendingMessage::Control {
                     id, command, ..
@@ -94,6 +102,12 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     .record_control(Some(id), command, super::control_status(&outcome));
                 super::super::uds_snapshots::refresh_busy_snapshots(ctx).await;
             }
+            // A failure during this drain stops the batch: the rest is
+            // retained, never retried against a failing provider.
+            if !ctx.session.automatic_turns_allowed {
+                ctx.session.restore_pending(remaining);
+                return;
+            }
         }
     }
 }
@@ -104,23 +118,27 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
 fn take_explicit_instructions(
     ctx: &mut DispatchCtx<'_>,
 ) -> Option<Vec<crate::interface::cli::uds_session::PendingMessage>> {
-    use crate::interface::cli::uds_session::PendingMessage;
     let (explicit, automatic): (Vec<_>, Vec<_>) = ctx
         .session
         .drain_pending()
         .into_iter()
-        .partition(|message| {
-            matches!(
-                message,
-                PendingMessage::User(_) | PendingMessage::Control { .. }
-            )
-        });
+        .partition(is_explicit);
     ctx.session.restore_pending(automatic.into_iter());
     if explicit.is_empty() {
         None
     } else {
         Some(explicit)
     }
+}
+
+/// Human or parent intent (a prompt or a queued control), as opposed to
+/// harness-generated notes and nudges.
+fn is_explicit(message: &crate::interface::cli::uds_session::PendingMessage) -> bool {
+    use crate::interface::cli::uds_session::PendingMessage;
+    matches!(
+        message,
+        PendingMessage::User(_) | PendingMessage::Control { .. }
+    )
 }
 
 /// A second-stage dispatch acknowledgment must reflect actual retention.
