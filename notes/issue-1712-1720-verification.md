@@ -24,9 +24,15 @@
   `PendingMessage::Automatic`: it runs like a prompt but never counts as an
   instruction.
 - Disconnect sentinels travel on their own unbounded channel
-  (`ClientGuard::disconnect_tx`), drained by the dispatch loop ahead of
-  commands, so they never consume command-channel capacity. The receipts
-  for a genuinely full channel are unchanged (explicit failure).
+  (`ClientGuard::disconnect_tx`), drained by the dispatch loop whenever the
+  command channel is idle, so they never consume command-channel capacity
+  and a client's own queued commands (an acknowledged follow-up, a tool
+  registration) are still handled before its disconnect, as when both
+  shared one channel. The receipts for a genuinely full channel are
+  unchanged (explicit failure).
+- A wake nudge on a terminal run is dropped by the pre-existing terminal
+  admission (only explicit messages run there), which is the better
+  outcome than the old `User` form running it.
 - Docs: `docs/swarm.md` and the agent-facing swarm guide say any explicit
   instruction re-arms a suspended member and that polls do not consume
   command capacity.
@@ -45,7 +51,9 @@
   after the instruction and never re-arms on its own.
 - `disconnect_sentinels_never_consume_command_capacity`: 300 dropped client
   guards against a 1-slot command channel leave a steer's `try_reserve`
-  succeeding and every sentinel still reaches the dispatcher ahead of the
-  next command.
+  succeeding; queued work is handled first and every sentinel still reaches
+  the dispatcher.
+- `wake_nudges_queue_as_automatic_messages`: the shared `SWARM_WAKE` type
+  name is the only id-less prompt that queues as automatic.
 - Existing suites: fast-ack conversion, queue-full rejection, steer priority,
   paused-run retention, provider-failure suspension (#1721).

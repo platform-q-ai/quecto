@@ -380,6 +380,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         );
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;
+        super::uds_swarm_control::date_provider_suspension(ctx).await;
         return false;
     };
     let mut message = Message::user(message);

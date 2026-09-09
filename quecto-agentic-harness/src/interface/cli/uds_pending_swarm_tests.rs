@@ -630,3 +630,93 @@ impl crate::domain::provider::LlmProvider for CountingProvider {
         })
     }
 }
+
+/// #1712: a harness wake nudge is queued as an automatic message; any other
+/// id-less prompt stays a user instruction.
+#[test]
+fn wake_nudges_queue_as_automatic_messages() {
+    use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
+    let mut session = AgentSession::new("m".into(), "k".into());
+    assert!(session.enqueue_control(
+        None,
+        crate::interface::cli::uds_swarm_control::SWARM_WAKE,
+        "Swarm work changed.".into(),
+        false
+    ));
+    assert!(session.enqueue_control(None, "prompt", "do it".into(), false));
+    assert_eq!(
+        session.drain_pending(),
+        [
+            PendingMessage::Automatic("Swarm work changed.".into()),
+            PendingMessage::User("do it".into())
+        ]
+    );
+}
+
+/// #1712/#1721: an explicit follow-up drained on the stale-abort prompt path
+/// is dated after its failure like any other turn.
+#[tokio::test]
+async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(FailingProvider),
+    );
+    let mut ctx = env.ctx();
+    ctx.session.observe_control_generation(Some(4));
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(4));
+    super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;
+    // Every status probe sees a later control generation (6, 16, 26, ...):
+    // the prompt's own arming probe, the drain's admission probe, the
+    // drained turn's arming probe, then the post-failure dating probe.
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
+            std::sync::Arc::new(Rising(std::sync::atomic::AtomicU64::new(6))),
+        )),
+    );
+    *ctx.cancel_handle.lock().unwrap() = crate::interface::cli::uds_cancel::CancelSlot::Fired;
+    super::handle_prompt(
+        &mut ctx,
+        super::PromptCommand {
+            id: Some("p".into()),
+            type_name: "prompt".into(),
+            message: "hello".into(),
+            streaming_behavior: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        ctx.session.control_receipt_status("f3"),
+        Some(crate::interface::cli::protocol::ControlStatus::Failed),
+        "the follow-up drained on the stale-abort path and failed"
+    );
+    assert!(!ctx.session.automatic_turns_allowed);
+    assert!(
+        !ctx.session.resume_after_control_change(26),
+        "dated after the failed drained turn (36), not at a generation seen before or during it"
+    );
+    assert!(ctx.session.resume_after_control_change(37));
+}
+
+/// A control port whose generation rises by ten on every probe.
+struct Rising(std::sync::atomic::AtomicU64);
+impl SwarmRunControl for Rising {
+    fn apply(
+        &self,
+        _: RunControlAction,
+    ) -> crate::domain::subagent_launch::LaunchFuture<
+        '_,
+        Result<RunControlReceipt, crate::domain::error::DomainError>,
+    > {
+        Box::pin(async {
+            Ok(RunControlReceipt {
+                budget: None,
+                wake_allowed: false,
+                status: RunStatus::Running,
+                generation: self.0.fetch_add(10, std::sync::atomic::Ordering::SeqCst),
+                wake_warnings: Vec::new(),
+            })
+        })
+    }
+}

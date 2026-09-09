@@ -1,6 +1,9 @@
 //! Typed supervisor control independent of model execution and queued prompts.
 use super::uds_reader_dispatch::ReaderDispatchCtx;
 use crate::domain::swarm::{RunControlAction, RunStatus};
+
+/// Type name of the harness's own wake nudges: never a human instruction.
+pub(crate) const SWARM_WAKE: &str = "swarm_wake";
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -235,7 +238,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 if ctx.session.resume_after_control_change(receipt.generation) {
                     let event = AgentEvent::ok(
                         None,
-                        "swarm_wake",
+                        SWARM_WAKE,
                         Some(serde_json::json!({
                             "status": "resumed", "generation": receipt.generation,
                             "reason": "automatic turns re-armed by a swarm resume after a provider failure"
@@ -253,7 +256,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 }
                 let event = AgentEvent::err(
                     None,
-                    "swarm_wake",
+                    SWARM_WAKE,
                     format!(
                         "generation {generation} {} while suspended: {error}",
                         if deferred { "deferred" } else { "not applied" }
@@ -279,13 +282,13 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             let resume_turn = runnable && ctx.session.take_pending_resume_turn();
             if resume_turn {
                 super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: "swarm_wake".into(),
+                    id: None, type_name: SWARM_WAKE.into(),
                     message: "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable tasks and yield when none remain.".into(),
                     streaming_behavior: None,
                 }).await;
             } else if receipt.wake_allowed {
                 super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: "swarm_wake".into(),
+                    id: None, type_name: SWARM_WAKE.into(),
                     message: "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable tasks; yield when none remain.".into(),
                     streaming_behavior: None,
                 }).await;
@@ -297,7 +300,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 ctx.turn_control.defer_swarm_wake(generation);
                 let event = AgentEvent::err(
                     None,
-                    "swarm_wake",
+                    SWARM_WAKE,
                     format!("generation {generation} deferred: {error}"),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
@@ -310,7 +313,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 );
                 let event = AgentEvent::err(
                     None,
-                    "swarm_wake",
+                    SWARM_WAKE,
                     format!("generation {generation}: {error}"),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;

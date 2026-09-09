@@ -58,7 +58,9 @@ impl AgentSession {
                     content,
                 },
                 // A harness nudge carries no id and no human intent.
-                None if command == "swarm_wake" => PendingMessage::Automatic(content),
+                None if command == crate::interface::cli::uds_swarm_control::SWARM_WAKE => {
+                    PendingMessage::Automatic(content)
+                }
                 None => PendingMessage::User(content),
             };
             if steer {

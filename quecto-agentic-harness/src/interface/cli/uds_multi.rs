@@ -131,7 +131,8 @@ pub(super) struct ClientGuard {
     /// dispatcher's short-lived poll connections never fill the bounded
     /// command channel and reject steer/follow_up as "queue full". Growth is
     /// bounded by poll rate × turn length (tens of bytes per sentinel) and
-    /// drained ahead of commands once the dispatcher is free.
+    /// drained whenever the command channel is idle, so a client's own
+    /// queued commands are handled before its disconnect.
     pub(super) disconnect_tx: tokio::sync::mpsc::UnboundedSender<ClientDisconnected>,
     /// Unique client identifier for per-client tool tracking (#352).
     pub(super) client_id: u64,

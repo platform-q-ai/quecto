@@ -49,8 +49,9 @@ async fn client_guard_drop_ignores_closed_channel() {
 /// #1720: a busy dispatcher consumes nothing, so every short-lived poll
 /// connection used to leave a sentinel in the bounded command channel until
 /// it was full and steer/follow_up were rejected as "queue full". Sentinels
-/// now travel on their own channel and the dispatcher drains them like any
-/// other client message.
+/// now travel on their own channel; the dispatcher still learns about every
+/// disconnect, but a client's queued command is always handled before its
+/// own sentinel, as when both shared one channel.
 #[tokio::test]
 async fn disconnect_sentinels_never_consume_command_capacity() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(1);
@@ -67,36 +68,39 @@ async fn disconnect_sentinels_never_consume_command_capacity() {
         cmd_tx.try_reserve().is_ok(),
         "a steer must still find command capacity after 300 polls"
     );
-    let shutdown = idle_shutdown();
-    let mut none = None;
-    let bounded = std::time::Duration::from_secs(2);
-    let first = tokio::time::timeout(
-        bounded,
-        recv_next_message(&mut cmd_rx, &mut disconnect_rx, &mut none, &shutdown),
-    )
-    .await
-    .expect("the dispatcher must see the sentinel promptly")
-    .unwrap();
-    assert!(
-        matches!(first, DispatchMsg::Client(ClientMessage::Disconnected(ref d)) if d.client_id == 0),
-        "the dispatcher still learns about each disconnect"
-    );
     cmd_tx
         .send(ClientMessage::SwarmWake { generation: 1 })
         .await
         .unwrap();
-    let mut seen = 1;
-    while let Ok(Some(DispatchMsg::Client(ClientMessage::Disconnected(_)))) = tokio::time::timeout(
+    let shutdown = idle_shutdown();
+    let mut none = None;
+    let bounded = std::time::Duration::from_secs(2);
+    let mut order = Vec::new();
+    while let Ok(Some(DispatchMsg::Client(message))) = tokio::time::timeout(
         bounded,
         recv_next_message(&mut cmd_rx, &mut disconnect_rx, &mut none, &shutdown),
     )
     .await
     {
-        seen += 1;
+        order.push(match message {
+            ClientMessage::SwarmWake { .. } => "wake",
+            ClientMessage::Disconnected(_) => "disconnect",
+            ClientMessage::Command(_) => "command",
+        });
+        if order.len() == 301 {
+            break;
+        }
     }
     assert_eq!(
-        seen, 300,
-        "every sentinel was delivered before the next command"
+        order.first(),
+        Some(&"wake"),
+        "queued work outranks sentinels"
+    );
+    assert_eq!(
+        order.iter().filter(|kind| **kind == "disconnect").count(),
+        300,
+        "every sentinel still reaches the dispatcher: {}",
+        order.len()
     );
 }
 
@@ -454,4 +458,50 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
 
 fn fresh_disconnects() -> tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected> {
     tokio::sync::mpsc::unbounded_channel().1
+}
+
+/// #1720: the command-first order also holds with a live sub-agent
+/// notification channel (the production shape).
+#[tokio::test]
+async fn commands_outrank_sentinels_with_a_live_notification_channel() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_notif_tx, notif_rx) =
+        crate::infrastructure::tools::subagent_registry::new_notification_channel();
+    let mut with_notifications = Some(notif_rx);
+    disconnect_tx
+        .send(ClientDisconnected { client_id: 5 })
+        .unwrap();
+    cmd_tx
+        .send(ClientMessage::SwarmWake { generation: 1 })
+        .await
+        .unwrap();
+    let shutdown = idle_shutdown();
+    let first = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(
+        matches!(
+            first,
+            Some(DispatchMsg::Client(ClientMessage::SwarmWake { .. }))
+        ),
+        "queued work outranks the sentinel"
+    );
+    let second = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(matches!(
+        second,
+        Some(DispatchMsg::Client(ClientMessage::Disconnected(
+            ClientDisconnected { client_id: 5 }
+        )))
+    ));
 }
