@@ -141,7 +141,7 @@ async fn child_snapshot_failure_and_unknown_direct_targets_do_not_mutate_admissi
     assert!(app.ac().master_session.footer.admission().is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn child_turn_end_clears_wait_but_preserves_cooldown() {
     let mut app = test_app().await;
     app.handle_event(subagents_changed(vec![subagent_with_socket(
@@ -154,6 +154,7 @@ async fn child_turn_end_clears_wait_but_preserves_cooldown() {
             "groups": [{"group": "test", "cooldown": {"state": "until", "remainingSeconds": 30}}]
         })),
     );
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
     app.route_subagent_event(
         "child",
         Event::TurnEnd {
@@ -171,8 +172,14 @@ async fn child_turn_end_clears_wait_but_preserves_cooldown() {
             .admission_labels
             .get("child")
             .map(String::as_str),
-        Some("cooldown 30s")
+        Some("cooldown 20s")
     );
+    for (seconds, expected) in [(5, "cooldown 15s"), (15, "cooldown elapsed")] {
+        tokio::time::advance(std::time::Duration::from_secs(seconds)).await;
+        assert!(app.service_animation_tick(&mut true, tokio::time::Instant::now()));
+        assert_eq!(app.ac().roster.admission_labels["child"], expected);
+        assert_eq!(app.ac().admission_children["child"].0.waiting, 1);
+    }
     app.route_subagent_event("child", direct(view(4, 1)));
     assert_eq!(
         app.ac().admission_children["child"].0.waiting,

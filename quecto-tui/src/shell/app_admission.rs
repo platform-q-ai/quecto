@@ -121,12 +121,17 @@ impl App {
     /// End of a run: an attempt cannot be waiting any more, so the view is
     /// re-derived with nothing waiting (a cooldown survives, a wait does not).
     pub(in crate::shell::app) fn clear_master_admission_wait(&mut self) {
-        if let Some(mut view) = self.ac().admission_view.clone()
+        if let Some(view) = self.ac().admission_view.clone()
             && view.waiting > 0
         {
-            view.waiting = 0;
-            view.longest_wait_seconds = None;
-            self.apply_master_admission(&view);
+            let mut projected = elapsed_view(
+                &view,
+                self.ac().admission_observed_at,
+                tokio::time::Instant::now(),
+            );
+            projected.waiting = 0;
+            projected.longest_wait_seconds = None;
+            self.apply_master_admission(&projected);
         }
     }
 
@@ -232,12 +237,11 @@ impl App {
     }
 
     pub(in crate::shell::app) fn clear_child_admission_wait(&mut self, id: &str) {
-        if let Some((view, _)) = self.ac().admission_children.get(id) {
+        if let Some((view, observed)) = self.ac().admission_children.get(id) {
             // Terminals are unversioned projections. Keep the authoritative view
             // intact so a same-revision state event can repair cross-feed order.
-            let mut terminal_view = view.clone();
-            terminal_view.waiting = 0;
-            terminal_view.longest_wait_seconds = None;
+            let terminal_view =
+                child_projection(view, *observed, tokio::time::Instant::now(), true);
             let label = terminal_view.compact_label();
             self.ac_mut()
                 .admission_unversioned_clears
@@ -254,6 +258,36 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Keep ticking while a clock is active OR its final projection is pending.
+    /// Select may be rebuilt after expiry before the armed timer is serviced.
+    pub(in crate::shell::app) fn needs_admission_tick(&self) -> bool {
+        let now = tokio::time::Instant::now();
+        self.tabs.values().any(|state| {
+            state.admission_view.as_ref().is_some_and(|view| {
+                let projected = elapsed_view(view, state.admission_observed_at, now);
+                projected.waiting > 0
+                    || projected.has_active_dated_cooldown_after(0)
+                    || state.master_session.footer.admission()
+                        != projected.status_label().as_deref()
+            }) || state
+                .admission_children
+                .iter()
+                .any(|(id, (view, observed))| {
+                    let projected = child_projection(
+                        view,
+                        *observed,
+                        now,
+                        state.admission_unversioned_clears.contains(id),
+                    );
+                    state.roster.tracked.contains_key(id)
+                        && (projected.waiting > 0
+                            || projected.has_active_dated_cooldown_after(0)
+                            || state.roster.admission_labels.get(id)
+                                != projected.compact_label().as_ref())
+                })
+        })
     }
 
     /// Transition events are snapshots, not clock ticks. Project elapsed local
@@ -293,11 +327,22 @@ impl App {
                 .admission_labels
                 .retain(|id, _| state.roster.tracked.contains_key(id));
             for (id, (view, observed)) in &state.admission_children {
-                if !state.admission_unversioned_clears.contains(id)
-                    && let Some(label) = elapsed_view(view, *observed, now).compact_label()
-                    && state.roster.admission_labels.get(id) != Some(&label)
-                {
-                    state.roster.admission_labels.insert(id.clone(), label);
+                let projected = child_projection(
+                    view,
+                    *observed,
+                    now,
+                    state.admission_unversioned_clears.contains(id),
+                );
+                let label = projected.compact_label();
+                if state.roster.admission_labels.get(id) != label.as_ref() {
+                    match label {
+                        Some(label) => {
+                            state.roster.admission_labels.insert(id.clone(), label);
+                        }
+                        None => {
+                            state.roster.admission_labels.remove(id);
+                        }
+                    }
                     changed = true;
                 }
             }
@@ -306,17 +351,50 @@ impl App {
     }
 }
 
+/// Terminal overlays clear only waiting, never the authoritative cooldown clock.
+fn child_projection(
+    view: &AdmissionView,
+    observed: tokio::time::Instant,
+    now: tokio::time::Instant,
+    wait_cleared: bool,
+) -> AdmissionView {
+    let mut projected = elapsed_view(view, observed, now);
+    if wait_cleared {
+        projected.waiting = 0;
+        projected.longest_wait_seconds = None;
+        debug_assert_eq!(
+            projected.revision, view.revision,
+            "terminal overlay preserves revision"
+        );
+    }
+    projected
+}
+
 fn elapsed_view(
     view: &AdmissionView,
     observed: tokio::time::Instant,
     now: tokio::time::Instant,
 ) -> AdmissionView {
     let mut projected = view.clone();
+    let elapsed = now.saturating_duration_since(observed).as_secs();
     if view.waiting > 0 {
-        projected.longest_wait_seconds = view.longest_wait_seconds.map(|seconds| {
-            seconds.saturating_add(now.saturating_duration_since(observed).as_secs())
-        });
+        projected.longest_wait_seconds = view
+            .longest_wait_seconds
+            .map(|seconds| seconds.saturating_add(elapsed));
     }
+    for group in &mut projected.groups {
+        if let Some(cooldown) = &mut group.cooldown
+            && cooldown.state == "until"
+        {
+            cooldown.remaining_seconds = cooldown
+                .remaining_seconds
+                .map(|seconds| seconds.saturating_sub(elapsed));
+        }
+    }
+    debug_assert_eq!(
+        projected.revision, view.revision,
+        "projection preserves revision"
+    );
     projected
 }
 

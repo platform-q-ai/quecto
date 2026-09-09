@@ -79,10 +79,35 @@ pub fn parse_admission(
 
 impl AdmissionView {
     fn throttled(&self) -> Option<&AdmissionGroupView> {
-        self.groups.iter().find(|g| {
-            g.cooldown
-                .as_ref()
-                .is_some_and(|c| c.state != "until" || c.remaining_seconds.unwrap_or(0) > 0)
+        self.groups
+            .iter()
+            .find(|group| {
+                group.cooldown.as_ref().is_some_and(|cooldown| {
+                    matches!(cooldown.state.as_str(), "unknown" | "unavailable")
+                        || (cooldown.state == "until"
+                            && cooldown
+                                .remaining_seconds
+                                .is_some_and(|seconds| seconds > 0))
+                })
+            })
+            .or_else(|| {
+                self.groups.iter().find(|group| {
+                    group.cooldown.as_ref().is_some_and(|cooldown| {
+                        cooldown.state == "until" && cooldown.remaining_seconds == Some(0)
+                    })
+                })
+            })
+    }
+
+    /// Whether a locally projectable dated cooldown still has time remaining.
+    pub(crate) fn has_active_dated_cooldown_after(&self, elapsed_seconds: u64) -> bool {
+        self.groups.iter().any(|group| {
+            group.cooldown.as_ref().is_some_and(|cooldown| {
+                cooldown.state == "until"
+                    && cooldown
+                        .remaining_seconds
+                        .is_some_and(|seconds| seconds > elapsed_seconds)
+            })
         })
     }
 
@@ -118,7 +143,11 @@ impl AdmissionView {
         }
         let cooldown = self.throttled()?.cooldown.as_ref()?;
         Some(match cooldown.state.as_str() {
-            "until" => format!("cooldown {}s", cooldown.remaining_seconds.unwrap_or(0)),
+            "until" => match cooldown.remaining_seconds {
+                Some(0) => "cooldown elapsed".to_string(),
+                Some(seconds) => format!("cooldown {seconds}s"),
+                None => "throttled".to_string(),
+            },
             "unavailable" => "unavailable".to_string(),
             _ => "throttled".to_string(),
         })
@@ -126,11 +155,11 @@ impl AdmissionView {
 
     fn cooldown_text(group: &AdmissionGroupView) -> String {
         match group.cooldown.as_ref() {
-            Some(cooldown) if cooldown.state == "until" => format!(
-                "{} cooldown {}s",
-                group.group,
-                cooldown.remaining_seconds.unwrap_or(0)
-            ),
+            Some(cooldown) if cooldown.state == "until" => match cooldown.remaining_seconds {
+                Some(0) => format!("{} cooldown elapsed", group.group),
+                Some(seconds) => format!("{} cooldown {seconds}s", group.group),
+                None => format!("{} throttled", group.group),
+            },
             Some(cooldown) if cooldown.state == "unavailable" => {
                 format!("{} unavailable", group.group)
             }
