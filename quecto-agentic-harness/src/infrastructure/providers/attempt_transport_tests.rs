@@ -231,3 +231,24 @@ fn supported_dotted_reasoning_remains_visible_on_read_failure() {
     assert_eq!(d.termination, Termination::ReadError);
     assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
 }
+
+#[test]
+fn malformed_anthropic_terminal_retains_event_without_payload_content() {
+    for (event, terminal) in [
+        ("error", TerminalEvent::Error),
+        ("message_stop", TerminalEvent::MessageStop),
+    ] {
+        let receipt = diagnostic_receipt();
+        let mut protocol = ProtocolObserver::new(Profile::new(
+            Vendor::Anthropic,
+            super::super::attempt_profile::Surface::Incremental,
+        ));
+        protocol.observe(&format!("event: {event}"), &receipt);
+        protocol.observe("data: {SECRET", &receipt);
+        let d = &receipt.0.lock().unwrap().diagnostics;
+        assert_eq!(d.terminal_event, Some(terminal));
+        assert_eq!(d.termination, Termination::Completed);
+        assert_eq!(d.parse_errors, 1);
+        assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
+    }
+}

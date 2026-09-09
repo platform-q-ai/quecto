@@ -497,12 +497,21 @@ impl ProtocolObserver {
             // on successful decoding, or later ignored bytes become feedback.
             match self.event.as_str() {
                 "error" => {
+                    let mut state = receipt.0.lock().unwrap();
+                    state.diagnostics.terminal_event = Some(TerminalEvent::Error);
+                    state.diagnostics.termination = Termination::Completed;
+                    drop(state);
                     let value = serde_json::from_str(data).unwrap_or_default();
                     receipt.typed(&value);
                     receipt.fail();
                     self.terminal = true;
                 }
-                "message_stop" => self.terminal = true,
+                "message_stop" => {
+                    let mut state = receipt.0.lock().unwrap();
+                    state.diagnostics.terminal_event = Some(TerminalEvent::MessageStop);
+                    state.diagnostics.termination = Termination::Completed;
+                    self.terminal = true;
+                }
                 _ => {}
             }
         } else {
