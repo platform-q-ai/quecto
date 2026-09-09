@@ -157,15 +157,17 @@ impl Tool for SwarmTool {
             };
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
                 op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
-                | "events") => match super::swarm_control::control(context, op, v.clone()).await {
-                    Ok(value) => {
-                        if value["status"] == "cancelled" {
-                            cancel_jobs(&jobs);
+                | "events" | "usage" | "usage_budget") => {
+                    match super::swarm_control::control(context, op, v.clone()).await {
+                        Ok(value) => {
+                            if value["status"] == "cancelled" {
+                                cancel_jobs(&jobs);
+                            }
+                            ok_json(value, false)
                         }
-                        ok_json(value, false)
+                        Err(error) => tool_err(error.to_string()),
                     }
-                    Err(error) => tool_err(error.to_string()),
-                },
+                }
                 "run" => {
                     run_op(
                         v,

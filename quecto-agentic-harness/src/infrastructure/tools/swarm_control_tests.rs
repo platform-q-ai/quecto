@@ -39,3 +39,48 @@ async fn native_supervisor_validates_budget_and_event_requests_without_mutation(
     let cancelled = control(context, "cancel_run", json!({})).await.unwrap();
     assert_eq!(cancelled["status"], "cancelled");
 }
+
+fn public_tool(context: SwarmContext) -> super::super::swarm::SwarmTool {
+    use std::sync::Arc;
+    let checkout = context.checkout.clone();
+    super::super::swarm::SwarmTool::new(
+        Arc::new(checkout.clone()),
+        Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(checkout),
+        )),
+        Default::default(),
+    )
+    .with_context(Some(context))
+}
+
+#[tokio::test]
+async fn public_swarm_tool_reports_usage_after_completion() {
+    use crate::domain::tool::Tool;
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    context.cancel_run().unwrap();
+    let result = public_tool(context)
+        .execute(r#"{"op":"usage"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let report: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert!(report.get("budget").is_some(), "{report}");
+}
+
+#[tokio::test]
+async fn public_swarm_tool_configures_and_disables_usage_budget() {
+    use crate::domain::tool::Tool;
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    let tool = public_tool(context.clone());
+    for limit in [json!(100), serde_json::Value::Null] {
+        let result = tool
+            .execute(&json!({"op":"usage_budget","token_limit":limit}).to_string())
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(
+            context.usage_report().unwrap()["budget"]["token_limit"],
+            limit
+        );
+    }
+}

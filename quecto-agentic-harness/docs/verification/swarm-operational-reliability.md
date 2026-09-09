@@ -89,3 +89,9 @@ CI then exposed a separate paged-history fixture startup race (`ConnectionRefuse
 after the socket path appeared). The fixture now waits for its actual connection
 within the same five-second budget, retrying only not-found/refused startup states;
 a pathname alone is not treated as listener readiness.
+
+The final independent review at `778eb48d` found a public-entry-point gap:
+`usage` and `usage_budget` were published and implemented in the control adapter
+but omitted from `SwarmTool::execute` dispatch. Two regressions invoked the public
+Tool port and failed with `unknown op` for terminal usage reporting and budget
+configuration. The explicit dispatch allowlist now includes both operations.
