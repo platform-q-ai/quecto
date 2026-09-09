@@ -61,3 +61,13 @@ Verified all nine first-round fixes closed; eight new items, all fixed test-firs
 |F6 lossy no-hint over a dated cooldown|documented limitation (never claims a cooldown the authority lacks)|doc comment + `no-hint keeps an unexpired dated cooldown` assertion|
 |F7 untested branches|max-merge with shorter/longer advice, expired cooldown reads `None`, no-hint over `Until`/`Unavailable`, failure keeps state|unit tests|
 |F8 steps file at the limit|left at 748 lines; slice 2 adds no authority steps (its steps live in the observation module)|—|
+
+## Mutations (slice 1, after review 2)
+    S1 clamp ignores elapsed transport time: killed (cooldown_is_anchored_at_the_grant_and_kept_per_group)
+    S2 completion throttle unclamped: killed (completion_throttle_is_clamped_and_expired_cooldowns_read_as_none)
+    S3 feedback not forwarded to the inner permit: killed (cooldown_is_anchored...)
+    S4 finish not forwarded: killed (no_hint_and_unavailable_throttles_are_visible_states)
+    S5 no-hint not forwarded: killed (same)
+    S6 shorter advice shortens the cooldown: killed (cooldown_is_anchored...)
+
+Process note: mutation runs restore src/ with git checkout, which also reverts uncommitted test sidecars; tests are committed before mutating.
