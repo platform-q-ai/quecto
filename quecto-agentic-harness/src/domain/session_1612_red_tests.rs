@@ -194,6 +194,27 @@ fn execution_metadata_keeps_optional_components_independent() {
 }
 
 #[test]
+fn malformed_optional_metadata_degrades_each_component_independently() {
+    let metadata: ExecutionMetadata = serde_json::from_value(serde_json::json!({
+        "folder_identity": 7,
+        "folder_label": "/work",
+        "agent_name": "x".repeat(257),
+        "git_branch": "main"
+    }))
+    .unwrap();
+    assert!(metadata.folder_identity().is_none());
+    assert_eq!(metadata.folder_label().unwrap().as_str(), "/work");
+    assert!(metadata.agent_name().is_none());
+    assert_eq!(metadata.git_branch().unwrap().as_str(), "main");
+
+    let serialized = serde_json::to_value(&metadata).unwrap();
+    assert_eq!(serialized["folder_label"], "/work");
+    assert_eq!(serialized["git_branch"], "main");
+    assert!(serialized.get("folder_identity").is_none());
+    assert!(serialized.get("agent_name").is_none());
+}
+
+#[test]
 fn session_initializes_origin_once_and_replaces_only_latest_afterward() {
     let first = complete_metadata(b'a', "first");
     let second = complete_metadata(b'b', "second");
