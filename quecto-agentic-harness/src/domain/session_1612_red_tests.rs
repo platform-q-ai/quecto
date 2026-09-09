@@ -68,8 +68,20 @@ fn persisted_folder_key_round_trips_without_consulting_the_filesystem() {
     assert!(FolderIdentity::from_encoded_key("unix:0").is_none());
     assert!(FolderIdentity::from_encoded_key("unix:gg").is_none());
     assert!(FolderIdentity::from_encoded_key("unknown:00").is_none());
+    assert!(FolderIdentity::from_encoded_key(&format!("unix:{}", "00".repeat(4096))).is_none());
     assert!(FolderIdentity::from_encoded_key("windows-u16le:00").is_none());
     let windows = FolderIdentity::from_windows_units(vec![0x43, 0x3a, 0xd800]).unwrap();
+    assert!(windows.unix_bytes().is_none());
+    assert_eq!(
+        windows.windows_units(),
+        Some([0x43, 0x3a, 0xd800].as_slice())
+    );
+    assert!(
+        FolderIdentity::from_unix_bytes(vec![b'/'])
+            .unwrap()
+            .windows_units()
+            .is_none()
+    );
     assert_eq!(
         FolderIdentity::from_encoded_key(&windows.encoded_key()),
         Some(windows)
@@ -218,6 +230,16 @@ fn malformed_optional_metadata_degrades_each_component_independently() {
     assert!(all_invalid.folder_label().is_none());
     assert!(all_invalid.agent_name().is_none());
     assert!(all_invalid.git_branch().is_none());
+
+    assert!(serde_json::from_str::<FolderIdentity>("\"unix:gg\"").is_err());
+    let serialized_identity =
+        serde_json::to_string(&FolderIdentity::from_unix_bytes(vec![1]).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<FolderIdentity>(&serialized_identity)
+            .unwrap()
+            .unix_bytes(),
+        Some([1].as_slice())
+    );
 
     let serialized = serde_json::to_value(&metadata).unwrap();
     assert_eq!(serialized["folder_label"], "/work");
