@@ -222,7 +222,10 @@ impl ExecutionMetadataWrite {
 }
 
 fn valid_bounded(value: &str, max: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max
+    if value.trim().is_empty() {
+        return false;
+    }
+    value.len() <= max
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
