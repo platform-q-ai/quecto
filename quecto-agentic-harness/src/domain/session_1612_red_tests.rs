@@ -109,11 +109,17 @@ fn presentation_metadata_enforces_utf8_byte_limits_independently() {
         assert!(GitBranchDisplay::new("b".repeat(bytes)).is_some());
     }
     assert!(AgentDisplayName::new("a".repeat(257)).is_none());
+    assert!(AgentDisplayName::new("").is_none());
+    assert!(AgentDisplayName::new("   ").is_none());
     assert!(GitBranchDisplay::new("b".repeat(257)).is_none());
+    assert!(GitBranchDisplay::new("").is_none());
+    assert!(GitBranchDisplay::new("\t").is_none());
     for bytes in [511, 512] {
         assert!(FolderDisplayLabel::new("f".repeat(bytes)).is_some());
     }
     assert!(FolderDisplayLabel::new("f".repeat(513)).is_none());
+    assert!(FolderDisplayLabel::new("").is_none());
+    assert!(FolderDisplayLabel::new(" \n ").is_none());
 
     let exact_multibyte_name = format!("{}a", "é".repeat(127));
     assert_eq!(exact_multibyte_name.len(), 255);
