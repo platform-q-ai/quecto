@@ -8,6 +8,10 @@ pub mod provider_reload;
 #[cfg(test)]
 mod provider_reload_tests;
 pub mod uds;
+mod uds_admission_projection;
+#[cfg(test)]
+#[path = "uds_admission_projection_tests.rs"]
+mod uds_admission_projection_tests;
 mod uds_busy_get_message;
 mod uds_busy_subagents;
 #[cfg(test)]
@@ -32,6 +36,64 @@ pub fn live_execution_state_for_events(
         state.observe(event);
     }
     serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
+}
+
+/// Test-support (#1679 P4): the `get_state` projection of a process whose
+/// admission activity comes from `source`, polled the way a supervisor does.
+#[cfg(any(test, feature = "test-support"))]
+pub struct AdmissionStateProbe {
+    execution: uds_execution_state::ExecutionState,
+    session: protocol::SessionState,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AdmissionStateProbe {
+    pub fn new(
+        source: std::sync::Arc<dyn crate::application::ports::AdmissionObservation>,
+    ) -> Self {
+        let mut execution = uds_execution_state::ExecutionState::default();
+        execution.set_admission_source(source);
+        Self {
+            execution,
+            session: protocol::SessionState {
+                model: "probe".into(),
+                generation: 0,
+                is_streaming: false,
+                session_key: "probe".into(),
+                message_count: 0,
+                pending_message_count: 0,
+                max_context_tokens: 0,
+                effort: None,
+                effort_levels: vec![],
+                workflow: None,
+                execution: None,
+                sync: 0,
+                control_receipts: vec![],
+                automatic_turns_suspended: false,
+                repeated_failure_notifications: Default::default(),
+            },
+        }
+    }
+    pub fn start_run(&mut self) {
+        self.execution.start_run();
+    }
+    pub fn finish_run(&mut self) {
+        self.execution.finish_run();
+    }
+    /// The slim `get_state` response data for an optional `since` cursor.
+    pub fn poll(&mut self, since: Option<u64>) -> serde_json::Value {
+        self.session.generation = self.execution.observe_visible_revisions(0, 0);
+        self.session.execution = Some(self.execution.snapshot());
+        uds_state_projection::slim_state_response_data(&self.session, since)
+    }
+}
+
+/// Test-support (#1679 P4): the production `admission_state_changed` hook.
+#[cfg(any(test, feature = "test-support"))]
+pub fn admission_broadcast_hook(
+    broadcast_tx: tokio::sync::broadcast::Sender<String>,
+) -> crate::infrastructure::admission::ActivityHook {
+    uds_admission_projection::admission_event_hook(broadcast_tx)
 }
 
 #[cfg(any(test, feature = "test-support"))]

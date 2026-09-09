@@ -14,9 +14,9 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub struct ObservationState {
-    recorder: Option<Arc<AdmissionRecorder>>,
+    pub(super) recorder: Option<Arc<AdmissionRecorder>>,
     observer: Option<AuthorityConnection>,
-    pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
+    pub(super) pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
 }
 impl std::fmt::Debug for ObservationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,7 +26,13 @@ impl std::fmt::Debug for ObservationState {
 
 #[when("an observed process attempt queues behind the holder")]
 fn when_observed_attempt_queues(world: &mut QuectoWorld) {
-    let recorder = Arc::new(AdmissionRecorder::new());
+    // A projection scenario may have installed its push hook on a recorder
+    // before the attempt queues, so the first transition is observed too.
+    let recorder = world
+        .authority_observation
+        .recorder
+        .clone()
+        .unwrap_or_else(|| Arc::new(AdmissionRecorder::new()));
     let s = &mut world.authority;
     let observer = new_root(s);
     let gate = Arc::new(ObservedAdmission::new(

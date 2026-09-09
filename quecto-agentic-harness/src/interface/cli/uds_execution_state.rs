@@ -1,4 +1,7 @@
+use super::uds_admission_projection::{AdmissionSnapshot, project, waiting_progress};
+use crate::application::ports::AdmissionObservation;
 use crate::domain::agent::AgentProgressEvent;
+use crate::domain::inference_admission::AdmissionActivity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -18,6 +21,9 @@ pub struct ExecutionSnapshot {
     pub current_tool: Option<CurrentToolSnapshot>,
     pub tools: ToolSummary,
     pub progress: ProgressSummary,
+    /// Bounded admission view (#1679 P4); absent when admission is disabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,9 +55,12 @@ pub struct ProgressSummary {
     pub tool_calls_failed: u64,
 }
 
-#[derive(Debug)]
 pub(crate) struct ExecutionState {
     phase: &'static str,
+    /// Read port of this process's admission activity, when admission is on.
+    admission: Option<Arc<dyn AdmissionObservation>>,
+    /// Last admission revision folded into `visible_generation`.
+    observed_admission_revision: u64,
     /// Single monotonic cursor exposed by the slim `get_state` projection.
     visible_generation: u64,
     /// Last component revisions folded into `visible_generation`.
@@ -81,10 +90,22 @@ fn timestamp_now() -> String {
     humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
 }
 
+impl std::fmt::Debug for ExecutionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutionState")
+            .field("phase", &self.phase)
+            .field("visible_generation", &self.visible_generation)
+            .field("admission", &self.admission.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for ExecutionState {
     fn default() -> Self {
         Self {
             phase: "idle",
+            admission: None,
+            observed_admission_revision: 0,
             visible_generation: 1,
             observed_session_generation: 0,
             observed_workflow_revision: 0,
@@ -109,14 +130,33 @@ impl ExecutionState {
         self.last_activity_at = timestamp_now();
     }
 
+    /// Attach the admission read port; its revision is folded into the public
+    /// cursor and its view rides on every snapshot.
+    pub(crate) fn set_admission_source(&mut self, source: Arc<dyn AdmissionObservation>) {
+        self.admission = Some(source);
+    }
+
+    fn admission_activity(&self) -> Option<AdmissionActivity> {
+        self.admission.as_ref().map(|source| source.snapshot())
+    }
+
     /// Fold revisions owned by other slim-state components into the one public
     /// cursor. Each changed observation advances exactly once; component values
     /// themselves are never exposed or arithmetically combined in the protocol.
+    /// The admission revision is read here, before the snapshot: a transition
+    /// racing between the two calls is folded by the next query, so a `since`
+    /// cursor can never hide it (at worst one redundant refresh).
     pub(crate) fn observe_visible_revisions(
         &mut self,
         session_generation: u64,
         workflow_revision: u64,
     ) -> u64 {
+        if let Some(activity) = self.admission_activity()
+            && activity.revision != self.observed_admission_revision
+        {
+            self.observed_admission_revision = activity.revision;
+            self.visible_generation = self.visible_generation.saturating_add(1);
+        }
         if session_generation > self.observed_session_generation {
             self.observed_session_generation = session_generation;
             self.visible_generation = self.visible_generation.saturating_add(1);
@@ -234,25 +274,31 @@ impl ExecutionState {
             .recent
             .back()
             .map_or(activity_ago, |(at, _)| now.duration_since(*at).as_secs());
-        let (state, reason) = if recent_completed > 0 {
-            (
-                "advancing",
-                format!("{recent_completed} tools completed in the last 120 seconds"),
-            )
-        } else if self.phase != "idle" {
-            (
-                "active",
-                format!(
-                    "{} with no completed tools in the last 120 seconds",
-                    self.phase
-                ),
-            )
-        } else {
-            (
-                "quiet",
-                "no tool activity in the last 120 seconds".to_string(),
-            )
-        };
+        let admission_activity = self.admission_activity();
+        // A queued attempt is evidence of waiting, never of a stall: it takes
+        // precedence over the tool-window verdicts (#1679 P4).
+        let (state, reason) =
+            if let Some((state, reason)) = admission_activity.as_ref().and_then(waiting_progress) {
+                (state, reason)
+            } else if recent_completed > 0 {
+                (
+                    "advancing",
+                    format!("{recent_completed} tools completed in the last 120 seconds"),
+                )
+            } else if self.phase != "idle" {
+                (
+                    "active",
+                    format!(
+                        "{} with no completed tools in the last 120 seconds",
+                        self.phase
+                    ),
+                )
+            } else {
+                (
+                    "quiet",
+                    "no tool activity in the last 120 seconds".to_string(),
+                )
+            };
         ExecutionSnapshot {
             phase: self.phase.into(),
             activity_generation: self.visible_generation,
@@ -282,6 +328,7 @@ impl ExecutionState {
                 tool_calls_completed: recent_completed,
                 tool_calls_failed: recent_failed,
             },
+            admission: admission_activity.as_ref().map(project),
         }
     }
 }

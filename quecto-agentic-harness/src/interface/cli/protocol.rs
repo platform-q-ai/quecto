@@ -137,6 +137,12 @@ pub enum AgentEvent {
     /// Broadcast when a subagent's status changes (#524).
     /// Contains the full list of subagents (clients do a simple replace).
     SubagentStateChanged { subagents: Vec<SubagentInfo> },
+    /// Broadcast after every admission transition of this process (#1679 P4):
+    /// the full bounded admission view (clients do a simple replace). Never a
+    /// lifecycle state; `get_state` folds the same revision into `generation`.
+    AdmissionStateChanged {
+        admission: super::uds_admission_projection::AdmissionSnapshot,
+    },
     /// Emitted when an agent completes a turn, carrying the messages appended
     /// during that turn (assistant message + any tool results). A sub-agent
     /// emits this on its own stream with an empty `agent_id`; the parent's

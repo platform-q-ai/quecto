@@ -108,6 +108,10 @@ impl ProcessAdmission {
     pub fn observation(&self) -> Arc<dyn crate::application::ports::AdmissionObservation> {
         self.recorder.clone()
     }
+    /// Receive a fresh view after every admission transition of this process.
+    pub fn on_transition(&self, hook: super::observed_gate::ActivityHook) {
+        self.recorder.set_hook(hook);
+    }
 }
 
 static PROCESS: OnceLock<Arc<ProcessAdmission>> = OnceLock::new();

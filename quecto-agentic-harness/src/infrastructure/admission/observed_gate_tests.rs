@@ -344,3 +344,101 @@ async fn completion_throttle_is_clamped_and_expired_cooldowns_read_as_none() {
         "completion advice beyond the maximum is unavailable, as at the authority"
     );
 }
+
+#[tokio::test]
+async fn transitions_bump_the_revision_and_notify_the_hook() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let seen = Arc::new(Mutex::new(Vec::<AdmissionActivity>::new()));
+    let sink = seen.clone();
+    recorder.set_hook(Arc::new(move |activity: &AdmissionActivity| {
+        sink.lock().unwrap().push(activity.clone());
+    }));
+    let gate = observed(Arc::new(Grant::new(0, 10_000)), "acct", "g", &recorder);
+    let before = recorder.snapshot().revision;
+    let permit = gate.acquire().await.unwrap();
+    let admitted = recorder.snapshot().revision;
+    assert!(admitted > before, "begin and grant advance the revision");
+    permit.finish(Feedback::Success);
+    let finished = recorder.snapshot().revision;
+    assert!(finished > admitted);
+    assert_eq!(
+        recorder.snapshot().revision,
+        finished,
+        "reading does not advance it"
+    );
+    let seen = seen.lock().unwrap();
+    let phases: Vec<(usize, usize, u64)> = seen
+        .iter()
+        .map(|a| (a.waiting, a.admitted, a.completed))
+        .collect();
+    assert_eq!(
+        phases,
+        vec![(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+        "the hook sees every transition in order with a fresh view"
+    );
+}
+
+/// Transitions on many workers still reach the hook in revision order, so a
+/// client that simply replaces its view never ends up holding a stale one.
+/// A probabilistic detector (8 workers × 25 transitions, a yield inside the
+/// hook): an unserialized delivery showed up on every run tried.
+#[test]
+fn concurrent_transitions_reach_the_hook_in_revision_order() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    recorder.set_hook(Arc::new(move |activity| {
+        // Widen the window in which an unordered delivery would show.
+        std::thread::yield_now();
+        sink.lock().unwrap().push(activity.revision);
+    }));
+    let group = GroupId::new("g").unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let recorder = recorder.clone();
+            let group = group.clone();
+            std::thread::spawn(move || {
+                for _ in 0..25 {
+                    let id = recorder.begin("acct", &group);
+                    recorder.cancelled(id);
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 400);
+    assert!(
+        seen.windows(2).all(|w| w[1] == w[0] + 1),
+        "deliveries are in revision order"
+    );
+}
+
+/// A snapshot's revision describes exactly its contents: the counters and the
+/// revision move in one critical section, so a reader can never see new
+/// contents under an old revision (review 2, L1).
+#[test]
+fn a_snapshot_revision_describes_exactly_its_contents() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let group = GroupId::new("g").unwrap();
+    let observer = recorder.clone();
+    recorder.set_hook(Arc::new(move |view| {
+        // Inside a transition the hook already sees the bumped revision
+        // together with the new contents.
+        let read = observer.snapshot();
+        assert_eq!(read.revision, view.revision);
+        assert_eq!(read.waiting, view.waiting);
+    }));
+    let id = recorder.begin("acct", &group);
+    let queued = recorder.snapshot();
+    assert_eq!((queued.revision, queued.waiting), (1, 1));
+    recorder.cancelled(id);
+    let cancelled = recorder.snapshot();
+    assert_eq!((cancelled.revision, cancelled.cancelled), (2, 1));
+    // No-op transitions bump nothing.
+    recorder.cancelled(id);
+    recorder.admitted(id);
+    assert_eq!(recorder.snapshot().revision, 2);
+}

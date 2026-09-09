@@ -20,9 +20,14 @@ struct Live {
     phase: AdmissionPhase,
 }
 
-#[derive(Debug, Default)]
+/// Receives a fresh view after every transition (never under the recorder lock).
+pub type ActivityHook = Arc<dyn Fn(&AdmissionActivity) + Send + Sync>;
+
+#[derive(Default)]
 struct RecorderState {
     next: u64,
+    revision: u64,
+    hook: Option<ActivityHook>,
     /// Every live attempt (exact counts). Bounded in practice by the
     /// authority's per-group capacity plus queue capacity.
     live: BTreeMap<u64, Live>,
@@ -34,10 +39,21 @@ struct RecorderState {
 }
 
 /// Process-wide admission activity; clock is monotonic from construction.
-#[derive(Debug)]
 pub struct AdmissionRecorder {
     start: Instant,
     state: Mutex<RecorderState>,
+    /// Held across snapshot + hook so views reach the hook in revision order
+    /// (never held together with `state`).
+    notify: Mutex<()>,
+}
+
+impl std::fmt::Debug for AdmissionRecorder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let revision = self.state.try_lock().map(|state| state.revision).ok();
+        f.debug_struct("AdmissionRecorder")
+            .field("revision", &revision)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for AdmissionRecorder {
@@ -73,6 +89,7 @@ impl AdmissionRecorder {
         Self {
             start: Instant::now(),
             state: Mutex::new(RecorderState::default()),
+            notify: Mutex::new(()),
         }
     }
 
@@ -86,80 +103,117 @@ impl AdmissionRecorder {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn begin(&self, alias: &str, group: &GroupId) -> u64 {
+    /// Install the transition hook (one per recorder; a later call replaces it).
+    pub fn set_hook(&self, hook: ActivityHook) {
+        self.lock().hook = Some(hook);
+    }
+
+    /// Apply one transition: `mutate` runs under the state lock and returns
+    /// `Some` when the view changed; the revision is bumped in that same
+    /// critical section, so a snapshot's revision exactly describes its
+    /// contents. The hook then receives a fresh view outside the state lock.
+    /// Deliveries are serialized behind `notify` (always taken first) so two
+    /// transitions on different workers cannot reach the hook with their
+    /// revisions swapped (clients do a simple replace).
+    fn transition<R>(
+        &self,
+        mutate: impl FnOnce(&mut RecorderState, u64) -> Option<R>,
+    ) -> Option<R> {
         let now = self.now_ms();
-        let mut state = self.lock();
-        state.next = state.next.wrapping_add(1);
-        let id = state.next;
-        state.live.insert(
-            id,
-            Live {
-                alias: alias.to_owned(),
-                group: group.clone(),
-                phase: AdmissionPhase::Waiting { since_ms: now },
-            },
-        );
-        state.groups.entry(group.clone()).or_default();
-        id
+        let _ordered = self
+            .notify
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (result, hook) = {
+            let mut state = self.lock();
+            let result = mutate(&mut state, now)?;
+            state.revision = state.revision.wrapping_add(1);
+            (result, state.hook.clone())
+        };
+        if let Some(hook) = hook {
+            hook(&self.snapshot());
+        }
+        Some(result)
+    }
+
+    fn begin(&self, alias: &str, group: &GroupId) -> u64 {
+        self.transition(|state, now| {
+            state.next = state.next.wrapping_add(1);
+            let id = state.next;
+            state.live.insert(
+                id,
+                Live {
+                    alias: alias.to_owned(),
+                    group: group.clone(),
+                    phase: AdmissionPhase::Waiting { since_ms: now },
+                },
+            );
+            state.groups.entry(group.clone()).or_default();
+            Some(id)
+        })
+        .expect("begin always transitions")
     }
 
     fn admitted(&self, id: u64) {
-        let now = self.now_ms();
-        if let Some(live) = self.lock().live.get_mut(&id) {
+        self.transition(|state, now| {
+            let live = state.live.get_mut(&id)?;
             live.phase = AdmissionPhase::Admitted { since_ms: now };
-        }
+            Some(())
+        });
     }
 
     fn refused(&self, id: u64, reason: &str) {
-        let mut state = self.lock();
-        let Some(live) = state.live.remove(&id) else {
-            return;
-        };
-        state.refused = state.refused.saturating_add(1);
-        state.groups.entry(live.group).or_default().last_refusal =
-            Some(truncate_bytes(reason, AdmissionActivity::MAX_REFUSAL_BYTES));
+        self.transition(|state, _| {
+            let live = state.live.remove(&id)?;
+            state.refused = state.refused.saturating_add(1);
+            state.groups.entry(live.group).or_default().last_refusal =
+                Some(truncate_bytes(reason, AdmissionActivity::MAX_REFUSAL_BYTES));
+            Some(())
+        });
     }
 
     fn cancelled(&self, id: u64) {
-        let mut state = self.lock();
-        if state.live.remove(&id).is_some() {
+        self.transition(|state, _| {
+            state.live.remove(&id)?;
             state.cancelled = state.cancelled.saturating_add(1);
-        }
+            Some(())
+        });
     }
 
     fn abandoned(&self, id: u64) {
-        let mut state = self.lock();
-        if state.live.remove(&id).is_some() {
+        self.transition(|state, _| {
+            state.live.remove(&id)?;
             state.abandoned = state.abandoned.saturating_add(1);
-        }
+            Some(())
+        });
     }
 
     fn completed(&self, id: u64, maximum_ms: u64, feedback: Feedback) {
-        let now = self.now_ms();
-        let mut state = self.lock();
-        let Some(live) = state.live.remove(&id) else {
-            return;
-        };
-        state.completed = state.completed.saturating_add(1);
-        let group = state.groups.entry(live.group).or_default();
-        match feedback {
-            // The authority marks the group unavailable for advice beyond its
-            // maximum; mirror that instead of showing an expiring cooldown.
-            Feedback::Throttle { delay_ms } if delay_ms > maximum_ms => {
-                group.cooldown = Some(CooldownState::Unavailable);
-            }
-            Feedback::Throttle { delay_ms } => {
-                group.cooldown = merge_until(group.cooldown, now.saturating_add(delay_ms));
-            }
-            Feedback::Success => {
-                // A confirmed success ends an open-ended throttle; a dated one
-                // expires on its own.
-                if matches!(group.cooldown, Some(CooldownState::Unknown { .. })) {
-                    group.cooldown = None;
+        self.transition(|state, now| {
+            let live = state.live.remove(&id)?;
+            state.completed = state.completed.saturating_add(1);
+            let group = state.groups.entry(live.group).or_default();
+            match feedback {
+                // The authority marks the group unavailable for advice beyond
+                // its maximum; mirror that instead of showing an expiring
+                // cooldown.
+                Feedback::Throttle { delay_ms } if delay_ms > maximum_ms => {
+                    group.cooldown = Some(CooldownState::Unavailable);
                 }
+                Feedback::Throttle { delay_ms } => {
+                    group.cooldown = merge_until(group.cooldown, now.saturating_add(delay_ms));
+                }
+                Feedback::Success => {
+                    // A confirmed success ends an open-ended throttle; a dated
+                    // one expires on its own.
+                    if matches!(group.cooldown, Some(CooldownState::Unknown { .. })) {
+                        group.cooldown = None;
+                    }
+                }
+                Feedback::Failure => {}
             }
-            Feedback::Failure => {}
-        }
+            Some(())
+        });
     }
 
     /// Receipt advice for the attempt `id`, anchored at its grant: the
@@ -171,37 +225,37 @@ impl AdmissionRecorder {
     /// `Unavailable`. A local `Unavailable` clears only when the process
     /// re-negotiates after an operator reset, exactly like the authority's.
     fn cooldown(&self, id: u64, receipt_ms: u64, maximum_ms: u64, feedback: ThrottleFeedback) {
-        let now = self.now_ms();
-        let mut state = self.lock();
-        let Some(live) = state.live.get(&id).cloned() else {
-            return;
-        };
-        let anchor = match live.phase {
-            AdmissionPhase::Admitted { since_ms } => since_ms,
-            AdmissionPhase::Waiting { .. } => now,
-        };
-        let group = state.groups.entry(live.group).or_default();
-        group.cooldown = match feedback {
-            ThrottleFeedback::Until(deadline) => {
-                let offset = deadline.saturating_sub(receipt_ms);
-                let remaining = offset.saturating_sub(now.saturating_sub(anchor));
-                if remaining > maximum_ms {
-                    Some(CooldownState::Unavailable)
-                } else {
-                    merge_until(group.cooldown, anchor.saturating_add(offset))
+        self.transition(|state, now| {
+            let live = state.live.get(&id).cloned()?;
+            let anchor = match live.phase {
+                AdmissionPhase::Admitted { since_ms } => since_ms,
+                AdmissionPhase::Waiting { .. } => now,
+            };
+            let group = state.groups.entry(live.group).or_default();
+            group.cooldown = match feedback {
+                ThrottleFeedback::Until(deadline) => {
+                    let offset = deadline.saturating_sub(receipt_ms);
+                    let remaining = offset.saturating_sub(now.saturating_sub(anchor));
+                    if remaining > maximum_ms {
+                        Some(CooldownState::Unavailable)
+                    } else {
+                        merge_until(group.cooldown, anchor.saturating_add(offset))
+                    }
                 }
-            }
-            // Known limitation: a no-hint throttle on top of an unexpired dated
-            // cooldown keeps the dated one locally, while the authority may
-            // extend it by its own fallback; the view never claims a cooldown
-            // the authority lacks, it may only under-report its length.
-            ThrottleFeedback::NoHint { .. } => match group.cooldown {
-                Some(CooldownState::Until { until_ms }) if until_ms > now => group.cooldown,
-                Some(CooldownState::Unavailable) => group.cooldown,
-                _ => Some(CooldownState::Unknown { since_ms: now }),
-            },
-            ThrottleFeedback::Unavailable => Some(CooldownState::Unavailable),
-        };
+                // Known limitation: a no-hint throttle on top of an unexpired
+                // dated cooldown keeps the dated one locally, while the
+                // authority may extend it by its own fallback; the view never
+                // claims a cooldown the authority lacks, it may only
+                // under-report its length.
+                ThrottleFeedback::NoHint { .. } => match group.cooldown {
+                    Some(CooldownState::Until { until_ms }) if until_ms > now => group.cooldown,
+                    Some(CooldownState::Unavailable) => group.cooldown,
+                    _ => Some(CooldownState::Unknown { since_ms: now }),
+                },
+                ThrottleFeedback::Unavailable => Some(CooldownState::Unavailable),
+            };
+            Some(())
+        });
     }
 }
 
@@ -262,6 +316,7 @@ impl AdmissionObservation for AdmissionRecorder {
             groups,
             hidden: state.live.len().saturating_sub(attempts.len()),
             attempts,
+            revision: state.revision,
             observed_at_ms: now,
         }
     }
