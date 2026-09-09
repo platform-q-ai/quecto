@@ -37,22 +37,17 @@ pub(super) fn admit_with(
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;
     }
-    match swarm_lifecycle::join_current_process(
+    // The join records participation on the shared handle; the workflow flag
+    // was already settled above (a created run implies participation).
+    if let Err(error) = swarm_lifecycle::join_current_process(
         &context,
         flags.socket_path.as_deref(),
         flags.swarm_participation.clone(),
     ) {
-        Ok(participates) => {
-            if participates {
-                flags.workflow_disabled = true;
-            }
-            true
-        }
-        Err(error) => {
-            stderr.push_str(&format!("swarm admission rejected: {error}\n"));
-            false
-        }
+        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+        return false;
     }
+    true
 }
 
 pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {

@@ -131,3 +131,12 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
     assert!(admit_with(None, &mut flags, &mut String::new()));
     assert!(!flags.workflow_disabled);
 }
+
+/// Outside any container there is no swarm context: admission is a no-op.
+#[test]
+fn admit_without_a_container_context_changes_nothing() {
+    let mut flags = flags_with(&["--workflow"]);
+    let mut stderr = String::new();
+    assert!(admit(&mut flags, &mut stderr), "{stderr}");
+    assert!(!flags.workflow_disabled && !flags.swarm_participation.participating());
+}

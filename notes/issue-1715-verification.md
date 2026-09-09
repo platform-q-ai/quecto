@@ -76,6 +76,10 @@ existing contract that early members count toward the limit.
     W9 (create does not flip participation immediately): masked, the supervisor tick records
     the same answer on its first observation; the explicit flip closes the window before that
     tick and stays.
+    Round 2 re-run: W1 placeholder counts as swarm, W2 nothing counts, W3, W4, W6 startup refuses
+    regardless of the run, W7 startup never refuses, W10, W11, W12 join does not record, W13 tick
+    does not record, W14, W15 run_created ignores the deadline, W16 hooks never run: killed.
+    W8 (post-join workflow disable) was equivalent to the pre-join refusal and is removed.
 
 ## Adversarial review 2 and fixes
 
