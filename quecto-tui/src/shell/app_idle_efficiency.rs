@@ -16,7 +16,7 @@ impl App {
     }
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
-        self.tabs.values().any(|state| state.admission_view.as_ref().is_some_and(|view| view.waiting > 0) || state.admission_children.values().any(|(view, _)| view.waiting > 0))
+        self.needs_admission_tick()
             || kitty_fallback_pending
             || self.ac().spinner.is_some()
             || self.ac().agent_state.is_running()

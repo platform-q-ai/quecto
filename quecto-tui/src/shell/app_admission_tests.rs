@@ -338,3 +338,69 @@ async fn rekeyed_child_keeps_wait_clock_without_another_transition() {
         Some("3s")
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn cooldowns_count_down_locally_and_expire_conservatively_for_master_and_child() {
+    let mut app = test_app().await;
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "reviewer", "running", None, None,
+    )]));
+    app.handle_event(event(None, cooldown("anthropic", 3)));
+    app.handle_event(event(Some("reviewer"), cooldown("anthropic", 3)));
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    app.service_animation_tick(&mut true, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission(),
+        Some("anthropic cooldown 1s")
+    );
+    assert_eq!(
+        app.ac()
+            .roster
+            .admission_labels
+            .get("reviewer")
+            .map(String::as_str),
+        Some("cooldown 1s")
+    );
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    app.service_animation_tick(&mut true, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission(),
+        Some("anthropic cooldown elapsed")
+    );
+    assert_eq!(
+        app.ac()
+            .roster
+            .admission_labels
+            .get("reviewer")
+            .map(String::as_str),
+        Some("cooldown elapsed")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn expiry_guard_keeps_final_projection_armed_after_select_reentry() {
+    let mut app = test_app().await;
+    assert!(!app.needs_animation_tick(false));
+    app.handle_event(event(None, cooldown("anthropic", 3)));
+    tokio::time::advance(std::time::Duration::from_millis(2960)).await;
+    app.service_animation_tick(&mut true, tokio::time::Instant::now());
+    assert_eq!(
+        app.ac().master_session.footer.admission(),
+        Some("anthropic cooldown 1s")
+    );
+    // Another select arm wins after expiry, before the next 80ms tick.
+    tokio::time::advance(std::time::Duration::from_millis(50)).await;
+    assert!(
+        app.needs_animation_tick(false),
+        "select reentry must retain the final repaint"
+    );
+    assert!(app.service_animation_tick(&mut true, tokio::time::Instant::now()));
+    assert_eq!(
+        app.ac().master_session.footer.admission(),
+        Some("anthropic cooldown elapsed")
+    );
+    assert!(
+        !app.needs_animation_tick(false),
+        "serviced expiry returns to idle"
+    );
+}
