@@ -109,19 +109,23 @@ pub fn canonical_admission_forward(
     if value.get("type").and_then(|t| t.as_str()) != Some("admission_state_changed") {
         return None;
     }
-    // An embedded identity is honoured only for a registered descendant that
-    // is not the parent itself; anything else is stamped as the immediate
-    // child, so a child can never paint its parent's or a sibling's view.
-    let agent = value
+    // An embedded identity is honoured only for a descendant of this child
+    // (the caller's predicate) that is not the parent itself; anything else
+    // is stamped as the immediate child under its real parent, so a child can
+    // never paint its parent's or a sibling's view.
+    let embedded = value
         .get("agent_id")
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty() && Some(*s) != parent_id && is_known_descendant(s))
-        .unwrap_or(child_id);
-    let parent = value
-        .get("parent_id")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .or_else(|| parent_id.map(str::to_string));
+        .filter(|s| !s.is_empty() && Some(*s) != parent_id && is_known_descendant(s));
+    let agent = embedded.unwrap_or(child_id);
+    let parent = match embedded {
+        Some(_) => value
+            .get("parent_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| parent_id.map(str::to_string)),
+        None => parent_id.map(str::to_string),
+    };
     let admission = value.get("admission")?;
     let number = |key: &str| admission.get(key).and_then(|v| v.as_u64());
     let groups: Vec<serde_json::Value> = admission

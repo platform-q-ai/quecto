@@ -72,9 +72,10 @@ pub fn parse_get_state(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let workflow = data.get("workflow").cloned();
-    let admission = data
-        .get("admission")
-        .and_then(|a| crate::protocol::admission_payloads::parse_admission(a, sanitize));
+    // `Null` for a missing key: the mapper answers `None` for anything but an
+    // object, so no raw key lookup is needed here.
+    let admission =
+        crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
     GetStateSnapshot {
         footer,
         effort_levels,

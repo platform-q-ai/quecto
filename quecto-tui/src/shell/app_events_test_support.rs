@@ -5,9 +5,9 @@ use crate::shell::terminal::Terminal;
 use tempfile::TempDir;
 use tokio::io::AsyncReadExt;
 
-pub(crate) struct TestApp {
+pub(super) struct TestApp {
     app: App,
-    pub(crate) dir: TempDir,
+    pub(super) dir: TempDir,
 }
 
 impl Deref for TestApp {
@@ -24,7 +24,7 @@ impl DerefMut for TestApp {
     }
 }
 
-pub(crate) async fn test_app() -> TestApp {
+pub(super) async fn test_app() -> TestApp {
     let dir = tempfile::Builder::new()
         .prefix("quecto-tui-app-events-test-")
         .tempdir()

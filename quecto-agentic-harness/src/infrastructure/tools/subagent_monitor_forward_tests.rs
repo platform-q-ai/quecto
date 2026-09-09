@@ -499,10 +499,12 @@ fn handle_monitor_line_forwards_child_admission_state_bounded_and_restamped() {
     assert!(rx.try_recv().is_err(), "exactly one forwarded line");
     // A forwarded, registered grandchild keeps its identity; a view without
     // the object is dropped.
+    let mut grandchild = test_entry();
+    grandchild.parent_id = Some("child".to_string());
     registry
         .lock()
         .unwrap()
-        .insert("grandchild".to_string(), test_entry());
+        .insert("grandchild".to_string(), grandchild);
     let line = r#"{"type":"admission_state_changed","agent_id":"grandchild","parent_id":"child","admission":{"waiting":1,"revision":2}}"#;
     super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
     let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
@@ -561,14 +563,37 @@ fn forwarded_admission_identity_cannot_be_spoofed() {
         .lock()
         .unwrap()
         .insert("child".to_string(), test_entry());
+    // A registered sibling (same parent) is not a descendant of the child.
+    registry
+        .lock()
+        .unwrap()
+        .insert("sibling".to_string(), test_entry());
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    for spoofed in ["root", "stranger", ""] {
+    for spoofed in ["root", "stranger", "sibling", ""] {
         let line = format!(
             r#"{{"type":"admission_state_changed","agent_id":"{spoofed}","admission":{{"waiting":1,"revision":1}}}}"#
         );
         super::handle_monitor_line(&line, "child", &registry, None, Some(&tx), Some("root"));
         let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(fwd["agent_id"], "child", "spoofed {spoofed:?}");
-        assert_eq!(fwd["parent_id"], "root");
+        assert_eq!(
+            fwd["parent_id"], "root",
+            "a claimed parent is not honoured either"
+        );
     }
+    // A lifecycle line that merely quotes the event name is not swallowed.
+    let quoted = r#"{"type":"agent_start","note":"see \"type\":\"admission_state_changed\""}"#;
+    super::handle_monitor_line(quoted, "child", &registry, None, Some(&tx), Some("root"));
+    let status = registry
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .status
+        .clone();
+    assert_eq!(
+        status,
+        super::super::subagent_registry::SubagentStatus::Running,
+        "agent_start still reaches the registry"
+    );
 }

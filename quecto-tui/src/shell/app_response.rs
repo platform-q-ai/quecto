@@ -717,6 +717,8 @@ impl App {
         self.ac_mut().master_session.running = false;
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;
+        // The run is over: an attempt cannot still be waiting (#1679 P4).
+        self.clear_master_admission_wait();
     }
     fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());

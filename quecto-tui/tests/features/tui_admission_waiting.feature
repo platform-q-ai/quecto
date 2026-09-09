@@ -18,11 +18,13 @@ Feature: Waiting for inference admission is visible without becoming a lifecycle
   Scenario: A cooldown survives the end of the run but a wait does not
     Given a fresh TUI harness for admission scenarios
     When the agent starts a run
+    And the agent reports a 30 second cooldown for group "anthropic"
+    And the agent ends the run
+    Then the master footer shows "anthropic cooldown 30s"
+    When the agent starts a run
     And the agent reports its admission view as waiting for 3 seconds in group "anthropic"
     And the agent ends the run
     Then the master footer shows no admission label
-    When the agent reports a 30 second cooldown for group "anthropic"
-    Then the master footer shows "anthropic cooldown 30s"
 
   Scenario: A descendant's forwarded wait is painted on its panel row only
     Given a fresh TUI harness for admission scenarios

@@ -188,3 +188,49 @@ async fn get_state_applies_or_clears_the_admission_view() {
     assert_eq!(capitalize(""), "");
     assert_eq!(capitalize("éa"), "Éa");
 }
+
+#[tokio::test]
+async fn agent_error_ends_the_wait_and_the_panel_row_paints_a_child_label() {
+    let mut app = test_app().await;
+    app.handle_event(Event::AgentStart);
+    app.handle_event(event(None, waiting(5)));
+    app.handle_event(Event::Response {
+        id: None,
+        command: "agent_error".into(),
+        success: false,
+        data: None,
+        error: Some("boom".into()),
+    });
+    assert!(!app.ac().master_session.running);
+    assert_eq!(app.ac().master_session.footer.admission(), None);
+    // A tool ending while the master is queued keeps the wait on the spinner.
+    app.handle_event(Event::AgentStart);
+    app.handle_event(event(None, waiting(6)));
+    app.handle_event(Event::ToolExecutionEnd {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        result: serde_json::json!({ "content": [] }),
+        is_error: false,
+    });
+    assert_eq!(
+        app.ac().spinner.as_ref().unwrap().message(),
+        "Waiting for admission 6s (Esc to interrupt)"
+    );
+    // The panel row of a tracked child carries its compact label.
+    app.handle_event(subagents_changed(vec![subagent_with_socket(
+        "reviewer", "running", None, None,
+    )]));
+    app.handle_event(event(Some("reviewer"), waiting(4)));
+    let rows = app.panel_rows_for_test();
+    let reviewer = rows
+        .iter()
+        .find(|(label, _)| label == "reviewer")
+        .expect("reviewer row");
+    assert_eq!(reviewer.1.as_deref(), Some("waiting 4s"));
+    let master = &rows[0];
+    assert_eq!(
+        master.1.as_deref(),
+        Some("waiting 6s"),
+        "master row uses the compact label"
+    );
+}

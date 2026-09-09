@@ -637,10 +637,14 @@ impl App {
         }
         let pad = usable
             .saturating_sub(1 + stalk_vis + name_vis + admission_vis + observer_vis + timer.len());
+        let admission = if admission.is_empty() {
+            admission
+        } else {
+            theme::dim(&admission)
+        };
         let line = format!(
-            "{selbar}{}{name}{}{observer}{}{} ",
+            "{selbar}{}{name}{admission}{observer}{}{} ",
             theme::dim(&row.prefix),
-            theme::dim(&admission),
             " ".repeat(pad),
             theme::dim(&timer),
         );

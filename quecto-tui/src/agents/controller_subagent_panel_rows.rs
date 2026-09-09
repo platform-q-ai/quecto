@@ -177,6 +177,17 @@ pub(super) struct PanelRow {
     pub(super) workflow: Option<(u32, u32)>,
 }
 
+impl App {
+    /// `(label, admission)` per panel row, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn panel_rows_for_test(&self) -> Vec<(String, Option<String>)> {
+        self.panel_rows()
+            .into_iter()
+            .map(|row| (row.label, row.admission))
+            .collect()
+    }
+}
+
 impl PanelRow {
     /// Whether this is a selectable environment row (not master, not an agent).
     pub(super) fn is_environment(&self) -> bool {

@@ -9,7 +9,7 @@ Scope (notes/1679-p4-scope.md item 3), stacked on slices 1 (#1700) and 2 (#1701)
   the state snapshot, `Event::AdmissionStateChanged { agent_id, admission }`,
   master footer label ("⏳ waiting for admission 12s · anthropic cooldown 30s")
   and working-spinner message, forwarded descendant label on the panel row
-  (truncated before the identity is), waiting label dropped at run end while a
+  (all or nothing, never a fragment), waiting label dropped at run end while a
   cooldown survives. No lifecycle state is touched (`running`, roster status).
 - **Harness**: the parent's monitor forwards a child's `admission_state_changed`
   re-stamped with `agent_id`/`parent_id`, rebuilt from known fields only (groups
@@ -57,10 +57,38 @@ Twelve items (2 high, 4 medium, 6 low), all fixed:
 |M1 master label survives disconnect / an agent without admission|cleared on disconnect and when `get_state` carries no view|`a_tool_spinner_message_is_never_clobbered_and_disconnect_clears_the_label`, `get_state_applies_or_clears_the_admission_view`|
 |M2 forwarded identity spoofable (child could paint the parent's footer)|embedded `agent_id` honoured only for a registered descendant that is not the parent; otherwise stamped as the child|`forwarded_admission_identity_cannot_be_spoofed`|
 |M3 admission clobbered tool spinner text|the module remembers the message it wrote and restores only over that|spinner test above|
-|M4 pacing measured between call returns|measured from before the first request, exact 200 ms bound|`inference_admission_matrix.feature` scenario 5|
+|M4 pacing measured between call returns|measured from before the first request, provable 200 ms lower bound|`inference_admission_matrix.feature` scenario 5|
 |L1 runbook named non-existent status fields|`"journal_healthy": true`, `"epoch": 1`|docs|
 |L2 master panel row used the long label|compact label on both rows|`footer_shows_the_admission_label_beside_the_model_and_clears_it`|
 |L3 partial label fragments in the panel|all-or-nothing label|panel render|
 |L4 500 ms queue deadline could elapse before the third request|2 s deadline|matrix scenario 3|
 |L5 run-end clearing keyed on the label text|re-derived from the last view with nothing waiting|"waiting-room" cooldown case in the master test|
 |L6 stale "single scan" comment|comment states the two substring gates|—|
+
+## Mutations (slice 3, round 1, after review 1)
+    T1 waiting never labelled, T2 elapsed cooldown shown, T3 groups unbounded, T5 waiting label survives run end,
+    T6 spinner not updated, T7 footer ignores admission, T9 unknown child id labelled, T10 labels never pruned,
+    T11 spinner restored over a foreign message, T12 disconnect keeps the label, H1 forwarded groups unbounded,
+    H4 spoofed identity honoured: all killed.
+    T8 panel row drops child label: SURVIVED (BDD-only proof) → lib test added, re-run in round 2.
+    H2/H3/T4: mis-anchored (workflow function / moved code), re-targeted in round 2.
+
+## Adversarial review 2 (2026-09-09) and fixes
+
+All twelve round-1 fixes verified. Eight new items, all fixed:
+
+|Finding|Fix|Proof|
+|---|---|---|
+|M1 `agent_error` ended a run without clearing a waiting label|`clear_master_admission_wait` on agent error|`agent_error_ends_the_wait_and_the_panel_row_paints_a_child_label`|
+|M2 a registered sibling could be painted by a child; claimed parent honoured|identity honoured only for a descendant reached by walking the registry's parent links from the embedded id to the emitting child; the parent is stamped from the monitor otherwise; docs state the rule|`forwarded_admission_identity_cannot_be_spoofed` (root, stranger, sibling, empty)|
+|M3 substring gate swallowed lifecycle lines quoting the event name|gate on `"type":"admission_state_changed"` and fall through unless the forwarder matched|quoted `agent_start` case in the same test|
+|L4 tool end wiped the wait from the spinner|tool end and run start reuse the remembered admission message|same test|
+|L5 note/doc drift|note corrected; protocol doc carries the identity rule|—|
+|I6 BDD scenario title vs body|cooldown reported before the run ends|`tui_admission_waiting.feature`|
+|I7 spinner created after a stored wait is unlabelled|run start seeds the spinner from the stored message|—|
+|I8 empty SGR pair; over-wide test-support visibility|dim only a non-empty label; visibility back to `pub(super)`|—|
+
+Architecture ratchets (pre-push): the admission mapper deserializes a typed
+`AdmissionView` DTO (no raw `serde_json` sites), `client_result_text.rs` is
+allowlisted as a pure `client.rs` relocation, the wire-DTO total records the
+one new dispatch arm, and the owner map lists the four new files.

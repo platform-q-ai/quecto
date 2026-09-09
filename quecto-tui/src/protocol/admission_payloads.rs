@@ -3,27 +3,39 @@
 //! Admission is never a lifecycle state; the view only adds a label beside
 //! whatever phase the agent is in.
 
+use serde::Deserialize;
+
 /// A quota group's cooldown as last learned by the agent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AdmissionCooldown {
     /// `until`, `unknown` or `unavailable` (unknown strings are kept as-is).
+    #[serde(default)]
     pub state: String,
+    #[serde(default)]
     pub remaining_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AdmissionGroupView {
     pub group: String,
+    #[serde(default)]
     pub cooldown: Option<AdmissionCooldown>,
 }
 
 /// Bounded admission view of one agent process.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AdmissionView {
+    #[serde(default)]
     pub waiting: u64,
+    #[serde(default)]
     pub admitted: u64,
+    #[serde(default)]
     pub longest_wait_seconds: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_groups")]
     pub groups: Vec<AdmissionGroupView>,
+    #[serde(default)]
     pub revision: u64,
 }
 
@@ -32,55 +44,53 @@ pub struct AdmissionView {
 const MAX_GROUPS: usize = 32;
 const MAX_GROUP_LABEL: usize = 48;
 
-/// Parse an `admission` object; `None` when absent or not an object.
+/// Malformed group entries are skipped rather than failing the whole view.
+fn lenient_groups<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<AdmissionGroupView>, D::Error> {
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .take(MAX_GROUPS)
+        .filter_map(|group| AdmissionGroupView::deserialize(group).ok())
+        .collect())
+}
+
+/// Parse an `admission` value; `None` when absent, null or not an object.
 pub fn parse_admission(
     value: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<AdmissionView> {
-    let object = value.as_object()?;
-    let groups = object
-        .get("groups")
-        .and_then(|g| g.as_array())
-        .map(|groups| {
-            groups
-                .iter()
-                .take(MAX_GROUPS)
-                .filter_map(|group| {
-                    let name = group.get("group")?.as_str()?;
-                    let name: String = sanitize(name).chars().take(MAX_GROUP_LABEL).collect();
-                    let cooldown = group.get("cooldown").and_then(|c| {
-                        Some(AdmissionCooldown {
-                            state: sanitize(c.get("state")?.as_str()?),
-                            remaining_seconds: c.get("remainingSeconds").and_then(|r| r.as_u64()),
-                        })
-                    });
-                    Some(AdmissionGroupView {
-                        group: name,
-                        cooldown,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(AdmissionView {
-        waiting: object.get("waiting").and_then(|v| v.as_u64()).unwrap_or(0),
-        admitted: object.get("admitted").and_then(|v| v.as_u64()).unwrap_or(0),
-        longest_wait_seconds: object.get("longestWaitSeconds").and_then(|v| v.as_u64()),
-        groups,
-        revision: object.get("revision").and_then(|v| v.as_u64()).unwrap_or(0),
-    })
+    if !value.is_object() {
+        return None;
+    }
+    let mut view = AdmissionView::deserialize(value).ok()?;
+    for group in &mut view.groups {
+        group.group = sanitize(&group.group)
+            .chars()
+            .take(MAX_GROUP_LABEL)
+            .collect();
+        if let Some(cooldown) = &mut group.cooldown {
+            cooldown.state = sanitize(&cooldown.state);
+        }
+    }
+    Some(view)
 }
 
 impl AdmissionView {
+    fn throttled(&self) -> Option<&AdmissionGroupView> {
+        self.groups.iter().find(|g| {
+            g.cooldown
+                .as_ref()
+                .is_some_and(|c| c.state != "until" || c.remaining_seconds.unwrap_or(0) > 0)
+        })
+    }
+
     /// A short status label, or `None` when nothing is worth showing: waiting
     /// attempts first (with the throttled group's cooldown when known), else
     /// an active dated cooldown, else nothing.
     pub fn status_label(&self) -> Option<String> {
-        let throttled = self.groups.iter().find(|g| {
-            g.cooldown
-                .as_ref()
-                .is_some_and(|c| c.state != "until" || c.remaining_seconds.unwrap_or(0) > 0)
-        });
+        let throttled = self.throttled();
         if self.waiting > 0 {
             let mut label = match self.longest_wait_seconds {
                 Some(seconds) => format!("waiting for admission {seconds}s"),
@@ -100,18 +110,13 @@ impl AdmissionView {
     /// The panel-row form of [`Self::status_label`]: a few characters that
     /// survive a narrow sub-agent panel ("waiting 4s", "cooldown 30s").
     pub fn compact_label(&self) -> Option<String> {
-        let throttled = self.groups.iter().find(|g| {
-            g.cooldown
-                .as_ref()
-                .is_some_and(|c| c.state != "until" || c.remaining_seconds.unwrap_or(0) > 0)
-        });
         if self.waiting > 0 {
             return Some(match self.longest_wait_seconds {
                 Some(seconds) => format!("waiting {seconds}s"),
                 None => "waiting".to_string(),
             });
         }
-        let cooldown = throttled?.cooldown.as_ref()?;
+        let cooldown = self.throttled()?.cooldown.as_ref()?;
         Some(match cooldown.state.as_str() {
             "until" => format!("cooldown {}s", cooldown.remaining_seconds.unwrap_or(0)),
             "unavailable" => "unavailable".to_string(),

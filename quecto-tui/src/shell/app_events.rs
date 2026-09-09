@@ -163,7 +163,12 @@ impl App {
         // flag for master and sub-agents alike (#828).
         self.ac_mut().master_session.running = true;
         self.ac_mut().master_session.footer.set_streaming(true);
-        self.ac_mut().spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
+        let message = self
+            .ac()
+            .admission_spinner_message
+            .clone()
+            .unwrap_or_else(|| app_admission::WORKING_MESSAGE.to_string());
+        self.ac_mut().spinner = Some(Spinner::new(&message));
     }
 
     pub(super) fn reconcile_master_retention_trim(&mut self) {
@@ -361,8 +366,15 @@ impl App {
         if is_subagent_tool(&tool_name) {
             self.request_roster_refresh(None);
         }
+        // Back to the plain message, unless the master is still queued for
+        // admission: that label outlives any single tool (#1679 P4).
+        let message = self
+            .ac()
+            .admission_spinner_message
+            .clone()
+            .unwrap_or_else(|| app_admission::WORKING_MESSAGE.to_string());
         if let Some(spinner) = &mut self.ac_mut().spinner {
-            spinner.set_message("Working... (Esc to interrupt)");
+            spinner.set_message(&message);
         }
     }
 
@@ -540,7 +552,7 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
 mod app_admission;
 #[cfg(test)]
 #[path = "app_events_test_support.rs"]
-pub(crate) mod app_events_test_support;
+pub(super) mod app_events_test_support;
 #[path = "app_workflow_automation.rs"]
 mod app_workflow_automation;
 #[cfg(test)]

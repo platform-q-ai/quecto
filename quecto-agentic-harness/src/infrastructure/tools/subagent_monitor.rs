@@ -485,12 +485,27 @@ fn handle_monitor_line(
         }
         // #1679 P4: a descendant waiting for admission is visible from the
         // parent's socket; not a status change, so it bypasses the registry.
-        if line.contains("\"admission_state_changed\"") {
-            let known = |id: &str| registry.lock().is_ok_and(|r| r.contains_key(id));
-            if let Some(fwd) = forward_child_admission_event(line, agent_id, parent_id, &known) {
+        if line.contains("\"type\":\"admission_state_changed\"") {
+            // An embedded identity is honoured only for a descendant of THIS
+            // child (walking the registry's parent links), never a sibling.
+            let descendant = |id: &str| {
+                registry.lock().is_ok_and(|r| {
+                    let mut current = id.to_string();
+                    for _ in 0..r.len() {
+                        match r.get(&current).and_then(|entry| entry.parent_id.clone()) {
+                            Some(parent) if parent == agent_id => return true,
+                            Some(parent) => current = parent,
+                            None => return false,
+                        }
+                    }
+                    false
+                })
+            };
+            if let Some(fwd) = forward_child_admission_event(line, agent_id, parent_id, &descendant)
+            {
                 let _ = tx.send(fwd);
+                return;
             }
-            return;
         }
     }
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {

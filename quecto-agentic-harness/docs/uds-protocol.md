@@ -1090,7 +1090,10 @@ child's `admission_state_changed` onto the parent's stream, re-stamped with
 `agent_id` / `parent_id` (a forwarded grandchild keeps its own identity) and
 rebuilt from the known fields above only (groups bounded to 32), so a
 supervisor sees a descendant waiting for admission without polling each child
-socket. Events without `agent_id` are the connected agent's own.
+socket. An identity embedded by the child is honoured only for a registered
+descendant of that child (never the parent or a sibling); anything else is
+stamped as the child itself. Events without `agent_id` are the connected
+agent's own.
 
 ```json
 {"type":"admission_state_changed","admission":{"waiting":1,"admitted":0,"longestWaitSeconds":3,"groups":[{"group":"anthropic"}],"counters":{"completed":0,"refused":0,"cancelled":0,"abandoned":0},"hidden":0,"revision":1}}
