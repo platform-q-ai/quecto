@@ -1,3 +1,5 @@
+pub(super) use super::*;
+
 #[path = "session_store_chat_tests.rs"]
 mod chat_tests;
 #[path = "session_store_cov_tests.rs"]

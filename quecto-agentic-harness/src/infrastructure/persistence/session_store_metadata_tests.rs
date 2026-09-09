@@ -628,7 +628,7 @@ fn stop_reason_to_str_covers_all_variants() {
 #[test]
 fn role_str_mapping_roundtrips_and_defaults() {
     for r in [Role::System, Role::User, Role::Assistant, Role::Tool] {
-        assert_eq!(super::str_to_role(super::role_to_str(&r)), r);
+        assert_eq!(super::str_to_role(r.as_str()), r);
     }
     assert_eq!(super::str_to_role("not-a-role"), Role::User);
 }

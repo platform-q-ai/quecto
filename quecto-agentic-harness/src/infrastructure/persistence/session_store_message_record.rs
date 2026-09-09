@@ -1,5 +1,5 @@
 use super::*;
-fn message_to_record(msg: &Message) -> MessageRecord {
+pub(super) fn message_to_record(msg: &Message) -> MessageRecord {
     MessageRecord {
         ordinal: msg.ordinal,
         role: msg.role.as_str().to_string(),
