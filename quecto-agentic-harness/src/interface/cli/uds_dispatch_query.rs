@@ -53,22 +53,29 @@ pub(super) async fn dispatch_fieldless_command(
         let scope = current.folder_identity();
         let scope_available = scope.is_some();
         let event = match ctx.session_store.list(None).await {
-            Ok(sessions) => AgentEvent::ok(
-                id,
-                tn,
-                Some(serde_json::json!({
-                    "sessions": sessions
-                        .iter()
-                        .filter(|summary| scope.is_some_and(|scope| {
-                            summary.latest_execution_metadata.as_ref()
-                                .and_then(|metadata| metadata.folder_identity()) == Some(scope)
-                        }))
-                        .filter(|summary| is_resume_picker_eligible_key(&summary.key))
-                        .map(session_summary_to_json)
-                        .collect::<Vec<_>>(),
-                    "scopeStatus": if scope_available { "available" } else { "unavailable" }
-                })),
-            ),
+            Ok(sessions) => {
+                let summaries = sessions
+                    .iter()
+                    .filter(|summary| {
+                        scope.is_some_and(|scope| {
+                            summary
+                                .latest_execution_metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.folder_identity())
+                                == Some(scope)
+                        }) && is_resume_picker_eligible_key(&summary.key)
+                    })
+                    .map(session_summary_to_json)
+                    .collect::<Vec<_>>();
+                AgentEvent::ok(
+                    id,
+                    tn,
+                    Some(serde_json::json!({
+                        "sessions": summaries,
+                        "scopeStatus": if scope_available { "available" } else { "unavailable" }
+                    })),
+                )
+            }
             Err(err) => AgentEvent::err(id, tn, err.to_string()),
         };
         emit_event_to_broadcast_or_writer(ctx, &event).await;
