@@ -68,6 +68,9 @@ impl AdmissionStateProbe {
                 workflow: None,
                 execution: None,
                 sync: 0,
+                control_receipts: vec![],
+                automatic_turns_suspended: false,
+                repeated_failure_notifications: Default::default(),
             },
         }
     }

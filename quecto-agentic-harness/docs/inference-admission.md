@@ -105,6 +105,23 @@ authority root with an empty tmpfs and re-exposes only `client/`.
   capability (sessions must restart) and explicitly gives up any claim that
   old remote work is bounded. Cooldown and pacing deadlines survive the reset.
 
+## Observing admission
+
+Admission is orthogonal to a session's lifecycle: a queued attempt is neither
+idle nor stalled. Each process records its own attempts' transitions (waiting,
+admitted, completed, refused, cancelled, abandoned) and the cooldown it last
+learned per quota group, as a bounded and fresh view (at most 64 live attempts
+are sampled, the rest are counted as `hidden`; refusal reasons are bounded to
+200 bytes).
+
+Over the socket the view rides on `get_state` as the `admission` object next
+to the execution phase, and the progress verdict becomes `waiting` (with the
+count, group, longest wait and cause) for as long as any attempt is queued.
+Every transition advances the `get_state` generation and is pushed as an
+`admission_state_changed` event; see [uds-protocol.md](uds-protocol.md).
+`abort` while an attempt waits cancels the wait at the authority and counts
+it under `counters.cancelled`.
+
 ## Limitations
 
 - Same-user, same-host coordination only. Processes holding provider

@@ -341,6 +341,54 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 | `progress` | object | Evidence-based progress verdict with only `state` and `reason` |
 | `generation` | integer | Activity cursor for `since` comparisons |
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
+| `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
+
+**Admission (`admission`, #1679 P4).** When the process shares an inference
+authority ([inference-admission.md](inference-admission.md)) the projection
+carries its own attempts' admission activity beside the phase. Admission is
+never a `state` value: a process whose next attempt is queued at the authority
+stays in `thinking` (or whatever phase it is in) and its `progress` becomes
+`waiting`, which supervisors must treat as neither idle nor stalled.
+
+```json
+{
+  "state": "thinking",
+  "progress": {
+    "state": "waiting",
+    "reason": "2 inference attempts waiting for admission in group anthropic for 12s; cooldown 30s remaining"
+  },
+  "admission": {
+    "waiting": 2,
+    "admitted": 0,
+    "longestWaitSeconds": 12,
+    "groups": [
+      {"group": "anthropic", "cooldown": {"state": "until", "remainingSeconds": 30}}
+    ],
+    "counters": {"completed": 7, "refused": 0, "cancelled": 1, "abandoned": 0},
+    "hidden": 0,
+    "revision": 41
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `waiting` / `admitted` | integer | Live attempts of this process queued at / granted by the authority (exact counts) |
+| `longestWaitSeconds` | integer \| omitted | Longest visible wait; omitted when nothing waits |
+| `groups[].group` | string | Quota group |
+| `groups[].cooldown` | object \| omitted | `state` is `until` (with `remainingSeconds`), `unknown` (throttled without a deadline) or `unavailable` (authority marked the group unavailable) |
+| `groups[].lastRefusal` | string \| omitted | Most recent refusal reason, bounded to 200 bytes |
+| `counters` | object | Lifetime `completed`, `refused`, `cancelled` (wait given up, e.g. `abort`) and `abandoned` (permit dropped without completion) |
+| `hidden` | integer | Live attempts beyond the bounded sample of 64 |
+| `revision` | integer | Advances on every admission transition |
+
+The `waiting` verdict takes precedence over the tool-window verdicts
+(`advancing`, `active`, `quiet`) while any attempt is queued. Every admission
+transition advances `generation` exactly once, so a `since` poll never returns
+the unchanged marker across a transition (ADR-0024 freshness and delta
+bounds). `abort` while an attempt waits cancels the wait at the authority; the
+next `get_state` shows the run idle with the wait counted under
+`counters.cancelled`.
 
 `get_state` intentionally does not include static vocabularies, transcript
 counts, sync/history state, context-window metadata, available workflow
@@ -1021,6 +1069,20 @@ Broadcast replacement snapshot of all spawned subagent statuses (clients do a si
 
 ```json
 {"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","agentUuid":"f47ac10b-58cc-4372-a567-0e02b2c3d479","displayName":"reviewer","status":"idle","pid":1234,"readOnly":true}]}
+```
+
+### `admission_state_changed`
+
+Broadcast after every inference-admission transition of this process (#1679
+P4): an attempt queued, granted, completed, refused, cancelled or abandoned,
+or a group's cooldown learned. Carries the full bounded `admission` object
+described under [`get_state`](#get_state) (clients do a simple replace).
+`revision` is strictly increasing, so a client can drop events older than the
+view it already holds. Emitted only when the process joined an admission
+authority; the same transition also advances the `get_state` generation.
+
+```json
+{"type":"admission_state_changed","admission":{"waiting":1,"admitted":0,"longestWaitSeconds":3,"groups":[{"group":"anthropic"}],"counters":{"completed":0,"refused":0,"cancelled":0,"abandoned":0},"hidden":0,"revision":1}}
 ```
 
 ### `subagent_messages_appended`

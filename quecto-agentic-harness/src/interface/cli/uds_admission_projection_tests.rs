@@ -230,6 +230,9 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
         workflow: None,
         execution: None,
         sync: 0,
+        control_receipts: vec![],
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: Default::default(),
     };
     let mut poll = |since: Option<u64>, execution: &mut ExecutionState| {
         session.generation = execution.observe_visible_revisions(0, 0);
@@ -270,4 +273,38 @@ fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     // No connected client: the transition is dropped, never an error.
     drop(rx);
     hook(&AdmissionActivity::default());
+}
+
+#[test]
+fn the_probe_polls_the_slim_projection_like_a_supervisor() {
+    let source = Arc::new(ScriptedObservation::default());
+    let mut probe = super::AdmissionStateProbe::new(source.clone());
+    let first = probe.poll(None);
+    assert_eq!(first["state"], "idle");
+    let generation = first["generation"].as_u64().unwrap();
+    probe.start_run();
+    source.set(waiting_activity(1, 1_000));
+    let waiting = probe.poll(Some(generation));
+    assert_eq!(waiting["state"], "thinking");
+    assert_eq!(waiting["progress"]["state"], "waiting");
+    probe.finish_run();
+    source.set(AdmissionActivity {
+        revision: 2,
+        ..AdmissionActivity::default()
+    });
+    let done = probe.poll(None);
+    assert_eq!(done["state"], "idle");
+    assert_eq!(done["progress"]["state"], "quiet");
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(1);
+    super::admission_broadcast_hook(tx)(&waiting_activity(4, 0));
+    assert!(rx.try_recv().unwrap().contains("admission_state_changed"));
+}
+
+#[test]
+fn execution_state_debug_names_the_phase_and_admission_presence() {
+    let mut state = ExecutionState::default();
+    assert!(format!("{state:?}").contains("admission: false"));
+    state.set_admission_source(Arc::new(ScriptedObservation::default()));
+    let text = format!("{state:?}");
+    assert!(text.contains("admission: true") && text.contains("phase: \"idle\""));
 }
