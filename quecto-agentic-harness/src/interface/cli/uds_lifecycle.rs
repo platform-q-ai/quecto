@@ -441,5 +441,15 @@ mod issue_1612_execution_context_tests {
         );
         assert!(metadata.folder_identity().is_some());
         assert!(metadata.folder_label().is_some());
+
+        let missing = capture_execution_metadata_for_backend(
+            std::path::Path::new("definitely-missing-1612"),
+            Some("   "),
+            ExecutionBackend::Native,
+        );
+        assert!(missing.folder_identity().is_none());
+        assert!(missing.folder_label().is_none());
+        assert!(missing.agent_name().is_none());
+        assert!(missing.git_branch().is_none());
     }
 }
