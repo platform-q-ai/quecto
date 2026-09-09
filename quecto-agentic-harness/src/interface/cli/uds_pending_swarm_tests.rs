@@ -653,8 +653,9 @@ fn wake_nudges_queue_as_automatic_messages() {
     );
 }
 
-/// #1712/#1721: an explicit follow-up drained on the stale-abort prompt path
-/// is dated after its failure like any other turn.
+/// #1712/#1721: a follow-up drained on the stale-abort prompt path (the
+/// prompt itself re-armed the session first) is dated after its failure
+/// like any other turn.
 #[tokio::test]
 async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
     use crate::interface::cli::uds_session::SuspensionCause;
@@ -663,7 +664,6 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
         std::sync::Arc::new(FailingProvider),
     );
     let mut ctx = env.ctx();
-    ctx.session.observe_control_generation(Some(4));
     ctx.session
         .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(4));
     super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;

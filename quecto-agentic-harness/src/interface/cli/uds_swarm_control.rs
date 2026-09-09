@@ -1,10 +1,10 @@
 //! Typed supervisor control independent of model execution and queued prompts.
 use super::uds_reader_dispatch::ReaderDispatchCtx;
 use crate::domain::swarm::{RunControlAction, RunStatus};
+use serde::Deserialize;
 
 /// Type name of the harness's own wake nudges: never a human instruction.
-pub(crate) const SWARM_WAKE: &str = "swarm_wake";
-use serde::Deserialize;
+pub(super) const SWARM_WAKE: &str = "swarm_wake";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

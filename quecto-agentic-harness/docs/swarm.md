@@ -384,14 +384,15 @@ reach are listed as `wake_warnings` on the receipt. Neither a prompt nor a steer
 is needed after a resume. A durable store rejection is not re-armed this
 way; it waits for an explicit instruction. Any explicit instruction (prompt,
 follow_up or steer) re-arms a suspended member once the run admits it (a
-paused run keeps it queued): a parent's fast-acked prompt to an idle member
-is queued as a follow-up and executes rather than waiting behind the
-suspension (#1712), while buffered automatic notifications and the
-harness's own wake nudges stay queued until the member is re-armed. Controls sent to a busy member are
-accepted or rejected on command-queue and pending-queue capacity alone;
-poll connections do not consume that capacity (#1720). Do not pause a run because one member
-failed: pause is a whole-run wait. Resume the run (the parent may send
-`swarm_control` `resume` to the coordinator's socket at any time; it is
+paused run keeps it queued): a parent's fast-acked prompt to an idle member is
+queued as a follow-up and executes rather than waiting behind the suspension
+(#1712), while buffered automatic notifications and the harness's own wake
+nudges stay queued until the member is re-armed. Controls sent to a busy
+member are accepted or rejected on command-queue and pending-queue capacity
+alone; poll connections do not consume that capacity (#1720). Do not pause a
+run because one member failed: pause is a whole-run wait. Resume the run (the
+parent may send `swarm_control` `resume` to the coordinator's socket at any
+time; it is
 handled below the model) and, only if a member is still stuck, steer it. A run paused because a
 strict budget saw an answered request without usage re-pauses on the next
 admission until `strict_unknown` is disabled (or the budget removed); raising
