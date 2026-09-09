@@ -17,7 +17,7 @@ impl ExecutionBackend {
     /// Interpret process context supplied by the trusted infrastructure layer.
     pub fn from_marker(marker: Option<&std::ffi::OsStr>) -> Self {
         match marker {
-            Some(value) if value == "1" => Self::NonNative,
+            Some(value) if matches!(value.to_str(), Some("1" | "true" | "yes")) => Self::NonNative,
             _ => Self::Native,
         }
     }
@@ -242,6 +242,9 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
     fn nibble(byte: u8) -> Option<u8> {
         match byte {
             b'0'..=b'9' => Some(byte - b'0'),
