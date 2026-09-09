@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod sanitization_tests {
     use super::super::*;
     #[test]
     fn headers_are_allowlisted_hashed_and_bounded() {

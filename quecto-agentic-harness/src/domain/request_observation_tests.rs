@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod retention_tests {
     use super::super::*;
 
     #[test]
