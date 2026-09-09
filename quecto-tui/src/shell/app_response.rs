@@ -526,37 +526,7 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
-        // #1679 P4: the slim state carries the admission view when the agent
-        // shares an authority; apply it exactly like the pushed event.
-        if let Some(admission) = snap.admission.as_ref() {
-            self.apply_master_admission(admission);
-        }
-    }
-
-    fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
-        let flags = crate::protocol::workflow_payloads::parse_workflow_automation(data);
-        if let Some(value) = flags.auto_continue {
-            self.ac_mut().workflow.auto_continue = value;
-        }
-        if let Some(value) = flags.completion_nudge {
-            self.ac_mut().workflow.completion_nudge = value;
-        }
-        self.mirror_automation_to_bar();
-    }
-
-    /// Mirror the live (App-global) automation flags onto the master workflow
-    /// bar so the always-visible compact line reflects the real auto-continue
-    /// state instead of the hard-coded `false` from `parse_workflow_event`
-    /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
-    pub(super) fn mirror_automation_to_bar(&mut self) {
-        self.ac_mut()
-            .master_session
-            .workflow_bar
-            .workflow_auto_continue = self.ac().workflow.auto_continue;
-        self.ac_mut()
-            .master_session
-            .workflow_bar
-            .workflow_completion_nudge = self.ac().workflow.completion_nudge;
+        self.apply_get_state_admission(snap.admission.as_ref());
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {

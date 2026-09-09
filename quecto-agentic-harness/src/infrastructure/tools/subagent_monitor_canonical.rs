@@ -104,14 +104,18 @@ pub fn canonical_admission_forward(
     value: &serde_json::Value,
     child_id: &str,
     parent_id: Option<&str>,
+    is_known_descendant: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
     if value.get("type").and_then(|t| t.as_str()) != Some("admission_state_changed") {
         return None;
     }
+    // An embedded identity is honoured only for a registered descendant that
+    // is not the parent itself; anything else is stamped as the immediate
+    // child, so a child can never paint its parent's or a sibling's view.
     let agent = value
         .get("agent_id")
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && Some(*s) != parent_id && is_known_descendant(s))
         .unwrap_or(child_id);
     let parent = value
         .get("parent_id")
@@ -172,4 +176,34 @@ pub fn canonical_admission_forward(
         "admission": view,
     }))
     .ok()
+}
+
+/// Newline-terminate a re-stamped event for the parent's stream, or drop it
+/// whole when re-stamping crossed the shared frame cap (an invariant
+/// violation, never permission to trim the child's payload).
+pub fn bounded_forward(forwarded: Option<String>, agent_id: &str, kind: &str) -> Option<String> {
+    let fwd = forwarded?;
+    if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+        tracing::warn!(agent = %agent_id, len = fwd.len(),
+            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+            "monitor: dropping oversized forwarded {kind} event");
+        return None;
+    }
+    Some(format!("{fwd}\n"))
+}
+
+/// Line-based wrapper around [`canonical_admission_forward`] with the frame
+/// bound applied.
+pub fn forward_child_admission_event(
+    line: &str,
+    child_id: &str,
+    parent_id: Option<&str>,
+    is_known_descendant: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    bounded_forward(
+        canonical_admission_forward(&value, child_id, parent_id, is_known_descendant),
+        child_id,
+        "admission",
+    )
 }

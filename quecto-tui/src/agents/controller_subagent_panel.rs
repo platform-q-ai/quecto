@@ -614,20 +614,19 @@ impl App {
         };
         let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
         let observer_vis = visible_width(observer);
-        // Admission label (#1679 P4) after the name, truncated before the name
-        // is, so a narrow panel drops the label rather than the identity.
+        // Admission label (#1679 P4) after the name, all or nothing: a narrow
+        // panel drops the label whole rather than the identity or a fragment.
+        let usable = width.saturating_sub(1);
+        let fixed = 1 + stalk_vis + 1 + observer_vis + timer.len();
+        let name_plain = sanitize_panel_label(&row.label);
         let admission = row
             .admission
             .as_deref()
             .map(|label| format!(" {} {label}", theme::ADMISSION_INDICATOR))
+            .filter(|label| {
+                visible_width(label) <= usable.saturating_sub(fixed + visible_width(&name_plain))
+            })
             .unwrap_or_default();
-        let usable = width.saturating_sub(1);
-        let fixed = 1 + stalk_vis + 1 + observer_vis + timer.len();
-        let name_plain = sanitize_panel_label(&row.label);
-        let admission_avail = usable
-            .saturating_sub(fixed + visible_width(&name_plain))
-            .min(visible_width(&admission));
-        let admission = truncate_to_width(&admission, admission_avail, Some(""));
         let admission_vis = visible_width(&admission);
         let name_avail = usable.saturating_sub(fixed + admission_vis);
         let name = truncate_to_width(&name_plain, name_avail, Some("…"));

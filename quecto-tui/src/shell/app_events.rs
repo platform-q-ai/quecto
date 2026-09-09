@@ -536,9 +536,13 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
     crate::agents::suppress_tool_box(tool_name)
 }
 
+#[path = "app_admission.rs"]
+mod app_admission;
 #[cfg(test)]
 #[path = "app_events_test_support.rs"]
 pub(crate) mod app_events_test_support;
+#[path = "app_workflow_automation.rs"]
+mod app_workflow_automation;
 #[cfg(test)]
 #[path = "app_events_cursor_tests.rs"]
 mod cursor_tests;

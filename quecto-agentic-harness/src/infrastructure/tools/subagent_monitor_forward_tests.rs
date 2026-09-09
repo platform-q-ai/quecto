@@ -497,7 +497,12 @@ fn handle_monitor_line_forwards_child_admission_state_bounded_and_restamped() {
     assert_eq!(admission["groups"][3]["cooldown"]["remainingSeconds"], 3);
     assert!(admission["groups"][3].get("junk").is_none());
     assert!(rx.try_recv().is_err(), "exactly one forwarded line");
-    // A forwarded grandchild keeps its identity; a view without the object is dropped.
+    // A forwarded, registered grandchild keeps its identity; a view without
+    // the object is dropped.
+    registry
+        .lock()
+        .unwrap()
+        .insert("grandchild".to_string(), test_entry());
     let line = r#"{"type":"admission_state_changed","agent_id":"grandchild","parent_id":"child","admission":{"waiting":1,"revision":2}}"#;
     super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
     let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
@@ -544,4 +549,26 @@ fn handle_monitor_line_rejects_oversized_restamped_admission_state() {
         rx.try_recv().is_err(),
         "oversized forwarded event is dropped whole"
     );
+}
+
+/// A child cannot paint its parent's or an unknown agent's view: an embedded
+/// identity that is the parent or not a registered descendant is re-stamped
+/// as the child itself.
+#[test]
+fn forwarded_admission_identity_cannot_be_spoofed() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    for spoofed in ["root", "stranger", ""] {
+        let line = format!(
+            r#"{{"type":"admission_state_changed","agent_id":"{spoofed}","admission":{{"waiting":1,"revision":1}}}}"#
+        );
+        super::handle_monitor_line(&line, "child", &registry, None, Some(&tx), Some("root"));
+        let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(fwd["agent_id"], "child", "spoofed {spoofed:?}");
+        assert_eq!(fwd["parent_id"], "root");
+    }
 }

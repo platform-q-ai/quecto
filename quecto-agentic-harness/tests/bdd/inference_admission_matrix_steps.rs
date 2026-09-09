@@ -231,7 +231,7 @@ fn given_bounded_queue(world: &mut QuectoWorld) {
     start_with(world, |g| {
         g.capacity = 1;
         g.queue_capacity = 1;
-        g.queue_timeout_ms = 500;
+        g.queue_timeout_ms = 2_000;
     });
 }
 
@@ -311,8 +311,10 @@ fn given_paced(world: &mut QuectoWorld) {
 
 #[when("both roots request inference back to back")]
 fn when_back_to_back(world: &mut QuectoWorld) {
-    let first = acquire_now(world, 0);
+    // Measured from before the first request: the second start is at least
+    // one interval after the first start, which is itself after this instant.
     world.admission_matrix.first_granted_at = Some(Instant::now());
+    let first = acquire_now(world, 0);
     let second = acquire_now(world, 1);
     world.admission_matrix.second_granted_at = Some(Instant::now());
     let _guard = rt(&world.authority).enter();

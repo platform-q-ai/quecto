@@ -24,6 +24,8 @@ pub struct Footer {
     /// Inference-admission label (#1679 P4): "waiting for admission 12s",
     /// "anthropic cooldown 30s"; `None` when nothing is worth showing.
     admission: Option<String>,
+    /// The panel-row form of the same label ("waiting 12s").
+    admission_compact: Option<String>,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -52,17 +54,24 @@ impl Footer {
             is_streaming: false,
             effort: None,
             admission: None,
+            admission_compact: None,
             pwd,
         }
     }
 
-    /// Show (or clear) the inference-admission label beside the model.
-    pub fn set_admission(&mut self, label: Option<String>) {
+    /// Show (or clear) the inference-admission label beside the model, with
+    /// its compact panel-row form.
+    pub fn set_admission(&mut self, label: Option<String>, compact: Option<String>) {
         self.admission = label;
+        self.admission_compact = compact;
     }
 
     pub fn admission(&self) -> Option<&str> {
         self.admission.as_deref()
+    }
+
+    pub fn admission_compact(&self) -> Option<&str> {
+        self.admission_compact.as_deref()
     }
 
     pub fn set_model(&mut self, model: &str) {

@@ -221,14 +221,18 @@ fn footer_shows_the_admission_label_beside_the_model_and_clears_it() {
     let mut f = Footer::new();
     f.set_model("m");
     f.set_streaming(true);
-    f.set_admission(Some("waiting for admission 12s".to_string()));
+    f.set_admission(
+        Some("waiting for admission 12s".to_string()),
+        Some("waiting 12s".to_string()),
+    );
+    assert_eq!(f.admission_compact(), Some("waiting 12s"));
     assert_eq!(f.admission(), Some("waiting for admission 12s"));
     let plain = crate::components::ansi::strip_ansi(&f.render(120).join("\n"));
     assert!(
         plain.contains("⏳ waiting for admission 12s · ● m · effort: default"),
         "{plain}"
     );
-    f.set_admission(None);
+    f.set_admission(None, None);
     let plain = crate::components::ansi::strip_ansi(&f.render(120).join("\n"));
     assert!(!plain.contains("admission"), "{plain}");
     assert!(plain.contains("● m · effort: default"), "{plain}");

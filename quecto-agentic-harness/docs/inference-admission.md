@@ -135,8 +135,9 @@ Activation (per host, per user):
 2. Start the authority: `quecto admission-broker run` (a service or a
    terminal that outlives every session). It refuses to start twice on the
    same directory.
-3. Verify: `quecto admission-broker status` reports `journal: healthy`, epoch
-   `1` and zero active/queued/uncertain counts per group.
+3. Verify: `quecto admission-broker status` prints JSON with
+   `"journal_healthy": true`, `"epoch": 1` on a fresh directory and zero
+   active/queued/uncertain counts per group.
 4. Start (or restart) every agent process. Roots register before composing a
    provider, so a session that cannot reach the authority exits with an error
    before any inference; a running session never switches policy in place.

@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_canonical::{
-    canonical_admission_forward, canonical_messages_appended_forward, canonical_workflow_forward,
-    forward_child_messages_appended, forward_child_workflow_event,
+    bounded_forward, canonical_messages_appended_forward, canonical_workflow_forward,
+    forward_child_admission_event, forward_child_messages_appended, forward_child_workflow_event,
 };
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
@@ -453,29 +453,22 @@ fn handle_monitor_line(
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
-    // Sub-agent stream events (per-turn messages and descendant state) are the
-    // only lines forwarded onto the parent's stream from here. Gate both behind
-    // one cheap substring fail-fast so high-volume `token` lines pay a single
-    // scan instead of one per forward check (perf review).
+    // Sub-agent stream events (per-turn messages, descendant state and
+    // admission views) are the only lines forwarded onto the parent's stream
+    // from here. Gate them behind two cheap substring fail-fasts so high-volume
+    // `token` lines pay at most two scans instead of one per forward check.
     if let Some(tx) = broadcast_tx {
         if line.contains("\"subagent_") {
             // Per-turn message stream: forward re-stamped onto the parent's
             // stream so the TUI inspector updates turn-by-turn (#797). Not a
             // status change, so it bypasses the state-changing path below.
-            if let Some(fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
-                // Re-stamping adds identity metadata and can cross the shared
-                // frame cap. That is an invariant violation, not permission to
-                // trim the child payload: reject the forwarded event whole.
-                if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
-                    tracing::warn!(
-                        agent = %agent_id,
-                        len = fwd.len(),
-                        cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
-                        "monitor: dropping oversized forwarded event"
-                    );
-                    return;
+            if line.contains("\"subagent_messages_appended\"") {
+                // Re-stamping can cross the shared frame cap: the forwarded
+                // event is then rejected whole (`bounded_forward`).
+                let fwd = forward_child_messages_appended(line, agent_id, parent_id);
+                if let Some(fwd) = bounded_forward(fwd, agent_id, "messages") {
+                    let _ = tx.send(fwd);
                 }
-                let _ = tx.send(format!("{fwd}\n"));
                 return;
             }
             // Descendant sub-agent state (a grandchild, or deeper) must reach the
@@ -491,20 +484,11 @@ fn handle_monitor_line(
             }
         }
         // #1679 P4: a descendant waiting for admission is visible from the
-        // parent's socket. Not a status change: rebuilt from known, bounded
-        // fields, re-stamped, and forwarded without touching the registry.
+        // parent's socket; not a status change, so it bypasses the registry.
         if line.contains("\"admission_state_changed\"") {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-                return;
-            };
-            if let Some(fwd) = canonical_admission_forward(&value, agent_id, parent_id) {
-                if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
-                    tracing::warn!(agent = %agent_id, len = fwd.len(),
-                        cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
-                        "monitor: dropping oversized forwarded admission event");
-                    return;
-                }
-                let _ = tx.send(format!("{fwd}\n"));
+            let known = |id: &str| registry.lock().is_ok_and(|r| r.contains_key(id));
+            if let Some(fwd) = forward_child_admission_event(line, agent_id, parent_id, &known) {
+                let _ = tx.send(fwd);
             }
             return;
         }
@@ -529,14 +513,12 @@ fn handle_monitor_line(
             let event = super::subagent_cascade::build_state_changed_event(registry);
             let _ = tx.send(event);
         }
-        if let Some(fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {
-            if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
-                tracing::warn!(agent = %agent_id, len = fwd.len(),
-                    cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
-                    "monitor: dropping oversized forwarded workflow event");
-                return;
-            }
-            let _ = tx.send(format!("{fwd}\n"));
+        if let Some(fwd) = bounded_forward(
+            canonical_workflow_forward(&value, agent_id, parent_id),
+            agent_id,
+            "workflow",
+        ) {
+            let _ = tx.send(fwd);
         }
     }
 }

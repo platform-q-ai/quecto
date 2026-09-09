@@ -45,3 +45,22 @@ Scope (notes/1679-p4-scope.md item 3), stacked on slices 1 (#1700) and 2 (#1701)
 |AC8 verification/docs|architecture + contract gates, this note, `docs/inference-admission.md` (configuration, limitations, runbook), measured comparison, no paid traffic|
 
 Review and mutation records are appended below.
+
+## Adversarial review 1 (2026-09-09) and fixes
+
+Twelve items (2 high, 4 medium, 6 low), all fixed:
+
+|Finding|Fix|Proof|
+|---|---|---|
+|H1 four files over the 750-line cap|`extract_result_text` → `client_result_text.rs`; workflow-automation helpers → `app_workflow_automation.rs`; admission mods declared from `app_events.rs`; monitor forwarding through `bounded_forward`/`forward_child_admission_event` in the canonical module|quality gate|
+|H2 child labels never pruned, insertable for any id (unbounded)|labels only for tracked children; pruned on every update|`a_forwarded_child_view_labels_a_tracked_child_only`|
+|M1 master label survives disconnect / an agent without admission|cleared on disconnect and when `get_state` carries no view|`a_tool_spinner_message_is_never_clobbered_and_disconnect_clears_the_label`, `get_state_applies_or_clears_the_admission_view`|
+|M2 forwarded identity spoofable (child could paint the parent's footer)|embedded `agent_id` honoured only for a registered descendant that is not the parent; otherwise stamped as the child|`forwarded_admission_identity_cannot_be_spoofed`|
+|M3 admission clobbered tool spinner text|the module remembers the message it wrote and restores only over that|spinner test above|
+|M4 pacing measured between call returns|measured from before the first request, exact 200 ms bound|`inference_admission_matrix.feature` scenario 5|
+|L1 runbook named non-existent status fields|`"journal_healthy": true`, `"epoch": 1`|docs|
+|L2 master panel row used the long label|compact label on both rows|`footer_shows_the_admission_label_beside_the_model_and_clears_it`|
+|L3 partial label fragments in the panel|all-or-nothing label|panel render|
+|L4 500 ms queue deadline could elapse before the third request|2 s deadline|matrix scenario 3|
+|L5 run-end clearing keyed on the label text|re-derived from the last view with nothing waiting|"waiting-room" cooldown case in the master test|
+|L6 stale "single scan" comment|comment states the two substring gates|—|

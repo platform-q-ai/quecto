@@ -20,7 +20,11 @@ impl App {
             label: conn.master_panel_label().to_string(),
             status: Self::master_status_for(conn).to_string(),
             workflow: master_wf,
-            admission: conn.master_session.footer.admission().map(str::to_string),
+            admission: conn
+                .master_session
+                .footer
+                .admission_compact()
+                .map(str::to_string),
         }];
         let groups = self.environment_groups();
         for (node, prefix) in self.subagent_tree_order(&groups) {

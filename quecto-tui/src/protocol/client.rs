@@ -354,27 +354,8 @@ pub enum Event {
 pub use crate::protocol::subagent_payloads::{
     SubagentEnvironmentInfo, SubagentInfoEvent, SubagentWorkflow,
 };
-// ─── Result text extraction ───────────────────────────────────────────────────
-/// Extract the first text content from a tool result JSON value.
-///
-/// The server sends tool results as:
-/// ```json
-/// {"content": [{"type": "text", "text": "..."}]}
-/// ```
-/// This function extracts the `text` field from the first text block.
-/// Used by `app.rs` when handling `ToolExecutionEnd` events.
-pub fn extract_result_text(result: &serde_json::Value) -> String {
-    result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
-                .next()
-        })
-        .unwrap_or("")
-        .to_string()
-}
+pub use client_result_text::extract_result_text;
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 /// Error type for client operations.
 #[derive(Debug)]
@@ -745,6 +726,8 @@ mod client_line_cap_tests;
 #[cfg(test)]
 #[path = "client_policy_tests.rs"]
 mod client_policy_tests;
+#[path = "client_result_text.rs"]
+mod client_result_text;
 #[cfg(test)]
 #[path = "client_sync_tests.rs"]
 mod client_sync_tests;
