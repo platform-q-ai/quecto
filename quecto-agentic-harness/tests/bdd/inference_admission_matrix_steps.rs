@@ -122,6 +122,7 @@ fn then_second_root_first(world: &mut QuectoWorld) {
     let status = inspect(&world.authority);
     let g = status.groups[&group()];
     assert_eq!((g.active, g.queued), (1, 1), "{g:?}");
+    world.authority.permits.push(permit);
 }
 
 #[then("the child is granted once the second root completes")]
@@ -261,7 +262,12 @@ fn then_queue_full(world: &mut QuectoWorld) {
 #[then("the second root's wait ends with an explicit deadline error and no grant")]
 fn then_deadline(world: &mut QuectoWorld) {
     let pending = world.admission_matrix.second_pending.take().unwrap();
-    let error = join(world, pending).expect_err("no grant after the deadline");
+    // The 10 s queue deadline is longer than the usual join limit.
+    let error = rt(&world.authority)
+        .block_on(async { tokio::time::timeout(Duration::from_secs(30), pending).await })
+        .expect("bounded wait")
+        .expect("join")
+        .expect_err("no grant after the deadline");
     assert!(error.contains("deadline"), "{error}");
     wait_for(&world.authority, "queue drained", |g| {
         g.active == 1 && g.queued == 0
