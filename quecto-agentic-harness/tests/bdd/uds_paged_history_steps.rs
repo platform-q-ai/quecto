@@ -23,7 +23,7 @@ use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provi
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
 use std::future::Future;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -40,6 +40,32 @@ const HISTORY_RESPONSE_JSON_BUDGET: usize =
     quecto::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 const OVERSIZED_HISTORY_BODY_LEN: usize =
     HISTORY_RESPONSE_JSON_BUDGET + (HISTORY_RESPONSE_JSON_BUDGET / 4);
+
+#[given("a paged history response is split across a socket timeout")]
+fn given_fragmented_paged_response(world: &mut QuectoWorld) {
+    let (mut writer, reader) = UnixStream::pair().expect("socket pair");
+    world._mc_live_streams.insert(1, reader);
+    writer
+        .write_all(b"{\"content\":\"\xc3")
+        .expect("write prefix");
+    assert_eq!(read_one_paged_line(world, 1), None);
+    writer
+        .write_all(b"\xa9\"}\n{\"next\":true}\n")
+        .expect("write suffix and next frame");
+    drop(writer);
+}
+
+#[then("the paged history client receives both complete response frames")]
+fn then_fragmented_paged_response(world: &mut QuectoWorld) {
+    assert_eq!(
+        read_one_paged_line(world, 1).as_deref(),
+        Some("{\"content\":\"é\"}")
+    );
+    assert_eq!(
+        read_one_paged_line(world, 1).as_deref(),
+        Some("{\"next\":true}")
+    );
+}
 
 // ── Given: seed a persisted session ─────────────────────────────────────────
 
@@ -1005,42 +1031,22 @@ where
             "timeout waiting for {description} on client {client_id}; events: {:#?}",
             world.mc_client_events.get(&client_id)
         );
-        read_one_paged_line(world, client_id, Duration::from_millis(100));
+        read_one_paged_line(world, client_id);
     }
 }
 
-fn read_one_paged_line(
-    world: &mut QuectoWorld,
-    client_id: u32,
-    timeout: Duration,
-) -> Option<String> {
-    let stream = world
-        ._mc_live_streams
-        .get_mut(&client_id)
-        .unwrap_or_else(|| panic!("client {client_id} is not connected"));
-    stream.set_read_timeout(Some(timeout)).ok();
-    let mut bytes = Vec::new();
-    let mut byte = [0_u8; 1];
-    loop {
-        match stream.read(&mut byte) {
-            Ok(0) => return None,
-            Ok(_) if byte[0] == b'\n' => break,
-            Ok(_) => bytes.push(byte[0]),
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                return None;
-            }
-            Err(_) => return None,
-        }
-    }
-    if bytes.last() == Some(&b'\r') {
-        bytes.pop();
-    }
-    let line = String::from_utf8(bytes).expect("UDS output is UTF-8 JSON");
+fn read_one_paged_line(world: &mut QuectoWorld, client_id: u32) -> Option<String> {
+    // Keep partial frames and read-ahead across polls; a socket timeout is not
+    // a frame boundary. Reuse the buffered reader used by bounded-event tests.
+    let reader = world._mc_event_readers.entry(client_id).or_insert_with(|| {
+        let stream = world
+            ._mc_live_streams
+            .get(&client_id)
+            .unwrap_or_else(|| panic!("client {client_id} is not connected"));
+        super::uds_event_reader::EventReader::new(stream.try_clone().expect("clone UDS reader"))
+            .expect("configure UDS reader")
+    });
+    let line = reader.poll().expect("read paged UDS event")?;
     if line.is_empty() {
         return None;
     }

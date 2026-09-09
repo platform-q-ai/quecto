@@ -90,3 +90,8 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     When a client requests the newest history page
     Then each small history message should arrive complete
     And no small history message should be represented as a summary
+
+  @done
+  Scenario: Paged history framing survives a socket timeout
+    Given a paged history response is split across a socket timeout
+    Then the paged history client receives both complete response frames
