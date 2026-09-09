@@ -230,3 +230,82 @@ fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
         "actual managed admission must still enforce the full pool"
     );
 }
+
+fn workflow_enabled_policy<'a>(
+    cwd: &'a std::path::Path,
+    home: Option<&'a std::path::Path>,
+) -> ToolRuntimeWorkflowPolicy<'a> {
+    ToolRuntimeWorkflowPolicy {
+        workflow_disabled: false,
+        workflow_guards: false,
+        workflow_spec_path: None,
+        broadcast_tx: None,
+        emitter_agent_id: None,
+        emitter_parent_id: None,
+        cwd,
+        home_dir: home,
+    }
+}
+
+fn runtime_in_container(
+    context: crate::infrastructure::tools::swarm_bridge::SwarmContext,
+    tmp: &std::path::Path,
+) -> Result<crate::interface::tool_runtime::ToolRuntimeBuild, String> {
+    let config = crate::infrastructure::config::Config::default();
+    let client = reqwest::Client::new();
+    let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.to_path_buf()));
+    let mut stderr = String::new();
+    build_tool_runtime(ToolRuntimeBuildArgs {
+        swarm_context: Some(context),
+        // The UDS entrypoint is the one that supports workflows at all.
+        entrypoint: ToolEntrypoint::UdsAgent,
+        profile_context: ToolRuntimeProfileContext::Child,
+        base_dir: tmp,
+        config: &config,
+        http_client: &client,
+        workspace: tmp.to_path_buf(),
+        sandbox,
+        exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+        session_key: "container-workflow-test".to_string(),
+        spawned: true,
+        parent_session_name: None,
+        parent_config_path: None,
+        disabled_tools: &[],
+        inherited_tool_policy: None,
+        workflow: workflow_enabled_policy(tmp, Some(tmp)),
+        stderr: &mut stderr,
+    })
+}
+
+/// #1715: composition installs the workflow runtime for an ordinary container
+/// (bootstrap placeholder run) and omits it once the run has been created.
+#[test]
+fn container_runtime_workflow_follows_swarm_participation() {
+    use crate::domain::swarm::ProcessIdentity;
+    let identity = ProcessIdentity {
+        pid: std::process::id(),
+        started: crate::infrastructure::tools::swarm_bridge::process_start(std::process::id())
+            .unwrap(),
+    };
+    let ordinary = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(ordinary.path().join(".quecto")).unwrap();
+    let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: ordinary.path().to_path_buf(),
+        member: "ordinary".into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    };
+    context.join(&identity, None, None).unwrap();
+    let built = runtime_in_container(context, ordinary.path()).unwrap();
+    assert!(
+        built.workflow_state.is_some(),
+        "an ordinary container keeps its workflow engine"
+    );
+    assert!(names_for(&built, ToolProfileContext::Child).contains("workflow"));
+    let (swarm_dir, swarm) = crate::swarm_control_fixture::context();
+    let built = runtime_in_container(swarm, swarm_dir.path()).unwrap();
+    assert!(
+        built.workflow_state.is_none(),
+        "a created run makes every member a swarm agent"
+    );
+    assert!(!names_for(&built, ToolProfileContext::Child).contains("workflow"));
+}

@@ -8,10 +8,12 @@ use crate::domain::swarm::{
 };
 use serde_json::{Value, json};
 
+/// Join the container's coordination store; returns the run status so the
+/// caller can tell an ordinary container (`setup`) from a swarm (#1715).
 pub fn join_current_process(
     context: &SwarmContext,
     socket: Option<&std::path::Path>,
-) -> Result<(), DomainError> {
+) -> Result<RunStatus, DomainError> {
     if !context.database().exists() && std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() != Ok("1")
     {
         return Err(DomainError::Tool("swarm coordination store missing; only the container creator may initialize it; do not reset admission".into()));
@@ -26,10 +28,11 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
-    if needs_supervision(snapshot.status) {
+    let status = snapshot.status;
+    if needs_supervision(status) {
         supervise(context.clone(), snapshot);
     }
-    Ok(())
+    Ok(status)
 }
 
 /// Every non-terminal run needs a watcher: a member joining while the run is

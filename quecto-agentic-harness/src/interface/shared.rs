@@ -163,6 +163,24 @@ pub fn register_workflow_tool(
     guards_enabled: bool,
     event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
 ) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
+    register_workflow_tool_with_participation(
+        registry,
+        wf_config,
+        guards_enabled,
+        event_emitter,
+        crate::infrastructure::tools::swarm_bridge::Participation::none(),
+    )
+}
+
+/// `participation` is the composition's shared swarm handle (#1715): the
+/// workflow tool refuses to act once this container hosts a swarm run.
+pub fn register_workflow_tool_with_participation(
+    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
+    wf_config: crate::domain::workflow::WorkflowConfig,
+    guards_enabled: bool,
+    event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+    participation: crate::infrastructure::tools::swarm_bridge::Participation,
+) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
     use crate::infrastructure::extensions::native::{
         WorkflowToolDeps, build_workflow_tool_extension, register_bundled_native_tools,
     };
@@ -176,6 +194,7 @@ pub fn register_workflow_tool(
         vec![build_workflow_tool_extension(WorkflowToolDeps {
             engine: engine.clone(),
             event_emitter,
+            participation,
         })],
     );
 

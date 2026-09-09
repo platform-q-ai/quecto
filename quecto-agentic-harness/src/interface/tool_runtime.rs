@@ -198,19 +198,25 @@ pub(crate) fn build_tool_runtime(
 
     // Entrypoints supply actual launch context; isolated runtime consumers
     // have no implicit enrollment side effects from their parent environment.
-    let swarm_agent = swarm_context.is_some();
+    // Workflow eligibility follows swarm participation, not containerization
+    // (#1715): the join answers whether this container's run was created.
+    let swarm_participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let swarm_agent = match &swarm_context {
+        Some(context) => crate::domain::swarm::participates(
+            crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+                context,
+                crate::infrastructure::tools::swarm_bridge::process_socket(),
+            )
+            .map_err(|e| e.to_string())?,
+        ),
+        None => false,
+    };
+    swarm_participation.set(swarm_agent);
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
     )
     .map_err(|e| e.to_string())?;
-    if let Some(context) = &swarm_context {
-        crate::infrastructure::tools::swarm_lifecycle::join_current_process(
-            context,
-            crate::infrastructure::tools::swarm_bridge::process_socket(),
-        )
-        .map_err(|e| e.to_string())?;
-    }
 
     // PR #1401 review: the parent may have been launched with a RELATIVE
     // `--config` (or hit the relative `.quecto` base-dir fallback). Container
@@ -229,6 +235,7 @@ pub(crate) fn build_tool_runtime(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
             swarm_context: swarm_context.clone(),
+            swarm_participation: swarm_participation.clone(),
             workspace,
             sandbox,
             exec_options,
@@ -263,6 +270,7 @@ pub(crate) fn build_tool_runtime(
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_participation: swarm_participation.clone(),
         swarm_context,
         base_dir: base_dir.to_path_buf(),
         socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
@@ -287,7 +295,12 @@ pub(crate) fn build_tool_runtime(
         workflow,
         stderr,
         swarm_agent,
+        swarm_participation,
     )?;
+    // A swarm cannot be created while this process's workflow is engaged.
+    if let Some(engine) = &wf_state {
+        crate::infrastructure::tools::swarm_bridge::bind_workflow_engine(engine.clone());
+    }
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -357,6 +370,7 @@ fn build_workflow_runtime(
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
     swarm_agent: bool,
+    swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
 ) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
     crate::domain::swarm::validate_workflow(
         swarm_agent,
@@ -429,11 +443,12 @@ fn build_workflow_runtime(
             }
         }
     };
-    let state = crate::interface::shared::register_workflow_tool(
+    let state = crate::interface::shared::register_workflow_tool_with_participation(
         registry,
         wf_config,
         workflow.workflow_guards,
         wf_emitter,
+        swarm_participation,
     )
     .map_err(|error| format!("failed to initialize workflow: {error}"))?;
     if let Some(spec) = bound_spec {

@@ -26,7 +26,7 @@ struct WireSnapshot {
 fn invalid(message: impl std::fmt::Display) -> DomainError {
     DomainError::Tool(format!("invalid swarm coordination response: {message}"))
 }
-fn decode_status(status: &str) -> Result<RunStatus, DomainError> {
+pub(super) fn decode_status(status: &str) -> Result<RunStatus, DomainError> {
     Ok(match status {
         "setup" => RunStatus::Setup,
         "running" => RunStatus::Running,

@@ -84,3 +84,65 @@ async fn public_swarm_tool_configures_and_disables_usage_budget() {
         );
     }
 }
+
+/// #1715: creating a run makes the creator a coordinator, which a workflow
+/// engine cannot be; a workflow-free creator succeeds and becomes a participant.
+#[tokio::test]
+async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let context = SwarmContext {
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    };
+    let identity = crate::domain::swarm::ProcessIdentity {
+        pid: std::process::id(),
+        started: super::super::swarm_bridge::process_start(std::process::id()).unwrap(),
+    };
+    context.join(&identity, None, None).unwrap();
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    let input = json!({"goal":"g","constraints":[],
+        "criteria":[{"id":"t","kind":"command","description":"pass"}],
+        "member_limit":2,"deadline":deadline});
+    let participation = super::super::swarm_bridge::Participation::shared();
+    let error = control_with_workflow(
+        context.clone(),
+        "create",
+        input.clone(),
+        participation.clone(),
+        true,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("cannot create a swarm"), "{error}");
+    assert!(
+        context.run_status().unwrap() == crate::domain::swarm::RunStatus::Setup,
+        "nothing was created"
+    );
+    assert!(!participation.participating(), "nothing was created");
+    let created = control_with_workflow(
+        context.clone(),
+        "create",
+        input,
+        participation.clone(),
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(created["status"], "running");
+    assert_eq!(
+        context.run_status().unwrap(),
+        crate::domain::swarm::RunStatus::Running
+    );
+    assert!(
+        participation.participating(),
+        "the creator is now a swarm agent"
+    );
+    context.cancel_run().unwrap();
+}

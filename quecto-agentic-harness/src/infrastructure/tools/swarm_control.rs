@@ -4,7 +4,32 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::ProcessIdentity;
 use serde_json::Value;
 
+/// Convenience for callers outside a tool composition: no shared participation
+/// handle, this process's own workflow engagement.
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
+    control_with_workflow(
+        context,
+        op,
+        input,
+        super::swarm_bridge::Participation::none(),
+        super::swarm_bridge::workflow_engaged(),
+    )
+    .await
+}
+
+/// `workflow_engaged` is this process's own workflow state (guards, bound
+/// spec or selected template): creating a run makes the process a
+/// coordinator, which cannot be running a workflow (#1715).
+pub async fn control_with_workflow(
+    context: SwarmContext,
+    op: &str,
+    input: Value,
+    participation: super::swarm_bridge::Participation,
+    workflow_engaged: bool,
+) -> Result<Value, DomainError> {
+    if op == "create" {
+        crate::domain::swarm::validate_swarm_creation(workflow_engaged)?;
+    }
     let settles = matches!(
         op,
         "create" | "reconcile" | "pause" | "resume" | "cancel_run" | "usage_budget"
@@ -25,6 +50,8 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
                 &process,
                 super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
             )?;
+            // From here on this process and its local children are swarm agents.
+            participation.set(true);
             super::swarm_lifecycle::supervise(ctx.clone(), snapshot);
             ctx.summary()
         }

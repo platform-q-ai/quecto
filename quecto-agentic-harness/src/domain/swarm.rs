@@ -10,6 +10,27 @@ pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), Domai
     Ok(())
 }
 
+/// Whether an agent in a container takes part in a swarm. Every container
+/// carries a placeholder `setup` run from its bootstrap; that is an ordinary
+/// container, not a swarm. Once a run has been created (running, paused or
+/// already stopped) every member is a swarm agent (#1715).
+pub fn participates(status: RunStatus) -> bool {
+    !matches!(status, RunStatus::Setup)
+}
+
+/// Creating a swarm turns the creator into its coordinator, which cannot be
+/// running a workflow (guards, a bound spec or a selected template). An idle,
+/// merely available workflow tool does not block creation; it refuses to act
+/// afterwards.
+pub fn validate_swarm_creation(workflow_engaged: bool) -> Result<(), DomainError> {
+    if workflow_engaged {
+        return Err(DomainError::Tool(
+            "a workflow-enabled agent cannot create a swarm; finish or relaunch without workflow, workflow_guards and workflow_spec, then create the run".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunStatus {
     Setup,
@@ -177,3 +198,7 @@ pub struct UsageBudgetStatus {
     pub observed_tokens: u64,
     pub unknown_usage_requests: u64,
 }
+
+#[cfg(test)]
+#[path = "swarm_tests.rs"]
+mod tests;

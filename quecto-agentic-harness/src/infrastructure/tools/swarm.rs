@@ -39,6 +39,9 @@ impl Drop for ActiveGuard {
 
 pub struct SwarmTool {
     context: Option<super::swarm_bridge::SwarmContext>,
+    /// Shared with the spawn and workflow tools (#1715): creating a run
+    /// flips it for all of them.
+    participation: super::swarm_bridge::Participation,
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: SwarmConfig,
@@ -74,6 +77,7 @@ impl SwarmTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig) -> Self {
         Self {
             context: None,
+            participation: super::swarm_bridge::Participation::none(),
             workspace,
             sandbox,
             config,
@@ -86,6 +90,11 @@ impl SwarmTool {
 }
 
 impl SwarmTool {
+    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
+        self.participation = participation;
+        self
+    }
+
     pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
         if let Some(ctx) = &context {
             register_context_jobs(ctx, &self.jobs);
@@ -134,6 +143,7 @@ impl Tool for SwarmTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        let participation = self.participation.clone();
         let context = self.context.clone();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
@@ -158,7 +168,15 @@ impl Tool for SwarmTool {
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
                 op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
                 | "events" | "usage" | "usage_budget") => {
-                    match super::swarm_control::control(context, op, v.clone()).await {
+                    match super::swarm_control::control_with_workflow(
+                        context,
+                        op,
+                        v.clone(),
+                        participation.clone(),
+                        super::swarm_bridge::workflow_engaged(),
+                    )
+                    .await
+                    {
                         Ok(value) => {
                             if value["status"] == "cancelled" {
                                 cancel_jobs(&jobs);

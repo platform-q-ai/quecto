@@ -140,6 +140,19 @@ impl SwarmContext {
         self.summary_since(None)
     }
 
+    /// The container run's status before joining it: a container without a
+    /// store yet is at the bootstrap placeholder (`setup`).
+    pub fn run_status(&self) -> Result<crate::domain::swarm::RunStatus, DomainError> {
+        if !self.database().exists() {
+            return Ok(crate::domain::swarm::RunStatus::Setup);
+        }
+        let summary = self.summary()?;
+        let status = summary["status"]
+            .as_str()
+            .ok_or_else(|| DomainError::Tool("swarm summary carries no run status".into()))?;
+        coordination::decode_status(status)
+    }
+
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
         self.rpc("summary", json!([since]))
     }
@@ -173,6 +186,67 @@ pub fn set_process_socket(socket: PathBuf) {
 
 pub fn process_socket() -> Option<&'static Path> {
     PROCESS_SOCKET.get().map(PathBuf::as_path)
+}
+
+/// This process's workflow engine, when one is installed: a swarm cannot be
+/// created while it is engaged (guards, a bound spec or a selected template).
+static WORKFLOW_ENGINE: std::sync::OnceLock<
+    std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>,
+> = std::sync::OnceLock::new();
+
+pub fn bind_workflow_engine(
+    engine: std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>,
+) {
+    let _ = WORKFLOW_ENGINE.set(engine);
+}
+
+/// Whether this process is running a workflow right now: guards on, or a
+/// template selected/bound. A merely available, idle engine is not engaged.
+pub fn workflow_engaged() -> bool {
+    WORKFLOW_ENGINE.get().is_some_and(|engine| {
+        engine
+            .lock()
+            .map(|engine| engine.guards_enabled() || engine.active_template().is_some())
+            .unwrap_or(true)
+    })
+}
+
+/// Whether this process takes part in a swarm (#1715). One shared handle is
+/// created per composition and injected into the spawn, workflow and swarm
+/// tools; creating a run flips it, so an ordinary container that becomes a
+/// swarm after composition is seen by every tool at once. Tests inject a
+/// fixed answer.
+#[derive(Debug, Clone)]
+pub enum Participation {
+    Shared(std::sync::Arc<std::sync::atomic::AtomicBool>),
+    Fixed(bool),
+}
+
+impl Participation {
+    pub fn shared() -> Self {
+        Self::Shared(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )))
+    }
+
+    /// No swarm at all (host-local runtimes and isolated consumers).
+    pub fn none() -> Self {
+        Self::Fixed(false)
+    }
+
+    pub fn participating(&self) -> bool {
+        match self {
+            Self::Shared(flag) => flag.load(std::sync::atomic::Ordering::SeqCst),
+            Self::Fixed(value) => *value,
+        }
+    }
+
+    /// Record participation; a fixed answer never changes.
+    pub fn set(&self, participating: bool) {
+        if let Self::Shared(flag) = self {
+            flag.store(participating, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 }
 
 fn isolated_pid_namespace(host: &str) -> bool {

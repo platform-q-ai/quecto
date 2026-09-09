@@ -548,3 +548,22 @@ async fn mutating_actions_emit_workflow_events_but_status_does_not() {
     assert_eq!(events[0]["type"], "workflow_state");
     assert_eq!(events[0]["activeTemplate"]["id"], "feature");
 }
+
+/// #1715: inside a swarm the tool stays registered but refuses every action.
+#[tokio::test]
+async fn workflow_tool_refuses_inside_a_swarm() {
+    use crate::domain::tool::Tool;
+    use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
+    let engine = std::sync::Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),
+    ));
+    let tool = WorkflowTool::new(engine)
+        .with_participation(super::super::swarm_bridge::Participation::Fixed(true));
+    let result = tool.execute(r#"{"action":"status"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .contains("workflow is unavailable for swarm agents")
+    );
+}

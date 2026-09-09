@@ -41,6 +41,9 @@ pub fn broadcast_emitter(
 pub struct WorkflowTool {
     engine: WorkflowEngineHandle,
     event_emitter: Option<WorkflowEventEmitter>,
+    /// Inside a swarm the tool stays registered but refuses to act (#1715):
+    /// an ordinary container may become a swarm after composition.
+    participation: super::swarm_bridge::Participation,
 }
 
 impl std::fmt::Debug for WorkflowTool {
@@ -54,6 +57,7 @@ impl WorkflowTool {
         Self {
             engine,
             event_emitter: None,
+            participation: super::swarm_bridge::Participation::none(),
         }
     }
 
@@ -61,7 +65,14 @@ impl WorkflowTool {
         Self {
             engine,
             event_emitter: Some(emitter),
+            participation: super::swarm_bridge::Participation::none(),
         }
+    }
+
+    /// Where the tool reads swarm participation from (tests inject an answer).
+    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
+        self.participation = participation;
+        self
     }
 
     pub fn engine(&self) -> &WorkflowEngineHandle {
@@ -330,6 +341,16 @@ impl Tool for WorkflowTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
+            if self.participation.participating() {
+                return Ok(ToolResult {
+                    content:
+                        "workflow is unavailable for swarm agents; this container hosts a swarm run"
+                            .into(),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
             match self.handle_action(&args) {
                 Ok(content) => Ok(ToolResult {
                     content,
