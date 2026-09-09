@@ -270,9 +270,7 @@ fn then_queue_full(world: &mut QuectoWorld) {
 #[then("the second root's wait ends with an explicit deadline error and no grant")]
 fn then_deadline(world: &mut QuectoWorld) {
     let pending = world.admission_matrix.second_pending.take().unwrap();
-    let error = join(world, pending)
-        .err()
-        .expect("no grant after the deadline");
+    let error = join(world, pending).expect_err("no grant after the deadline");
     assert!(error.contains("deadline"), "{error}");
     wait_for(&world.authority, "queue drained", |g| {
         g.active == 1 && g.queued == 0
@@ -292,8 +290,7 @@ fn then_fails_closed(world: &mut QuectoWorld) {
     let outcome = rt(s).block_on(async { tokio::time::timeout(LIMIT, gate.acquire()).await });
     let error = outcome
         .expect("bounded, never an unbounded fallback")
-        .err()
-        .expect("no grant without an authority");
+        .expect_err("no grant without an authority");
     let text = error.to_string();
     assert!(
         text.contains("admission authority connection closed"),
