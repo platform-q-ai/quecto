@@ -1,5 +1,25 @@
 use super::*;
 
+#[derive(Debug, Clone, Default)]
+pub struct SessionUsage {
+    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
+    pub tokens: TokenStats,
+    pub cost_micro_usd: u64,
+}
+impl SessionUsage {
+    pub fn cost_usd(&self) -> f64 {
+        self.cost_micro_usd as f64 / 1_000_000.0
+    }
+
+    pub fn cache_hit_ratio(&self) -> Option<f64> {
+        crate::domain::usage_accounting::cache_hit_ratio(
+            self.tokens.input,
+            self.tokens.cache_read,
+            self.tokens.cache_write,
+        )
+    }
+}
+
 /// Compute session statistics from the current message history.
 pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
     compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0, 0)

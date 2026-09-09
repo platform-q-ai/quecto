@@ -139,3 +139,88 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
     );
 }
+
+/// A running run at a given control generation that never grants a wake, so
+/// the re-arming can be observed without a model turn.
+struct RunningAt(u64);
+impl SwarmRunControl for RunningAt {
+    fn apply(
+        &self,
+        _: RunControlAction,
+    ) -> crate::domain::subagent_launch::LaunchFuture<
+        '_,
+        Result<RunControlReceipt, crate::domain::error::DomainError>,
+    > {
+        Box::pin(async {
+            Ok(RunControlReceipt {
+                budget: None,
+                wake_allowed: false,
+                status: RunStatus::Running,
+                generation: self.0,
+            })
+        })
+    }
+}
+
+/// #1721: a status receipt newer than the generation a provider-failure
+/// suspension was dated under re-arms automatic turns and the member then
+/// runs one resume turn even though the wake targets nobody; an equal
+/// generation (no pause/resume since) stays a plain notification; a store
+/// rejection never re-arms this way.
+#[tokio::test]
+async fn a_resume_wake_re_arms_a_provider_suspended_member() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
+            std::sync::Arc::new(RunningAt(5)),
+        )),
+    );
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(5));
+    ctx.turn_control.queue_swarm_wake(40);
+    crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 40).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "a wake at the suspension's own control generation is just a notification"
+    );
+    assert!(ctx.messages.is_empty());
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
+            std::sync::Arc::new(RunningAt(7)),
+        )),
+    );
+    ctx.turn_control.queue_swarm_wake(41);
+    crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 41).await;
+    assert!(
+        ctx.session.automatic_turns_allowed,
+        "resumed at generation 7"
+    );
+    assert_eq!(ctx.turn_control.control_generation(), Some(7));
+    let prompts: Vec<_> = ctx
+        .messages
+        .iter()
+        .filter(|m| m.role == crate::domain::message::Role::User)
+        .map(|m| m.content.clone())
+        .collect();
+    assert_eq!(prompts.len(), 1, "exactly one resume turn: {prompts:?}");
+    assert!(prompts[0].contains("resumed after a provider failure"));
+    assert!(
+        !ctx.session.take_pending_resume_turn(),
+        "the owed turn was consumed"
+    );
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::StoreRejection, Some(7));
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
+            std::sync::Arc::new(RunningAt(9)),
+        )),
+    );
+    ctx.turn_control.queue_swarm_wake(42);
+    crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 42).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "store rejections wait for a human"
+    );
+}

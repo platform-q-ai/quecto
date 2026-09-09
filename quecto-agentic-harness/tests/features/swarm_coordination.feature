@@ -117,6 +117,12 @@ Feature: Container swarm coordination
     Then the swarm inspection is unchanged without task history
 
   @done @swarm-supervision
+  Scenario: A resume restores a member suspended by a provider failure
+    Given a swarm workspace
+    When a provider failure suspends the coordinator and the parent resumes the run
+    Then the coordinator is re-armed by the resume alone and continues its work
+
+  @done @swarm-supervision
   Scenario: Supervisor pauses active work and receives approval handling and retained evidence
     When the supervisor pauses active work then delivers approval and exports evidence
     Then the swarm approval has a completed receipt and a retained terminal report

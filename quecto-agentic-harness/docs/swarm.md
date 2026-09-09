@@ -368,7 +368,15 @@ concurrent appends. The manifest states this scope. Previously cleared/evicted
 messages are not reconstructed. Use normal container artifact transport to copy
 these files to the host.
 
-Resume restores admission and extends the deadline. A run paused because a
+Resume restores admission and extends the deadline. It also re-arms every
+member whose automatic turns were suspended by a provider failure since the
+last pause/resume: the resume's control generation reaches each member on its
+next wake (the resumer wakes itself), the member re-arms and runs. Neither a
+prompt nor a steer is needed after a resume. A durable store rejection is not
+re-armed this way; it waits for an explicit prompt. Do not pause a run because
+one member failed: pause is a whole-run wait. Resume the run (the parent may
+send `swarm_control` `resume` to the coordinator's socket at any time; it is
+handled below the model) and, only if a member is still stuck, steer it. A run paused because a
 strict budget saw an answered request without usage re-pauses on the next
 admission until `strict_unknown` is disabled (or the budget removed); raising
 the limit alone does not clear it. Cancelled and rejected attempts never count
