@@ -15,10 +15,10 @@ pub(super) const LIMIT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct AuthorityState {
-    runtime: Option<tokio::runtime::Runtime>,
-    temp: Option<tempfile::TempDir>,
-    server: Option<AuthorityServer>,
-    roots: Vec<AuthorityConnection>,
+    pub(super) runtime: Option<tokio::runtime::Runtime>,
+    pub(super) temp: Option<tempfile::TempDir>,
+    pub(super) server: Option<AuthorityServer>,
+    pub(super) roots: Vec<AuthorityConnection>,
     credential: Option<Credential>,
     pub(super) permits: Vec<Box<dyn AttemptPermit>>,
     pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
@@ -36,7 +36,7 @@ pub(super) fn group() -> GroupId {
     GroupId::new("g").unwrap()
 }
 
-fn proposal(capacity: usize, queue_timeout_ms: u64) -> AdmissionRuntimeProposal {
+pub(super) fn proposal(capacity: usize, queue_timeout_ms: u64) -> AdmissionRuntimeProposal {
     AdmissionRuntimeProposal {
         policy: quecto::domain::inference_admission::AdmissionConfig {
             groups: BTreeMap::from([(
@@ -101,7 +101,7 @@ pub(super) fn new_root(s: &AuthorityState) -> AuthorityConnection {
     })
 }
 
-fn inspect(s: &AuthorityState) -> quecto::application::ports::AuthorityStatus {
+pub(super) fn inspect(s: &AuthorityState) -> quecto::application::ports::AuthorityStatus {
     let admin_socket = s.server.as_ref().unwrap().directory().admin_socket();
     rt(s).block_on(async {
         AdminConnection::connect(&admin_socket)
@@ -113,7 +113,7 @@ fn inspect(s: &AuthorityState) -> quecto::application::ports::AuthorityStatus {
     })
 }
 
-fn wait_for(
+pub(super) fn wait_for(
     s: &AuthorityState,
     description: &str,
     expected: impl Fn(&quecto::domain::inference_admission::GroupSnapshot) -> bool,

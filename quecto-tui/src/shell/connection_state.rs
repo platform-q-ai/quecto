@@ -32,6 +32,12 @@ pub(crate) struct ConnectionState {
     pub(crate) spinner: Option<Spinner>,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     pub(crate) connected_agent_id: Option<String>,
+    /// Last admission view of the connected agent (#1679 P4); `None` when
+    /// the agent shares no authority or is disconnected.
+    pub(crate) admission_view: Option<crate::protocol::admission_payloads::AdmissionView>,
+    /// The spinner message this module last wrote, so a tool message set by
+    /// someone else is never clobbered when the wait ends.
+    pub(crate) admission_spinner_message: Option<String>,
     pub(crate) agent_connected: bool,
     /// Pin: once the left panel has shown for a connected agent it must not
     /// vanish when the agent dies (#1047) — the user keeps the session /
@@ -126,6 +132,8 @@ impl ConnectionState {
             agent_state: AgentRunState::new(),
             spinner: None,
             connected_agent_id: None,
+            admission_view: None,
+            admission_spinner_message: None,
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,

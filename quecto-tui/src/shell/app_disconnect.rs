@@ -57,6 +57,13 @@ impl App {
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;
         self.ac_mut().master_session.chat.finalize_assistant();
+        // No connection, no admission view: a stale wait must not outlive it.
+        self.clear_master_admission();
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell::app) fn mark_agent_disconnected_for_test(&mut self) {
+        self.mark_agent_disconnected();
     }
 
     /// Emit the disconnect notification (and stderr-tail transcript entries,

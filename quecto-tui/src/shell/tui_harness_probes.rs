@@ -97,6 +97,16 @@ impl TuiHarness {
         crate::components::ansi::strip_ansi(&rendered)
     }
 
+    /// The working spinner's current message (#1679 P4): scenarios assert the
+    /// admission wait is spoken there without reading private state.
+    pub fn spinner_message(&self) -> Option<String> {
+        self.app
+            .ac()
+            .spinner
+            .as_ref()
+            .map(|s| s.message().to_string())
+    }
+
     /// The App-level `current_model` tracker (#1085), used with
     /// [`Self::master_footer_text`] to assert late master responses do not
     /// clobber focused-child state.

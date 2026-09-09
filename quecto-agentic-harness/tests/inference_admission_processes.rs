@@ -593,3 +593,68 @@ async fn sigterm_stops_the_authority_cleanly() {
         "ledger kept for the next start"
     );
 }
+
+/// P4 measured comparison (AC8): the same fake workload — four independent
+/// root sessions each making one attempt against a provider that holds every
+/// request for 600 ms — run once without admission and once behind a shared
+/// authority bound at C=2. The oracle records peak concurrency and the wall
+/// time of the whole burst; the numbers are recorded in
+/// `notes/1679-p4-3-verification.md`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn burst_versus_admitted_fake_workload_is_measured() {
+    const ROOTS: usize = 4;
+    const CAPACITY: usize = 2;
+    let hold = Duration::from_millis(600);
+    async fn run(
+        temp: &Path,
+        admission: Option<(usize, u64)>,
+        hold: Duration,
+    ) -> (usize, usize, Duration) {
+        let provider = fake_provider(hold).await;
+        let config = write_config(temp, &provider.base, admission);
+        let _broker = admission.map(|_| start_broker(temp, &config));
+        let started = Instant::now();
+        let roots: Vec<Child> = (0..ROOTS).map(|_| root_agent(temp, &config, &[])).collect();
+        let results: Vec<_> =
+            tokio::task::spawn_blocking(move || roots.into_iter().map(finish).collect::<Vec<_>>())
+                .await
+                .unwrap();
+        let elapsed = started.elapsed();
+        for (ok, _, stderr) in &results {
+            assert!(*ok, "root agent failed: {stderr}");
+        }
+        (
+            provider.peak.load(Ordering::SeqCst),
+            provider.total.load(Ordering::SeqCst),
+            elapsed,
+        )
+    }
+    let burst_dir = tempfile::tempdir().unwrap();
+    let (burst_peak, burst_total, burst_wall) = run(burst_dir.path(), None, hold).await;
+    let admitted_dir = tempfile::tempdir().unwrap();
+    let (admitted_peak, admitted_total, admitted_wall) =
+        run(admitted_dir.path(), Some((CAPACITY, 20_000)), hold).await;
+    println!(
+        "MEASURED burst: peak={burst_peak} total={burst_total} wall={burst_wall:?}; \
+         admitted(C={CAPACITY}): peak={admitted_peak} total={admitted_total} wall={admitted_wall:?}"
+    );
+    assert_eq!(burst_total, ROOTS);
+    assert_eq!(
+        admitted_total, ROOTS,
+        "admission delays, never drops, attempts"
+    );
+    assert_eq!(
+        burst_peak, ROOTS,
+        "control: the oracle sees the whole burst"
+    );
+    assert!(
+        admitted_peak <= CAPACITY,
+        "admitted peak {admitted_peak} exceeded C={CAPACITY}"
+    );
+    // Two waves of at most C attempts: the admitted run takes at least two
+    // holds, while the burst finishes in about one.
+    assert!(
+        admitted_wall >= hold * 2,
+        "admitted burst finished in {admitted_wall:?}, faster than two waves"
+    );
+}

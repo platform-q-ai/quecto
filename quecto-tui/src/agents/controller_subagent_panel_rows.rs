@@ -20,6 +20,11 @@ impl App {
             label: conn.master_panel_label().to_string(),
             status: Self::master_status_for(conn).to_string(),
             workflow: master_wf,
+            admission: conn
+                .master_session
+                .footer
+                .admission_compact()
+                .map(str::to_string),
         }];
         let groups = self.environment_groups();
         for (node, prefix) in self.subagent_tree_order(&groups) {
@@ -46,6 +51,7 @@ impl App {
                         // forwarded copy must not paint a dying env `running`.
                         status: self.environment_status(&env_key),
                         workflow: None,
+                        admission: None,
                         id: None,
                         env_key: Some(env_key),
                         prefix,
@@ -72,6 +78,7 @@ impl App {
                         label,
                         status: info.map(|i| i.status.clone()).unwrap_or_default(),
                         workflow,
+                        admission: self.ac().roster.admission_labels.get(&id).cloned(),
                         id: Some(id),
                         env_key: None,
                         prefix,
@@ -163,9 +170,22 @@ pub(super) struct PanelRow {
     pub(super) prefix: String,
     pub(super) label: String,
     pub(super) status: String,
+    /// Forwarded admission label painted after the name (#1679 P4).
+    pub(super) admission: Option<String>,
     /// `(steps_completed, steps_total)` when the agent has an active workflow —
     /// drives the per-step progress bar drawn beneath the name row.
     pub(super) workflow: Option<(u32, u32)>,
+}
+
+impl App {
+    /// `(label, admission)` per panel row, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn panel_rows_for_test(&self) -> Vec<(String, Option<String>)> {
+        self.panel_rows()
+            .into_iter()
+            .map(|row| (row.label, row.admission))
+            .collect()
+    }
 }
 
 impl PanelRow {

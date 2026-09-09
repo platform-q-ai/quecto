@@ -25,6 +25,9 @@ pub struct GetStateSnapshot {
     /// Nested `workflow` object when present (still a Value so workflow mappers
     /// own its interpretation).
     pub workflow: Option<serde_json::Value>,
+    /// Bounded inference-admission view when the agent shares an authority
+    /// (#1679 P4); absent otherwise.
+    pub admission: Option<crate::protocol::admission_payloads::AdmissionView>,
 }
 
 /// Parse footer fields from a `get_state` payload.
@@ -69,11 +72,16 @@ pub fn parse_get_state(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let workflow = data.get("workflow").cloned();
+    // `Null` for a missing key: the mapper answers `None` for anything but an
+    // object, so no raw key lookup is needed here.
+    let admission =
+        crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
     GetStateSnapshot {
         footer,
         effort_levels,
         session_key,
         workflow,
+        admission,
     }
 }
 

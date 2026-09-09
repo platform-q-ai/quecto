@@ -11,6 +11,8 @@ pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", 
 /// so a spinner frame here would read as frozen. Frame-cycling stays owned by
 /// the `Spinner` component.
 pub const STREAMING_INDICATOR: &str = "●";
+/// Prefix of the inference-admission footer label (#1679 P4).
+pub const ADMISSION_INDICATOR: &str = "⏳";
 
 /// Observer marker drawn next to a read-only sub-agent's name in the left panel
 /// (#966). A circled division slash (U+2298) reads as "prohibited / not

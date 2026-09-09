@@ -259,5 +259,23 @@ refuses containers without it.
 Real multi-process evidence (`tests/inference_admission_processes.rs`) covers two
 independent roots plus a third bounded at C=2 against a fake HTTP provider, a
 control burst without admission, descendant wait/forged-capability refusal,
-SIGKILL of a client and of the authority. Waiting/freshness observation, the full
-fairness/recovery end-to-end matrix and rollout runbooks remain P4.
+SIGKILL of a client and of the authority.
+
+### P4 observation, presentation and rollout status
+
+Each process records its own attempts' admission transitions behind an
+observation decorator (`AdmissionRecorder`/`ObservedAdmission`, read through the
+`AdmissionObservation` port) as a bounded, fresh view: exact counts, a sample of
+at most 64 live attempts, per-group cooldown and bounded refusal reasons. Over
+the socket the view rides beside the execution phase as `get_state.admission`;
+the progress verdict is `waiting` (count, group, longest wait, cause) while any
+attempt is queued, so a queued agent is never idle, quiet or stalled; a changed
+revision advances the single `generation` cursor once per observation and every
+transition is pushed in order as `admission_state_changed`. The parent's monitor
+forwards a descendant's view re-stamped with its identity. The TUI paints the
+label on the footer and working spinner (master) and on the panel row
+(descendants) without touching any lifecycle state. `abort` while waiting cancels
+the wait at the authority. Evidence and the measured fake-workload comparison
+(four roots, burst versus C=2) are in `notes/1679-p4-3-verification.md`; the
+activation/rollback/quarantine runbook is in `docs/inference-admission.md`.
+Adaptive concurrency, token-aware pacing and multi-host authority stay deferred.
