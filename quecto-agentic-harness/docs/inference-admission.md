@@ -6,8 +6,9 @@ pacing, fair queueing and a shared cooldown when a provider throttles. It
 limits **outbound provider attempts**, never the number of agents: spawning,
 tool execution, idle agents and parents waiting on children hold no permit.
 
-Admission is **disabled by default**. Nothing changes until an `admission`
-section is configured and the authority process is running.
+Admission is **disabled by default**. Configuring an `admission` section enables
+it; the authority must be running before agents start. An unavailable authority
+is an error, not a fallback to unbounded inference.
 
 ## Configuration
 
@@ -28,7 +29,7 @@ section is configured and the authority process is running.
       }
     },
     "aliases": { "acct-openai": "openai-main" },
-    "bindings": { "openai": "acct-openai" }
+    "bindings": { "openai-oauth": "acct-openai" }
   }
 }
 ```
@@ -40,13 +41,46 @@ section is configured and the authority process is running.
   `fallback_base_ms`/`max_cooldown_ms` govern throttle cooldowns.
 - `aliases`: opaque, non-secret account/endpoint names mapped to a group.
   Credentials, endpoint URLs and model names are never used as identity.
-- `bindings`: router provider slot (`openai`, `anthropic`, or an
-  `openai_compatible` endpoint `prefix`) to alias. Every slot you want bounded
-  must be bound explicitly; unknown aliases fail configuration.
+- `bindings`: exact router provider slot to alias (see below). Every provider
+  constructed by the runtime must have an explicit binding when admission is
+  enabled; unknown aliases fail configuration.
 - `directory` (optional, default `<base_dir>/admission`): a private, owner-only
   directory holding the authority's lock, journal and sockets. It must be
   absolute and must not be the base directory or one of its ancestors; it is
   refused if group/other bits are set.
+
+### Provider slots and authentication
+
+The example binds **OpenAI OAuth** (`openai-oauth`), not API-key requests. It
+is sufficient only when that is the only provider the runtime constructs.
+Built-in slots are auth-specific:
+
+| Slot | Authentication |
+| --- | --- |
+| `openai-oauth` | OpenAI OAuth |
+| `openai-api` | OpenAI API key |
+| `anthropic-oauth` | Anthropic OAuth |
+| `anthropic-api` | Anthropic API key |
+
+Bare `openai` and `anthropic` are not the production built-in router slots;
+they do not bind the auth-specific providers. Custom `models.json` providers
+use their provider key as the slot (not their `oauthProvider` credential key).
+An `openai_compatible` endpoint uses its configured `prefix`.
+
+Bind **all constructed providers**, not just the provider of the selected
+model. Available credentials and configured endpoints/registry entries can
+cause additional providers to be constructed even when unused by the current
+session. For example, if both OpenAI API-key and OAuth providers are
+constructed, both `openai-api` and `openai-oauth` need bindings. A missing
+binding fails provider composition with
+`admission provider '<slot>' requires an explicit alias binding`; it does not
+leave that provider unbounded. Providers skipped because their required
+credentials are unavailable do not need bindings.
+
+Multiple slots can map to the same alias/group when they share a quota; use
+separate groups for independent quotas. Authentication mode alone does not
+establish whether accounts share a quota. Adding credentials or another
+provider may require adding a binding and restarting.
 
 No numeric value above is a vendor-safe default; measure and set your own.
 Policy and bindings are restart-only: a reload with a changed section is
@@ -130,7 +164,8 @@ it under `counters.cancelled`.
 Activation (per host, per user):
 
 1. Add the `admission` section (groups, aliases, bindings) to the config;
-   every provider slot that must be bounded needs a binding. Measure your own
+   every provider the runtime constructs needs an explicit slot binding,
+   including providers other than the selected model. Measure your own
    values; none of the numbers in this document are vendor-safe defaults.
 2. Start the authority: `quecto admission-broker run` (a service or a
    terminal that outlives every session). It refuses to start twice on the
@@ -146,7 +181,9 @@ Activation (per host, per user):
 
 Rollback:
 
-1. Remove the `admission` section (or stop binding the provider slots).
+1. Remove the entire `admission` section. Removing bindings while keeping
+   admission enabled is not a selective bypass: missing bindings for constructed
+   providers cause startup/composition to fail.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.
 3. Stop the authority (SIGTERM). Outstanding remote work is no longer

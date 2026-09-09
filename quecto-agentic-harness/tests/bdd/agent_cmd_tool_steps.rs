@@ -301,15 +301,34 @@ fn install_busy_state_snapshot_entry(
             let snapshot_shape = snapshot_shape.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let mut snapshot = serde_json::json!({
-                    "type": "response",
-                    "command": "get_state",
-                    "data": {
-                        "state": "runningTool", "effort": null, "model": "mock",
-                        "progress": {"state": "active", "reason": "busy"},
-                        "generation": snapshot_generation
-                    }
-                });
+                let mut state = quecto::interface::cli::protocol::SessionState {
+                    control_receipts: vec![],
+                    automatic_turns_suspended: false,
+                    repeated_failure_notifications: 0,
+                    model: "mock".into(),
+                    generation: snapshot_generation,
+                    is_streaming: true,
+                    session_key: "cli:bdd-busy".into(),
+                    message_count: 0,
+                    pending_message_count: 0,
+                    max_context_tokens: 0,
+                    effort: None,
+                    effort_levels: vec![],
+                    workflow: None,
+                    execution: None,
+                    sync: 0,
+                };
+                let execution = state.execution.get_or_insert_with(Default::default);
+                execution.phase = "runningTool".into();
+                execution.progress.state = "active".into();
+                execution.progress.reason = "busy".into();
+                let mut snapshot =
+                    serde_json::to_value(quecto::interface::cli::protocol::AgentEvent::ok(
+                        None,
+                        "get_state",
+                        Some(state.slim_projection()),
+                    ))
+                    .unwrap();
                 if snapshot_shape != "busy-state" {
                     snapshot["data"]["workflow"] = serde_json::json!({
                         "activeTemplate": {"id": "bugfix"},
@@ -1067,9 +1086,19 @@ fn then_agent_cmd_response_slim_state(world: &mut QuectoWorld, command: String) 
     let keys: std::collections::BTreeSet<&str> = data.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        ["state", "effort", "model", "progress", "generation"]
-            .into_iter()
-            .collect(),
+        [
+            "state",
+            "effort",
+            "effortLevels",
+            "model",
+            "sessionKey",
+            "progress",
+            "generation",
+            "automaticTurnsSuspended",
+            "repeatedFailureNotifications"
+        ]
+        .into_iter()
+        .collect(),
         "unexpected get_state data keys: {}",
         json["data"]
     );
