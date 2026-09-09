@@ -95,6 +95,8 @@ mod swarm_lifecycle;
 mod request_accounting;
 #[path = "contracts/request_admission.rs"]
 mod request_admission;
+#[path = "contracts/session_context_inspector.rs"]
+mod session_context_inspector;
 #[path = "common/swarm_control_fixture.rs"]
 mod swarm_control_fixture;
 #[path = "contracts/swarm_run_control.rs"]

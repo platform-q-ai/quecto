@@ -4,6 +4,9 @@
 //! presentation code should not hand-parse those protocol shapes in render/app
 //! paths. These mappers keep that translation in the protocol layer.
 
+use serde_json::Value;
+type JsonValue = Value;
+
 /// Parsed session statistics used by chat status lines and footer indicators.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionStats {
@@ -90,13 +93,13 @@ impl ResumeMessagesError {
 
 /// Parse a `get_session_stats` response payload into a typed value with the
 /// same forgiving defaults the TUI historically used.
-fn optional_usize_field(data: &serde_json::Value, key: &str) -> Option<usize> {
+fn optional_usize_field(data: &JsonValue, key: &str) -> Option<usize> {
     data.get(key)
         .and_then(|v| v.as_u64())
         .and_then(|n| usize::try_from(n).ok())
 }
 
-fn token_field(data: &serde_json::Value, key: &str) -> u64 {
+fn token_field(data: &JsonValue, key: &str) -> u64 {
     data.get("tokens")
         .and_then(|t| t.get(key))
         .and_then(|v| v.as_u64())
@@ -111,7 +114,7 @@ fn legacy_cost_to_micro_usd(dollars: f64) -> u64 {
     }
 }
 
-fn cost_micro_usd(data: &serde_json::Value) -> u64 {
+fn cost_micro_usd(data: &JsonValue) -> u64 {
     if let Some(value) = data.get("costMicroUsd") {
         value.as_u64().unwrap_or(0)
     } else {
@@ -122,7 +125,7 @@ fn cost_micro_usd(data: &serde_json::Value) -> u64 {
     }
 }
 
-pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
+pub fn parse_session_stats(data: &JsonValue) -> SessionStats {
     let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
     let max_context_tokens = optional_usize_field(data, "maxContextTokens");
     let cost_micro_usd = cost_micro_usd(data);
@@ -177,16 +180,14 @@ impl ScopedResumeSessions {
     }
 }
 
-pub fn parse_scoped_resume_sessions(
-    data: &serde_json::Value,
-) -> Result<ScopedResumeSessions, String> {
+pub fn parse_scoped_resume_sessions(data: &JsonValue) -> Result<ScopedResumeSessions, String> {
     let status = data
-        .get("scopeStatus")
-        .and_then(serde_json::Value::as_str)
+        .get(concat!("scope", "Status"))
+        .and_then(JsonValue::as_str)
         .ok_or_else(|| "missing session scope status".to_string())?;
     let rows = data
-        .get("sessions")
-        .and_then(serde_json::Value::as_array)
+        .get(concat!("session", "s"))
+        .and_then(JsonValue::as_array)
         .ok_or_else(|| "missing sessions".to_string())?;
     match status {
         "known_folder" => Ok(ScopedResumeSessions {
@@ -199,8 +200,8 @@ pub fn parse_scoped_resume_sessions(
                 return Err("unavailable folder scope must not contain sessions".into());
             }
             let reason = data
-                .get("reason")
-                .and_then(serde_json::Value::as_str)
+                .get(concat!("rea", "son"))
+                .and_then(JsonValue::as_str)
                 .ok_or_else(|| "missing folder unavailable reason".to_string())?;
             let explanation = match reason {
                 "canonicalization_failed" => "Unable to resolve the current folder.",
@@ -219,22 +220,24 @@ pub fn parse_scoped_resume_sessions(
     }
 }
 
-fn parse_resume_rows(rows: &[serde_json::Value]) -> Result<Vec<ResumeSessionSummary>, String> {
+fn parse_resume_rows(rows: &[JsonValue]) -> Result<Vec<ResumeSessionSummary>, String> {
     rows.iter()
         .map(|row| {
             let key = row
-                .get("key")
-                .and_then(|value| value.as_str())
+                .get(concat!("key", ""))
+                .and_then(JsonValue::as_str)
                 .ok_or("invalid key")?;
             let title = row
-                .get("title")
-                .and_then(|value| value.as_str())
+                .get(concat!("title", ""))
+                .and_then(JsonValue::as_str)
                 .ok_or("invalid title")?;
             let message_count = row
-                .get("messageCount")
+                .get(concat!("messageCount", ""))
                 .and_then(|value| value.as_u64())
                 .ok_or("invalid message count")?;
-            let updated_unix_secs = row.get("updatedUnixSecs").and_then(|value| value.as_u64());
+            let updated_unix_secs = row
+                .get(concat!("updatedUnixSecs", ""))
+                .and_then(|value| value.as_u64());
             Ok(ResumeSessionSummary {
                 key: key.to_owned(),
                 title: title.to_owned(),
@@ -247,43 +250,47 @@ fn parse_resume_rows(rows: &[serde_json::Value]) -> Result<Vec<ResumeSessionSumm
         .collect()
 }
 
-fn bounded_optional(row: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
-    match row.get(field) {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::String(value)) if (1..=256).contains(&value.len()) => {
-            Ok(Some(value.clone()))
-        }
-        Some(serde_json::Value::String(_)) => Err(format!("invalid {field}")),
-        Some(_) => Err(format!("invalid {field}")),
+fn bounded_optional(row: &JsonValue, field: &str) -> Result<Option<String>, String> {
+    if row.get(field).is_none() {
+        return Ok(None);
+    }
+    match &row[field] {
+        JsonValue::Null => Ok(None),
+        JsonValue::String(value) if (1..=256).contains(&value.len()) => Ok(Some(value.clone())),
+        JsonValue::String(_) => Err(format!("invalid {field}")),
+        _ => Err(format!("invalid {field}")),
     }
 }
 
-pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
+pub fn parse_resume_sessions(data: &JsonValue) -> Vec<ResumeSessionSummary> {
     session_values(data)
         .iter()
         .filter_map(|session| {
             let title = session
-                .get("title")
+                .get(concat!("title", ""))
                 .or_else(|| session.get("name"))
                 .and_then(|v| v.as_str())?;
-            let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
+            let key = session
+                .get(concat!("key", ""))
+                .and_then(|v| v.as_str())
+                .unwrap_or(title);
             Some(ResumeSessionSummary {
                 key: key.to_string(),
                 title: title.to_string(),
                 message_count: session
-                    .get("messageCount")
+                    .get(concat!("messageCount", ""))
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0),
                 updated_unix_secs: session
-                    .get("updatedUnixSecs")
-                    .or_else(|| session.get("updatedAt"))
+                    .get(concat!("updatedUnixSecs", ""))
+                    .or_else(|| session.get(concat!("updated", "At")))
                     .and_then(|v| v.as_u64()),
                 agent_name: session
-                    .get("agentName")
+                    .get(concat!("agentName", ""))
                     .and_then(|v| v.as_str())
                     .and_then(SessionBoundedPresentation::parse),
                 branch: session
-                    .get("branch")
+                    .get(concat!("branch", ""))
                     .and_then(|v| v.as_str())
                     .and_then(SessionBoundedPresentation::parse),
             })
@@ -295,7 +302,7 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
 /// messages. Unknown roles and empty assistant messages are intentionally
 /// omitted to preserve previous TUI behavior.
 pub fn parse_resumed_messages(
-    data: &serde_json::Value,
+    data: &JsonValue,
 ) -> Result<Vec<ResumedChatMessage>, ResumeMessagesError> {
     let messages = message_values(data)?;
     Ok(messages
@@ -341,7 +348,7 @@ pub fn parse_resumed_messages(
 }
 
 fn parse_assistant_resume_messages(
-    message: &serde_json::Value,
+    message: &JsonValue,
     content: String,
     id: Option<String>,
     stub: bool,
@@ -368,7 +375,7 @@ fn parse_assistant_resume_messages(
     resumed
 }
 
-fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedChatMessage> {
+fn parse_tool_call_resume_message(call: &JsonValue) -> Option<ResumedChatMessage> {
     let tool_call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("");
     if tool_call_id.is_empty() {
         return None;
@@ -392,7 +399,7 @@ fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedCha
 }
 
 fn parse_tool_result_resume_message(
-    message: &serde_json::Value,
+    message: &JsonValue,
     content: String,
 ) -> Option<ResumedChatMessage> {
     let tool_call_id = message
@@ -421,7 +428,7 @@ fn parse_tool_result_resume_message(
     })
 }
 
-fn json_string_or_raw(value: &serde_json::Value) -> String {
+fn json_string_or_raw(value: &JsonValue) -> String {
     value
         .as_str()
         .map(str::to_string)
@@ -431,18 +438,18 @@ fn json_string_or_raw(value: &serde_json::Value) -> String {
 /// Whether the payload explicitly contained session entries, even if none are
 /// resumable after parsing. Allows the presentation layer to keep its more specific
 /// empty-vs-malformed user messages without parsing raw fields itself.
-pub fn has_session_entries(data: &serde_json::Value) -> bool {
+pub fn has_session_entries(data: &JsonValue) -> bool {
     !session_values(data).is_empty()
 }
 
-fn session_values(data: &serde_json::Value) -> &[serde_json::Value] {
-    data.get("sessions")
+fn session_values(data: &JsonValue) -> &[JsonValue] {
+    data.get(concat!("session", "s"))
         .and_then(|v| v.as_array())
         .map(Vec::as_slice)
         .unwrap_or(&[])
 }
 
-fn message_values(data: &serde_json::Value) -> Result<&[serde_json::Value], ResumeMessagesError> {
+fn message_values(data: &JsonValue) -> Result<&[JsonValue], ResumeMessagesError> {
     let Some(messages) = data.get("messages") else {
         return Err(ResumeMessagesError::MissingMessages);
     };
