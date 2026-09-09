@@ -237,6 +237,8 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
     let sandbox =
         crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
     let exts = build_official_tool_extensions(OfficialToolDeps {
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        workflow_engine: Default::default(),
         swarm_context: None,
         workspace: tmp.path().to_path_buf(),
         sandbox,
@@ -274,6 +276,7 @@ fn build_session_tool_extensions_supplies_recall() {
 fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         swarm_context: None,
         parent_config_path: None,
         base_dir: tmp.path().to_path_buf(),
@@ -305,6 +308,7 @@ fn build_workflow_tool_extension_supplies_workflow() {
     let ext = build_workflow_tool_extension(WorkflowToolDeps {
         engine,
         event_emitter: None,
+        participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
     });
     assert_eq!(ext.name(), "quecto:workflow");
     assert!(has_tool(&[ext], "workflow"));
@@ -323,6 +327,8 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            workflow_engine: Default::default(),
             swarm_context: None,
             workspace: tmp.path().to_path_buf(),
             sandbox,

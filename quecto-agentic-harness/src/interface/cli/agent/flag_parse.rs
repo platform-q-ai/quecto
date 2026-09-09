@@ -18,6 +18,10 @@ pub(crate) struct AgentFlags {
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
+    /// This process's shared swarm participation (#1715): set by the
+    /// container join at startup, kept current by the supervisor, injected
+    /// into the tool composition.
+    pub(crate) swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
     pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
     pub(crate) inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,

@@ -93,6 +93,11 @@ impl Extension for NativeExtension {
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    /// Shared swarm participation of this composition (#1715).
+    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    /// The composition's workflow engine slot (#1715); a run cannot be created
+    /// while it is engaged.
+    pub workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -139,7 +144,9 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                     sandbox.clone(),
                     deps.swarm_config,
                 )
-                .with_context(deps.swarm_context),
+                .with_context(deps.swarm_context)
+                .with_participation(deps.swarm_participation.clone())
+                .with_workflow_engine(deps.workflow_engine),
             ),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
@@ -174,6 +181,8 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
 
 pub struct AgentControlToolDeps {
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    /// Shared swarm participation of this composition (#1715).
+    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
     pub base_dir: PathBuf,
     pub socket_dir: PathBuf,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -200,6 +209,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let mut spawn =
         crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)
             .with_swarm_context(deps.swarm_context)
+            .with_swarm_participation(deps.swarm_participation)
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path);
@@ -240,20 +250,21 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
 pub struct WorkflowToolDeps {
     pub engine: crate::infrastructure::tools::workflow_tool::WorkflowEngineHandle,
     pub event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+    /// Shared swarm participation (#1715); the tool refuses inside a swarm.
+    pub participation: crate::infrastructure::tools::swarm_bridge::Participation,
 }
 
 pub fn build_workflow_tool_extension(deps: WorkflowToolDeps) -> Arc<dyn Extension> {
-    let tool: Arc<dyn Tool> = match deps.event_emitter {
-        Some(emitter) => Arc::new(
+    let tool = match deps.event_emitter {
+        Some(emitter) => {
             crate::infrastructure::tools::workflow_tool::WorkflowTool::with_event_emitter(
                 deps.engine,
                 emitter,
-            ),
-        ),
-        None => {
-            Arc::new(crate::infrastructure::tools::workflow_tool::WorkflowTool::new(deps.engine))
+            )
         }
+        None => crate::infrastructure::tools::workflow_tool::WorkflowTool::new(deps.engine),
     };
+    let tool: Arc<dyn Tool> = Arc::new(tool.with_participation(deps.participation));
     Arc::new(NativeExtension::new(
         "quecto:workflow",
         "Bundled Quecto workflow tool",
@@ -304,6 +315,8 @@ pub fn build_official_tool_registry_with_context(
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            workflow_engine: Default::default(),
             swarm_context,
             workspace,
             sandbox,

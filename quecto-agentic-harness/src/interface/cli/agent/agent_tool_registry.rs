@@ -106,6 +106,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             swarm_context: crate::interface::tool_runtime::swarm_context(),
+            swarm_participation: flags.swarm_participation.clone(),
             entrypoint,
             profile_context:
                 crate::interface::tool_runtime::ToolRuntimeProfileContext::from_spawned(

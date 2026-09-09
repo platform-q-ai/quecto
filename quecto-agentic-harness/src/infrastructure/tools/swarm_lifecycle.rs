@@ -8,10 +8,17 @@ use crate::domain::swarm::{
 };
 use serde_json::{Value, json};
 
+/// Join the container's coordination store; returns whether this container
+/// hosts a created run, so the caller can tell an ordinary container from a
+/// swarm (#1715). `participation` is this process's shared handle: it is set
+/// from the join answer and kept current by the supervisor, so a member that
+/// joined before the run was created still learns that it became a swarm
+/// agent.
 pub fn join_current_process(
     context: &SwarmContext,
     socket: Option<&std::path::Path>,
-) -> Result<(), DomainError> {
+    participation: super::swarm_bridge::Participation,
+) -> Result<bool, DomainError> {
     if !context.database().exists() && std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() != Ok("1")
     {
         return Err(DomainError::Tool("swarm coordination store missing; only the container creator may initialize it; do not reset admission".into()));
@@ -26,10 +33,12 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
+    let participates = crate::domain::swarm::participates(snapshot.deadline);
+    participation.set(participates);
     if needs_supervision(snapshot.status) {
-        supervise(context.clone(), snapshot);
+        supervise(context.clone(), snapshot, participation);
     }
-    Ok(())
+    Ok(participates)
 }
 
 /// Every non-terminal run needs a watcher: a member joining while the run is
@@ -148,9 +157,31 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
 
+/// One supervisor tick: refresh the snapshot and record swarm participation
+/// from it (#1715), so a member that joined an ordinary container becomes a
+/// swarm agent the moment the run is created by someone else.
+pub(super) fn observe(
+    context: &SwarmContext,
+    snapshot: &mut crate::domain::swarm::Snapshot,
+    participation: &super::swarm_bridge::Participation,
+) {
+    match context.snapshot() {
+        Ok(current) => *snapshot = current,
+        Err(error) => {
+            super::swarm::cancel_context_jobs(context);
+            tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
+        }
+    }
+    participation.set(crate::domain::swarm::participates(snapshot.deadline));
+}
+
 /// A per-process watcher also observes outcomes set by other members. This
 /// cancels detached local jobs even if a remote turn-abort leaves them alive.
-pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snapshot) {
+pub fn supervise(
+    context: SwarmContext,
+    mut snapshot: crate::domain::swarm::Snapshot,
+    participation: super::swarm_bridge::Participation,
+) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if STARTED.set(()).is_err() {
         return;
@@ -158,13 +189,7 @@ pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snap
     std::thread::spawn(move || {
         let mut suspended = None;
         loop {
-            match context.snapshot() {
-                Ok(current) => snapshot = current,
-                Err(error) => {
-                    super::swarm::cancel_context_jobs(&context);
-                    tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
-                }
-            }
+            observe(&context, &mut snapshot, &participation);
             if snapshot.status == RunStatus::Paused
                 && suspended != Some(snapshot.control_generation)
             {

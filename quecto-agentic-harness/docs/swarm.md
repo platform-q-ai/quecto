@@ -287,11 +287,20 @@ requests and artifact export.
 ## Workflow exclusion and awaiting approval
 
 Workflow is fully unavailable for swarm coordinators and workers: no workflow
-tool, engine, guards or automatic nudges are installed. Container and swarm-local
-launches reject `workflow: true`, `workflow_guards: true`, and a non-null
-`workflow_spec`; direct swarm startup rejects the corresponding CLI flags.
-Default UDS workflow availability is disabled inside the swarm. A host-local
-master may still use a workflow to supervise it.
+tool, engine, guards or automatic nudges are installed. The distinction is swarm
+participation, not containerization (#1715): a container whose run is still the
+bootstrap placeholder is an ordinary container and keeps workflow like a
+host-local agent. Once the run has been created, worker launches reject
+`workflow: true`, `workflow_guards: true` and a non-null `workflow_spec`, a
+join into that container with any of them is refused at startup before
+inference, and `create` is rejected while the creator is running a workflow
+(guards, a bound spec or a selected template). An idle, merely available
+workflow tool does not block creation; it refuses every action once the run
+exists. Members that joined the container before the run was created become
+swarm agents the moment it exists: their workflow tool refuses and their
+local launches reject workflows, but an engine they already engaged (guards or
+a bound spec) is not torn down, so create the run before spawning members. A
+host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
 with `board.block(task_id, claim_token, reason)`, report the exact question to the
