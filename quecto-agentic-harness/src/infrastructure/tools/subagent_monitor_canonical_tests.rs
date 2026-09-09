@@ -84,6 +84,8 @@ fn line_wrappers_forward_canonical_events_and_reject_malformed_input() {
         bounded_forward(Some("{}".into()), "child", "test"),
         Some("{}\n".into())
     );
+    let oversized = "x".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET + 1);
+    assert!(bounded_forward(Some(oversized), "child", "test").is_none());
 }
 
 #[test]
