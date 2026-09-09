@@ -1,0 +1,66 @@
+#[cfg(test)]
+mod tests {
+    use super::super::*;
+
+    #[test]
+    fn maximum_produced_attempt_payload_fits_accounting_envelope() {
+        use crate::domain::attempt_diagnostics::{HeaderName, HeaderValue, SafeHeader};
+        let trace = RequestTrace::default();
+        for attempt_number in 1..=16 {
+            trace.record_attempt(AttemptDiagnostics {
+                attempt_number,
+                started_unix_ms: u64::MAX,
+                finished_unix_ms: u64::MAX,
+                elapsed_ms: u64::MAX,
+                headers: (0..10)
+                    .map(|_| SafeHeader {
+                        name: HeaderName::XRequestId,
+                        value: HeaderValue::Sha256("a".repeat(64)),
+                    })
+                    .collect(),
+                ..Default::default()
+            });
+        }
+        // Leave at least 4 KiB for existing observation/runtime measurements.
+        assert!(
+            serde_json::to_vec(&trace.attempt_diagnostics())
+                .unwrap()
+                .len()
+                < 28_672
+        );
+    }
+
+    #[test]
+    fn attempt_retention_is_bounded_and_preserves_attempt_numbers() {
+        let trace = RequestTrace::default();
+        for attempt_number in 1..=20 {
+            trace.record_attempt(AttemptDiagnostics {
+                attempt_number,
+                wire_status: Some(200),
+                ..Default::default()
+            });
+        }
+        let records = trace.attempt_diagnostics();
+        assert_eq!(records.len(), 16);
+        assert_eq!(records[0].attempt_number, 1);
+        assert_eq!(records[15].attempt_number, 16);
+    }
+}
+#[cfg(test)]
+mod compatibility_tests {
+    use super::super::*;
+
+    #[test]
+    fn legacy_observation_has_unavailable_wire_evidence() {
+        let legacy = serde_json::json!({
+            "request_id":"legacy", "model":"test", "provider":"test", "outcome":"failed",
+            "error_class":"server", "estimated_context_tokens":0, "instrumented_attempts":3,
+            "oauth_retries":0, "duration_ms":10, "harness_prefix_sha256":"",
+            "harness_prefix_bytes":0
+        });
+        let record: RequestObservation = serde_json::from_value(legacy).unwrap();
+        assert_eq!(record.started_unix_ms, None);
+        assert_eq!(record.finished_unix_ms, None);
+        assert!(record.attempt_diagnostics.is_empty());
+    }
+}
