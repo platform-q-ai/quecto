@@ -7,6 +7,7 @@ use std::time::Duration;
 pub struct EventReader {
     reader: BufReader<UnixStream>,
     pending: Vec<u8>,
+    eof: bool,
 }
 
 impl EventReader {
@@ -15,12 +16,21 @@ impl EventReader {
         Ok(Self {
             reader: BufReader::new(stream),
             pending: Vec::new(),
+            eof: false,
         })
+    }
+
+    /// The peer closed the stream; further polls can only return `None`.
+    pub fn at_eof(&self) -> bool {
+        self.eof
     }
 
     pub fn poll(&mut self) -> io::Result<Option<String>> {
         match self.reader.read_until(b'\n', &mut self.pending) {
-            Ok(0) if self.pending.is_empty() => Ok(None),
+            Ok(0) if self.pending.is_empty() => {
+                self.eof = true;
+                Ok(None)
+            }
             Ok(_) if self.pending.last() == Some(&b'\n') => {
                 let bytes = std::mem::take(&mut self.pending);
                 String::from_utf8(bytes)

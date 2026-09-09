@@ -290,9 +290,6 @@ impl RefreshableProvider {
         >,
     {
         let inner = self.inner.read().await.clone();
-        if let Some(admission) = &request.admission {
-            admission.check().await?;
-        }
         // Happy path: shallow clone (copies slice pointers + small Option fields,
         // not the underlying message/tool vecs).
         let result = call(&inner, request.clone()).await;
@@ -318,15 +315,17 @@ impl RefreshableProvider {
                             "token refreshed — rebuilding provider"
                         );
                         let new_inner = (self.factory)(&new_token);
+                        // Keep the refreshed provider even if admission denies
+                        // the resend: a paused run must not force another
+                        // 401 + refresh when it resumes.
+                        *self.inner.write().await = new_inner.clone();
                         if let Some(admission) = &owned.admission {
                             admission.check().await?;
                         }
                         if let Some(trace) = &owned.trace {
                             trace.oauth_retry();
                         }
-                        let result = call(&new_inner, owned.as_request()).await;
-                        *self.inner.write().await = new_inner;
-                        result
+                        call(&new_inner, owned.as_request()).await
                     }
                     Err(refresh_err) => {
                         tracing::warn!(

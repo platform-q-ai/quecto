@@ -77,6 +77,11 @@ class Transaction:
         current = self.connection.execute('SELECT coalesce(max(id),0) FROM events').fetchone()[0]
         if generation > current:
             raise SwarmError('wake generation is ahead of the board')
+        run = self.run()
+        if run is None or run['status'] != 'running':
+            # A paused run retains its wake frontier: the same generation is
+            # honoured after resume instead of being silently consumed.
+            return []
         cursor = self.connection.execute('SELECT event FROM wake_cursors WHERE actor=?', (actor,)).fetchone()
         previous = cursor[0] if cursor else 0
         if generation <= previous:

@@ -1672,6 +1672,9 @@ fn drain_client_events(world: &mut QuectoWorld, client_id: u32, budget: Duration
         {
             events.push(line);
         }
+        if reader.at_eof() {
+            break;
+        }
     }
 }
 

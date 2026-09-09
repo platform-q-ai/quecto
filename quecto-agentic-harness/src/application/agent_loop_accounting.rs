@@ -3,7 +3,12 @@ use super::*;
 impl AgentLoopImpl {
     /// Usage receipts remain available even when a later request fails or is cancelled.
     pub fn take_unreported_usage(&mut self) -> UsageTotals {
-        std::mem::take(&mut *self.unreported_usage.lock().unwrap())
+        std::mem::take(
+            &mut *self
+                .unreported_usage
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 
     pub fn take_request_observations(
@@ -15,21 +20,43 @@ impl AgentLoopImpl {
     pub fn take_request_diagnostics(
         &self,
     ) -> crate::domain::request_observation::RequestDiagnostics {
-        std::mem::take(&mut *self.request_observations.lock().unwrap())
+        std::mem::take(
+            &mut *self
+                .request_observations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
     /// A record is removed only after durable acknowledgment. Cancellation leaves
     /// the original ID pending, including when a writer may already have committed.
+    /// A full diagnostic ledger drops the record with a warning: diagnostics
+    /// must never block inference, including the coordinator's final report.
     pub async fn flush_request_accounting(&self) -> Result<(), DomainError> {
         if let Some(accounting) = &self.request_accounting {
             loop {
-                let record = self.accounting_outbox.lock().unwrap().first().cloned();
+                let record = self
+                    .accounting_outbox
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .first()
+                    .cloned();
                 let Some(record) = record else {
                     break;
                 };
-                accounting.record(&record).await?;
+                match accounting.record(&record).await {
+                    Ok(()) => {}
+                    Err(error) if ledger_full(&error) => {
+                        tracing::warn!(
+                            request_id = %record.request_id,
+                            %error,
+                            "request diagnostic dropped: ledger full; export the run to retain diagnostics"
+                        );
+                    }
+                    Err(error) => return Err(error),
+                }
                 self.accounting_outbox
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .retain(|pending| pending.request_id != record.request_id);
             }
         }
@@ -87,3 +114,13 @@ impl AgentLoopImpl {
         self
     }
 }
+
+/// The accounting store's explicit capacity refusal (see the swarm repository's
+/// `request diagnostic ledger full` error). Any other failure still propagates.
+pub(crate) fn ledger_full(error: &DomainError) -> bool {
+    matches!(error, DomainError::Tool(message) if message.contains("ledger full"))
+}
+
+#[cfg(test)]
+#[path = "agent_loop_accounting_tests.rs"]
+mod accounting_tests;

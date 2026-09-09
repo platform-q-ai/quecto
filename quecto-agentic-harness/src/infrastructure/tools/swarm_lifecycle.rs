@@ -26,10 +26,17 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
-    if snapshot.status == RunStatus::Running {
+    if needs_supervision(snapshot.status) {
         supervise(context.clone(), snapshot);
     }
     Ok(())
+}
+
+/// Every non-terminal run needs a watcher: a member joining while the run is
+/// paused must still observe resume, deadline expiry, cancellation and later
+/// pauses, or its local jobs and inference are never settled.
+pub(super) fn needs_supervision(status: RunStatus) -> bool {
+    !status.terminal()
 }
 
 struct LinuxProcesses;
@@ -334,3 +341,7 @@ fn settle_observed_snapshot(
 #[cfg(test)]
 #[path = "swarm_pause_generation_tests.rs"]
 mod pause_generation_tests;
+
+#[cfg(test)]
+#[path = "swarm_lifecycle_tests.rs"]
+mod tests;

@@ -12,7 +12,7 @@ impl AgentLoopImpl {
         let unchanged = self
             .request_prefix
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .replace(prefix.0.clone())
             .map(|previous| previous == prefix.0);
         let trace = Arc::new(crate::domain::request_observation::RequestTrace::default());
@@ -38,7 +38,10 @@ impl AgentLoopImpl {
         let result = self.request_provider_response_inner(request).await;
         if let Ok(response) = &result {
             if let Some(usage) = &response.usage {
-                self.unreported_usage.lock().unwrap().record(usage);
+                self.unreported_usage
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .record(usage);
             }
         }
         let record = observation.finish(&result);

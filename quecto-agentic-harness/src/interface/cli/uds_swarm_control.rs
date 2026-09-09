@@ -81,11 +81,19 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                     Some(serde_json::json!({"status":"accepted"})),
                 )
             }
-            _ => super::protocol::AgentEvent::err(
-                id.as_deref(),
-                "swarm_control",
-                "wake unavailable or queue full",
-            ),
+            (Some(generation), Some(_), Err(_)) => {
+                // The command channel is full: the queued wake message already
+                // pending will drain this generation; coalesce, never drop it.
+                ctx.turn_control.queue_swarm_wake(generation);
+                super::protocol::AgentEvent::ok(
+                    id.as_deref(),
+                    "swarm_control",
+                    Some(serde_json::json!({"status":"coalesced"})),
+                )
+            }
+            _ => {
+                super::protocol::AgentEvent::err(id.as_deref(), "swarm_control", "wake unavailable")
+            }
         };
         if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id)
         {
@@ -184,7 +192,11 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                     }
                 }
                 Err(error) => {
-                    ctx.session.automatic_turns_allowed = false;
+                    // Store contention is transient: the next wake retries.
+                    // Only a durable rejection stops automatic turns.
+                    if !transient_store_error(&error) {
+                        ctx.session.automatic_turns_allowed = false;
+                    }
                     let event = AgentEvent::err(
                         None,
                         "swarm_wake",
@@ -196,4 +208,11 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         }
     }
     false
+}
+
+/// SQLite busy/locked failures from the coordination store are retried by the
+/// next wake; they must not latch automatic turns off until a human prompt.
+pub(super) fn transient_store_error(error: &crate::domain::error::DomainError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("database is locked") || message.contains("database table is locked")
 }

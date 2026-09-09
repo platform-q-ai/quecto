@@ -111,9 +111,23 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
                 return false;
             };
             let command_type = command.type_name().to_owned();
+            // Forwarders run concurrently (replies may reorder relative to
+            // queued commands) but are bounded per process so a client cannot
+            // fan out unlimited in-flight descendant queries.
+            static FORWARDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+            let Ok(permit) = FORWARDERS.try_acquire() else {
+                let event = super::protocol::AgentEvent::err(
+                    id.as_deref(),
+                    &command_type,
+                    "descendant query capacity exhausted; retry after in-flight queries return",
+                );
+                write_event(clients, client_id, id.as_deref(), &command_type, &event).await;
+                return true;
+            };
             let subagents = subagents.clone();
             let clients = clients.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 let event =
                     forward_child_command(&subagents, id.as_deref(), &agent_id, value).await;
                 write_event(&clients, client_id, id.as_deref(), &command_type, &event).await;

@@ -265,27 +265,6 @@ impl AgentSession {
             result.cache_write_tokens,
             result.cost_micro_usd,
         );
-        if result.billed_input_tokens > 0
-            || result.billed_output_tokens > 0
-            || result.cache_read_tokens > 0
-            || result.cache_write_tokens > 0
-            || result.cost_micro_usd > 0
-        {
-            let ratio = self.usage.cache_hit_ratio();
-            tracing::info!(
-                target: "session_usage",
-                session_key = %self.session_key,
-                input = self.usage.tokens.input,
-                output = self.usage.tokens.output,
-                cacheRead = self.usage.tokens.cache_read,
-                cacheWrite = self.usage.tokens.cache_write,
-                total = self.usage.tokens.total,
-                contextTokens = self.context_tokens,
-                costMicroUsd = self.usage.cost_micro_usd,
-                cacheHitRatio = ratio,
-                "normalized session usage recorded"
-            );
-        }
     }
     pub fn context_tokens(&self) -> usize {
         self.context_tokens
@@ -319,6 +298,29 @@ impl AgentSession {
             .input
             .saturating_add(self.usage.tokens.output);
         self.usage.cost_micro_usd = self.usage.cost_micro_usd.saturating_add(cost_micro_usd);
+        // The normalized usage log (#1567) rides every production usage path,
+        // not only the legacy whole-result accumulator.
+        if input_tokens > 0
+            || output_tokens > 0
+            || cache_read_tokens > 0
+            || cache_write_tokens > 0
+            || cost_micro_usd > 0
+        {
+            let ratio = self.usage.cache_hit_ratio();
+            tracing::info!(
+                target: "session_usage",
+                session_key = %self.session_key,
+                input = self.usage.tokens.input,
+                output = self.usage.tokens.output,
+                cacheRead = self.usage.tokens.cache_read,
+                cacheWrite = self.usage.tokens.cache_write,
+                total = self.usage.tokens.total,
+                contextTokens = self.context_tokens,
+                costMicroUsd = self.usage.cost_micro_usd,
+                cacheHitRatio = ratio,
+                "normalized session usage recorded"
+            );
+        }
     }
     pub(crate) fn record_request_diagnostics(
         &mut self,

@@ -281,6 +281,11 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 
 ---
 
+> Descendant queries (`get_state`/`get_report` with `agent_id`) are forwarded
+> concurrently: their replies may arrive before earlier queued commands, and at
+> most eight are in flight per process; beyond that the query is answered with
+> an explicit capacity error rather than queued.
+
 ### `get_state`
 
 Return the slim live supervision projection for the active session. This is the

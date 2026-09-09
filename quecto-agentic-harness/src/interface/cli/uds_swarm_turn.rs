@@ -6,9 +6,33 @@ pub(in crate::interface::cli) fn suspend_swarm_turn(
     generation: u64,
     still_current: impl FnOnce() -> bool,
 ) {
-    let mut slot = handle.lock().unwrap();
-    if matches!(*slot, CancelSlot::ScopedArmed(_, crate::domain::swarm::RunStatus::Setup | crate::domain::swarm::RunStatus::Running, admitted) if admitted <= generation)
-        && still_current()
+    use crate::domain::swarm::RunStatus;
+    // Decide under the lock, verify with the lock released (the verification
+    // may run a subprocess), then re-check the same armed generation before
+    // acting so abort/steer are never blocked behind coordination I/O.
+    let admitted = {
+        let slot = handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*slot {
+            CancelSlot::ScopedArmed(_, RunStatus::Setup | RunStatus::Running, admitted)
+                if *admitted <= generation =>
+            {
+                Some(*admitted)
+            }
+            _ => None,
+        }
+    };
+    let Some(admitted) = admitted else {
+        return;
+    };
+    if !still_current() {
+        return;
+    }
+    let mut slot = handle
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if matches!(&*slot, CancelSlot::ScopedArmed(_, RunStatus::Setup | RunStatus::Running, current) if *current == admitted)
     {
         *slot = CancelSlot::Idle;
     }

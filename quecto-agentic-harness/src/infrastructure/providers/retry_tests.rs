@@ -445,3 +445,36 @@ async fn pause_during_backoff_prevents_the_next_provider_attempt() {
     );
     assert_eq!(count.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn admission_is_rechecked_only_on_retry_attempts() {
+    use crate::domain::provider::RequestAdmission;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Debug)]
+    struct Counting(Arc<AtomicUsize>);
+    impl RequestAdmission for Counting {
+        fn check(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+        {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+    let checks = Arc::new(AtomicUsize::new(0));
+    let count = Arc::new(AtomicU32::new(0));
+    let inner = Arc::new(CountingMockProvider::new(
+        count.clone(),
+        1,
+        "provider error (503): unavailable",
+    ));
+    let provider = RetryingProvider::new(inner, RetryConfig::no_delay(3));
+    let mut request = test_request();
+    request.admission = Some(Arc::new(Counting(checks.clone())));
+    provider.chat(request).await.unwrap();
+    assert_eq!(
+        checks.load(Ordering::SeqCst),
+        1,
+        "the loop admitted the first attempt; only the retry re-checks"
+    );
+}

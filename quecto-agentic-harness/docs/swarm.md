@@ -359,7 +359,12 @@ concurrent appends. The manifest states this scope. Previously cleared/evicted
 messages are not reconstructed. Use normal container artifact transport to copy
 these files to the host.
 
-Resume restores admission and extends the deadline; send an explicit prompt to
+Resume restores admission and extends the deadline. A run paused by a strict
+token budget re-pauses on the next admission until the limit is raised or
+`strict_unknown` is disabled; cancelled and rejected attempts never count as
+unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
+turn suspends that turn: the pause receipt is durable on the board but the
+calling turn ends without a tool result. Send an explicit prompt to
 continue processing retained instructions. Paused queued instructions remain
 retained without an inference attempt. Terminal completion notices do not start
 automatic report turns. Raw exports contain retained wire message records, run

@@ -3,13 +3,25 @@ use crate::domain::message::{Message, Role};
 use serde_json::{Value, json};
 
 pub(super) fn latest_report(messages: &[Message]) -> Value {
-    let Some(message) = messages.iter().rev().find(|message| {
+    latest_report_resolving(messages, |_| None)
+}
+
+/// The latest assistant report, with the chosen message resolved through
+/// `full_copy` (the id-addressable ledger) so a context-collapsed stub is never
+/// reported as the full text.
+pub(super) fn latest_report_resolving<'a>(
+    messages: &'a [Message],
+    full_copy: impl Fn(&str) -> Option<&'a Message>,
+) -> Value {
+    let Some(candidate) = messages.iter().rev().find(|message| {
         message.role == Role::Assistant
             && message.tool_calls.is_empty()
             && !message.content.trim().is_empty()
     }) else {
         return json!({"report":null,"snapshot":true});
     };
+    let id = candidate.id().to_string();
+    let message = full_copy(&id).unwrap_or(candidate);
     let mut end = message.content.len().min(8192);
     while !message.content.is_char_boundary(end) {
         end -= 1;
@@ -101,7 +113,10 @@ pub(super) async fn report(
         } else {
             None
         };
-        (latest_report(&state.messages), export)
+        (
+            latest_report_resolving(&state.messages, |id| state.full_copy(id)),
+            export,
+        )
     };
     if let Some((root, epoch, revision, messages, (spill_store, session_key))) = export {
         let mut records: Vec<Value> = messages.into_iter().map(|message| json!({"kind":"message","message":super::uds_session::message_to_json(&message)})).collect();

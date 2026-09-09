@@ -204,6 +204,11 @@ impl ConversationSnapshotData {
                 .map(|i| &self.messages[i])
         })
     }
+    /// The full ledger copy of a message, if retained (the live conversation
+    /// may hold only a collapsed stub).
+    pub(super) fn full_copy(&self, message_id: &str) -> Option<&Message> {
+        self.ledger.get(message_id)
+    }
     /// Resolve a message id to its full copy. See [`Self::lookup`].
     #[cfg(test)]
     pub fn resolve(&self, message_id: &str) -> Option<&Message> {

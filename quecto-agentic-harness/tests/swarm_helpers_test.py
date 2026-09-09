@@ -146,6 +146,43 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.pause('pause takes priority over queued hint')
         self.assertFalse(self.parent._accept_wake(generation))
 
+    def test_cancelled_attempt_does_not_keep_a_strict_budget_paused(self):
+        self.parent.usage_budget(100, strict_unknown=True)
+        self.worker._record_request({'request_id': 'cancelled', 'instrumented_attempts': 1,
+                                     'outcome': 'cancelled'})
+        self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 0)
+        self.parent.pause('supervisor pause')
+        self.parent.resume()
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.worker._record_request({'request_id': 'hidden', 'instrumented_attempts': 1,
+                                     'outcome': 'failed'})
+        self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 1)
+        self.assertEqual(self.parent.summary()['status'], 'paused')
+
+    def test_paused_run_retains_the_wake_frontier_until_resume(self):
+        self.worker.send('wake-paused', 'coordinator', 'work')
+        generation = self.parent.summary()['event_cursor']
+        self.parent.pause('hold')
+        self.assertFalse(self.parent._accept_wake(generation))
+        self.parent.resume()
+        self.assertTrue(self.parent._accept_wake(generation), 'the generation was not consumed while paused')
+        with self.assertRaises(SwarmError):
+            self.parent._accept_wake(self.parent.summary()['event_cursor'] + 1)
+
+    def test_request_diagnostic_ledger_bounds_are_explicit(self):
+        self.worker._record_request({'request_id': 'first', 'instrumented_attempts': 1, 'outcome': 'failed'})
+        with self.assertRaises(SwarmError):
+            self.worker._record_request({'request_id': 'huge', 'instrumented_attempts': 1, 'outcome': 'failed',
+                                         'error_class': 'x' * 32768})
+        with closing(sqlite3.connect(self.db)) as db:
+            db.executemany('INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)',
+                           [(f'fill-{index}', 'worker', '{}', 0, 0, 1, None, None, None, None) for index in range(9999)])
+            db.commit()
+        with self.assertRaises(SwarmError) as refused:
+            self.worker._record_request({'request_id': 'overflow', 'instrumented_attempts': 1, 'outcome': 'failed'})
+        self.assertIn('ledger full', str(refused.exception))
+        self.assertEqual(self.parent.summary()['status'], 'running', 'a full ledger never blocks the run itself')
+
     def test_default_summary_does_not_replay_historical_contract_payloads(self):
         original = self.parent.summary()
         for index in range(12):

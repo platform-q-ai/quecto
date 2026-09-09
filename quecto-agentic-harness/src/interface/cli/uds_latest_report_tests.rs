@@ -57,7 +57,12 @@ mod export_control_tests {
             Box::pin(async { Ok(None) })
         }
         fn list_entries(&self, _: &str) -> SpillIndexList<'_> {
-            Box::pin(std::future::pending())
+            // Slow but finite and cancellable, so the export permit taken by
+            // the spawned task is released and never leaks across tests.
+            Box::pin(async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                Ok(Arc::new(Vec::new()))
+            })
         }
         fn clear(
             &self,
@@ -199,4 +204,24 @@ mod unavailable_spill {
             assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         }
     }
+}
+
+/// The report resolves the chosen assistant message through the ledger so a
+/// context-collapsed stub is never returned as the full text.
+#[tokio::test]
+async fn report_prefers_the_ledger_copy_over_a_collapsed_stub() {
+    use crate::domain::message::Message;
+    use crate::interface::cli::uds_snapshots::ConversationSnapshotData;
+    let full = Message::assistant("the complete final report", vec![]);
+    let id = full.id().to_string();
+    let mut state = ConversationSnapshotData::default();
+    state.publish(std::slice::from_ref(&full));
+    let mut stub = full.clone();
+    stub.content = "recall(spilled)".to_string();
+    state.publish(&[stub]);
+    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
+    let data = report(&snapshot, false).await.unwrap();
+    assert_eq!(data["report"]["messageId"], id);
+    assert_eq!(data["report"]["content"], "the complete final report");
+    assert_eq!(data["report"]["contentTruncated"], false);
 }

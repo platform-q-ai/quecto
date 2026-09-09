@@ -117,5 +117,9 @@ def request_measurement(record):
         attempts = record.get('instrumented_attempts')
         if type(attempts) is int and 0 <= attempts <= 2**32 - 1 and record.get('outcome') in ('succeeded', 'failed', 'cancelled', 'rejected'):
             known = record.get('context_input_tokens') is not None and record.get('output_tokens') is not None
-            return ((record['context_input_tokens'] + record['output_tokens']) if known else 0, int(attempts > 0 and not known), attempts)
+            # Only a request the provider answered can hide usage; a cancelled
+            # or rejected attempt never had usage to report, so it must not
+            # keep a strict budget paused after resume.
+            answered = record.get('outcome') in ('succeeded', 'failed')
+            return ((record['context_input_tokens'] + record['output_tokens']) if known else 0, int(answered and attempts > 0 and not known), attempts)
     raise SwarmError('invalid request observation')

@@ -162,10 +162,13 @@ impl LlmProvider for RetryingProvider {
         Box::pin(async move {
             let mut attempt: u32 = 1;
             loop {
-                if let Some(admission) = &request.admission {
-                    admission.check().await?;
-                }
+                // The loop already admitted the logical request; only retries
+                // re-check, so a first attempt never pays an extra admission
+                // round trip.
                 if attempt > 1 {
+                    if let Some(admission) = &request.admission {
+                        admission.check().await?;
+                    }
                     if let Some(trace) = &request.trace {
                         trace.retry();
                     }

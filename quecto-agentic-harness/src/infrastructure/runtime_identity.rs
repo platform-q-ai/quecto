@@ -51,22 +51,6 @@ fn executable_digest_for(pid: u32) -> std::io::Result<String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
-#[cfg(all(test, target_os = "linux"))]
-#[test]
-fn runtime_digest_tracks_running_inode_after_executable_replacement() {
-    let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("running");
-    std::fs::copy("/bin/sleep", &executable).unwrap();
-    let expected = format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap()));
-    let mut process = std::process::Command::new(&executable)
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let replacement = directory.path().join("replacement");
-    std::fs::copy("/bin/true", &replacement).unwrap();
-    std::fs::rename(replacement, executable).unwrap();
-    let result = executable_digest_for(process.id());
-    let _ = process.kill();
-    let _ = process.wait();
-    assert_eq!(result.unwrap(), expected);
-}
+#[cfg(test)]
+#[path = "runtime_identity_tests.rs"]
+mod tests;

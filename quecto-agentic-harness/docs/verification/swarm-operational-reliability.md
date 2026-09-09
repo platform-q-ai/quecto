@@ -95,3 +95,29 @@ The final independent review at `778eb48d` found a public-entry-point gap:
 but omitted from `SwarmTool::execute` dispatch. Two regressions invoked the public
 Tool port and failed with `unknown op` for terminal usage reporting and budget
 configuration. The explicit dispatch allowlist now includes both operations.
+
+## Adversarial review follow-up (2026-09-09)
+
+An independent review of the PR diff raised 16 findings (1 high, 6 medium,
+9 low); each was fixed with a failing test first:
+
+- members joining a paused run are supervised (`needs_supervision`)
+- the loop admits a logical request once; retries and OAuth resends re-check
+  (no interpreter spawn before the first attempt), and a denied resend keeps
+  the refreshed provider
+- the cancel slot is never held across the coordination-status subprocess
+- cancelled/rejected attempts are not unknown usage, so a strict budget does
+  not re-pause forever after a supervisor pause
+- the `session_usage` log rides the production `record_usage` path
+- a full request ledger drops the record with a warning instead of blocking
+  every turn; the ledger cap and payload bound have tests
+- descendant `get_state`/`get_report` forwarders are bounded (8) and the
+  reorder is documented; `get_report` resolves through the ledger
+- wake requests coalesce when the command channel is full, and only durable
+  rejections (not SQLite contention) stop automatic turns; a paused run
+  retains its wake frontier
+- `runtime_identity` test moved to a sidecar; poison-tolerant locks; the
+  bounded-events drain stops at EOF; the export test no longer leaks a permit
+- documented: `swarm op=pause` suspends the calling turn; Retry-After hints
+  above the wait budget fail immediately (all sessions); strict-budget resume
+  caveat
