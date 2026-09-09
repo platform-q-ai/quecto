@@ -55,6 +55,38 @@ fn admission_forward_falls_back_to_immediate_child_and_rejects_other_events() {
 }
 
 #[test]
+fn line_wrappers_forward_canonical_events_and_reject_malformed_input() {
+    let workflow = forward_child_workflow_event(
+        r#"{"type":"workflow_state","mode":"active"}"#,
+        "child",
+        Some("parent"),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&workflow).unwrap()["agent_id"],
+        "child"
+    );
+
+    let messages = forward_child_messages_appended(
+        r#"{"type":"subagent_messages_appended","messages":[{"text":"hello"}]}"#,
+        "child",
+        Some("parent"),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&messages).unwrap()["messages"][0]["text"],
+        "hello"
+    );
+
+    assert!(forward_child_workflow_event("not json", "child", None).is_none());
+    assert!(forward_child_messages_appended("{}", "child", None).is_none());
+    assert_eq!(
+        bounded_forward(Some("{}".into()), "child", "test"),
+        Some("{}\n".into())
+    );
+}
+
+#[test]
 fn admission_line_requires_exact_type_and_known_registry_descendant() {
     let registry = new_registry();
     {
