@@ -126,7 +126,13 @@ impl AgentLoopImpl {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .blocks_execution(tc.name.as_str(), self.tool_profile_context);
-        let tool_result = if disabled_by_runtime_policy {
+        let admission = match &self.tool_admission {
+            Some(policy) => policy.check(&tc.name, &tc.arguments).await,
+            None => Ok(()),
+        };
+        let tool_result = if let Err(error) = admission {
+            Err(error)
+        } else if disabled_by_runtime_policy {
             Ok(crate::domain::tool::ToolResult {
                 content: format!("tool '{}' is disabled by runtime policy", tc.name),
                 image_blocks: vec![],

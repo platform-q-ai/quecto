@@ -18,6 +18,22 @@ pub(super) async fn try_forward_subagent_targeted_command(
 ) -> Option<bool> {
     let routable = RoutableInspectionCommand::from_uds_type(cmd.type_name())?;
     debug_assert!(UDS_INSPECTION_ALLOWLIST.contains(&routable));
+    if let AgentCommand::GetReport {
+        id,
+        agent_id: Some(agent_id),
+        ..
+    } = cmd
+    {
+        let event = super::super::uds_busy_subagents::forward_child_command(
+            &ctx.subagent_registry,
+            id.as_deref(),
+            agent_id,
+            serde_json::to_value(cmd).expect("command serializes"),
+        )
+        .await;
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), "get_report", event).await;
+        return Some(false);
+    }
     if let AgentCommand::GetState {
         agent_id: Some(agent_id),
         id,
@@ -25,7 +41,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
     } = cmd
     {
         let tn = cmd.type_name();
-        let ev = forward_subagent_get_state(
+        let ev = forward_subagent_snapshot(
             ctx,
             id.as_deref().map(CommandId::from),
             tn,
@@ -129,7 +145,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
     None
 }
 
-pub(super) async fn forward_subagent_get_state(
+pub(super) async fn forward_subagent_snapshot(
     ctx: &DispatchCtx<'_>,
     id: Option<CommandId>,
     tn: &str,
@@ -147,7 +163,7 @@ pub(super) async fn forward_subagent_get_state(
         Ok(route) => route,
         Err(e) => return AgentEvent::err(id_ref, tn, e),
     };
-    let mut cmd = serde_json::json!({ "type": "get_state" });
+    let mut cmd = serde_json::json!({ "type": tn });
     if let Some(since) = since {
         cmd["since"] = serde_json::json!(since);
     }
@@ -168,8 +184,7 @@ pub(super) async fn forward_subagent_get_state(
     )
     .await
     {
-        Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, "get_state")
-        {
+        Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, tn) {
             Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
             Err(error) => AgentEvent::err(id_ref, tn, error),
         },

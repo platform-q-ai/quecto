@@ -110,6 +110,8 @@ impl LlmProvider for HangingProvider {
 
 fn empty_request<'a>() -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "stub",

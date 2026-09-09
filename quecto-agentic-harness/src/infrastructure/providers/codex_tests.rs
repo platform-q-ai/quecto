@@ -65,6 +65,8 @@ fn test_build_request_body() {
     let messages = vec![Message::system("Be concise."), Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.4",
@@ -91,6 +93,8 @@ fn test_build_request_body_uses_effort_level() {
     let messages = vec![Message::system("Be concise."), Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.4",
@@ -112,6 +116,8 @@ fn test_build_request_body_uses_effort_level() {
 fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
     let messages = vec![Message::user("Hi")];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "gpt-5.4",
@@ -146,6 +152,8 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
 fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
     let messages = vec![Message::user("Hi")];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "gpt-5.4",
@@ -221,6 +229,8 @@ fn test_build_request_body_responses_api_fields() {
     let messages = vec![Message::user("Hi")];
     let tools = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-5.4",
@@ -457,6 +467,8 @@ async fn test_codex_provider_http_error() {
     let messages = vec![Message::system("You are helpful."), Message::user("hi")];
     let result = provider
         .chat(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "gpt-5.6-luna",
@@ -482,6 +494,8 @@ async fn test_codex_provider_rejects_provider_qualified_model_name() {
 
     let result = provider
         .chat(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "openai/gpt-5.3-codex",
@@ -510,6 +524,8 @@ async fn test_codex_provider_rejects_missing_instructions() {
 
     let result = provider
         .chat(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "gpt-5.3-codex",

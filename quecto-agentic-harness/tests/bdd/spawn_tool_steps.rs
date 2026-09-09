@@ -618,7 +618,15 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
         });
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .respond_with(move |request: &wiremock::Request| {
+                let input: serde_json::Value = request.body_json().unwrap();
+                if input["stream"] == true {
+                    let chunk = serde_json::json!({"choices":[{"index":0,"delta":{"content":"LIVE_CHILD_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}});
+                    wiremock::ResponseTemplate::new(200).set_body_raw(format!("data: {chunk}\n\ndata: [DONE]\n\n"), "text/event-stream")
+                } else {
+                    wiremock::ResponseTemplate::new(200).set_body_json(&body)
+                }
+            })
             .mount(&server)
             .await;
     });
@@ -649,7 +657,7 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     let config_path = base.join("config.json");
     let config = serde_json::json!({
         "providers": {"openai": {"api_key": "sk-test-key", "api_base": uri}},
-        "agents": {"defaults": {"model": "openai/gpt-4o-mini", "workspace": workspace}}
+        "agents": {"defaults": {"model": "openai-api/gpt-4o-mini", "workspace": workspace}}
     });
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 
@@ -718,9 +726,14 @@ fn then_live_get_messages_contains(world: &mut QuectoWorld, agent_id: String, ex
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     let result = last.expect("get_messages was not attempted");
+    let stats = rt
+        .block_on(tool.execute(
+            &serde_json::json!({"agent_id": agent_id, "command":"get_session_stats"}).to_string(),
+        ))
+        .unwrap();
     panic!(
-        "expected get_messages to contain {expected:?}, got: {}",
-        result.content
+        "expected get_messages to contain {expected:?}, got: {}; diagnostics: {}",
+        result.content, stats.content
     );
 }
 

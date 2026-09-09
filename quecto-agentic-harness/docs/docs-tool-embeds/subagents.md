@@ -51,19 +51,19 @@ fixed member limit (including itself) and deadline. It calls `swarm` `op=create`
 before spawning local workers into that shared checkout. The external master
 supervises the coordinator and does not count as a member.
 
-For approval/clarification, tell the coordinator to keep the run running and
-block only the affected task, then yield. A blocked run is terminal. Reply with
-`prompt` when idle or `steer` when busy, and retrieve its explicit acknowledgment
-and action report; transport acceptance alone does not prove handling.
+For approval/clarification, block the affected task and yield, or use durable
+`swarm_control` pause for a whole-run wait. A blocked run is terminal. Resume a
+paused run before replying with `prompt` when idle or `steer` when busy. Retrieve
+its control receipt, explicit acknowledgment and action report; transport
+acceptance alone does not prove handling.
 
 For progress, ask the coordinator to inspect `swarm` `op=summary`; retrieve its
-report with `agent_cmd.get_messages`. Generic agent state is not the task board.
-A terminal run still permits summary and ordinary artifact export; do not ask
+report with `agent_cmd` `get_report`. Add `export_raw:true` for retained raw artifacts. Generic agent state is not the task board.
+A terminal coordinator permits read-only swarm reports and supervisor-channel export; do not ask
 for Python inbox/ack execution after completion. Request the final revision,
 criterion evidence and any blockers, and preserve artifacts before teardown.
 Artifact references resolve against the returned container `artifact_base`.
-Dedicated swarm UDS creation/update/inspection/result endpoints and a dashboard
-are follow-on work; use the existing agent supervision channel today.
+Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `status`, and `usage_budget` bypass the model queue. General swarm creation/update/result events and a dashboard remain follow-on work. Read the swarm manual for receipt and budget semantics.
 
 ## See also
 

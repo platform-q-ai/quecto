@@ -57,6 +57,8 @@ impl LlmProvider for CountingProvider {
 
 fn request<'a>() -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test-model",

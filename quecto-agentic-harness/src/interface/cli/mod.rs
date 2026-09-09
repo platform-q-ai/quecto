@@ -124,6 +124,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
 mod uds_extensions;
+mod uds_latest_report;
 mod uds_lifecycle;
 pub mod uds_models;
 mod uds_multi;
@@ -139,6 +140,7 @@ mod uds_socket;
 mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
+mod uds_swarm_control;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
@@ -526,3 +528,5 @@ mod leading_config_dispatch_tests;
 
 #[cfg(test)]
 mod mod_tests;
+
+mod swarm_composition;

@@ -17,6 +17,7 @@ struct WireMember {
 }
 #[derive(Deserialize)]
 struct WireSnapshot {
+    control_generation: u64,
     status: String,
     coordinator: String,
     deadline: f64,
@@ -25,18 +26,22 @@ struct WireSnapshot {
 fn invalid(message: impl std::fmt::Display) -> DomainError {
     DomainError::Tool(format!("invalid swarm coordination response: {message}"))
 }
-fn decode(value: Value) -> Result<Snapshot, DomainError> {
-    let wire: WireSnapshot = serde_json::from_value(value).map_err(invalid)?;
-    let status = match wire.status.as_str() {
+fn decode_status(status: &str) -> Result<RunStatus, DomainError> {
+    Ok(match status {
         "setup" => RunStatus::Setup,
         "running" => RunStatus::Running,
+        "paused" => RunStatus::Paused,
         "succeeded" => RunStatus::Succeeded,
         "blocked" => RunStatus::Blocked,
         "failed" => RunStatus::Failed,
         "cancelled" => RunStatus::Cancelled,
         "budget-exhausted" => RunStatus::BudgetExhausted,
         _ => return Err(invalid("unknown run status")),
-    };
+    })
+}
+fn decode(value: Value) -> Result<Snapshot, DomainError> {
+    let wire: WireSnapshot = serde_json::from_value(value).map_err(invalid)?;
+    let status = decode_status(&wire.status)?;
     let members = wire
         .members
         .into_iter()
@@ -46,6 +51,7 @@ fn decode(value: Value) -> Result<Snapshot, DomainError> {
         return Err(invalid("coordinator missing from membership"));
     }
     Ok(Snapshot {
+        control_generation: wire.control_generation,
         status,
         coordinator: wire.coordinator,
         deadline: wire.deadline,
@@ -103,6 +109,49 @@ impl CoordinationPort for SwarmContext {
     }
 }
 impl SwarmContext {
+    pub fn inference_snapshot(&self) -> Result<Snapshot, DomainError> {
+        decode(self.rpc("_request_admission", json!([]))?)
+    }
+
+    pub(crate) fn decode_control_receipt(
+        value: Value,
+        wake_allowed: bool,
+    ) -> Result<crate::domain::swarm::RunControlReceipt, DomainError> {
+        Ok(crate::domain::swarm::RunControlReceipt {
+            budget: value
+                .get("budget")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(invalid)?,
+            wake_allowed,
+            status: decode_status(
+                value["status"]
+                    .as_str()
+                    .ok_or_else(|| invalid("missing control status"))?,
+            )?,
+            generation: value["generation"]
+                .as_u64()
+                .ok_or_else(|| invalid("missing control generation"))?,
+        })
+    }
+
+    pub fn notification_batch(&self) -> Result<(Vec<Member>, u64), DomainError> {
+        let value = self.rpc("_notifications", json!([true]))?;
+        let generation = value["generation"]
+            .as_u64()
+            .ok_or_else(|| invalid("missing wake generation"))?;
+        let members: Vec<WireMember> =
+            serde_json::from_value(value["members"].clone()).map_err(invalid)?;
+        Ok((
+            members
+                .into_iter()
+                .map(decode_member)
+                .collect::<Result<Vec<_>, _>>()?,
+            generation,
+        ))
+    }
+
     pub fn notifications(&self) -> Result<Vec<Member>, DomainError> {
         let members: Vec<WireMember> =
             serde_json::from_value(self.rpc("_notifications", json!([]))?).map_err(invalid)?;
@@ -164,3 +213,24 @@ impl SwarmContext {
 #[cfg(test)]
 #[path = "swarm_coordination_tests.rs"]
 mod tests;
+
+impl crate::domain::request_observation::RequestAccounting for SwarmContext {
+    fn record<'a>(
+        &'a self,
+        observation: &'a crate::domain::request_observation::RequestObservation,
+    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+        let context = self.clone();
+        let observation = observation.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let mut value = serde_json::to_value(observation).map_err(invalid)?;
+                value["runtime"] =
+                    serde_json::to_value(crate::infrastructure::runtime_identity::current())
+                        .map_err(invalid)?;
+                context.rpc("_record_request", json!([value])).map(|_| ())
+            })
+            .await
+            .map_err(invalid)?
+        })
+    }
+}

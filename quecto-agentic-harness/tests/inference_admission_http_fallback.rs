@@ -45,6 +45,8 @@ async fn check(status: u16, body: &str, expected: bool) {
             .unwrap(),
         );
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         model: "fixture",
         messages: &[],
         tools: &[],
@@ -130,6 +132,8 @@ async fn assembled_responses_reports_sse_throttle_before_body_eof() {
     );
     let call = tokio::spawn(async move {
         let request = ChatRequest {
+            trace: None,
+            admission: None,
             model: "fixture",
             messages: &[],
             tools: &[],

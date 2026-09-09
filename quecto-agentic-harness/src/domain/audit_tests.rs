@@ -40,6 +40,7 @@ fn llm_turn_start_round_trip() {
 #[test]
 fn llm_turn_end_round_trip() {
     let event = AuditEvent::LlmTurnEnd {
+        usage_source: None,
         input_tokens: 45200,
         output_tokens: 1830,
         stop_reason: "tool_use".into(),

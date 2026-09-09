@@ -26,10 +26,20 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
-    if snapshot.status == RunStatus::Running {
+    if needs_supervision(snapshot.status) {
         supervise(context.clone(), snapshot);
     }
     Ok(())
+}
+
+/// Every non-terminal run needs a watcher: a member joining while the run is
+/// paused must still observe resume, deadline expiry, cancellation and later
+/// pauses, or its local jobs and inference are never settled.
+pub(super) fn needs_supervision(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Setup | RunStatus::Running | RunStatus::Paused
+    )
 }
 
 struct LinuxProcesses;
@@ -47,7 +57,9 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
 /// Durable messages remain authoritative when a wake hint fails.
 pub async fn notify(context: &SwarmContext) -> Vec<String> {
     let ctx = context.clone();
-    let Ok(Ok(members)) = tokio::task::spawn_blocking(move || ctx.notifications()).await else {
+    let Ok(Ok((members, generation))) =
+        tokio::task::spawn_blocking(move || ctx.notification_batch()).await
+    else {
         return vec!["swarm notification summary unavailable; inspect durable inbox".into()];
     };
     let mut warnings = Vec::new();
@@ -58,7 +70,7 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
         if member.id == context.member || member.status != MemberStatus::Live {
             continue;
         }
-        let command = json!({"type":"prompt", "message":"Swarm work may be available. First call swarm with op=summary. If the run is running, inspect your durable inbox and ready tasks; acknowledge messages after reading. If it is terminal, do not run Python or attempt inbox acknowledgment: report the final summary and remain available for supervisor requests, including artifact export. This hint may have been queued before completion.", "streamingBehavior":"followUp", "ack":"accept"});
+        let command = json!({"type":"swarm_control", "action":"wake", "generation":generation});
         let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
             std::path::Path::new(socket),
             &command.to_string(),
@@ -80,6 +92,14 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
 
 struct RuntimeProcesses<'a>(&'a SwarmContext);
 impl ProcessControl for RuntimeProcesses<'_> {
+    fn suspend_local_executions(&self, snapshot: &crate::domain::swarm::Snapshot) {
+        super::swarm::suspend_context_jobs(self.0, snapshot.control_generation);
+    }
+    fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::Snapshot) {
+        if let Some(cancel) = LOCAL_SUSPEND.get() {
+            cancel(snapshot.status, snapshot.control_generation);
+        }
+    }
     fn cancel_local_executions(&self) {
         super::swarm::cancel_context_jobs(self.0);
     }
@@ -136,6 +156,7 @@ pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snap
         return;
     }
     std::thread::spawn(move || {
+        let mut suspended = None;
         loop {
             match context.snapshot() {
                 Ok(current) => snapshot = current,
@@ -143,6 +164,15 @@ pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snap
                     super::swarm::cancel_context_jobs(&context);
                     tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
                 }
+            }
+            if snapshot.status == RunStatus::Paused
+                && suspended != Some(snapshot.control_generation)
+            {
+                if settle_observed_snapshot(&context, &snapshot) {
+                    suspended = Some(snapshot.control_generation);
+                }
+            } else if snapshot.status == RunStatus::Running {
+                suspended = None;
             }
             if context
                 .lifecycle
@@ -181,3 +211,140 @@ impl crate::domain::swarm::Clock for SystemClock {
             .as_secs_f64()
     }
 }
+
+impl crate::domain::provider::RequestAdmission for SwarmContext {
+    fn check(&self) -> LaunchFuture<'_, Result<(), DomainError>> {
+        let context = self.clone();
+        let actor = self.member.clone();
+        Box::pin(async move {
+            let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())
+                .await
+                .map_err(|error| DomainError::Tool(error.to_string()))??;
+            if snapshot
+                .status
+                .admits_inference(actor == snapshot.coordinator)
+            {
+                Ok(())
+            } else {
+                Err(DomainError::Tool(format!(
+                    "swarm {:?}: model execution suspended; use supervisor controls",
+                    snapshot.status
+                )))
+            }
+        })
+    }
+}
+
+static LOCAL_SUSPEND: std::sync::OnceLock<std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+/// The CLI composition root supplies active-turn cancellation, without coupling
+/// process lifecycle adapters to the UDS cancellation representation.
+pub fn bind_local_suspension(cancel: std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>) {
+    let _ = LOCAL_SUSPEND.set(cancel);
+}
+
+impl crate::domain::swarm::SwarmRunControl for SwarmContext {
+    fn apply(
+        &self,
+        action: crate::domain::swarm::RunControlAction,
+    ) -> LaunchFuture<'_, Result<crate::domain::swarm::RunControlReceipt, DomainError>> {
+        let context = self.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                use crate::domain::swarm::RunControlAction;
+                let mut wake_allowed = false;
+                let value = match action {
+                    RunControlAction::UsageBudget {
+                        token_limit,
+                        strict_unknown,
+                    } => {
+                        context.usage_budget(token_limit, strict_unknown)?;
+                        context.control_status()?
+                    }
+                    RunControlAction::Wake { generation } => {
+                        wake_allowed = context.accept_wake(generation)?;
+                        context.control_status()?
+                    }
+                    RunControlAction::Pause { reason } => context.pause(&reason)?,
+                    RunControlAction::Resume => context.resume()?,
+                    RunControlAction::Status => context.control_status()?,
+                };
+                SwarmContext::decode_control_receipt(value, wake_allowed)
+            })
+            .await
+            .map_err(|error| DomainError::Tool(error.to_string()))?
+        })
+    }
+}
+
+impl crate::domain::tool::ToolExecutionAdmission for SwarmContext {
+    fn check<'a>(
+        &'a self,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> LaunchFuture<'a, Result<(), DomainError>> {
+        let context = self.clone();
+        Box::pin(async move {
+            let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())
+                .await
+                .map_err(|error| DomainError::Tool(error.to_string()))??;
+            use crate::domain::swarm::RunStatus;
+            let admitted = match snapshot.status {
+                RunStatus::Setup | RunStatus::Running => true,
+                RunStatus::Paused => false,
+                RunStatus::Succeeded
+                | RunStatus::Blocked
+                | RunStatus::Failed
+                | RunStatus::Cancelled
+                | RunStatus::BudgetExhausted => {
+                    self.member == snapshot.coordinator
+                        && name == "swarm"
+                        && serde_json::from_str::<serde_json::Value>(arguments)
+                            .ok()
+                            .is_some_and(|input| {
+                                matches!(input["op"].as_str(), Some("summary" | "events" | "usage"))
+                            })
+                }
+            };
+            if admitted {
+                Ok(())
+            } else {
+                Err(DomainError::Tool("swarm lifecycle prohibits this tool execution; terminal coordinator is report only".into()))
+            }
+        })
+    }
+}
+
+fn settle_observed_snapshot(
+    context: &SwarmContext,
+    snapshot: &crate::domain::swarm::Snapshot,
+) -> bool {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => {
+            if let Err(error) = runtime.block_on(context.lifecycle.settle(
+                snapshot,
+                &context.member,
+                &RuntimeProcesses(context),
+            )) {
+                tracing::error!(%error, "swarm suspension failed");
+            }
+            true
+        }
+        Err(error) => {
+            tracing::error!(%error, "swarm suspension runtime failed");
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_pause_generation_tests.rs"]
+mod pause_generation_tests;
+
+#[cfg(test)]
+#[path = "swarm_lifecycle_tests.rs"]
+mod tests;

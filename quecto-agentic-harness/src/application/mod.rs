@@ -17,6 +17,7 @@ mod environment_control_tests;
 pub mod extension_tool;
 pub mod ports;
 pub mod provider_runtime;
+mod request_observation;
 pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use crate::domain::message::UsageInfo;
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct UsageTotals {
+pub struct UsageTotals {
     pub context_input_tokens: u32,
     pub output_tokens: u32,
     pub billed_input_tokens: u64,

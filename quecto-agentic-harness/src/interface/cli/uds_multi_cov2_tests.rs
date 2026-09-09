@@ -199,6 +199,8 @@ async fn cov2_test_helpers_execute_their_trait_surfaces() {
     assert_eq!(
         provider
             .chat(ChatRequest {
+                trace: None,
+                admission: None,
                 messages: &[],
                 tools: &[],
                 model: "stub",
@@ -219,6 +221,8 @@ async fn cov2_test_helpers_execute_their_trait_surfaces() {
     );
     let mut rx = provider
         .chat_stream_incremental(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &[],
             tools: &[],
             model: "stub",

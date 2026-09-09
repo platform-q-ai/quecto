@@ -49,6 +49,9 @@ fn make_args(
             ]),
         )),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
+            control_receipts: Vec::new(),
+            automatic_turns_suspended: false,
+            repeated_failure_notifications: 0,
             execution: None,
             model: "mock-model".into(),
             generation: 1,

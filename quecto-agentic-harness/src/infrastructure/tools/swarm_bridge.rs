@@ -103,8 +103,45 @@ impl SwarmContext {
         self.rpc(method, args)
     }
 
+    pub fn accept_wake(&self, generation: u64) -> Result<bool, DomainError> {
+        self.rpc("_accept_wake", json!([generation]))?
+            .as_bool()
+            .ok_or_else(|| DomainError::Tool("invalid wake receipt".into()))
+    }
+
+    pub fn pause(&self, reason: &str) -> Result<Value, DomainError> {
+        self.rpc("pause", json!([reason]))
+    }
+
+    pub fn resume(&self) -> Result<Value, DomainError> {
+        self.rpc("resume", json!([]))
+    }
+
+    pub fn control_status(&self) -> Result<Value, DomainError> {
+        self.rpc("_control_status", json!([]))
+    }
+
+    pub fn usage_report(&self) -> Result<Value, DomainError> {
+        self.rpc("usage_report", json!([]))
+    }
+    pub fn usage_budget(
+        &self,
+        limit: Option<u64>,
+        strict_unknown: bool,
+    ) -> Result<Value, DomainError> {
+        self.rpc("usage_budget", json!([limit, strict_unknown]))
+    }
+
+    pub fn events(&self, after: u64, limit: u32) -> Result<Value, DomainError> {
+        self.rpc("events", json!([after, limit]))
+    }
+
     pub fn summary(&self) -> Result<Value, DomainError> {
-        self.rpc("summary", json!([]))
+        self.summary_since(None)
+    }
+
+    pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
+        self.rpc("summary", json!([since]))
     }
 }
 

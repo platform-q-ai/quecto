@@ -19,6 +19,11 @@ pub enum CancelSlot {
     Idle,
     /// A run is in progress; drop this sender to cancel it.
     Armed(tokio::sync::oneshot::Sender<()>),
+    ScopedArmed(
+        tokio::sync::oneshot::Sender<()>,
+        crate::domain::swarm::RunStatus,
+        u64,
+    ),
     /// Cancel was requested before the run started (or while arming).
     /// The next call to [`arm_cancel`] will immediately return `None`.
     Fired,
@@ -41,11 +46,22 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 ///   so the steered instruction is obeyed next instead of being overridden.
 #[derive(Default)]
 pub struct TurnControl {
+    pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    pub(crate) swarm_control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
     abort_requested: std::sync::atomic::AtomicBool,
     pending_steers: std::sync::atomic::AtomicUsize,
 }
 
 impl TurnControl {
+    pub fn with_swarm_control(
+        control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
+    ) -> Self {
+        Self {
+            swarm_control: control,
+            ..Self::default()
+        }
+    }
+
     /// Reader: record a full-stop abort ahead of dispatch (#895).
     pub fn mark_abort(&self) {
         self.abort_requested
@@ -115,7 +131,7 @@ pub type TurnControlHandle = std::sync::Arc<TurnControl>;
 pub fn fire_cancel(handle: &CancelHandle) {
     let mut guard = handle.lock().expect("CancelSlot mutex poisoned");
     match std::mem::replace(&mut *guard, CancelSlot::Idle) {
-        CancelSlot::Armed(tx) => {
+        CancelSlot::Armed(tx) | CancelSlot::ScopedArmed(tx, _, _) => {
             let _ = tx.send(());
             // Slot is now Idle — the prompt cleans up after the select!.
         }
@@ -159,7 +175,10 @@ pub fn arm_cancel(handle: &CancelHandle) -> Option<tokio::sync::oneshot::Receive
 /// Panics if the `CancelSlot` mutex is poisoned (indicates a bug elsewhere).
 pub fn disarm_cancel(handle: &CancelHandle) {
     let mut guard = handle.lock().expect("CancelSlot mutex poisoned");
-    if matches!(*guard, CancelSlot::Armed(_)) {
+    if matches!(
+        *guard,
+        CancelSlot::Armed(_) | CancelSlot::ScopedArmed(_, _, _)
+    ) {
         *guard = CancelSlot::Idle;
     }
 }
@@ -334,11 +353,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     } = args;
 
     agent_session.set_streaming(true);
-    if let Some(state) = &execution_state {
-        if let Ok(mut state) = state.lock() {
-            state.start_run();
-        }
-    }
+    update_execution(&execution_state, |state| state.start_run());
     // Commit the prompt synchronously before the first await. Workflow-nudge
     // admission polls this future once while holding the subagent registry lock;
     // this push is therefore the linearization point between an admitted nudge
@@ -352,13 +367,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     sink.emit(&AgentEvent::AgentStart).await;
     sink.emit(&AgentEvent::TurnStart).await;
-    if let Some(state) = &execution_state {
-        if let Ok(mut state) = state.lock() {
-            let visible_count = user_visible_messages(messages, system_prompt).len();
-            state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
-            state.set_message_count(visible_count);
-        }
-    }
+    update_execution(&execution_state, |state| {
+        let visible_count = user_visible_messages(messages, system_prompt).len();
+        state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
+        state.set_message_count(visible_count);
+    });
     if let Some(snapshot) = &conversation_snapshot {
         let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
         let advance = snapshot.write().await.publish(&visible);
@@ -369,19 +382,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
     // large enough to never block under normal streaming throughput.
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
-    let live_execution = execution_state.clone();
-    agent.set_progress_callback(Some(Arc::new(move |ev| {
-        // Operational telemetry is recorded synchronously before the lossy UI
-        // channel, so a saturated event stream cannot hide tool/message progress.
-        if let Some(state) = &live_execution {
-            if let Ok(mut state) = state.lock() {
-                state.observe(&ev);
-            }
-        }
-        // try_send: drop event if the channel is full rather than blocking
-        // the synchronous callback. Dropped presentation events are acceptable.
-        let _ = progress_tx.try_send(ev);
-    })));
+    install_progress_callback(agent, execution_state.clone(), progress_tx);
 
     // Run process() + token drain concurrently, with cancel support.
     let (result, notifications, tokens_emitted) = run_with_token_drain(TokenDrainArgs {
@@ -396,6 +397,23 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     })
     .await;
 
+    let result = match agent.flush_request_accounting().await {
+        Ok(()) => result,
+        Err(error) => {
+            tracing::error!(%error, "request accounting remains pending; suspending automatic turns");
+            Some(Err(error))
+        }
+    };
+    agent_session.record_request_diagnostics(agent.take_request_diagnostics());
+    let recorded_usage = agent.take_unreported_usage();
+    agent_session.record_usage(
+        recorded_usage.billed_input_tokens,
+        recorded_usage.billed_output_tokens,
+        recorded_usage.cache_read_tokens,
+        recorded_usage.cache_write_tokens,
+        recorded_usage.cost_micro_usd,
+    );
+
     // The CLI UDS boundary owns a mutable agent and is therefore the real
     // production boundary where queued AtNextTurnBoundary policy mutations can
     // be drained before the next prompt snapshots tool definitions.
@@ -404,11 +422,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // Clear the callback so it doesn't hold the closed sender.
     agent.set_progress_callback(None);
     agent_session.set_streaming(false);
-    if let Some(state) = &execution_state {
-        if let Ok(mut state) = state.lock() {
-            state.finish_run();
-        }
-    }
+    update_execution(&execution_state, |state| state.finish_run());
 
     // Auto-await (#816): completions that arrived mid-turn are buffered here as
     // pending notes — NOT injected into the turn that just ran. They surface at
@@ -444,7 +458,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
-            agent_session.record_agent_result(&agent_result);
+            agent_session.set_context_tokens(agent_result.context_tokens);
             // Tool events are forwarded in real-time via forward_progress_event
             // — emitting them again here would duplicate events with conflicting
             // IDs.
@@ -514,6 +528,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Success
         }
         Some(Err(e)) => {
+            agent_session.automatic_turns_allowed = false;
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error
@@ -689,9 +704,43 @@ pub async fn forward_progress_event(
     forward_progress_event_sink(ev, &mut EventSink::writer(stdout)).await;
 }
 
+fn install_progress_callback(
+    agent: &mut AgentLoopImpl,
+    live_execution: Option<super::uds_execution_state::ExecutionStateHandle>,
+    progress_tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
+) {
+    agent.set_progress_callback(Some(Arc::new(move |ev| {
+        // Operational telemetry is recorded synchronously before the lossy UI
+        // channel, so a saturated event stream cannot hide tool/message progress.
+        if let Some(state) = &live_execution {
+            if let Ok(mut state) = state.lock() {
+                state.observe(&ev);
+            }
+        }
+        // try_send: drop event if the channel is full rather than blocking
+        // the synchronous callback. Dropped presentation events are acceptable.
+        let _ = progress_tx.try_send(ev);
+    })));
+}
+
+fn update_execution(
+    handle: &Option<super::uds_execution_state::ExecutionStateHandle>,
+    update: impl FnOnce(&mut super::uds_execution_state::ExecutionState),
+) {
+    if let Some(handle) = handle {
+        if let Ok(mut state) = handle.lock() {
+            update(&mut state);
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "uds_cancel_1060_tests.rs"]
 mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
+
+#[path = "uds_swarm_turn.rs"]
+mod swarm_turn;
+pub(super) use swarm_turn::{arm_swarm_cancel, suspend_swarm_turn};

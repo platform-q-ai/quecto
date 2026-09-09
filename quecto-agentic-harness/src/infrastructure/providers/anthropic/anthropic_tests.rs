@@ -53,6 +53,8 @@ async fn test_chat_text_response() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -105,6 +107,8 @@ async fn test_chat_with_tool_use() {
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-6",
@@ -138,6 +142,8 @@ async fn test_chat_server_error() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -222,6 +228,8 @@ data: {}\n\n";
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -261,6 +269,8 @@ async fn test_chat_with_system_prompt() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::system("You are helpful."), Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -435,6 +445,8 @@ fn test_parse_response_extracts_cache_usage() {
 fn test_build_request_body_system_prompt_has_cache_control() {
     let messages = vec![Message::system("You are helpful."), Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -474,6 +486,8 @@ fn test_build_request_body_last_user_message_has_cache_control() {
         Message::user("Second message"),
     ];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -590,6 +604,8 @@ fn test_build_request_body_includes_tool_choice_auto() {
         parameters_schema: "{}".into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-6",
@@ -615,6 +631,8 @@ fn test_build_request_body_includes_tool_choice_any() {
         parameters_schema: "{}".into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-6",
@@ -640,6 +658,8 @@ fn test_build_request_body_includes_tool_choice_specific() {
         parameters_schema: "{}".into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "claude-sonnet-4-6",
@@ -663,6 +683,8 @@ fn test_build_request_body_includes_tool_choice_specific() {
 fn test_build_request_body_includes_metadata_user_id() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -685,6 +707,8 @@ fn test_build_request_body_includes_metadata_user_id() {
 fn test_build_request_body_omits_metadata_when_none() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -705,34 +729,8 @@ fn test_build_request_body_omits_metadata_when_none() {
 // fine-grained-tool-streaming is now GA — the header must NOT be sent.
 // The dedicated test for this lives in anthropic_thinking_tests.rs.
 
-// --- normalize_messages clone-on-write tests (#374) ---
-
-#[test]
-fn test_normalize_messages_does_not_clone_unmodified_messages() {
-    // Messages with no tool calls need no normalization — they should be
-    // returned as borrowed Cow::Borrowed, not deep-cloned.
-    let messages = vec![
-        Message::user("hello"),
-        Message::assistant("world", vec![]),
-        Message::user("follow up"),
-    ];
-
-    let normalized = AnthropicProvider::normalize_messages(&messages);
-    assert_eq!(normalized.len(), 3);
-
-    // Verify pointer equality: each Cow::Borrowed should point to the
-    // original message, not a clone.
-    for (i, cow) in normalized.iter().enumerate() {
-        let original_ptr = &messages[i] as *const Message;
-        // Cow::Borrowed derefs to the original; Cow::Owned derefs to a new alloc.
-        let normalized_ptr: *const Message = &**cow;
-        assert_eq!(
-            original_ptr, normalized_ptr,
-            "message {} should be Cow::Borrowed (same pointer), not cloned",
-            i
-        );
-    }
-}
+#[path = "anthropic_normalize_tests.rs"]
+mod normalize_tests;
 
 // Thinking tests are in anthropic_thinking_tests.rs (split for 750-line limit)
 #[path = "anthropic_thinking_tests.rs"]

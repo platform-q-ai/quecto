@@ -425,6 +425,10 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
+    let agent = super::swarm_composition::wire_agent(
+        agent,
+        crate::interface::tool_runtime::swarm_context(),
+    );
     Some(AgentBuildResult {
         agent,
         workflow_config: wf_config,
@@ -559,15 +563,9 @@ use crate::interface::shared::scrub_ephemeral_spill;
 /// per-tool and HTTP client timeouts), then the scope exits.
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
 /// Resolve UDS persistence key.
-fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {
-    if ephemeral {
-        String::new()
-    } else if let Some(name) = session_name {
-        crate::domain::session::Session::build_key("cli", name)
-    } else {
-        crate::interface::shared::generate_chat_key()
-    }
-}
+#[path = "agent_session_identity.rs"]
+mod session_identity;
+use session_identity::resolve_uds_session_key;
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before

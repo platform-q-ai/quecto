@@ -266,7 +266,7 @@ async fn ready_failure_retains_launched_scope_after_child_rollback() {
 }
 
 #[tokio::test]
-async fn expired_budget_falls_back_to_termination_when_abort_endpoint_is_unavailable() {
+async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);
@@ -295,8 +295,8 @@ async fn expired_budget_falls_back_to_termination_when_abort_endpoint_is_unavail
     let _ = super::swarm_lifecycle::settle(context).await;
     let exit = tokio::time::timeout(std::time::Duration::from_millis(500), child.wait()).await;
     assert!(
-        exit.is_ok(),
-        "unavailable abort socket allowed work past its budget"
+        exit.is_err(),
+        "coordinator must remain available for diagnostic reports"
     );
 }
 
@@ -320,25 +320,6 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
     coordinator
         .register_endpoint(socket.to_str().unwrap())
         .unwrap();
-    let accepts_abort = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let (read, mut write) = tokio::io::split(stream);
-        let mut read = tokio::io::BufReader::new(read);
-        let bytes = quecto_line_io::read_frame(&mut read, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
-            .await
-            .unwrap()
-            .unwrap();
-        let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(command["type"], "abort");
-        let response = json!({"type":"response", "id":command["id"], "success":true});
-        quecto_line_io::write_frame(
-            &mut write,
-            response.to_string().as_bytes(),
-            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
-        )
-        .await
-        .unwrap();
-    });
     let start = tool.execute(r#"{"code":"import time, pathlib; pathlib.Path('writer-ready').touch()\nwhile not pathlib.Path('release-writer').exists(): time.sleep(0.01)\nopen('late-write','w').write('unsafe')","background":true}"#).await.unwrap();
     assert!(!start.is_error, "{}", start.content);
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -353,10 +334,12 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
         .await
         .unwrap();
     assert!(!stop.is_error, "{}", stop.content);
-    tokio::time::timeout(std::time::Duration::from_secs(2), accepts_abort)
-        .await
-        .unwrap()
-        .unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err(),
+        "local suspension must not signal the coordinator through its socket"
+    );
     std::fs::write(directory.path().join("release-writer"), "go").unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     assert!(
@@ -497,7 +480,7 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
 }
 
 #[tokio::test]
-async fn live_wake_hint_is_coalesced_and_teaches_terminal_safe_inspection() {
+async fn live_wake_hint_is_coalesced_and_carries_an_actionable_generation() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 2);
@@ -519,12 +502,9 @@ async fn live_wake_hint_is_coalesced_and_teaches_terminal_safe_inspection() {
             .unwrap()
             .unwrap();
         let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let message = command["message"].as_str().unwrap();
-        assert!(
-            message.contains("op=summary")
-                && message.contains("terminal")
-                && message.contains("artifact export")
-        );
+        assert_eq!(command["type"], "swarm_control");
+        assert_eq!(command["action"], "wake");
+        assert!(command["generation"].as_u64().unwrap() > 0);
         let response = json!({"type":"response","id":command["id"],"success":true});
         quecto_line_io::write_frame(
             &mut write,
@@ -604,4 +584,158 @@ async fn foreground_terminal_watcher(outcome: &str) {
     );
     assert_eq!(context.summary().unwrap()["status"], outcome);
     assert!(result.content.contains("cancelled"), "{}", result.content);
+}
+
+#[test]
+fn pause_receipt_uses_control_generation_and_is_idempotent() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    let paused = context.pause("await supervisor").unwrap();
+    assert_eq!(paused["status"], "paused");
+    let generation = paused["generation"]
+        .as_u64()
+        .expect("transaction control generation");
+    assert!(generation > 0);
+    assert_eq!(context.pause("same pause").unwrap(), paused);
+    let resumed = context.resume().unwrap();
+    assert_eq!(resumed["status"], "running");
+    assert!(resumed["generation"].as_u64().unwrap() > generation);
+    assert_eq!(context.resume().unwrap(), resumed);
+}
+
+#[tokio::test]
+async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
+    use crate::domain::provider::RequestAdmission;
+    for status in ["failed", "blocked", "cancelled"] {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = context(&directory);
+        create(&parent, 2);
+        parent
+            .call("stop", json!([status, "retain diagnostic report"]))
+            .unwrap();
+        assert!(
+            parent.check().await.is_ok(),
+            "coordinator report unavailable for {status}"
+        );
+        let worker = SwarmContext {
+            member: "worker".into(),
+            ..parent.clone()
+        };
+        assert!(
+            worker.check().await.is_err(),
+            "terminal worker admitted for {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn summary_cursor_suppresses_unchanged_tool_payload_and_rejects_bad_cursors() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    let cursor = context.summary().unwrap()["event_cursor"].clone();
+    let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
+        .await
+        .unwrap();
+    assert_eq!(delta["unchanged"], true);
+    assert!(delta.to_string().len() < 150);
+    for input in [json!({"since":-1}), json!({"since":"bad"})] {
+        assert!(
+            super::swarm_control::control(context.clone(), "summary", input)
+                .await
+                .is_err()
+        );
+    }
+    for input in [
+        json!({"limit":101}),
+        json!({"limit":0}),
+        json!({"after":-1}),
+    ] {
+        assert!(
+            super::swarm_control::control(context.clone(), "events", input)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn resumed_swarm_can_start_python_jobs_after_suspension() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = Arc::new(directory.path().to_path_buf());
+    let tool = super::swarm_test_support::tool(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+        SwarmConfig::default(),
+    );
+    let context = SwarmContext {
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+    };
+    context.pause("inspect retained state").unwrap();
+    super::swarm_lifecycle::settle(context.clone())
+        .await
+        .unwrap();
+    context.resume().unwrap();
+    let result = tool
+        .execute(r#"{"code":"print('resumed')"}"#)
+        .await
+        .unwrap();
+    assert!(
+        !result.is_error,
+        "resume permanently closed the execution registry: {}",
+        result.content
+    );
+    assert!(result.content.contains("resumed"));
+}
+
+#[tokio::test]
+async fn terminal_tool_admission_allows_only_native_read_operations() {
+    use crate::domain::tool::ToolExecutionAdmission;
+    let directory = tempfile::tempdir().unwrap();
+    let parent = context(&directory);
+    create(&parent, 2);
+    parent.call("stop", json!(["failed", "report"])).unwrap();
+    for op in ["summary", "events", "usage"] {
+        assert!(
+            parent
+                .check("swarm", &json!({"op":op}).to_string())
+                .await
+                .is_ok()
+        );
+    }
+    for (name, args) in [
+        ("bash", "{}"),
+        ("spawn_agent", "{}"),
+        ("swarm", r#"{"op":"run","code":"print(1)"}"#),
+        ("swarm", r#"{"op":"resume"}"#),
+        ("swarm", "{}"),
+        ("swarm", "invalid"),
+    ] {
+        assert!(
+            parent.check(name, args).await.is_err(),
+            "admitted {name}: {args}"
+        );
+    }
+    let worker = SwarmContext {
+        member: "worker".into(),
+        ..parent
+    };
+    assert!(worker.check("swarm", r#"{"op":"summary"}"#).await.is_err());
+}
+
+#[tokio::test]
+async fn paused_summary_delta_is_read_only_and_stays_compact() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    context.pause("inspection").unwrap();
+    let cursor = context.summary().unwrap()["event_cursor"].clone();
+    let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
+        .await
+        .unwrap();
+    assert_eq!(delta["unchanged"], true);
+    assert!(delta.to_string().len() < 150);
 }

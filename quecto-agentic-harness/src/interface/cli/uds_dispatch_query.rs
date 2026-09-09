@@ -24,6 +24,19 @@ pub(super) async fn dispatch_fieldless_command(
 ) -> Option<bool> {
     let id = cmd.id();
     let tn = cmd.type_name();
+    if let AgentCommand::GetReport { export_raw, .. } = cmd {
+        ctx.conversation_snapshot.write().await.export_root =
+            Some(ctx.base_dir.join("artifacts/session-exports"));
+        let event =
+            match super::super::uds_latest_report::report(&ctx.conversation_snapshot, *export_raw)
+                .await
+            {
+                Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+                Err(error) => AgentEvent::err(id, tn, error),
+            };
+        emit_event_to_broadcast_or_writer(ctx, &event).await;
+        return Some(false);
+    }
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
         let event = match ctx.session_store.list(None).await {
             Ok(sessions) => AgentEvent::ok(

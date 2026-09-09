@@ -695,15 +695,15 @@ fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
 }
 
 #[test]
-fn agent_schema_hides_internal_message_lookup_but_parser_preserves_it() {
+fn agent_schema_exposes_supported_message_recovery() {
     let definition = empty_tool().definition();
     let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
     let properties = &schema["properties"];
     let commands = properties["command"]["enum"].as_array().unwrap();
     assert!(commands.iter().any(|command| command == "get_messages"));
-    assert!(!commands.iter().any(|command| command == "get_message"));
+    assert!(commands.iter().any(|command| command == "get_message"));
     for internal_field in ["messageId", "offset", "limit", "toolCallId"] {
-        assert!(properties.get(internal_field).is_none());
+        assert!(properties.get(internal_field).is_some());
     }
     assert!(
         properties["agent_id"]["description"]
@@ -728,3 +728,20 @@ fn agent_schema_hides_internal_message_lookup_but_parser_preserves_it() {
 
 #[path = "agent_cmd_trial_tests.rs"]
 mod trial_tests;
+
+#[test]
+fn unpersisted_report_does_not_advance_the_durable_delivery_watermark() {
+    let response = serde_json::json!({"success":true,"data":{"messages":[
+        {"id":"old","role":"user","content":"old","ordinal":100},
+        {"id":"current","role":"assistant","content":"current report","ordinal":null}
+    ]}})
+    .to_string();
+    let plan = crate::infrastructure::tools::agent_cmd_report::plan_default_report(&response, 100);
+    assert!(
+        plan.pending.is_none(),
+        "unpersisted report must not invent a durable ordinal"
+    );
+    let value: serde_json::Value = serde_json::from_str(&plan.content).unwrap();
+    assert_eq!(value["data"]["cursorNeutral"], true);
+    assert_eq!(value["data"]["messages"][0]["id"], "current");
+}

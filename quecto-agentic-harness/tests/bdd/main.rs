@@ -960,6 +960,7 @@ pub struct QuectoWorld {
     /// Live multi-client: agent thread handle.
     pub _mc_live_handle: Option<std::thread::JoinHandle<i32>>,
     /// Live multi-client: open client streams.
+    pub _mc_event_readers: HashMap<u32, uds_event_reader::EventReader>,
     pub _mc_live_streams: std::collections::HashMap<u32, std::os::unix::net::UnixStream>,
     /// Live multi-client: use phased live driver instead of batch execute.
     pub _mc_live_busy: bool,
@@ -1430,6 +1431,8 @@ mod tui_architecture_steps;
 mod tui_context_usage_steps;
 mod uds_1093_steps;
 mod uds_bounded_events_steps;
+#[path = "../common/uds_event_reader.rs"]
+mod uds_event_reader;
 mod uds_framing_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;

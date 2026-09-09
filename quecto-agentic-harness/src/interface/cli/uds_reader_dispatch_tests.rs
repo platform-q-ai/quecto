@@ -101,3 +101,110 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
         ));
     }
 }
+
+struct TestSwarmControl;
+impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
+    fn apply(
+        &self,
+        _: crate::domain::swarm::RunControlAction,
+    ) -> crate::domain::subagent_launch::LaunchFuture<
+        '_,
+        Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
+    > {
+        Box::pin(async {
+            Ok(crate::domain::swarm::RunControlReceipt {
+                budget: None,
+                wake_allowed: false,
+                status: crate::domain::swarm::RunStatus::Paused,
+                generation: 42,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt() {
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+    super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+    let (commands, _receiver) = tokio::sync::mpsc::channel(1);
+    commands
+        .send(ClientMessage::Command(ClientCommand {
+            line: "occupied".into(),
+            client_id: 1,
+        }))
+        .await
+        .unwrap();
+    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let (broadcast, _) = tokio::sync::broadcast::channel(4);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
+        std::sync::Arc::new(TestSwarmControl),
+    ));
+    assert!(control.swarm_control.is_some());
+    let completed = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        dispatch(ReaderDispatchCtx {
+            line: r#"{"type":"swarm_control","action":"pause","id":"pause-42"}"#.into(),
+            cancel_handle: &cancel,
+            turn_control: &control,
+            snapshot: &snapshot,
+            registry: &registry,
+            subagent_registry: &None,
+            broadcast_tx: &broadcast,
+            client_id: 1,
+            cmd_tx: &commands,
+        }),
+    )
+    .await;
+    assert!(
+        completed.is_ok(),
+        "pause must bypass saturated command queue"
+    );
+    let response: serde_json::Value = serde_json::from_str(&replies.recv().await.unwrap()).unwrap();
+    assert_eq!(response["id"], "pause-42");
+    assert_eq!(response["data"]["status"], "paused");
+    assert_eq!(response["data"]["generation"], 42);
+}
+
+#[tokio::test]
+async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+    super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+    let (commands, _receiver) = tokio::sync::mpsc::channel(1);
+    commands
+        .send(ClientMessage::Command(ClientCommand {
+            line: "occupied".into(),
+            client_id: 1,
+        }))
+        .await
+        .unwrap();
+    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let (broadcast, _) = tokio::sync::broadcast::channel(4);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
+        std::sync::Arc::new(TestSwarmControl),
+    ));
+    assert!(control.swarm_control.is_some());
+    let completed = tokio::time::timeout(std::time::Duration::from_millis(250), dispatch(ReaderDispatchCtx {
+        line: r#"{"type":"swarm_control","action":"pause","agent_id":"missing-descendant","id":"pause-42"}"#.into(),
+        cancel_handle: &cancel, turn_control: &control, snapshot: &snapshot,
+        registry: &registry, subagent_registry: &None, broadcast_tx: &broadcast,
+        client_id: 1, cmd_tx: &commands,
+    })).await;
+    assert!(
+        completed.is_ok(),
+        "pause must bypass saturated command queue"
+    );
+    let response: serde_json::Value = serde_json::from_str(&replies.recv().await.unwrap()).unwrap();
+    assert_eq!(response["id"], "pause-42");
+    assert_eq!(
+        response["success"], false,
+        "targeted command must not mutate the receiver"
+    );
+}

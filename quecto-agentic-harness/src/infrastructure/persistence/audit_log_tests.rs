@@ -84,6 +84,7 @@ async fn appends_multiple_events_in_order() {
     log.emit(
         2,
         AuditEvent::LlmTurnEnd {
+            usage_source: None,
             input_tokens: 5000,
             output_tokens: 500,
             stop_reason: "end_turn".into(),
@@ -180,6 +181,7 @@ async fn all_event_types_write_successfully() {
             message_count: 5,
         },
         AuditEvent::LlmTurnEnd {
+            usage_source: None,
             input_tokens: 1000,
             output_tokens: 200,
             stop_reason: "end_turn".into(),

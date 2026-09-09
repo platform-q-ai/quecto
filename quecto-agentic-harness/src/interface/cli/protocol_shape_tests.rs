@@ -124,6 +124,8 @@ fn get_state_data_matches_spec_shape() {
 }
 fn make_test_stats() -> SessionStats {
     SessionStats {
+        runtime: None,
+        request_diagnostics: Default::default(),
         session_key: "cli:my-session".into(),
         user_messages: 5,
         assistant_messages: 5,

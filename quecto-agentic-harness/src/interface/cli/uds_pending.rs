@@ -10,7 +10,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         // at enqueue; #816 deferral is preserved (this only runs at idle).
         // The reader has admitted an explicit replacement instruction. Yield
         // to command dispatch before consuming buffered automated work.
-        if ctx.turn_control.is_steer_pending() {
+        if !ctx.session.automatic_turns_allowed || ctx.turn_control.is_steer_pending() {
             return;
         }
         let pending =
@@ -20,12 +20,63 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         let mut remaining = pending.into_iter();
         while let Some(pending_msg) = remaining.next() {
-            if ctx.turn_control.is_steer_pending() {
+            if !ctx.session.automatic_turns_allowed || ctx.turn_control.is_steer_pending() {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
             }
-            run_drained_message(ctx, pending_msg.into_message()).await;
+            if let Some(control) = &ctx.turn_control.swarm_control {
+                use crate::domain::swarm::{RunControlAction, RunStatus};
+                use crate::interface::cli::uds_session::PendingMessage;
+                let admission = match control.apply(RunControlAction::Status).await {
+                    Ok(receipt) => match receipt.status {
+                        RunStatus::Setup | RunStatus::Running => Some(true),
+                        RunStatus::Paused => None,
+                        RunStatus::Succeeded
+                        | RunStatus::Blocked
+                        | RunStatus::Failed
+                        | RunStatus::Cancelled
+                        | RunStatus::BudgetExhausted => Some(matches!(
+                            pending_msg,
+                            PendingMessage::User(_) | PendingMessage::Control { .. }
+                        )),
+                    },
+                    Err(error) => {
+                        let event =
+                            super::AgentEvent::err(None, "pending_admission", error.to_string());
+                        super::emit_event_to_broadcast_or_writer(ctx, &event).await;
+                        None
+                    }
+                };
+                match admission {
+                    Some(true) => {}
+                    Some(false) => continue,
+                    None => {
+                        ctx.session
+                            .restore_pending(std::iter::once(pending_msg).chain(remaining));
+                        return;
+                    }
+                }
+            }
+            let correlation = match &pending_msg {
+                crate::interface::cli::uds_session::PendingMessage::Control {
+                    id, command, ..
+                } => Some((id.clone(), command.clone())),
+                _ => None,
+            };
+            if let Some((id, command)) = &correlation {
+                ctx.session.record_control(
+                    Some(id),
+                    command,
+                    super::super::protocol::ControlStatus::Started,
+                );
+            }
+            let outcome = run_drained_message(ctx, pending_msg.into_message()).await;
+            if let Some((id, command)) = &correlation {
+                ctx.session
+                    .record_control(Some(id), command, super::control_status(&outcome));
+                super::super::uds_snapshots::refresh_busy_snapshots(ctx).await;
+            }
         }
     }
 }
@@ -39,12 +90,19 @@ pub(super) async fn queue_prompt(
     steer: bool,
 ) -> bool {
     let type_name = if steer { "steer" } else { type_name };
-    let retained = if steer {
+    if steer {
         ctx.turn_control.consume_steer();
-        ctx.session.prepend_pending(message)
-    } else {
-        ctx.session.enqueue_pending(message)
-    };
+    }
+    let retained = ctx.session.enqueue_control(id, type_name, message, steer);
+    ctx.session.record_control(
+        id,
+        type_name,
+        if retained {
+            super::super::protocol::ControlStatus::Queued
+        } else {
+            super::super::protocol::ControlStatus::Rejected
+        },
+    );
     let event = if retained {
         super::AgentEvent::ok(id, type_name, Some(serde_json::json!({"status":"queued"})))
     } else {

@@ -197,8 +197,13 @@ fn rejected_wake(world: &mut QuectoWorld) {
             .unwrap();
         let command = quecto::infrastructure::test_support::read_framed_command(&stream).unwrap();
         let command: serde_json::Value = serde_json::from_str(&command).unwrap();
-        assert_eq!(command["type"], "prompt");
-        assert!(command["message"].as_str().unwrap().contains("op=summary"));
+        assert_eq!(command["type"], "swarm_control");
+        assert_eq!(command["action"], "wake");
+        assert!(
+            command["generation"]
+                .as_u64()
+                .is_some_and(|value| value > 0)
+        );
         writeln!(stream,"{}",json!({"type":"response","id":command["id"],"success":false,"error":"control queue is full"})).unwrap();
     });
     run(
@@ -254,6 +259,8 @@ fn amend_criteria(world: &mut QuectoWorld) {
 
 #[then("the swarm audit retains both complete contracts")]
 fn contract_history(world: &mut QuectoWorld) {
+    let criteria = result_json(world)["criteria"].clone();
+    run(world, json!({"op":"events","limit":100}));
     let summary = result_json(world);
     let events = summary["events"].as_array().unwrap();
     let detail = |action: &str| -> serde_json::Value {
@@ -267,7 +274,7 @@ fn contract_history(world: &mut QuectoWorld) {
     let created = detail("created");
     let amended = detail("amended");
     assert_eq!(amended["before"], created["contract"]);
-    assert_eq!(amended["after"]["criteria"], summary["criteria"]);
+    assert_eq!(amended["after"]["criteria"], criteria);
     assert_ne!(amended["before"]["criteria"], amended["after"]["criteria"]);
     assert_eq!(amended["reason"], "approved change");
 }
@@ -388,4 +395,49 @@ fn no_idle_wake(world: &mut QuectoWorld) {
         "a stale hint attempted delivery to the unavailable peer: {}",
         result(world).content
     );
+}
+
+#[when("an owned blocked swarm task is unblocked")]
+fn unblock_owned_task(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; import json; t=board.task_create('approval-resume','work',['pass']); c=board.claim(t['id']); board.reserve(t['id'],c['token'],['owned.rs']); board.block(t['id'],c['token'],'approval'); board.unblock(t['id'],c['token'],'approved'); resumed=board.task(t['id']); print(json.dumps({'before':c['token'],'after':resumed['token'],'status':resumed['status'],'files':board.summary()['files']}))"}),
+    );
+}
+
+#[then("the resumed swarm task retains its claim and reserved file")]
+fn unblocked_ownership(world: &mut QuectoWorld) {
+    assert!(!result(world).is_error, "{}", result(world).content);
+    let value: serde_json::Value =
+        serde_json::from_str(result_json(world)["stdout"].as_str().unwrap()).unwrap();
+    assert_eq!(value["before"], value["after"]);
+    assert_eq!(value["status"], "claimed");
+    assert_eq!(value["files"][0]["path"], "owned.rs");
+}
+
+#[when("the supervisor durably pauses the swarm")]
+fn durable_pause(world: &mut QuectoWorld) {
+    run(world, json!({"op":"pause", "reason":"master approval"}));
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("the supervisor resumes the swarm")]
+fn durable_resume(world: &mut QuectoWorld) {
+    run(world, json!({"op":"resume"}));
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("the supervisor inspects the unchanged swarm cursor")]
+fn unchanged_inspection(world: &mut QuectoWorld) {
+    let cursor = result_json(world)["event_cursor"].clone();
+    run(world, json!({"op":"summary", "since":cursor}));
+}
+
+#[then("the swarm inspection is unchanged without task history")]
+fn unchanged_board(world: &mut QuectoWorld) {
+    let value = result_json(world);
+    assert_eq!(value["unchanged"], true);
+    assert!(value.get("tasks").is_none());
+    assert!(value.get("events").is_none());
+    assert!(result(world).content.len() < 150);
 }

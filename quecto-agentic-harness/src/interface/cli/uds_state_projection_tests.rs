@@ -6,6 +6,9 @@ use super::uds_state_projection::{
 
 fn state_with_execution(activity_generation: u64, progress_state: &str) -> SessionState {
     SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         model: "mock".into(),
         generation: 1,
         is_streaming: true,
@@ -245,4 +248,14 @@ fn projection_reports_the_durable_session_key() {
         data["sessionKey"], "chat-1787000000-deadbeef00000",
         "get_state must always report the session key: {data}"
     );
+}
+
+#[test]
+fn failure_circuit_is_visible_in_slim_supervision_state() {
+    let mut state = state_with_execution(7, "quiet");
+    state.automatic_turns_suspended = true;
+    state.repeated_failure_notifications = 12;
+    let data = slim_state_projection(&state);
+    assert_eq!(data["automaticTurnsSuspended"], true);
+    assert_eq!(data["repeatedFailureNotifications"], 12);
 }

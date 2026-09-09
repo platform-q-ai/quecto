@@ -7,7 +7,7 @@
 //! (4xx), `Auth` and `Cancelled` errors are passed straight through and never
 //! retried. When a `Retry-After` / `retry-after-ms` hint is present on a 429/529
 //! it is honoured for the backoff delay instead of the exponential default
-//! (clamped to `max_backoff`, since the hint comes from an untrusted string).
+//! (hints beyond `max_backoff` return the failure without retrying early).
 //!
 //! Only the non-streaming `chat()` path is retried: a stream cannot be replayed
 //! mid-flight, so `chat_stream` / `chat_stream_incremental` retry nothing here
@@ -118,16 +118,7 @@ impl RetryingProvider {
     /// The delay to wait before the next attempt. Honours a `Retry-After` /
     /// `retry-after-ms` hint on the error when present; otherwise uses bounded
     /// exponential backoff (`base * 2^(attempt-1)`, capped) plus jitter.
-    fn backoff_delay(&self, attempt: u32, err: &DomainError) -> Duration {
-        if let DomainError::Provider(msg) = err {
-            if let Some(hint) = parse_retry_after(&msg.to_ascii_lowercase()) {
-                // Clamp the provider-supplied hint to `max_backoff`. The value is
-                // parsed from an untrusted provider error string, so a hostile or
-                // buggy endpoint emitting e.g. `retry-after: 999999999` must not
-                // be able to block the turn in `sleep` past the bounded ceiling.
-                return hint.min(self.config.max_backoff);
-            }
-        }
+    fn backoff_delay(&self, attempt: u32) -> Duration {
         let exp = self
             .config
             .base_backoff
@@ -155,46 +146,6 @@ fn jitter(base: Duration) -> Duration {
     Duration::from_millis(nanos % base_ms)
 }
 
-/// Parse a `retry-after-ms` (milliseconds) or `retry-after` (seconds) hint from
-/// an already-lowercased provider error string.
-fn parse_retry_after(lowered: &str) -> Option<Duration> {
-    if let Some(ms) = number_after(lowered, "retry-after-ms") {
-        return Some(Duration::from_millis(ms));
-    }
-    if let Some(secs) = number_after(lowered, "retry-after") {
-        return Some(Duration::from_secs(secs));
-    }
-    None
-}
-
-/// Find `marker` in `s`, then parse the run of digits that follows (skipping
-/// separators like `:`, `=`, whitespace and quotes).
-fn number_after(s: &str, marker: &str) -> Option<u64> {
-    let rel = s.find(marker)?;
-    let rest = &s[rel + marker.len()..];
-    let bytes = rest.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b.is_ascii_digit() {
-            let mut value: u64 = 0;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                value = value
-                    .saturating_mul(10)
-                    .saturating_add((bytes[i] - b'0') as u64);
-                i += 1;
-            }
-            return Some(value);
-        }
-        if matches!(b, b':' | b'=' | b'"' | b'\'' | b' ' | b'\t') {
-            i += 1;
-            continue;
-        }
-        return None;
-    }
-    None
-}
-
 impl LlmProvider for RetryingProvider {
     fn name(&self) -> &str {
         self.inner.name()
@@ -211,6 +162,17 @@ impl LlmProvider for RetryingProvider {
         Box::pin(async move {
             let mut attempt: u32 = 1;
             loop {
+                // The loop already admitted the logical request; only retries
+                // re-check, so a first attempt never pays an extra admission
+                // round trip.
+                if attempt > 1 {
+                    if let Some(admission) = &request.admission {
+                        admission.check().await?;
+                    }
+                    if let Some(trace) = &request.trace {
+                        trace.retry();
+                    }
+                }
                 // Shallow clone (slice pointers + small Option fields) — the
                 // borrow lives for 'a so each attempt can re-forward it.
                 match self.inner.chat(request.clone()).await {
@@ -220,7 +182,13 @@ impl LlmProvider for RetryingProvider {
                         if !class.is_retryable() || attempt >= self.config.max_attempts {
                             return Err(err);
                         }
-                        let delay = self.backoff_delay(attempt, &err);
+                        let Some(delay) = crate::domain::provider_retry::bounded_delay(
+                            &err,
+                            self.backoff_delay(attempt),
+                            self.config.max_backoff,
+                        ) else {
+                            return Err(err);
+                        };
                         tracing::warn!(
                             target: "provider_retry",
                             attempt,

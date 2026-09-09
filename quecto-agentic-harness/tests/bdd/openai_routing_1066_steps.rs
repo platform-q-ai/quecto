@@ -270,6 +270,8 @@ fn when_send_agent_turn_with_tools(world: &mut QuectoWorld, model: String) {
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: &model,

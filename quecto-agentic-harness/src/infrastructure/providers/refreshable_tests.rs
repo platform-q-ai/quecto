@@ -100,6 +100,8 @@ impl LlmProvider for MockSuccessProvider {
 
 fn test_request() -> ChatRequest<'static> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test-model",
@@ -343,6 +345,8 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
     let original_ptr = messages.as_ptr() as usize;
 
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "test-model",
@@ -494,6 +498,8 @@ fn is_refreshable_auth_error_only_true_for_auth() {
 fn owned_request_roundtrip_preserves_fields() {
     let msgs = vec![crate::domain::message::Message::user("hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &msgs,
         tools: &[],
         model: "openai/gpt-5.2",
@@ -519,6 +525,8 @@ fn owned_request_roundtrip_preserves_fields() {
 fn owned_request_roundtrip_with_none_session() {
     let msgs = vec![crate::domain::message::Message::user("yo")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &msgs,
         tools: &[],
         model: "anthropic/claude-haiku-4-5",
@@ -720,25 +728,5 @@ async fn mock_streaming_provider_trait_surface_is_exercised() {
     assert!(rx.recv().await.is_none());
 }
 
-#[tokio::test]
-async fn refreshable_delegates_chat_stream_incremental_to_inner_provider() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let provider = RefreshableProvider::new(RefreshableConfig {
-        inner: Arc::new(MockStreamingProvider),
-        store: Arc::new(CredentialStore::new(tmp.path())),
-        provider_name: "anthropic".to_string(),
-        credential_provider: "anthropic".to_string(),
-        refresh_fn: make_mock_refresh("unused"),
-        factory: noop_factory(),
-    });
-
-    let mut rx = provider.chat_stream_incremental(test_request()).await;
-    assert!(matches!(
-        rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::TextDelta(text)) if text == "stream"
-    ));
-    assert!(matches!(
-        rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stream-done")
-    ));
-}
+#[path = "refreshable_admission_tests.rs"]
+mod admission_tests;

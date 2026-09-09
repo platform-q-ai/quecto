@@ -60,6 +60,8 @@ async fn send_turn_with_tools(
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model,
@@ -158,6 +160,8 @@ async fn send_toolless_turn_with_effort(
     ];
     let tools: Vec<ToolDefinition> = vec![];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model,

@@ -11,6 +11,8 @@ async fn stub_provider_trait_methods_are_scripted() {
     let provider = make_stub_provider();
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub-model",
@@ -34,6 +36,8 @@ async fn stub_provider_trait_methods_are_scripted() {
 
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub-model",
@@ -51,6 +55,8 @@ async fn stub_provider_trait_methods_are_scripted() {
 
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub-model",

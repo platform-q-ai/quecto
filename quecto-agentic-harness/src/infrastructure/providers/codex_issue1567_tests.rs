@@ -19,6 +19,8 @@ async fn test_codex_provider_success() {
     let messages = vec![Message::system("You are helpful."), Message::user("hello")];
     let result = provider
         .chat(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "gpt-5.6-luna",

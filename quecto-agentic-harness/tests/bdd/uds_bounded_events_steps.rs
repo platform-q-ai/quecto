@@ -1656,37 +1656,24 @@ fn send_queued_commands_live(world: &mut QuectoWorld) {
 }
 
 fn drain_client_events(world: &mut QuectoWorld, client_id: u32, budget: Duration) {
-    let Some(stream) = world._mc_live_streams.get(&client_id) else {
-        return;
-    };
-    let Ok(reader_stream) = stream.try_clone() else {
-        return;
-    };
-    reader_stream
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .ok();
-    let mut reader = BufReader::new(reader_stream);
+    let reader = world._mc_event_readers.entry(client_id).or_insert_with(|| {
+        let stream = world
+            ._mc_live_streams
+            .get(&client_id)
+            .expect("connected UDS client");
+        super::uds_event_reader::EventReader::new(stream.try_clone().expect("clone UDS reader"))
+            .expect("configure UDS reader")
+    });
     let deadline = Instant::now() + budget;
     let events = world.mc_client_events.entry(client_id).or_default();
     while Instant::now() < deadline {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let line = line.trim_end().to_string();
-                if !line.is_empty() {
-                    events.push(line);
-                }
-            }
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                // keep draining until budget
-            }
-            Err(_) => break,
+        if let Some(line) = reader.poll().expect("read UDS event")
+            && !line.is_empty()
+        {
+            events.push(line);
+        }
+        if reader.at_eof() {
+            break;
         }
     }
 }
@@ -1780,6 +1767,7 @@ fn finalize_mc_live(world: &mut QuectoWorld) {
         // Send any leftover commands first.
         send_queued_commands_live(world);
         drain_client_events(world, cid, Duration::from_secs(2));
+        world._mc_event_readers.remove(&cid);
         if let Some(stream) = world._mc_live_streams.remove(&cid) {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
