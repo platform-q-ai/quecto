@@ -65,6 +65,9 @@ fn persisted_folder_key_round_trips_without_consulting_the_filesystem() {
 
     assert_eq!(restored, original);
     assert_eq!(restored.encoded_key(), persisted);
+    assert!(FolderIdentity::from_encoded_key("unix:0").is_none());
+    assert!(FolderIdentity::from_encoded_key("unix:gg").is_none());
+    assert!(FolderIdentity::from_encoded_key("unknown:00").is_none());
 }
 
 #[test]

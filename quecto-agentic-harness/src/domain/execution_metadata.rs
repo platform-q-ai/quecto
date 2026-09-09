@@ -280,5 +280,13 @@ mod execution_backend_tests {
             ExecutionBackend::from_marker(Some(OsStr::new("1"))),
             ExecutionBackend::NonNative
         );
+        assert_eq!(
+            ExecutionBackend::from_marker(Some(OsStr::new("yes"))),
+            ExecutionBackend::NonNative
+        );
+        assert_eq!(
+            ExecutionBackend::from_marker(Some(OsStr::new("true"))),
+            ExecutionBackend::NonNative
+        );
     }
 }
