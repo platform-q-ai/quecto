@@ -43,3 +43,26 @@ fn harness_runtime_keeps_a_resident_blocking_thread() {
     let second = runtime.block_on(blocking_thread());
     assert_eq!(first, second, "the warm thread is reused, never retired");
 }
+
+/// The test-support execution-state and ledger-hint probes are part of the
+/// lib's public surface for the BDD suites; pin their shapes here too.
+#[tokio::test]
+async fn test_support_probes_report_live_and_completed_execution_state() {
+    use crate::domain::agent::AgentProgressEvent;
+    let started = AgentProgressEvent::ToolStarted {
+        tool_call_id: "c1".into(),
+        name: "bash".into(),
+        arguments: "{}".into(),
+    };
+    let live = super::live_execution_state_for_events(std::slice::from_ref(&started));
+    assert_eq!(live["execution"]["phase"], "runningTool");
+    assert_eq!(live["execution"]["tools"]["started"], 1);
+    let done = super::completed_live_execution_state(&[started]);
+    assert_eq!(done["execution"]["phase"], "idle");
+    assert_eq!(done["messageCount"], 0);
+    let hints = super::ledger_hint_lines_for_turn_events(&[AgentProgressEvent::Done]).await;
+    assert!(
+        hints.iter().all(|line| line.is_object()),
+        "every emitted line is a JSON event: {hints:?}"
+    );
+}
