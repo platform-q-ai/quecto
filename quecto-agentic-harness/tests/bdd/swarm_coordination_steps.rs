@@ -298,7 +298,7 @@ fn permit_subprocesses(world: &mut QuectoWorld) {
 #[when(expr = "a {string} swarm interpreter returns before its ordinary child")]
 fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
     assert!(matches!(mode.as_str(), "foreground" | "background"));
-    let child = "import pathlib,time,os; pathlib.Path('child-ready').write_text(str(os.getpid())); time.sleep(10)";
+    let child = "import pathlib,time,os; p=pathlib.Path('child-ready'); tmp=p.with_suffix('.tmp'); tmp.write_text(str(os.getpid())); tmp.replace(p); time.sleep(10)";
     let code = format!(
         "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
         json!(child)
