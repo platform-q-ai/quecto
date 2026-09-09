@@ -31,3 +31,18 @@ Nine findings (4 medium, 5 low/info), all fixed test-first:
 |L7 sleeps as oracles|contract and BDD poll until the attempt is waiting; elapsed asserted strictly increasing|contract + `inference_admission_observation_steps.rs`|
 |L8 trivial/dead assertions, untested claims|removed; two-group, unavailable and clamp cases added|—|
 |I9 steps file over 750 lines|P4 steps moved to `inference_admission_observation_steps.rs`|—|
+
+## Mutations (slice 1, after review fixes)
+    === MUTANT Q1 cooldown anchored at feedback time [cooldown_is_anchored]
+      test infrastructure::admission::observed_gate::tests::cooldown_is_anchored_at_the_grant_and_kept_per_group ... FAILED
+    === MUTANT Q2 excessive advice not unavailable [no_hint_and_unavailable]
+      test infrastructure::admission::observed_gate::tests::no_hint_and_unavailable_throttles_are_visible_states ... FAILED
+    === MUTANT Q3 no-hint throttle invisible [no_hint_and_unavailable]
+      test infrastructure::admission::observed_gate::tests::no_hint_and_unavailable_throttles_are_visible_states ... FAILED
+    === MUTANT Q5 hidden count dropped [counts_stay_exact]
+      test infrastructure::admission::observed_gate::tests::counts_stay_exact_beyond_the_bounded_sample ... FAILED
+    === MUTANT Q4b dropped permit counted as cancelled: killed (dropped_permit_is_abandonment_and_finish_is_completion)
+    === MUTANT Q6b refusal reason unbounded: killed (refusal_reason_is_recorded_per_group_and_byte_bounded)
+    === MUTANT Q7b refusal recorded on the wrong group: killed (same)
+
+Earlier round (O1–O6): dropped wait stays live, unbounded view, elapsed not reported, process gates unobserved all killed; O2/O5 were dead-code compile errors superseded by Q1–Q7.
