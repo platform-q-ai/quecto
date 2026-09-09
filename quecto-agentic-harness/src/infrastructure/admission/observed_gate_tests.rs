@@ -380,6 +380,8 @@ async fn transitions_bump_the_revision_and_notify_the_hook() {
 
 /// Transitions on many workers still reach the hook in revision order, so a
 /// client that simply replaces its view never ends up holding a stale one.
+/// A probabilistic detector (8 workers × 25 transitions, a yield inside the
+/// hook): an unserialized delivery showed up on every run tried.
 #[test]
 fn concurrent_transitions_reach_the_hook_in_revision_order() {
     let recorder = Arc::new(AdmissionRecorder::new());
@@ -412,4 +414,31 @@ fn concurrent_transitions_reach_the_hook_in_revision_order() {
         seen.windows(2).all(|w| w[1] == w[0] + 1),
         "deliveries are in revision order"
     );
+}
+
+/// A snapshot's revision describes exactly its contents: the counters and the
+/// revision move in one critical section, so a reader can never see new
+/// contents under an old revision (review 2, L1).
+#[test]
+fn a_snapshot_revision_describes_exactly_its_contents() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let group = GroupId::new("g").unwrap();
+    let observer = recorder.clone();
+    recorder.set_hook(Arc::new(move |view| {
+        // Inside a transition the hook already sees the bumped revision
+        // together with the new contents.
+        let read = observer.snapshot();
+        assert_eq!(read.revision, view.revision);
+        assert_eq!(read.waiting, view.waiting);
+    }));
+    let id = recorder.begin("acct", &group);
+    let queued = recorder.snapshot();
+    assert_eq!((queued.revision, queued.waiting), (1, 1));
+    recorder.cancelled(id);
+    let cancelled = recorder.snapshot();
+    assert_eq!((cancelled.revision, cancelled.cancelled), (2, 1));
+    // No-op transitions bump nothing.
+    recorder.cancelled(id);
+    recorder.admitted(id);
+    assert_eq!(recorder.snapshot().revision, 2);
 }

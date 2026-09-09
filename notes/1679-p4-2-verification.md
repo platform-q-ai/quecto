@@ -41,7 +41,7 @@ outside the recorder lock. Admission never appears in `state`.
     M7 slim get_state drops admission: killed (slim_get_state_carries_admission_and_since_sees_transitions)
     M8 hidden count dropped from the projection: killed (projection_is_bounded_and_carries_cooldowns_and_counters)
     M9 seconds reported as milliseconds: killed (waiting_progress_names_count_group_wait_and_cause)
-    M10 snapshot omits admission: dead-import compile error, superseded by M10b in round 2
+    M10 snapshot omits admission: dead-import compile error, superseded by M10b below
 
 ## Adversarial review 1 (2026-09-09) and fixes
 
@@ -60,3 +60,25 @@ Twelve items (3 medium, 5 low, 3 info, 1 housekeeping), all fixed:
 |I1 hook keeps a sender alive in the process-wide binding|documented on `attach_process_admission`|—|
 |I2 recorder `Debug` could deadlock under its own lock|`try_lock` in the impl|—|
 |I3 uncommitted work|committed with the slice|—|
+
+## Mutations (slice 2, round 2, after review 1 fixes)
+    M10b snapshot carries an empty admission view: killed (a_waiting_attempt_is_reported_as_waiting_never_quiet_or_active)
+    N1 hook deliveries not serialized: dead-field compile error, superseded by N1b in round 3
+    N2 hidden queue attributed to a guessed group: killed (a_fully_hidden_queue_reports_an_unknown_wait_without_inventing_one)
+    N3 wiring does not install the hook: killed (attaching_a_process_binding_projects_and_pushes_its_transitions)
+    N4 wiring does not attach the source: killed (same)
+
+## Adversarial review 2 (2026-09-09) and fixes
+
+All nine round-1 fixes verified real (no deadlock: lock order is always
+`notify → state`, the hook never re-enters the recorder). Six new items, all
+fixed:
+
+|Finding|Fix|Proof|
+|---|---|---|
+|L1 revision bumped in a second critical section after the mutation, so a `since` poll could answer `unchanged` for a view that already changed|one `transition(mutate)` primitive: mutation and revision bump in the same state critical section, hook outside it, ordered behind `notify`; six mutators rewritten on it|`a_snapshot_revision_describes_exactly_its_contents` (hook re-reads the recorder and sees the bumped revision with the new contents; no-op transitions bump nothing)|
+|L2 `longestWaitSeconds: 0` for a fully hidden queue reads as "under a second"|omitted unless attributed; documented|`a_fully_hidden_queue_is_reported_without_a_guessed_group`|
+|L3 `revision` semantics only proven on the concrete recorder|port contract asserts strictly increasing revisions across queued/granted/cooldown/completed and stability across reads|`tests/contracts/admission_observation.rs`|
+|I1 ordering test is probabilistic|documented in the test|—|
+|I2 two bounded snapshots per `get_state`|accepted (bounded view; a `revision()` accessor would widen the port)|—|
+|I3 dangling round-2 reference in this note|round-2 record added|—|

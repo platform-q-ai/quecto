@@ -185,6 +185,27 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
         "released attempts leave the live view"
     );
     assert_eq!(released.completed, 1);
+    // Port contract: the revision advances on every transition (queued,
+    // granted, cooldown, completed) and is stable across plain reads.
+    assert!(
+        idle.revision < later.revision
+            && later.revision < admitted.revision
+            && admitted.revision < cooling.revision
+            && cooling.revision < released.revision,
+        "revisions {:?}",
+        [
+            idle.revision,
+            later.revision,
+            admitted.revision,
+            cooling.revision,
+            released.revision
+        ]
+    );
+    assert_eq!(
+        recorder.snapshot().revision,
+        released.revision,
+        "reads do not transition"
+    );
     // The release reached the authority: the slot is free (the group is in
     // the 3 s cooldown the completion advised, so no new grant is expected).
     let after = view_when_authority(&admin, "slot released at the authority", |s| {

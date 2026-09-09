@@ -11,7 +11,8 @@ use crate::domain::inference_admission_view::{WaitCause, waiting_verdict};
 pub struct AdmissionSnapshot {
     pub waiting: usize,
     pub admitted: usize,
-    /// Longest wait among the visible waiting attempts; absent when nothing waits.
+    /// Longest wait among the sampled waiting attempts; absent when nothing
+    /// waits or every waiting attempt is beyond the sample (see `hidden`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub longest_wait_seconds: Option<u64>,
     pub groups: Vec<GroupSnapshot>,
@@ -75,7 +76,11 @@ pub(crate) fn project(activity: &AdmissionActivity) -> AdmissionSnapshot {
     AdmissionSnapshot {
         waiting: activity.waiting,
         admitted: activity.admitted,
-        longest_wait_seconds: waiting_verdict(activity).map(|v| seconds(v.longest_wait_ms)),
+        // Omitted when nothing waits or every waiting attempt is beyond the
+        // sample: a client must not read "unknown" as "under a second".
+        longest_wait_seconds: waiting_verdict(activity)
+            .filter(|verdict| verdict.attribution.is_some())
+            .map(|verdict| seconds(verdict.longest_wait_ms)),
         groups: activity
             .groups
             .iter()

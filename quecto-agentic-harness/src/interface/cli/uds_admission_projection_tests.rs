@@ -325,7 +325,9 @@ fn a_fully_hidden_queue_is_reported_without_a_guessed_group() {
         reason,
         "3 inference attempts waiting for admission beyond the sampled attempts"
     );
-    assert_eq!(project(&activity).longest_wait_seconds, Some(0));
+    let snapshot = project(&activity);
+    assert_eq!(snapshot.longest_wait_seconds, None, "unknown is not 0s");
+    assert_eq!((snapshot.waiting, snapshot.hidden), (3, 3));
 }
 
 /// The production wiring over a real in-process authority: the socket loop's

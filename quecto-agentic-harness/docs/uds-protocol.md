@@ -374,7 +374,7 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 | Field | Type | Description |
 |---|---|---|
 | `waiting` / `admitted` | integer | Live attempts of this process queued at / granted by the authority (exact counts) |
-| `longestWaitSeconds` | integer \| omitted | Longest visible wait; omitted when nothing waits |
+| `longestWaitSeconds` | integer \| omitted | Longest sampled wait; omitted when nothing waits or every waiting attempt is beyond the sample (`hidden`), never `0` for "unknown" |
 | `groups[].group` | string | Quota group |
 | `groups[].cooldown` | object \| omitted | `state` is `until` (with `remainingSeconds`), `unknown` (throttled without a deadline) or `unavailable` (authority marked the group unavailable) |
 | `groups[].lastRefusal` | string \| omitted | Most recent refusal reason, bounded to 200 bytes |
@@ -385,9 +385,9 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 The `waiting` verdict takes precedence over the tool-window verdicts
 (`advancing`, `active`, `quiet`) while any attempt is queued. A changed
 admission `revision` advances `generation` once per observation (several
-transitions between two polls advance it once), so a `since` poll never
-returns the unchanged marker across a transition (ADR-0024 freshness and delta
-bounds). `revision` and `generation` track transitions only: elapsed waits,
+transitions between two polls advance it once); the revision moves in the
+same critical section as the view, so a `since` poll never returns the
+unchanged marker across a transition (ADR-0024 freshness and delta bounds). `revision` and `generation` track transitions only: elapsed waits,
 `remainingSeconds` and the `reason` text are re-derived on every full read and
 keep moving while a `since` poll answers `unchanged`; poll without `since` to
 watch a wait grow or a cooldown run out. `abort` while an attempt waits
