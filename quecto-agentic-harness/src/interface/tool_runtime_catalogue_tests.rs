@@ -147,8 +147,7 @@ fn swarm_runtime_omits_workflow_engine_tool_and_guards() {
         &config,
         workflow,
         &mut String::new(),
-        true,
-        crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
     )
     .unwrap();
     assert!(state.is_none());
@@ -174,8 +173,7 @@ fn swarm_runtime_rejects_guards_and_bound_specs_before_loading_files() {
             &config,
             workflow,
             &mut String::new(),
-            true,
-            crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
         )
         .unwrap_err();
         assert!(error.contains("workflow is unavailable for swarm agents"));

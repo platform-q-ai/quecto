@@ -4,6 +4,24 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::ProcessIdentity;
 use serde_json::Value;
 
+/// The swarm tool's entry: the composition's shared participation handle and
+/// this process's own workflow engagement.
+pub async fn control_for(
+    context: SwarmContext,
+    op: &str,
+    input: Value,
+    participation: super::swarm_bridge::Participation,
+) -> Result<Value, DomainError> {
+    control_with_workflow(
+        context,
+        op,
+        input,
+        participation,
+        super::swarm_bridge::workflow_engaged(),
+    )
+    .await
+}
+
 /// Convenience for callers outside a tool composition: no shared participation
 /// handle, this process's own workflow engagement.
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
@@ -143,3 +161,11 @@ fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainErro
 #[cfg(test)]
 #[path = "swarm_control_tests.rs"]
 mod tests;
+
+impl super::swarm::SwarmTool {
+    /// The composition's shared participation handle (#1715).
+    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
+        self.participation = participation;
+        self
+    }
+}

@@ -294,7 +294,6 @@ pub(crate) fn build_tool_runtime(
         config,
         workflow,
         stderr,
-        swarm_agent,
         swarm_participation,
     )?;
     // A swarm cannot be created while this process's workflow is engaged.
@@ -369,9 +368,9 @@ fn build_workflow_runtime(
     config: &crate::infrastructure::config::Config,
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
-    swarm_agent: bool,
     swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
 ) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+    let swarm_agent = swarm_participation.participating();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),

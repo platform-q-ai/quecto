@@ -39,9 +39,8 @@ impl Drop for ActiveGuard {
 
 pub struct SwarmTool {
     context: Option<super::swarm_bridge::SwarmContext>,
-    /// Shared with the spawn and workflow tools (#1715): creating a run
-    /// flips it for all of them.
-    participation: super::swarm_bridge::Participation,
+    /// Shared with the spawn and workflow tools (#1715); `create` flips it.
+    pub(super) participation: super::swarm_bridge::Participation,
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: SwarmConfig,
@@ -90,11 +89,6 @@ impl SwarmTool {
 }
 
 impl SwarmTool {
-    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
-        self.participation = participation;
-        self
-    }
-
     pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
         if let Some(ctx) = &context {
             register_context_jobs(ctx, &self.jobs);
@@ -168,14 +162,8 @@ impl Tool for SwarmTool {
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
                 op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
                 | "events" | "usage" | "usage_budget") => {
-                    match super::swarm_control::control_with_workflow(
-                        context,
-                        op,
-                        v.clone(),
-                        participation.clone(),
-                        super::swarm_bridge::workflow_engaged(),
-                    )
-                    .await
+                    match super::swarm_control::control_for(context, op, v.clone(), participation)
+                        .await
                     {
                         Ok(value) => {
                             if value["status"] == "cancelled" {
