@@ -282,6 +282,11 @@ fn session_initializes_origin_once_and_replaces_only_latest_afterward() {
     assert_eq!(session.origin_execution_metadata(), Some(&first));
     assert_eq!(session.latest_execution_metadata(), Some(&second));
 
+    let mut replacement = Session::from_parts("other", vec![], None, vec![]);
+    replacement.inherit_execution_metadata_from(&session);
+    assert_eq!(replacement.origin_execution_metadata(), Some(&first));
+    assert_eq!(replacement.latest_execution_metadata(), Some(&second));
+
     session.update_latest_execution_metadata(detached.clone());
     assert_eq!(session.origin_execution_metadata(), Some(&first));
     assert_eq!(session.latest_execution_metadata(), Some(&detached));
