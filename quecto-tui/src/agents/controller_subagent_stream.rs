@@ -73,8 +73,6 @@ impl App {
             }
             return;
         }
-        // A get_state snapshot for THIS connection carries the child's workflow
-        // data (#842/#869a); it is keyed by the connection id, not forwarded.
         if let Event::Response {
             command,
             success: false,
@@ -164,36 +162,13 @@ impl App {
                 }
                 return;
             }
-            if command == "get_state" {
+            if command == "get_state" && *success {
                 if !self.is_retained_or_tracked_agent(agent_id) {
                     return;
                 }
-                self.ensure_session(agent_id);
-                self.note_sync_capability(agent_id, data);
-                let snap = crate::protocol::state_payloads::parse_get_state(
-                    data,
-                    &crate::components::ansi::sanitize_control,
-                );
-                if let Some(wf) = snap.workflow.as_ref() {
-                    let bar = workflow_bar::parse_workflow_event(wf);
-                    self.record_subagent_workflow(agent_id, &bar);
-                    if let Some(session) = self.ac_mut().roster.sessions.get_mut(agent_id) {
-                        session.workflow_bar = bar;
-                    }
-                }
-                // Preserve the existing per-session footer mapping (model +
-                // context window) that the generic path applied for get_state.
+                self.apply_child_state_snapshot(agent_id, data);
                 if let Some(session) = self.ac_mut().roster.sessions.get_mut(agent_id) {
                     Self::update_session_footer(session, &ev);
-                }
-                if self.ac().roster.active_agent_id.as_deref() == Some(agent_id) {
-                    if let Some(model) = snap.footer.model.clone() {
-                        self.ac_mut().inference.current_model = Some(model);
-                    }
-                    self.ac_mut().inference.current_effort = snap.footer.effort.clone();
-                    if !snap.effort_levels.is_empty() {
-                        self.ac_mut().inference.effort_levels = snap.effort_levels;
-                    }
                 }
                 return;
             }
@@ -213,9 +188,7 @@ impl App {
                 return;
             }
         }
-        // Tearing down a connection mid-stream can leave queued events. Drop events
-        // for agents no longer tracked or retained so stale frames cannot resurrect
-        // sessions just dropped by `evict_retained_sessions` (#800 review).
+        // Drop queued frames after eviction; stale connections cannot resurrect sessions.
         if !self.is_retained_or_tracked_agent(agent_id) {
             return;
         }
@@ -224,6 +197,9 @@ impl App {
             if self.ac().roster.tracked.contains_key(agent_id) {
                 self.update_subagent_bar_from_source(Some(agent_id), subagents);
             }
+            return;
+        }
+        if self.route_child_admission_event(agent_id, &ev) {
             return;
         }
         self.ensure_session(agent_id);
@@ -259,9 +235,7 @@ impl App {
             }
             _ => {}
         }
-        // Per-session FOOTER: feed the child's OWN context-window / cost / model
-        // gauges from its forwarded events so a selected sub-agent shows ITS
-        // usage, not the master's (#805).
+        // Feed the selected child's own context/cost/model gauges (#805).
         Self::update_session_footer(session, &ev);
         // A completion note for THIS child's own sub-agent (a grandchild): render
         // it as a passive one-line status in this session's chat, deferred while
@@ -302,6 +276,32 @@ impl App {
         }
         if let Some((refs, content_len)) = recovery_refs {
             self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
+        }
+    }
+
+    fn apply_child_state_snapshot(&mut self, agent_id: &str, data: &serde_json::Value) {
+        self.ensure_session(agent_id);
+        self.note_sync_capability(agent_id, data);
+        let snap = crate::protocol::state_payloads::parse_get_state(
+            data,
+            &crate::components::ansi::sanitize_control,
+        );
+        self.apply_child_get_state_admission(agent_id, snap.admission.as_ref());
+        if let Some(wf) = snap.workflow.as_ref() {
+            let bar = workflow_bar::parse_workflow_event(wf);
+            self.record_subagent_workflow(agent_id, &bar);
+            if let Some(session) = self.ac_mut().roster.sessions.get_mut(agent_id) {
+                session.workflow_bar = bar;
+            }
+        }
+        if self.ac().roster.active_agent_id.as_deref() == Some(agent_id) {
+            if let Some(model) = snap.footer.model.clone() {
+                self.ac_mut().inference.current_model = Some(model);
+            }
+            self.ac_mut().inference.current_effort = snap.footer.effort.clone();
+            if !snap.effort_levels.is_empty() {
+                self.ac_mut().inference.effort_levels = snap.effort_levels;
+            }
         }
     }
 

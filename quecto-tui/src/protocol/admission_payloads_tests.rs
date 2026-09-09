@@ -69,10 +69,7 @@ fn status_label_prefers_waiting_then_cooldown_then_nothing() {
     );
     view.longest_wait_seconds = Some(12);
     view.waiting = 3;
-    assert_eq!(
-        view.status_label().as_deref(),
-        Some("waiting for admission 12s (×3)")
-    );
+    assert_eq!(view.status_label().as_deref(), Some("12s (×3)"));
     view.groups.push(AdmissionGroupView {
         group: "anthropic".into(),
         cooldown: Some(AdmissionCooldown {
@@ -82,7 +79,7 @@ fn status_label_prefers_waiting_then_cooldown_then_nothing() {
     });
     assert_eq!(
         view.status_label().as_deref(),
-        Some("waiting for admission 12s (×3) · anthropic cooldown 30s")
+        Some("12s (×3) · anthropic cooldown 30s")
     );
     view.waiting = 0;
     view.longest_wait_seconds = None;
@@ -121,7 +118,7 @@ fn compact_label_fits_a_panel_row() {
     view.waiting = 2;
     assert_eq!(view.compact_label().as_deref(), Some("waiting"));
     view.longest_wait_seconds = Some(4);
-    assert_eq!(view.compact_label().as_deref(), Some("waiting 4s"));
+    assert_eq!(view.compact_label().as_deref(), Some("4s"));
     view.waiting = 0;
     view.groups.push(AdmissionGroupView {
         group: "g".into(),

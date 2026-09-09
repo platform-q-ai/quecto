@@ -93,7 +93,7 @@ impl AdmissionView {
         let throttled = self.throttled();
         if self.waiting > 0 {
             let mut label = match self.longest_wait_seconds {
-                Some(seconds) => format!("waiting for admission {seconds}s"),
+                Some(seconds) => format!("{seconds}s"),
                 None => "waiting for admission".to_string(),
             };
             if self.waiting > 1 {
@@ -108,11 +108,11 @@ impl AdmissionView {
     }
 
     /// The panel-row form of [`Self::status_label`]: a few characters that
-    /// survive a narrow sub-agent panel ("waiting 4s", "cooldown 30s").
+    /// survive a narrow sub-agent panel ("4s", "cooldown 30s").
     pub fn compact_label(&self) -> Option<String> {
         if self.waiting > 0 {
             return Some(match self.longest_wait_seconds {
-                Some(seconds) => format!("waiting {seconds}s"),
+                Some(seconds) => format!("{seconds}s"),
                 None => "waiting".to_string(),
             });
         }

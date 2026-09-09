@@ -180,6 +180,15 @@ alias for `/help`.
 - On exit, `quecto-tui` terminates the spawned agent process group so child
   agents are cleaned up too.
 
+### Admission waiting indicators
+
+Queued admission waits display as `⏳ Ns` (for example, `⏳ 12s`). The subagent
+panel prioritizes this indicator over long child names. The hourglass means
+waiting for admission, **not active inference**; brief display during immediate
+admission is expected. Selecting or reconnecting to a waiting child restores
+its indicator from the child's admission snapshot. Live cooldown countdown
+projection is separate work tracked in #1708.
+
 ### Subagent transcript freshness
 
 Direct child-socket feeds display live token events. Open subagent feeds also
