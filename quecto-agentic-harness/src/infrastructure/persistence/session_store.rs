@@ -2,22 +2,25 @@ use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
-
+#[path = "session_store_message_record.rs"]
+mod session_store_message_record;
 #[path = "session_store_ordinals.rs"]
 pub(crate) mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
+use session_store_message_record::message_to_record;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
-
 impl FileSessionStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -25,19 +28,15 @@ impl FileSessionStore {
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
     }
-
     fn claim_key(&self, key: &str) -> Result<(), DomainError> {
         self.ownership.claim(&self.sessions_dir, key)
     }
-
     fn key_to_filename(key: &str) -> String {
         format!("{}.json", super::filename::sanitize_session_key(key))
     }
-
     fn session_path(&self, key: &str) -> PathBuf {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
-
     pub async fn save_clean_delta(
         &self,
         key: &str,
@@ -65,7 +64,6 @@ impl FileSessionStore {
         )
         .await
     }
-
     async fn delete_session_file_if_present(&self, key: &str) -> Result<(), DomainError> {
         match tokio::fs::remove_file(self.session_path(key)).await {
             Ok(()) => Ok(()),
@@ -75,23 +73,19 @@ impl FileSessionStore {
             ))),
         }
     }
-
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
 }
-
 impl SessionStore for FileSessionStore {
     fn claim(&self, key: &str) -> Result<(), DomainError> {
         self.claim_key(key)
     }
-
     fn release(&self, key: &str) {
         self.ownership.release(key);
     }
-
     fn load(
         &self,
         key: &str,
@@ -109,7 +103,6 @@ impl SessionStore for FileSessionStore {
             Ok(Some(session))
         })
     }
-
     fn save(
         &self,
         session: &Session,
@@ -130,7 +123,6 @@ impl SessionStore for FileSessionStore {
             append_or_compact(&path, &session).await
         })
     }
-
     fn save_delta<'a>(
         &'a self,
         key: &'a str,
@@ -155,7 +147,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn save_clean_delta<'a>(
         &'a self,
         key: &'a str,
@@ -178,7 +169,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn exists(
         &self,
         key: &str,
@@ -186,7 +176,6 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(key);
         Box::pin(async move { Ok(path.exists()) })
     }
-
     fn list(
         &self,
         key_prefix: Option<&str>,
@@ -282,12 +271,10 @@ impl SessionStore for FileSessionStore {
         })
     }
 }
-
 fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
     if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
         return Ok(header);
     }
-
     let mut key = std::borrow::Cow::Borrowed("");
     let mut messages = Vec::new();
     let mut _origin_location = None;
@@ -342,12 +329,10 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
         latest_location,
     })
 }
-
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
     if let Ok(file) = serde_json::from_str::<SessionFile>(data) {
         return Ok(session_from_file(file));
     }
-
     let mut session: Option<Session> = None;
     let mut parsed_any = false;
     for line in data.lines().filter(|line| !line.trim().is_empty()) {
@@ -406,7 +391,6 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
         .map(session_store_ordinals::with_assigned_ordinals)
         .unwrap_or_else(|| Session::new("")))
 }
-
 fn session_from_file(file: SessionFile) -> Session {
     let messages =
         assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
@@ -419,10 +403,8 @@ fn session_from_file(file: SessionFile) -> Session {
         subagent_roster: file.subagent_roster,
     }
 }
-
 async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     use tokio::io::AsyncReadExt;
-
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
@@ -434,7 +416,6 @@ async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     let prefix = std::str::from_utf8(&prefix[..len]).unwrap_or("");
     Ok(prefix.trim_start().starts_with(r#"{"type":"#))
 }
-
 async fn persisted_prefix_changed(
     path: &Path,
     messages: &[Message],
@@ -456,7 +437,6 @@ async fn persisted_prefix_changed(
         .zip(messages_with_assigned_ordinals(&messages[..previously_persisted]).iter())
         .any(|(left, right)| message_to_record(left) != message_to_record(right)))
 }
-
 async fn append_known_delta(
     path: &Path,
     key: &str,
@@ -478,7 +458,6 @@ async fn append_known_delta(
     )
     .await
 }
-
 async fn compact_or_append_delta(
     path: &Path,
     key: &str,
@@ -520,7 +499,6 @@ async fn compact_or_append_delta(
     };
     append_record(path, &record).await
 }
-
 async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainError> {
     let mut assigned_session;
     let session = if session.messages.iter().any(|m| m.ordinal.is_none()) {
@@ -533,7 +511,6 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     if !path.exists() || !is_jsonl_session_file(path).await? {
         return write_compacted(path, session).await;
     }
-
     let data = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
@@ -549,7 +526,6 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     {
         return write_compacted(path, session).await;
     }
-
     let added = &session.messages[previous.messages.len()..];
     let roster_changed = session.subagent_roster != previous.subagent_roster;
     let location_metadata_changed = session.origin_location != previous.origin_location
@@ -561,7 +537,6 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     {
         return Ok(());
     }
-
     let record = SessionRecordRef::Append {
         start_index: Some(previous.messages.len()),
         messages: added.iter().map(message_to_record_ref).collect(),
@@ -578,7 +553,6 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     };
     append_record(path, &record).await
 }
-
 async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
     let record = SessionRecordRef::Snapshot(SessionFileRef {
         key: &session.key,
@@ -600,10 +574,8 @@ async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainErr
         .map_err(|e| DomainError::Session(format!("failed to rename session: {e}")))?;
     Ok(())
 }
-
 async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> Result<(), DomainError> {
     use tokio::io::AsyncWriteExt;
-
     reject_symlink(path).await?;
     let mut line = serde_json::to_string(record)
         .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
@@ -621,7 +593,6 @@ async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> Result<(),
         .map_err(|e| DomainError::Session(format!("failed to flush session: {e}")))?;
     Ok(())
 }
-
 async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
     let metadata = tokio::fs::symlink_metadata(path)
         .await
@@ -633,11 +604,6 @@ async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
     }
     Ok(())
 }
-
-fn role_to_str(role: &Role) -> &str {
-    role.as_str()
-}
-
 fn str_to_role(s: &str) -> Role {
     match s {
         "system" => Role::System,
@@ -647,26 +613,19 @@ fn str_to_role(s: &str) -> Role {
         _ => Role::User,
     }
 }
-
-/// Extract the raw title datum: the session's first user message, trimmed.
-/// Returns an empty string when there is none, bounded to a transport-safe
-/// length (no ellipsis). Display truncation and the "(untitled)" placeholder
-/// are applied by the interface/display layer, not by persistence.
 fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
-    const TRANSPORT_CHAR_CAP: usize = 200;
     messages
         .iter()
         .find(|m| matches!(str_to_role(&m.role), Role::User))
         .map(|m| m.content.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| s.chars().take(TRANSPORT_CHAR_CAP).collect())
+        .map(|s| s.chars().take(200).collect())
         .unwrap_or_default()
 }
-
 fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
     MessageRecordRef {
         ordinal: msg.ordinal,
-        role: role_to_str(&msg.role),
+        role: msg.role.as_str(),
         content: &msg.content,
         tool_calls: msg
             .tool_calls
@@ -703,50 +662,6 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
             .collect(),
     }
 }
-
-fn message_to_record(msg: &Message) -> MessageRecord {
-    MessageRecord {
-        ordinal: msg.ordinal,
-        role: role_to_str(&msg.role).to_string(),
-        content: msg.content.clone(),
-        tool_calls: msg
-            .tool_calls
-            .iter()
-            .map(|tc| ToolCallRecord {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-            })
-            .collect(),
-        tool_call_id: msg.tool_call_id.clone(),
-        turn: msg.turn,
-        is_pinned: Some(msg.is_pinned),
-        is_manifest: msg.is_manifest,
-        is_collapsed: msg.is_collapsed,
-        tool_name: msg.tool_name.clone(),
-        input_preview: msg.input_preview.clone(),
-        spill_id: msg.spill_id.clone(),
-        is_error: msg.is_error,
-        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
-        thinking_blocks: msg
-            .thinking_blocks
-            .iter()
-            .map(|tb| match tb {
-                ThinkingBlock::Normal {
-                    thinking,
-                    signature,
-                } => ThinkingBlockRecord::Normal {
-                    thinking: thinking.clone(),
-                    signature: signature.clone(),
-                },
-                ThinkingBlock::Redacted { data } => {
-                    ThinkingBlockRecord::Redacted { data: data.clone() }
-                }
-            })
-            .collect(),
-    }
-}
-
 fn record_to_message(rec: MessageRecord) -> Message {
     let role = str_to_role(&rec.role);
     let tool_calls = rec
@@ -792,19 +707,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
         .collect();
     msg
 }
-
 #[cfg(test)]
-#[path = "session_store_chat_tests.rs"]
-mod chat_tests;
-#[cfg(test)]
-#[path = "session_store_cov_tests.rs"]
-mod cov_tests;
-#[cfg(test)]
-#[path = "session_store_metadata_tests.rs"]
-mod metadata_tests;
-#[cfg(test)]
-#[path = "session_store_subagent_roster_tests.rs"]
-mod subagent_roster_tests;
-#[cfg(test)]
-#[path = "session_store_tests.rs"]
-mod tests;
+mod test_modules {
+    include!("session_store_test_modules.rs");
+}
