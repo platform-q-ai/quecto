@@ -44,19 +44,7 @@ impl App {
             return;
         }
 
-        if let Some(snapshot) = self.ac_mut().admission_children.remove(from) {
-            self.ac_mut()
-                .admission_children
-                .entry(to.to_string())
-                .or_insert(snapshot);
-        }
-        if let Some(label) = self.ac_mut().roster.admission_labels.remove(from) {
-            self.ac_mut()
-                .roster
-                .admission_labels
-                .entry(to.to_string())
-                .or_insert(label);
-        }
+        self.rekey_child_admission(from, to);
 
         if let Some(session) = self.ac_mut().roster.sessions.remove(from) {
             self.ac_mut()
@@ -274,6 +262,18 @@ impl App {
             },
             &mut roster.expired_terminal_uuids,
         );
+
+        let terminal_ids = self
+            .ac()
+            .roster
+            .tracked
+            .iter()
+            .filter(|(_, child)| child.exited_at.is_some())
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in terminal_ids {
+            self.clear_child_admission_wait(&id);
+        }
 
         let warm_ids = self
             .ac()

@@ -604,9 +604,13 @@ impl App {
         } else {
             " ".to_string()
         };
+        // Admission has priority over identity and ordinary run time (#1711).
+        // At tiny widths drop row chrome, then duration, retaining the hourglass
+        // (or a one-cell '?' when even that double-width glyph cannot fit).
+        if row.admission.is_some() {
+            return self.panel_admission_name_line(row, &selbar, active, width, now);
+        }
         let stalk_vis = visible_width(&row.prefix);
-        // Environment rows have no per-agent timer; `id: None` must not fall
-        // back to the coordinator elapsed timer (#1369 slice 4).
         let timer = if row.is_environment() {
             String::new()
         } else {
@@ -614,36 +618,19 @@ impl App {
         };
         let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
         let observer_vis = visible_width(observer);
-        // Admission label (#1679 P4) after the name, all or nothing: a narrow
-        // panel drops the label whole rather than the identity or a fragment.
         let usable = width.saturating_sub(1);
         let fixed = 1 + stalk_vis + 1 + observer_vis + timer.len();
         let name_plain = sanitize_panel_label(&row.label);
-        let admission = row
-            .admission
-            .as_deref()
-            .map(|label| format!(" {} {label}", theme::ADMISSION_INDICATOR))
-            .filter(|label| {
-                visible_width(label) <= usable.saturating_sub(fixed + visible_width(&name_plain))
-            })
-            .unwrap_or_default();
-        let admission_vis = visible_width(&admission);
-        let name_avail = usable.saturating_sub(fixed + admission_vis);
+        let name_avail = usable.saturating_sub(fixed);
         let name = truncate_to_width(&name_plain, name_avail, Some("…"));
         let name_vis = visible_width(&name);
         let mut name = status_colored_name(&row.status, &name);
         if active {
             name = theme::bold(&name);
         }
-        let pad = usable
-            .saturating_sub(1 + stalk_vis + name_vis + admission_vis + observer_vis + timer.len());
-        let admission = if admission.is_empty() {
-            admission
-        } else {
-            theme::dim(&admission)
-        };
+        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
         let line = format!(
-            "{selbar}{}{name}{admission}{observer}{}{} ",
+            "{selbar}{}{name}{observer}{}{} ",
             theme::dim(&row.prefix),
             " ".repeat(pad),
             theme::dim(&timer),
@@ -700,3 +687,10 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "controller_subagent_panel_admission_tests.rs"]
+mod admission_tests;
+
+#[path = "controller_subagent_panel_admission.rs"]
+mod admission;
