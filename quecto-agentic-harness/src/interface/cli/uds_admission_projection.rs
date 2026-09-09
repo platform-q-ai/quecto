@@ -1,55 +1,13 @@
 //! Wire projection of admission activity (#1679 P4, ADR-0024): a bounded,
 //! fresh `admission` object beside the execution phase, plus the `waiting`
 //! progress verdict. Admission never becomes a lifecycle `state` value.
-use serde::{Deserialize, Serialize};
 
 use crate::domain::inference_admission::{AdmissionActivity, CooldownState};
 use crate::domain::inference_admission_view::{WaitCause, waiting_verdict};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionSnapshot {
-    pub waiting: usize,
-    pub admitted: usize,
-    /// Longest wait among the sampled waiting attempts; absent when nothing
-    /// waits or every waiting attempt is beyond the sample (see `hidden`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub longest_wait_seconds: Option<u64>,
-    pub groups: Vec<GroupSnapshot>,
-    pub counters: AdmissionCounters,
-    /// Waiting or admitted attempts beyond the bounded sample.
-    pub hidden: usize,
-    /// Advances on every transition (a delta cursor for `admission_state_changed`).
-    pub revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionCounters {
-    pub completed: u64,
-    pub refused: u64,
-    pub cancelled: u64,
-    pub abandoned: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupSnapshot {
-    pub group: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cooldown: Option<CooldownSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_refusal: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CooldownSnapshot {
-    /// `until`, `unknown` or `unavailable`.
-    pub state: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remaining_seconds: Option<u64>,
-}
+pub use crate::domain::state_snapshot::{
+    AdmissionCounters, AdmissionSnapshot, CooldownSnapshot, GroupSnapshot,
+};
 
 fn seconds(ms: u64) -> u64 {
     ms / 1_000

@@ -361,3 +361,27 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
         "delete_all_subagents must not be forwarded to the dispatch channel"
     );
 }
+
+/// Given serialized dispatch is held, inspection must use the real connect projection.
+#[tokio::test]
+async fn busy_inspection_accepts_production_projection_without_dispatch() {
+    use crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout;
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("inspection.sock");
+    let (args, _broadcast, _commands, _held_dispatch) = make_args(&socket, true, None);
+    let accept = spawn_accept_loop(args);
+    let result = send_subagent_uds_command_with_timeout(
+        &socket,
+        r#"{"type":"get_state"}"#,
+        std::time::Duration::from_millis(250),
+    )
+    .await;
+    accept.abort();
+    let response: serde_json::Value =
+        serde_json::from_str(&result.expect("real busy snapshot must answer without dispatch"))
+            .unwrap();
+    assert_eq!(response["command"], "get_state");
+    assert!(response.get("id").is_none());
+    assert_eq!(response["data"]["automaticTurnsSuspended"], false);
+    assert_eq!(response["data"]["repeatedFailureNotifications"], 0);
+}

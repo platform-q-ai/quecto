@@ -603,16 +603,18 @@ impl Tool for AgentCmdTool {
                     ancestor_socket_path
                 }
             };
-            let send = if Self::is_control_command(&command) {
-                send_uds_command_with_timeout(
-                    socket_path,
-                    &json_cmd,
-                    super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
-                )
-                .await
-            } else {
-                send_uds_command(socket_path, &json_cmd).await
-            };
+            // Inspection is bounded independently of acceptance-ack semantics.
+            let send =
+                if matches!(command.as_str(), "get_state") || Self::is_control_command(&command) {
+                    send_uds_command_with_timeout(
+                        socket_path,
+                        &json_cmd,
+                        super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+                    )
+                    .await
+                } else {
+                    send_uds_command(socket_path, &json_cmd).await
+                };
 
             // Send the command via UDS. Lifecycle state comes from the child's
             // monitor events; the transport ack alone cannot prove task progress
@@ -676,3 +678,7 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_cmd_876_tests.rs"]
 mod tests_876;
+
+#[cfg(test)]
+#[path = "agent_cmd_timeout_tests.rs"]
+mod timeout_tests;

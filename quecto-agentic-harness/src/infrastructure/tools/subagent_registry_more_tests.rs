@@ -307,18 +307,29 @@ async fn busy_get_state_snapshot_without_live_reply_for(
 }
 
 fn busy_get_state_changed_snapshot() -> serde_json::Value {
-    serde_json::json!({
-        "type": "response",
-        "command": "get_state",
-        "data": {
-            "state": "runningTool",
-            "effort": null,
-            "model": "mock",
-            "sessionKey": "cli:dog-story-writer",
-            "progress": { "state": "advancing", "reason": "tool activity" },
-            "generation": 9
-        }
-    })
+    let state = crate::interface::cli::protocol::SessionState {
+        control_receipts: vec![],
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
+        model: "mock".into(),
+        generation: 9,
+        is_streaming: true,
+        session_key: "cli:dog-story-writer".into(),
+        message_count: 0,
+        pending_message_count: 0,
+        max_context_tokens: 0,
+        effort: None,
+        effort_levels: vec![],
+        workflow: None,
+        execution: None,
+        sync: 0,
+    };
+    serde_json::to_value(crate::interface::cli::protocol::AgentEvent::ok(
+        None,
+        "get_state",
+        Some(state.slim_projection()),
+    ))
+    .unwrap()
 }
 
 async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json::Value {
