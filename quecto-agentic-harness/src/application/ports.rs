@@ -22,6 +22,7 @@ pub use super::inference_authority::{
     AdmissionAuthority, AuthorityError, AuthorityStatus, Credential,
 };
 pub use super::inference_authority_ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
+pub use super::inference_observation::AdmissionObservation;
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
 
 #[cfg(any(test, feature = "test-support"))]

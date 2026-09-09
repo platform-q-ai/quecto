@@ -193,3 +193,70 @@ pub struct AdmissionLedger {
     pub outstanding: Vec<OutstandingAttempt>,
     pub groups: BTreeMap<GroupId, LedgerGroup>,
 }
+
+/// Where one outbound attempt stands with respect to admission. Orthogonal to
+/// any process or turn lifecycle: a waiting attempt is neither idle nor stalled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionPhase {
+    /// Queued at the authority since `since_ms` (process-monotonic).
+    Waiting { since_ms: u64 },
+    /// Granted at `since_ms`; the transport may run until completion.
+    Admitted { since_ms: u64 },
+}
+
+/// One live attempt as seen by the process that owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptObservation {
+    pub alias: String,
+    pub group: GroupId,
+    pub phase: AdmissionPhase,
+    /// Milliseconds spent in the current phase at `observed_at_ms`.
+    pub elapsed_ms: u64,
+}
+
+/// A quota group's throttle state as this process last learned it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CooldownState {
+    /// Cooling down until `until_ms` (process-monotonic, anchored at the grant
+    /// the advice arrived on).
+    Until { until_ms: u64 },
+    /// Throttled without a usable deadline (the authority escalates its own
+    /// fallback); visible since `since_ms` until a later success.
+    Unknown { since_ms: u64 },
+    /// The authority marked the group unavailable (excessive or invalid advice).
+    Unavailable,
+}
+
+/// Per-group view: cooldown and the most recent refusal reason.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GroupActivity {
+    pub cooldown: Option<CooldownState>,
+    /// Bounded to `AdmissionActivity::MAX_REFUSAL_BYTES`.
+    pub last_refusal: Option<String>,
+}
+
+/// Bounded per-process admission activity with freshness. Counts are exact
+/// and saturating; `attempts` is a sample of at most `MAX_LIVE_ATTEMPTS`
+/// (the oldest, i.e. longest-waiting, first) and `hidden` counts the rest.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AdmissionActivity {
+    pub waiting: usize,
+    pub admitted: usize,
+    pub completed: u64,
+    pub refused: u64,
+    /// Waits given up before a grant (cancelled at the authority).
+    pub cancelled: u64,
+    /// Permits dropped without completion: the authority keeps that occupancy
+    /// as uncertain until its attempt deadline (ADR-0026, drop is not release).
+    pub abandoned: u64,
+    pub groups: BTreeMap<GroupId, GroupActivity>,
+    pub attempts: BTreeMap<u64, AttemptObservation>,
+    pub hidden: usize,
+    /// Process-monotonic milliseconds at which this view was taken.
+    pub observed_at_ms: u64,
+}
+
+impl AdmissionActivity {
+    pub const MAX_LIVE_ATTEMPTS: usize = 64;
+    pub const MAX_REFUSAL_BYTES: usize = 200;
+}

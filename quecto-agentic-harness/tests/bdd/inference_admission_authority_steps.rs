@@ -11,7 +11,7 @@ use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-const LIMIT: Duration = Duration::from_secs(5);
+pub(super) const LIMIT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct AuthorityState {
@@ -20,7 +20,7 @@ pub struct AuthorityState {
     server: Option<AuthorityServer>,
     roots: Vec<AuthorityConnection>,
     credential: Option<Credential>,
-    permits: Vec<Box<dyn AttemptPermit>>,
+    pub(super) permits: Vec<Box<dyn AttemptPermit>>,
     pending: Option<tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>>,
     refusal: Option<String>,
     epoch_before: u64,
@@ -32,7 +32,7 @@ impl std::fmt::Debug for AuthorityState {
     }
 }
 
-fn group() -> GroupId {
+pub(super) fn group() -> GroupId {
     GroupId::new("g").unwrap()
 }
 
@@ -64,7 +64,7 @@ fn state(world: &mut QuectoWorld) -> &mut AuthorityState {
     &mut world.authority
 }
 
-fn rt(state: &AuthorityState) -> &tokio::runtime::Runtime {
+pub(super) fn rt(state: &AuthorityState) -> &tokio::runtime::Runtime {
     state.runtime.as_ref().expect("authority runtime")
 }
 
@@ -88,7 +88,7 @@ fn start(world: &mut QuectoWorld, capacity: usize, queue_timeout_ms: u64) {
     s.server = Some(server);
 }
 
-fn new_root(s: &AuthorityState) -> AuthorityConnection {
+pub(super) fn new_root(s: &AuthorityState) -> AuthorityConnection {
     let socket = s.server.as_ref().unwrap().directory().client_socket();
     rt(s).block_on(async {
         let connection = AuthorityConnection::connect(&socket).await.unwrap();
