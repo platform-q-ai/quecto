@@ -120,14 +120,8 @@ fn then_second_root_first(world: &mut QuectoWorld) {
         "the child of the root that just had service must wait its root's next turn"
     );
     let status = inspect(&world.authority);
-    assert_eq!(
-        (
-            status.groups[&group()].active,
-            status.groups[&group()].queued
-        ),
-        (1, 1)
-    );
-    world.authority.permits.push(permit);
+    let g = status.groups[&group()];
+    assert_eq!((g.active, g.queued), (1, 1), "{refusal}: {g:?}");
 }
 
 #[then("the child is granted once the second root completes")]
@@ -231,7 +225,9 @@ fn given_bounded_queue(world: &mut QuectoWorld) {
     start_with(world, |g| {
         g.capacity = 1;
         g.queue_capacity = 1;
-        g.queue_timeout_ms = 2_000;
+        // Long enough that a slow, coverage-instrumented runner still
+        // observes the queue-full refusal before the queued wait expires.
+        g.queue_timeout_ms = 10_000;
     });
 }
 
