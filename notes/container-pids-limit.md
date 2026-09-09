@@ -20,3 +20,12 @@ Two causes, both fixed here:
    OS refuses one, runs the teardown inline: a slow stop, never a crash that
    takes the container's other agents down. Proof:
    `teardown_without_a_spare_thread_runs_inline_instead_of_panicking`.
+
+Also in this change: the harness runtime keeps one warm blocking thread for
+its whole life (`build_tokio_runtime`). Tokio's `spawn_blocking` only panics
+when it has to create a thread and cannot; with a resident thread it queues,
+so the other blocking calls on exit-sensitive paths (child reaper, cascade
+cleanup, swarm lifecycle) stall instead of aborting the release binary. Bare
+`std::thread::spawn` sites (query, provider reload, swarm supervisor,
+runtime identity, admission process) still abort on EAGAIN and are a
+follow-up. A kill script that cannot be started is now logged.

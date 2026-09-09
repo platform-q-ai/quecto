@@ -110,9 +110,18 @@ pub(super) async fn shutdown_on(
     .await
 }
 
-/// A dedicated OS thread for the teardown, or the reason none could be made.
+/// The teardown, boxed so a spawner can take it as one unit.
 type TeardownJob = Box<dyn FnOnce() + Send>;
+/// Starts a dedicated OS thread for the teardown, or reports why none could
+/// be made (tests inject a refusing spawner).
 type TeardownSpawner = fn(TeardownJob) -> std::io::Result<()>;
+
+fn run_teardown(
+    registry: &SubagentRegistry,
+    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+) -> usize {
+    super::uds_delete_all_subagents::delete_all_subagents_from_registry(registry, broadcast_tx)
+}
 
 fn spawn_teardown_thread(job: TeardownJob) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -124,8 +133,9 @@ fn spawn_teardown_thread(job: TeardownJob) -> std::io::Result<()> {
 /// The teardown needs a thread of its own so the dispatch loop and client
 /// writers stay responsive while retained kill scripts run synchronously.
 /// When the process cannot get one (a full pid cgroup, the very condition
-/// that makes environments die), the teardown runs inline instead: a slow
-/// stop, never a panic that takes the whole container down with it.
+/// that makes environments die), the teardown runs inline instead: it then
+/// blocks the runtime thread until the kill scripts return, a slow stop,
+/// never a panic that takes the whole container down with it.
 pub(super) async fn shutdown_on_with(
     trigger: impl Future<Output = ()>,
     spawner: TeardownSpawner,
@@ -136,27 +146,22 @@ pub(super) async fn shutdown_on_with(
 ) -> usize {
     trigger.await;
     tracing::info!("termination signal received; tearing down subagents and environments");
-    let teardown = {
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    let job = {
         let registry = registry.clone();
         let broadcast_tx = broadcast_tx.clone();
         move || {
-            super::uds_delete_all_subagents::delete_all_subagents_from_registry(
-                &registry,
-                broadcast_tx.as_ref(),
-            )
+            let _ = done_tx.send(run_teardown(&registry, broadcast_tx.as_ref()));
         }
     };
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    let removed = match spawner(Box::new(move || {
-        let _ = done_tx.send(teardown());
-    })) {
-        Ok(()) => done_rx.await.unwrap_or(0),
+    let removed = match spawner(Box::new(job)) {
+        Ok(()) => done_rx.await.unwrap_or_else(|_| {
+            tracing::warn!("termination teardown thread ended without a result");
+            0
+        }),
         Err(error) => {
             tracing::warn!(%error, "no thread for the termination teardown; running it inline");
-            super::uds_delete_all_subagents::delete_all_subagents_from_registry(
-                &registry,
-                broadcast_tx.as_ref(),
-            )
+            run_teardown(&registry, broadcast_tx.as_ref())
         }
     };
     tracing::info!(

@@ -292,7 +292,10 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
-    let _ = cmd.status();
+    if let Err(error) = cmd.status() {
+        // Typically a full pid cgroup: the environment may outlive us.
+        tracing::warn!(environment_id, %error, "retained container script could not be started");
+    }
 }
 
 /// Build the retained-kill invocation. Single definition of the kill script

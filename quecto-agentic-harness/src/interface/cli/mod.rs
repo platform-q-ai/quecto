@@ -533,10 +533,21 @@ pub(crate) fn is_valid_session_name(name: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
 }
 
+/// The harness runs a current-thread runtime. Its blocking pool is warmed
+/// with one long-lived thread on purpose: Tokio's `spawn_blocking` panics
+/// (and with `panic = "abort"` kills the process) when it must create a
+/// thread and the OS refuses, but merely queues when at least one blocking
+/// thread already exists. Under a full pid cgroup that difference is the
+/// difference between a stalled call and a dead container.
 pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()
+        .thread_keep_alive(std::time::Duration::from_secs(60 * 60 * 24 * 365))
+        .build()?;
+    runtime.block_on(async {
+        let _ = tokio::task::spawn_blocking(|| {}).await;
+    });
+    Ok(runtime)
 }
 
 fn version_text(out: &mut String) {

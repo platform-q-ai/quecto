@@ -210,10 +210,12 @@ run_as+=(--init)
 # agent cannot even tear down cleanly, so the whole environment dies and
 # every member disconnects at once. Keep a fence, but a generous one;
 # QUECTO_CONTAINER_PIDS_LIMIT overrides it (-1 defers to the user slice).
+# `0` is refused: Docker reads it as "daemon default" and Podman ignores it
+# (falling back to the 2048 this fence exists to replace).
 pids_limit="${QUECTO_CONTAINER_PIDS_LIMIT:-16384}"
 case "$pids_limit" in
-  -1|[0-9]*) ;;
-  *) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a non-negative integer" ;;
+  -1) ;;
+  ''|0|*[!0-9]*) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a positive integer" ;;
 esac
 run_as+=(--pids-limit "$pids_limit")
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
