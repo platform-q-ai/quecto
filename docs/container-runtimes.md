@@ -438,6 +438,10 @@ Design properties:
   detaches the child from the identity-mounted `$HOME/.quecto` and breaks
   OAuth providers. The scripts carry a comment warning against this.
 - **Image selection.** `--image <img>` on the create argv, or the
+  `QUECTO_CONTAINER_PIDS_LIMIT` sets the container's pid cgroup fence
+  (default `16384`; `-1` defers to the user slice). Threads count against
+  it, and the runtime default of 2048 is exhausted by an in-container
+  `cargo test`, after which every fork fails and the environment dies.
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
   (`quecto-box:local`).
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes

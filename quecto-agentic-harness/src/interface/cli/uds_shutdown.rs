@@ -99,18 +99,66 @@ pub(super) async fn shutdown_on(
     cancel_handle: CancelHandle,
     notify: Arc<Notify>,
 ) -> usize {
+    shutdown_on_with(
+        trigger,
+        spawn_teardown_thread,
+        registry,
+        broadcast_tx,
+        cancel_handle,
+        notify,
+    )
+    .await
+}
+
+/// A dedicated OS thread for the teardown, or the reason none could be made.
+type TeardownJob = Box<dyn FnOnce() + Send>;
+type TeardownSpawner = fn(TeardownJob) -> std::io::Result<()>;
+
+fn spawn_teardown_thread(job: TeardownJob) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("quecto-teardown".into())
+        .spawn(job)
+        .map(drop)
+}
+
+/// The teardown needs a thread of its own so the dispatch loop and client
+/// writers stay responsive while retained kill scripts run synchronously.
+/// When the process cannot get one (a full pid cgroup, the very condition
+/// that makes environments die), the teardown runs inline instead: a slow
+/// stop, never a panic that takes the whole container down with it.
+pub(super) async fn shutdown_on_with(
+    trigger: impl Future<Output = ()>,
+    spawner: TeardownSpawner,
+    registry: SubagentRegistry,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    cancel_handle: CancelHandle,
+    notify: Arc<Notify>,
+) -> usize {
     trigger.await;
     tracing::info!("termination signal received; tearing down subagents and environments");
-    // The retained kill scripts run synchronously; keep them off the runtime
-    // workers so the dispatch loop and client writers stay responsive.
-    let removed = tokio::task::spawn_blocking(move || {
-        super::uds_delete_all_subagents::delete_all_subagents_from_registry(
-            &registry,
-            broadcast_tx.as_ref(),
-        )
-    })
-    .await
-    .unwrap_or(0);
+    let teardown = {
+        let registry = registry.clone();
+        let broadcast_tx = broadcast_tx.clone();
+        move || {
+            super::uds_delete_all_subagents::delete_all_subagents_from_registry(
+                &registry,
+                broadcast_tx.as_ref(),
+            )
+        }
+    };
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    let removed = match spawner(Box::new(move || {
+        let _ = done_tx.send(teardown());
+    })) {
+        Ok(()) => done_rx.await.unwrap_or(0),
+        Err(error) => {
+            tracing::warn!(%error, "no thread for the termination teardown; running it inline");
+            super::uds_delete_all_subagents::delete_all_subagents_from_registry(
+                &registry,
+                broadcast_tx.as_ref(),
+            )
+        }
+    };
     tracing::info!(
         removed,
         "termination teardown complete; requesting dispatch loop exit"
