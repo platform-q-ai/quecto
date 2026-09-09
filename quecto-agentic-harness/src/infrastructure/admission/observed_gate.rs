@@ -134,7 +134,7 @@ impl AdmissionRecorder {
         }
     }
 
-    fn completed(&self, id: u64, feedback: Feedback) {
+    fn completed(&self, id: u64, maximum_ms: u64, feedback: Feedback) {
         let now = self.now_ms();
         let mut state = self.lock();
         let Some(live) = state.live.remove(&id) else {
@@ -143,6 +143,11 @@ impl AdmissionRecorder {
         state.completed = state.completed.saturating_add(1);
         let group = state.groups.entry(live.group).or_default();
         match feedback {
+            // The authority marks the group unavailable for advice beyond its
+            // maximum; mirror that instead of showing an expiring cooldown.
+            Feedback::Throttle { delay_ms } if delay_ms > maximum_ms => {
+                group.cooldown = Some(CooldownState::Unavailable);
+            }
             Feedback::Throttle { delay_ms } => {
                 group.cooldown = merge_until(group.cooldown, now.saturating_add(delay_ms));
             }
@@ -159,8 +164,12 @@ impl AdmissionRecorder {
 
     /// Receipt advice for the attempt `id`, anchored at its grant: the
     /// authority's deadline is `receipt_ms + offset`, so locally it becomes
-    /// `admitted_since + offset`. Advice beyond the permit's maximum is what the
-    /// authority treats as unavailable.
+    /// `admitted_since + offset`. The authority judges advice against its
+    /// maximum by the delay *remaining when the report arrives*; the same
+    /// measure is used here (offset minus the time since the grant) so a long
+    /// transport never turns acceptable advice into a false, sticky
+    /// `Unavailable`. A local `Unavailable` clears only when the process
+    /// re-negotiates after an operator reset, exactly like the authority's.
     fn cooldown(&self, id: u64, receipt_ms: u64, maximum_ms: u64, feedback: ThrottleFeedback) {
         let now = self.now_ms();
         let mut state = self.lock();
@@ -175,12 +184,17 @@ impl AdmissionRecorder {
         group.cooldown = match feedback {
             ThrottleFeedback::Until(deadline) => {
                 let offset = deadline.saturating_sub(receipt_ms);
-                if offset > maximum_ms {
+                let remaining = offset.saturating_sub(now.saturating_sub(anchor));
+                if remaining > maximum_ms {
                     Some(CooldownState::Unavailable)
                 } else {
                     merge_until(group.cooldown, anchor.saturating_add(offset))
                 }
             }
+            // Known limitation: a no-hint throttle on top of an unexpired dated
+            // cooldown keeps the dated one locally, while the authority may
+            // extend it by its own fallback; the view never claims a cooldown
+            // the authority lacks, it may only under-report its length.
             ThrottleFeedback::NoHint { .. } => match group.cooldown {
                 Some(CooldownState::Until { until_ms }) if until_ms > now => group.cooldown,
                 Some(CooldownState::Unavailable) => group.cooldown,
@@ -370,7 +384,8 @@ impl AttemptPermit for ObservedPermit {
         }
     }
     fn finish(mut self: Box<Self>, feedback: Feedback) {
-        self.recorder.completed(self.id, feedback);
+        let maximum = self.maximum_cooldown_ms();
+        self.recorder.completed(self.id, maximum, feedback);
         if let Some(inner) = self.inner.take() {
             inner.finish(feedback);
         }

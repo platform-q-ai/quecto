@@ -46,3 +46,18 @@ Nine findings (4 medium, 5 low/info), all fixed test-first:
     === MUTANT Q7b refusal recorded on the wrong group: killed (same)
 
 Earlier round (O1–O6): dropped wait stays live, unbounded view, elapsed not reported, process gates unobserved all killed; O2/O5 were dead-code compile errors superseded by Q1–Q7.
+
+## Adversarial review 2 (2026-09-09) and fixes
+
+Verified all nine first-round fixes closed; eight new items, all fixed test-first:
+
+|Finding|Fix|Proof|
+|---|---|---|
+|F1 medium: receipt-based clamp could pin a group `Unavailable` locally while the authority kept granting|advice judged by the delay remaining when it arrives (offset minus time since grant), the authority's measure|`cooldown_is_anchored_at_the_grant_and_kept_per_group` ("max + 10 ms" 40 ms into the grant reads as `Until`)|
+|F2 completion throttle unclamped|`finish(Throttle)` beyond the permit maximum reads as `Unavailable`|`completion_throttle_is_clamped_and_expired_cooldowns_read_as_none`|
+|F3 racy anchor assertion|exact `since_ms + offset` from the observed phase, in unit and contract tests|same tests|
+|F4 inner forwarding unproven|recording inner permit asserts every advice/no-hint/finish reached it; contract checks the authority's cooldown and released slot|unit fake `Forwarded`; contract `view_when_authority`|
+|F5 `Unavailable` stickiness|documented: clears only on re-negotiation after operator reset, like the authority|doc comment|
+|F6 lossy no-hint over a dated cooldown|documented limitation (never claims a cooldown the authority lacks)|doc comment + `no-hint keeps an unexpired dated cooldown` assertion|
+|F7 untested branches|max-merge with shorter/longer advice, expired cooldown reads `None`, no-hint over `Until`/`Unavailable`, failure keeps state|unit tests|
+|F8 steps file at the limit|left at 748 lines; slice 2 adds no authority steps (its steps live in the observation module)|—|

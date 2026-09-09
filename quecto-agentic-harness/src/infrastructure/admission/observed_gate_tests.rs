@@ -23,16 +23,36 @@ impl AttemptAdmission for Refuse {
     }
 }
 
-/// Grants immediately; the permit reports a fixed authority receipt clock.
+/// What the inner permit received, so forwarding is provable.
+#[derive(Debug, Default)]
+struct Forwarded {
+    feedback: Vec<ThrottleFeedback>,
+    no_hint: usize,
+    finished: Vec<Feedback>,
+}
+
+/// Grants immediately; the permit reports a fixed authority receipt clock and
+/// records everything forwarded to it.
 #[derive(Debug)]
 struct Grant {
     receipt_ms: u64,
     maximum_ms: u64,
+    forwarded: Arc<Mutex<Forwarded>>,
+}
+impl Grant {
+    fn new(receipt_ms: u64, maximum_ms: u64) -> Self {
+        Self {
+            receipt_ms,
+            maximum_ms,
+            forwarded: Arc::new(Mutex::new(Forwarded::default())),
+        }
+    }
 }
 #[derive(Debug)]
 struct Plain {
     receipt_ms: u64,
     maximum_ms: u64,
+    forwarded: Arc<Mutex<Forwarded>>,
 }
 impl AttemptPermit for Plain {
     fn receipt_clock(&self) -> (u64, SystemTime) {
@@ -41,14 +61,22 @@ impl AttemptPermit for Plain {
     fn maximum_cooldown_ms(&self) -> u64 {
         self.maximum_ms
     }
-    fn feedback(&mut self, _: ThrottleFeedback) {}
-    fn finish(self: Box<Self>, _: Feedback) {}
+    fn throttle_without_hint(&mut self) {
+        self.forwarded.lock().unwrap().no_hint += 1;
+    }
+    fn feedback(&mut self, feedback: ThrottleFeedback) {
+        self.forwarded.lock().unwrap().feedback.push(feedback);
+    }
+    fn finish(self: Box<Self>, feedback: Feedback) {
+        self.forwarded.lock().unwrap().finished.push(feedback);
+    }
 }
 impl AttemptAdmission for Grant {
     fn acquire(&self) -> AttemptAcquisition<'_> {
         let permit = Plain {
             receipt_ms: self.receipt_ms,
             maximum_ms: self.maximum_ms,
+            forwarded: self.forwarded.clone(),
         };
         Box::pin(async move { Ok(Box::new(permit) as Box<dyn AttemptPermit>) })
     }
@@ -128,15 +156,7 @@ async fn refusal_reason_is_recorded_per_group_and_byte_bounded() {
 #[tokio::test]
 async fn dropped_permit_is_abandonment_and_finish_is_completion() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(
-        Arc::new(Grant {
-            receipt_ms: 1_000,
-            maximum_ms: 10_000,
-        }),
-        "acct",
-        "g",
-        &recorder,
-    );
+    let gate = observed(Arc::new(Grant::new(1_000, 10_000)), "acct", "g", &recorder);
     let permit = gate.acquire().await.unwrap();
     assert_eq!(recorder.snapshot().admitted, 1);
     drop(permit);
@@ -164,15 +184,7 @@ async fn dropped_permit_is_abandonment_and_finish_is_completion() {
 #[tokio::test]
 async fn cooldown_is_anchored_at_the_grant_and_kept_per_group() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(
-        Arc::new(Grant {
-            receipt_ms: 5_000,
-            maximum_ms: 10_000,
-        }),
-        "acct",
-        "g",
-        &recorder,
-    );
+    let gate = observed(Arc::new(Grant::new(5_000, 10_000)), "acct", "g", &recorder);
     let mut permit = gate.acquire().await.unwrap();
     let granted_at = recorder.snapshot().observed_at_ms;
     tokio::time::sleep(std::time::Duration::from_millis(40)).await;
@@ -198,17 +210,16 @@ async fn cooldown_is_anchored_at_the_grant_and_kept_per_group() {
 #[tokio::test]
 async fn no_hint_and_unavailable_throttles_are_visible_states() {
     let recorder = Arc::new(AdmissionRecorder::new());
-    let gate = observed(
-        Arc::new(Grant {
-            receipt_ms: 0,
-            maximum_ms: 1_000,
-        }),
-        "acct",
-        "g",
-        &recorder,
-    );
+    let inner = Arc::new(Grant::new(0, 1_000));
+    let forwarded = inner.forwarded.clone();
+    let gate = observed(inner, "acct", "g", &recorder);
     let mut permit = gate.acquire().await.unwrap();
     permit.throttle_without_hint();
+    assert_eq!(
+        forwarded.lock().unwrap().no_hint,
+        1,
+        "forwarded to the inner permit"
+    );
     assert!(matches!(
         recorder.snapshot().groups[&g("g")].cooldown,
         Some(CooldownState::Unknown { .. })
@@ -233,6 +244,11 @@ async fn no_hint_and_unavailable_throttles_are_visible_states() {
         "unavailable is sticky against shorter advice"
     );
     permit.finish(Feedback::Failure);
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable),
+        "a failure does not clear the group state"
+    );
     let permit = gate.acquire().await.unwrap();
     let mut permit = permit;
     permit.feedback(ThrottleFeedback::Unavailable);
@@ -240,5 +256,60 @@ async fn no_hint_and_unavailable_throttles_are_visible_states() {
         recorder.snapshot().groups[&g("g")].cooldown,
         Some(CooldownState::Unavailable)
     );
+    permit.throttle_without_hint();
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable),
+        "no-hint advice never downgrades unavailable"
+    );
     permit.finish(Feedback::Failure);
+    assert_eq!(
+        forwarded.lock().unwrap().finished,
+        vec![Feedback::Success, Feedback::Failure, Feedback::Failure],
+        "every completion reached the inner permit"
+    );
+}
+
+#[tokio::test]
+async fn completion_throttle_is_clamped_and_expired_cooldowns_read_as_none() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let gate = observed(Arc::new(Grant::new(0, 1_000)), "acct", "g", &recorder);
+    let permit = gate.acquire().await.unwrap();
+    permit.finish(Feedback::Throttle { delay_ms: 5 });
+    assert!(matches!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Until { .. })
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        None,
+        "an elapsed cooldown is not reported"
+    );
+    let mut permit = gate.acquire().await.unwrap();
+    permit.throttle_without_hint();
+    let unknown = recorder.snapshot().groups[&g("g")].cooldown;
+    assert!(matches!(unknown, Some(CooldownState::Unknown { .. })));
+    permit.feedback(ThrottleFeedback::Until(500));
+    assert!(
+        matches!(
+            recorder.snapshot().groups[&g("g")].cooldown,
+            Some(CooldownState::Until { .. })
+        ),
+        "dated advice replaces an open-ended throttle"
+    );
+    permit.throttle_without_hint();
+    assert!(
+        matches!(
+            recorder.snapshot().groups[&g("g")].cooldown,
+            Some(CooldownState::Until { .. })
+        ),
+        "no-hint advice keeps an unexpired dated cooldown"
+    );
+    permit.finish(Feedback::Throttle { delay_ms: 20_000 });
+    assert_eq!(
+        recorder.snapshot().groups[&g("g")].cooldown,
+        Some(CooldownState::Unavailable),
+        "completion advice beyond the maximum is unavailable, as at the authority"
+    );
 }

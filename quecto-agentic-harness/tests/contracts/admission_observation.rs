@@ -7,7 +7,8 @@ use quecto::domain::inference_admission::{
     GroupPolicy, ThrottleFeedback, WorkloadClass,
 };
 use quecto::infrastructure::admission::{
-    AdmissionRecorder, AuthorityConnection, AuthorityDirectory, AuthorityServer, ObservedAdmission,
+    AdminConnection, AdmissionRecorder, AuthorityConnection, AuthorityDirectory, AuthorityServer,
+    ObservedAdmission,
 };
 use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 use std::collections::BTreeMap;
@@ -76,6 +77,25 @@ async fn view_when(
     }
 }
 
+async fn view_when_authority(
+    admin: &AdminConnection,
+    what: &str,
+    expected: impl Fn(&quecto::application::ports::AuthorityStatus) -> bool,
+) -> quecto::application::ports::AuthorityStatus {
+    let deadline = tokio::time::Instant::now() + LIMIT;
+    loop {
+        let status = admin.inspect().await.unwrap();
+        if expected(&status) {
+            return status;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "never observed {what}: {status:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() {
     let temp = tempfile::tempdir().unwrap();
@@ -130,18 +150,33 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
     ));
 
     let (receipt_ms, _) = permit.receipt_clock();
+    let AdmissionPhase::Admitted { since_ms } = admitted.attempts.values().next().unwrap().phase
+    else {
+        panic!("admitted")
+    };
     permit.feedback(ThrottleFeedback::Until(receipt_ms + 3_000));
     let cooling = recorder.snapshot();
-    // Anchored at the grant (which happened within the last few ms), so the
-    // deadline reads as roughly three seconds ahead of now, for group g only.
-    assert!(
-        matches!(cooling.groups[&group("g")].cooldown, Some(CooldownState::Until { until_ms }) if until_ms >= cooling.observed_at_ms + 2_900 && until_ms <= cooling.observed_at_ms + 3_000),
-        "group cooldown on the process clock: {cooling:?}"
+    // Anchored exactly at the grant on the process clock, for group g only.
+    assert_eq!(
+        cooling.groups[&group("g")].cooldown,
+        Some(CooldownState::Until {
+            until_ms: since_ms + 3_000
+        }),
+        "{cooling:?}"
     );
     assert_eq!(
         cooling.groups.get(&group("h")).and_then(|g| g.cooldown),
         None
     );
+    // The advice reached the authority through the wrapped permit.
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    let authority = view_when_authority(&admin, "authority cooldown", |s| {
+        s.groups[&group("g")].cooldown_until >= receipt_ms + 3_000
+    })
+    .await;
+    assert_eq!(authority.groups[&group("g")].active, 1);
     permit.finish(Feedback::Throttle { delay_ms: 3_000 });
     let released = recorder.snapshot();
     assert_eq!((released.waiting, released.admitted), (0, 0));
@@ -150,6 +185,13 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
         "released attempts leave the live view"
     );
     assert_eq!(released.completed, 1);
+    // The release reached the authority: the slot is free (the group is in
+    // the 3 s cooldown the completion advised, so no new grant is expected).
+    let after = view_when_authority(&admin, "slot released at the authority", |s| {
+        s.groups[&group("g")].active == 0
+    })
+    .await;
+    assert!(after.groups[&group("g")].cooldown_until > 0);
     server.shutdown().await;
 }
 
