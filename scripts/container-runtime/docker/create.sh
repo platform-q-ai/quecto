@@ -237,7 +237,7 @@ append_secret() {
   local value="$2"
   printf "export %s='%s'\n" "$1" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
 }
-for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY; do
+for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY FIREWORKS_API_KEY; do
   if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
 done
 # GitHub access for agents inside the environment (workflows need `gh` and

@@ -463,12 +463,13 @@ Design properties:
   command-running transports (`ext::…`) can never execute host commands
   (PR #1401 review; config files travel, so the restriction stays).
 - **Provider API keys never enter the docker-side container config.**
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` are written to
-  a `0600` file in the `0700` state dir, identity-mounted read-only, and
-  sourced by a bootstrap `sh` that `exec`s the child (which therefore still
-  ends up as PID 1). Passing them with `docker run -e` would persist them in
-  the container config, readable via `docker inspect` for the container's
-  whole lifetime (PR #1401 review). Requires `/bin/sh` in the image.
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+  `FIREWORKS_API_KEY` are written to a `0600` file in the `0700` state dir,
+  identity-mounted read-only, and sourced by a bootstrap `sh` that `exec`s
+  the child (which therefore still ends up as PID 1). Passing them with
+  `docker run -e` would persist them in the container config, readable via
+  `docker inspect` for the container's whole lifetime (PR #1401 review).
+  Requires `/bin/sh` in the image.
 - **GitHub access works inside the environment.** Agent workflows need `gh`
   and git-over-https pushes, and a host keyring is unreachable from a
   container. `create.sh` resolves the token host-side (`gh auth token`) and
