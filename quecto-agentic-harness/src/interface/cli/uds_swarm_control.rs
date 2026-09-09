@@ -81,15 +81,24 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                     Some(serde_json::json!({"status":"accepted"})),
                 )
             }
-            (Some(generation), Some(_), Err(_)) => {
-                // The command channel is full: the queued wake message already
-                // pending will drain this generation; coalesce, never drop it.
-                ctx.turn_control.queue_swarm_wake(generation);
-                super::protocol::AgentEvent::ok(
-                    id.as_deref(),
-                    "swarm_control",
-                    Some(serde_json::json!({"status":"coalesced"})),
-                )
+            (Some(generation), Some(_), Err(tokio::sync::mpsc::error::TrySendError::Full(_))) => {
+                // A wake message is already pending only when the coalescing
+                // slot was occupied: then this generation rides that message.
+                // If the slot was empty nothing would drain it, so refuse.
+                if ctx.turn_control.queue_swarm_wake(generation) {
+                    ctx.turn_control.take_swarm_wake(0);
+                    super::protocol::AgentEvent::err(
+                        id.as_deref(),
+                        "swarm_control",
+                        "wake queue full; the durable inbox remains authoritative",
+                    )
+                } else {
+                    super::protocol::AgentEvent::ok(
+                        id.as_deref(),
+                        "swarm_control",
+                        Some(serde_json::json!({"status":"coalesced"})),
+                    )
+                }
             }
             _ => {
                 super::protocol::AgentEvent::err(id.as_deref(), "swarm_control", "wake unavailable")
@@ -191,28 +200,47 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                             }).await;
                     }
                 }
-                Err(error) => {
-                    // Store contention is transient: the next wake retries.
-                    // Only a durable rejection stops automatic turns.
-                    if !transient_store_error(&error) {
-                        ctx.session.automatic_turns_allowed = false;
+                Err(error) => match store_failure(&error) {
+                    // Contention: keep the generation for the next wake.
+                    StoreFailure::Transient => {
+                        ctx.turn_control.queue_swarm_wake(generation);
+                        let event = AgentEvent::err(
+                            None,
+                            "swarm_wake",
+                            format!("generation {generation} deferred: {error}"),
+                        );
+                        emit_event_to_broadcast_or_writer(ctx, &event).await;
                     }
-                    let event = AgentEvent::err(
-                        None,
-                        "swarm_wake",
-                        format!("generation {generation}: {error}"),
-                    );
-                    emit_event_to_broadcast_or_writer(ctx, &event).await;
-                }
+                    // A durable rejection stops automatic turns until a human prompt.
+                    StoreFailure::Durable => {
+                        ctx.session.automatic_turns_allowed = false;
+                        let event = AgentEvent::err(
+                            None,
+                            "swarm_wake",
+                            format!("generation {generation}: {error}"),
+                        );
+                        emit_event_to_broadcast_or_writer(ctx, &event).await;
+                    }
+                },
             }
         }
     }
     false
 }
 
-/// SQLite busy/locked failures from the coordination store are retried by the
-/// next wake; they must not latch automatic turns off until a human prompt.
-pub(super) fn transient_store_error(error: &crate::domain::error::DomainError) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("database is locked") || message.contains("database table is locked")
+/// How a coordination-store failure is treated by automatic turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StoreFailure {
+    /// SQLite busy/locked (`database ... is locked`): the next wake retries.
+    Transient,
+    /// Anything else is a durable rejection.
+    Durable,
+}
+
+pub(super) fn store_failure(error: &crate::domain::error::DomainError) -> StoreFailure {
+    if error.to_string().to_ascii_lowercase().contains("is locked") {
+        StoreFailure::Transient
+    } else {
+        StoreFailure::Durable
+    }
 }

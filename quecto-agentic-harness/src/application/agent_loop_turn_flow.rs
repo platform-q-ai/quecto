@@ -80,8 +80,12 @@ impl AgentLoopImpl {
         // Streaming initiation *is* retried here: the decorator forwards
         // `chat_stream` without retry, so this loop owns stream re-initiation.
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
-            if let Some(admission) = &self.request_admission {
-                admission.check().await?;
+            // The logical request was admitted above; only re-initiations
+            // re-check, so streaming never pays a second first-attempt check.
+            if attempt > 1 {
+                if let Some(admission) = &self.request_admission {
+                    admission.check().await?;
+                }
             }
             if let Some(trace) = &request.trace {
                 if attempt == 1 {

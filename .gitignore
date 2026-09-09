@@ -3,3 +3,5 @@
 *.swo
 .env
 .quecto/
+__pycache__/
+*.pyc

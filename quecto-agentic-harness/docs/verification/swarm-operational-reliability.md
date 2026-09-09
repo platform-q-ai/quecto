@@ -121,3 +121,18 @@ An independent review of the PR diff raised 16 findings (1 high, 6 medium,
 - documented: `swarm op=pause` suspends the calling turn; Retry-After hints
   above the wait budget fail immediately (all sessions); strict-budget resume
   caveat
+
+## Second adversarial review (2026-09-09)
+
+Verified 13 of the 16 first-round fixes closed and 3 partial; 10 new findings,
+all fixed test-first: committed Python bytecode removed and ignored; a wake
+arriving on a full command channel is refused when nothing would drain it
+(coalesced only when a wake is already pending) and `Closed` is an error;
+wake outcomes documented; streaming re-initiations, not the first attempt,
+re-check admission; SQLite schema locks count as contention; a contended wake
+keeps its generation for the next wake; strict-budget wording corrected; the
+whole-result usage accumulator is test-only; supervision and store-failure
+guards are affirmative with typed classification (`StoreFailure`,
+`AccountingFailure`); poison-tolerant locks in the turn helpers; any durable
+store rejection of a diagnostic record drops it with a warning so diagnostics
+never block inference, while contention keeps it pending.

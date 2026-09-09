@@ -1272,7 +1272,11 @@ applies a durable pause independently of the prompt queue. Actions are `pause`,
 integer or explicit null) and optionally `strict_unknown` (default true). Add
 `agent_id` to route to a descendant. Successful responses include `applied`,
 `status`, `generation`, and `budget`. The internal `wake` action carries a durable
-event generation and is rechecked for actionability at dispatch.
+event generation and is rechecked for actionability at dispatch; it answers
+`{"status":"accepted"}` when a wake turn is queued, `{"status":"coalesced"}` when
+the generation joined an already pending wake, or an error (`wake unavailable`,
+`wake queue full`) when nothing would drain it — the durable inbox remains
+authoritative in every case.
 
 `get_state` adds bounded `controlReceipts` identified by command ID, with queued,
 started, completed, failed, cancelled or rejected status. Completed means a model

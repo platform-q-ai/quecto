@@ -98,7 +98,8 @@ impl crate::domain::request_observation::RequestAccounting for RetryAccounting {
             let mut records = self.records.lock().unwrap();
             records.push(observation.request_id.clone());
             if records.len() == 1 {
-                Err(DomainError::Tool("accounting unavailable".into()))
+                // Store contention keeps the record pending for a retry.
+                Err(DomainError::Tool("database is locked".into()))
             } else {
                 Ok(())
             }
@@ -124,6 +125,54 @@ async fn failed_accounting_is_retried_with_original_observation_id() {
         *accounting.records.lock().unwrap(),
         vec![records[0].request_id.clone(); 2]
     );
+}
+
+#[derive(Default)]
+struct RejectingAccounting {
+    records: Mutex<Vec<String>>,
+}
+impl crate::domain::request_observation::RequestAccounting for RejectingAccounting {
+    fn record<'a>(
+        &'a self,
+        observation: &'a crate::domain::request_observation::RequestObservation,
+    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+        Box::pin(async move {
+            self.records
+                .lock()
+                .unwrap()
+                .push(observation.request_id.clone());
+            Err(DomainError::Tool(
+                "request diagnostic ledger full; export before starting another run".into(),
+            ))
+        })
+    }
+}
+/// Diagnostics never block inference: a durable store rejection drops the
+/// record with a warning and the next turn (e.g. the terminal report) runs.
+#[tokio::test]
+async fn durable_accounting_rejection_drops_the_record_without_blocking_turns() {
+    let (agent, _) = make_agent(
+        vec![text_response("first"), text_response("report")],
+        vec![],
+    );
+    let accounting = Arc::new(RejectingAccounting::default());
+    let mut agent = agent.with_request_accounting(Some(accounting.clone()));
+    agent
+        .run_loop(&mut vec![Message::user("go")])
+        .await
+        .expect("a rejected diagnostic must not fail the turn");
+    agent
+        .run_loop(&mut vec![Message::user("report")])
+        .await
+        .expect("the report turn still runs");
+    agent.flush_request_accounting().await.unwrap();
+    let attempted = accounting.records.lock().unwrap().clone();
+    assert_eq!(
+        attempted.len(),
+        2,
+        "each record was offered exactly once, then dropped"
+    );
+    assert_ne!(attempted[0], attempted[1]);
 }
 
 #[derive(Debug)]

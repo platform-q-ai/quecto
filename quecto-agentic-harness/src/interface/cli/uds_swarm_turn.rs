@@ -58,7 +58,9 @@ pub(in crate::interface::cli) async fn arm_swarm_cancel(
     };
     let receiver = arm_cancel(handle)?;
     if let Some((status, generation)) = scope {
-        let mut slot = handle.lock().unwrap();
+        let mut slot = handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *slot = match std::mem::replace(&mut *slot, CancelSlot::Idle) {
             CancelSlot::Armed(sender) => CancelSlot::ScopedArmed(sender, status, generation),
             other => other,
@@ -69,7 +71,10 @@ pub(in crate::interface::cli) async fn arm_swarm_cancel(
 
 impl TurnControl {
     pub fn queue_swarm_wake(&self, generation: u64) -> bool {
-        let mut pending = self.pending_swarm_wake.lock().unwrap();
+        let mut pending = self
+            .pending_swarm_wake
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let first = pending.is_none();
         *pending = Some(pending.unwrap_or(0).max(generation));
         first
@@ -77,7 +82,7 @@ impl TurnControl {
     pub fn take_swarm_wake(&self, fallback: u64) -> u64 {
         self.pending_swarm_wake
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
             .unwrap_or(fallback)
     }

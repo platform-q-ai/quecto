@@ -45,14 +45,18 @@ impl AgentLoopImpl {
                 };
                 match accounting.record(&record).await {
                     Ok(()) => {}
-                    Err(error) if ledger_full(&error) => {
-                        tracing::warn!(
+                    Err(error) => match classify_accounting_failure(&error) {
+                        // Contention: keep the record pending and retry next turn.
+                        AccountingFailure::Transient => return Err(error),
+                        // Diagnostics never block inference: a durable rejection
+                        // (ledger full, revoked member, ...) drops the record
+                        // with an audited warning.
+                        AccountingFailure::Durable => tracing::warn!(
                             request_id = %record.request_id,
                             %error,
-                            "request diagnostic dropped: ledger full; export the run to retain diagnostics"
-                        );
-                    }
-                    Err(error) => return Err(error),
+                            "request diagnostic dropped after a durable rejection; export the run to retain diagnostics"
+                        ),
+                    },
                 }
                 self.accounting_outbox
                     .lock()
@@ -115,10 +119,23 @@ impl AgentLoopImpl {
     }
 }
 
-/// The accounting store's explicit capacity refusal (see the swarm repository's
-/// `request diagnostic ledger full` error). Any other failure still propagates.
-pub(crate) fn ledger_full(error: &DomainError) -> bool {
-    matches!(error, DomainError::Tool(message) if message.contains("ledger full"))
+/// How a store rejection of a diagnostic record is handled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AccountingFailure {
+    /// The store was busy (SQLite lock contention): retry on the next turn.
+    Transient,
+    /// A durable refusal (ledger full, unknown member, ...): drop the record.
+    Durable,
+}
+
+/// The bridge reports SQLite contention as `... is locked`; everything else the
+/// store refuses is durable for this process.
+pub(crate) fn classify_accounting_failure(error: &DomainError) -> AccountingFailure {
+    if error.to_string().to_ascii_lowercase().contains("is locked") {
+        AccountingFailure::Transient
+    } else {
+        AccountingFailure::Durable
+    }
 }
 
 #[cfg(test)]

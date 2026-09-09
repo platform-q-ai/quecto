@@ -36,7 +36,10 @@ pub fn join_current_process(
 /// paused must still observe resume, deadline expiry, cancellation and later
 /// pauses, or its local jobs and inference are never settled.
 pub(super) fn needs_supervision(status: RunStatus) -> bool {
-    !status.terminal()
+    matches!(
+        status,
+        RunStatus::Setup | RunStatus::Running | RunStatus::Paused
+    )
 }
 
 struct LinuxProcesses;

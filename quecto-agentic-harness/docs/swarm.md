@@ -359,10 +359,11 @@ concurrent appends. The manifest states this scope. Previously cleared/evicted
 messages are not reconstructed. Use normal container artifact transport to copy
 these files to the host.
 
-Resume restores admission and extends the deadline. A run paused by a strict
-token budget re-pauses on the next admission until the limit is raised or
-`strict_unknown` is disabled; cancelled and rejected attempts never count as
-unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
+Resume restores admission and extends the deadline. A run paused because a
+strict budget saw an answered request without usage re-pauses on the next
+admission until `strict_unknown` is disabled (or the budget removed); raising
+the limit alone does not clear it. Cancelled and rejected attempts never count
+as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
 turn suspends that turn: the pause receipt is durable on the board but the
 calling turn ends without a tool result. Send an explicit prompt to
 continue processing retained instructions. Paused queued instructions remain

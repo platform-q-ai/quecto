@@ -1,7 +1,6 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::application::context_pruning::messages::message_stub_without_recall;
-use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
@@ -256,7 +255,10 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
-    pub fn record_agent_result(&mut self, result: &AgentResult) {
+    /// Whole-result accumulator kept for tests; production records usage
+    /// through `record_usage` on the UDS run path.
+    #[cfg(test)]
+    pub fn record_agent_result(&mut self, result: &crate::domain::agent::AgentResult) {
         self.context_tokens = result.context_tokens;
         self.record_usage(
             result.billed_input_tokens,
