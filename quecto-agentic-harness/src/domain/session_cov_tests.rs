@@ -164,6 +164,29 @@ impl SessionStore for DefaultDeltaStore {
 }
 
 #[tokio::test]
+async fn default_execution_metadata_write_initializes_then_updates() {
+    let store = DefaultDeltaStore::default();
+    let first = ExecutionMetadata::new(
+        FolderIdentity::from_unix_bytes(b"/first".to_vec()),
+        FolderDisplayLabel::new("/first"),
+        AgentDisplayName::new("builder"),
+        GitBranchDisplay::new("main"),
+    );
+    store
+        .save_execution_metadata(
+            "chat-metadata",
+            ExecutionMetadataWrite::UpdateLatest(first.clone()),
+        )
+        .await
+        .expect("first update initializes metadata");
+
+    let saved = store.saved.lock().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].origin_execution_metadata(), Some(&first));
+    assert_eq!(saved[0].latest_execution_metadata(), Some(&first));
+}
+
+#[tokio::test]
 async fn default_session_store_delta_methods_delegate_to_save() {
     let store = DefaultDeltaStore::default();
     let messages = vec![Message::user("hello"), Message::assistant("world", vec![])];

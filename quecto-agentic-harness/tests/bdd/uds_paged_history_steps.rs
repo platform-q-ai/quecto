@@ -946,7 +946,10 @@ fn connect_paged_client(world: &mut QuectoWorld, client_id: u32) {
     let socket_path = world._mc_live_socket.clone().expect("no live socket");
     // bind creates the pathname before listen makes it connectable. Synchronize
     // on the connection we will actually use, retaining the original time budget.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // Coverage shards contend heavily while constructing providers and loading a
+    // large persisted history. Keep retrying transient startup errors long enough
+    // for the server thread to bind rather than treating scheduler delay as absence.
+    let deadline = Instant::now() + Duration::from_secs(15);
     let stream = loop {
         match UnixStream::connect(&socket_path) {
             Ok(stream) => break stream,
