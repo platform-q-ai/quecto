@@ -186,8 +186,10 @@ Queued admission waits display as `⏳ Ns` (for example, `⏳ 12s`). The subagen
 panel prioritizes this indicator over long child names. The hourglass means
 waiting for admission, **not active inference**; brief display during immediate
 admission is expected. Selecting or reconnecting to a waiting child restores
-its indicator from the child's admission snapshot. Live cooldown countdown
-projection is separate work tracked in #1708.
+its indicator from the child's admission snapshot. Dated cooldown labels count
+down from their transition snapshot using local monotonic time. At local expiry
+they remain visible as `cooldown elapsed` until an authoritative update arrives;
+this presentation does not claim admission availability.
 
 ### Subagent transcript freshness
 

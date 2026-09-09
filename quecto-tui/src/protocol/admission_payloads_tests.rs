@@ -92,9 +92,9 @@ fn status_label_prefers_waiting_then_cooldown_then_nothing() {
         remaining_seconds: Some(0),
     });
     assert_eq!(
-        view.status_label(),
-        None,
-        "an elapsed cooldown is not shown"
+        view.status_label().as_deref(),
+        Some("anthropic cooldown elapsed"),
+        "local expiry stays visible without claiming authoritative availability"
     );
     view.groups[0].cooldown = Some(AdmissionCooldown {
         state: "unknown".into(),

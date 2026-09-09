@@ -121,12 +121,17 @@ impl App {
     /// End of a run: an attempt cannot be waiting any more, so the view is
     /// re-derived with nothing waiting (a cooldown survives, a wait does not).
     pub(in crate::shell::app) fn clear_master_admission_wait(&mut self) {
-        if let Some(mut view) = self.ac().admission_view.clone()
+        if let Some(view) = self.ac().admission_view.clone()
             && view.waiting > 0
         {
-            view.waiting = 0;
-            view.longest_wait_seconds = None;
-            self.apply_master_admission(&view);
+            let mut projected = elapsed_view(
+                &view,
+                self.ac().admission_observed_at,
+                tokio::time::Instant::now(),
+            );
+            projected.waiting = 0;
+            projected.longest_wait_seconds = None;
+            self.apply_master_admission(&projected);
         }
     }
 
@@ -232,10 +237,10 @@ impl App {
     }
 
     pub(in crate::shell::app) fn clear_child_admission_wait(&mut self, id: &str) {
-        if let Some((view, _)) = self.ac().admission_children.get(id) {
+        if let Some((view, observed)) = self.ac().admission_children.get(id) {
             // Terminals are unversioned projections. Keep the authoritative view
             // intact so a same-revision state event can repair cross-feed order.
-            let mut terminal_view = view.clone();
+            let mut terminal_view = elapsed_view(view, *observed, tokio::time::Instant::now());
             terminal_view.waiting = 0;
             terminal_view.longest_wait_seconds = None;
             let label = terminal_view.compact_label();
@@ -312,11 +317,25 @@ fn elapsed_view(
     now: tokio::time::Instant,
 ) -> AdmissionView {
     let mut projected = view.clone();
+    let elapsed = now.saturating_duration_since(observed).as_secs();
     if view.waiting > 0 {
-        projected.longest_wait_seconds = view.longest_wait_seconds.map(|seconds| {
-            seconds.saturating_add(now.saturating_duration_since(observed).as_secs())
-        });
+        projected.longest_wait_seconds = view
+            .longest_wait_seconds
+            .map(|seconds| seconds.saturating_add(elapsed));
     }
+    for group in &mut projected.groups {
+        if let Some(cooldown) = &mut group.cooldown
+            && cooldown.state == "until"
+        {
+            cooldown.remaining_seconds = cooldown
+                .remaining_seconds
+                .map(|seconds| seconds.saturating_sub(elapsed));
+        }
+    }
+    debug_assert_eq!(
+        projected.revision, view.revision,
+        "projection preserves revision"
+    );
     projected
 }
 
