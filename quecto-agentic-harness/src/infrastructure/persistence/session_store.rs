@@ -121,6 +121,8 @@ impl SessionStore for FileSessionStore {
             if session.messages.is_empty()
                 && session.workflow_run.is_none()
                 && session.subagent_roster.is_empty()
+                && session.origin_location.is_none()
+                && session.latest_location.is_none()
             {
                 return self.delete_session_file_if_present(&session.key).await;
             }
@@ -253,6 +255,18 @@ impl SessionStore for FileSessionStore {
                     .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
                     .count();
                 summaries.push(SessionSummary {
+                    latest_folder_identity: header
+                        .latest_location
+                        .as_ref()
+                        .map(|location| location.folder_identity.clone()),
+                    agent_name: header
+                        .latest_location
+                        .as_ref()
+                        .and_then(|location| location.agent_name.clone()),
+                    branch: header
+                        .latest_location
+                        .as_ref()
+                        .and_then(|location| location.branch.clone()),
                     title,
                     key: header.key.into_owned(),
                     message_count,
@@ -276,6 +290,8 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
 
     let mut key = std::borrow::Cow::Borrowed("");
     let mut messages = Vec::new();
+    let mut _origin_location = None;
+    let mut latest_location = None;
     let mut parsed_any = false;
     for line in data.lines().filter(|line| !line.trim().is_empty()) {
         let record: SessionRecord = match serde_json::from_str(line) {
@@ -290,6 +306,8 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
         match record {
             SessionRecord::Snapshot(file) => {
                 key = file.key.into();
+                _origin_location = file.origin_location;
+                latest_location = file.latest_location;
                 messages = file
                     .messages
                     .into_iter()
@@ -300,16 +318,29 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
                     .collect();
             }
             SessionRecord::Append {
-                messages: added, ..
+                messages: added,
+                origin_location: updated_origin,
+                latest_location: updated_latest,
+                location_metadata_changed,
+                ..
             } => {
                 messages.extend(added.into_iter().map(|message| MessageHeader {
                     role: message.role.into(),
                     content: message.content.into(),
                 }));
+                if location_metadata_changed {
+                    _origin_location = updated_origin;
+                    latest_location = updated_latest;
+                }
             }
         }
     }
-    Ok(SessionHeader { key, messages })
+    Ok(SessionHeader {
+        key,
+        messages,
+        _origin_location,
+        latest_location,
+    })
 }
 
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
@@ -337,6 +368,9 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
                 workflow_run,
                 workflow_run_cleared,
                 subagent_roster,
+                origin_location,
+                latest_location,
+                location_metadata_changed,
             } => {
                 if let Some(session) = &mut session {
                     if let Some(start_index) = start_index {
@@ -360,6 +394,10 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
                     if let Some(roster) = subagent_roster {
                         session.subagent_roster = roster;
                     }
+                    if location_metadata_changed {
+                        session.origin_location = origin_location;
+                        session.latest_location = latest_location;
+                    }
                 }
             }
         }
@@ -373,6 +411,8 @@ fn session_from_file(file: SessionFile) -> Session {
     let messages =
         assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
     Session {
+        origin_location: file.origin_location,
+        latest_location: file.latest_location,
         key: file.key,
         messages,
         workflow_run: file.workflow_run,
@@ -455,6 +495,8 @@ async fn compact_or_append_delta(
             .map(|s| s.subagent_roster)
             .unwrap_or_default();
         let session = Session {
+            origin_location: None,
+            latest_location: None,
             key: key.to_string(),
             messages: messages_with_assigned_ordinals(messages),
             workflow_run: workflow_run.cloned(),
@@ -472,6 +514,9 @@ async fn compact_or_append_delta(
         workflow_run,
         workflow_run_cleared: workflow_run.is_none(),
         subagent_roster: None,
+        origin_location: None,
+        latest_location: None,
+        location_metadata_changed: false,
     };
     append_record(path, &record).await
 }
@@ -507,7 +552,13 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
 
     let added = &session.messages[previous.messages.len()..];
     let roster_changed = session.subagent_roster != previous.subagent_roster;
-    if added.is_empty() && session.workflow_run == previous.workflow_run && !roster_changed {
+    let location_metadata_changed = session.origin_location != previous.origin_location
+        || session.latest_location != previous.latest_location;
+    if added.is_empty()
+        && session.workflow_run == previous.workflow_run
+        && !roster_changed
+        && !location_metadata_changed
+    {
         return Ok(());
     }
 
@@ -517,6 +568,13 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
         workflow_run: session.workflow_run.as_ref(),
         workflow_run_cleared: session.workflow_run.is_none(),
         subagent_roster: roster_changed.then_some(session.subagent_roster.as_slice()),
+        origin_location: location_metadata_changed
+            .then_some(session.origin_location.as_ref())
+            .flatten(),
+        latest_location: location_metadata_changed
+            .then_some(session.latest_location.as_ref())
+            .flatten(),
+        location_metadata_changed,
     };
     append_record(path, &record).await
 }
@@ -527,6 +585,8 @@ async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainErr
         messages: session.messages.iter().map(message_to_record_ref).collect(),
         workflow_run: session.workflow_run.as_ref(),
         subagent_roster: &session.subagent_roster,
+        origin_location: session.origin_location.as_ref(),
+        latest_location: session.latest_location.as_ref(),
     });
     let mut line = serde_json::to_string(&record)
         .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;

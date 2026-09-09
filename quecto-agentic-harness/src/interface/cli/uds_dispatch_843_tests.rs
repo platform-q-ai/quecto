@@ -629,6 +629,8 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
     let mut fx = Fx::new();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "dead-child".into(),
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
@@ -677,6 +679,8 @@ async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_o
         .collect();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "dead-child".into(),
             messages,
             workflow_run: None,

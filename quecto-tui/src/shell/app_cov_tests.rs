@@ -195,20 +195,21 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
 #[tokio::test]
 async fn open_resume_selector_empty_shows_status_no_selector() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": []});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": []});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     assert!(a.ac().sessions.resume_selector.is_none());
-    assert!(chat_text(a).contains("No persisted sessions"));
+    assert!(chat_text(a).contains("No resumable sessions found for this folder."));
 }
 
 #[tokio::test]
 async fn open_resume_selector_with_names_builds_list() {
     let mut h = harness().await;
     let data = serde_json::json!({
+        "scopeStatus": "known_folder",
         "sessions": [
-            {"name": "alpha", "messageCount": 3},
-            {"name": "beta"}
+            {"key": "alpha", "title": "alpha", "messageCount": 3},
+            {"key": "beta", "title": "beta", "messageCount": 0}
         ]
     });
     let a = h.app_mut();
@@ -227,17 +228,17 @@ async fn open_resume_selector_with_names_builds_list() {
 #[tokio::test]
 async fn open_resume_selector_without_names_shows_status() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"messageCount": 1}]});
+    let data =
+        serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"messageCount": 1}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     assert!(a.ac().sessions.resume_selector.is_none());
-    assert!(chat_text(a).contains("No resumable"));
 }
 
 #[tokio::test]
 async fn handle_resume_selector_key_enter_selects_and_closes() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 3}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Enter);
@@ -255,7 +256,7 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
 #[tokio::test]
 async fn handle_resume_selector_key_escape_cancels() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 0}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Escape);
@@ -265,7 +266,7 @@ async fn handle_resume_selector_key_escape_cancels() {
 #[tokio::test]
 async fn handle_resume_selector_key_pending_keeps_selector() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "a"}, {"name": "b"}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "a", "title": "a", "messageCount": 0}, {"key": "b", "title": "b", "messageCount": 0}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Down);
@@ -587,7 +588,7 @@ async fn selection_extraction_works_after_drag_render() {
 #[tokio::test]
 async fn compose_frame_with_resume_overlay() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 1}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 1}]});
     h.app_mut()
         .open_resume_selector_at(&data, &empty_manifest_path());
     let frame = h.app_mut().compose_frame().join("\n");

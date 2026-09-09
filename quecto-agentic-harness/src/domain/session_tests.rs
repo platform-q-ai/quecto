@@ -161,3 +161,58 @@ fn filter_orphan_pairs_empty_messages_returns_empty() {
     assert!(valid.is_empty());
     assert!(!diag.has_orphans());
 }
+
+// Issue #1612: location metadata is typed, bounded domain data. This compile-time RED
+// deliberately names the required domain API before its implementation.
+#[test]
+fn session_location_metadata_enforces_lossless_identity_and_presentation_bounds() {
+    let max_identity = FolderIdentity::try_from("x".repeat(4096)).expect("4 KiB identity");
+    assert_eq!(max_identity.as_str().len(), 4096);
+    assert!(FolderIdentity::try_from("x".repeat(4097)).is_err());
+
+    let max_name = SessionPresentation::try_agent_name("n".repeat(256));
+    assert!(max_name.is_some());
+    assert!(SessionPresentation::try_agent_name("n".repeat(257)).is_none());
+
+    let max_branch = SessionPresentation::try_branch("b".repeat(256));
+    assert!(max_branch.is_some());
+    assert!(SessionPresentation::try_branch("b".repeat(257)).is_none());
+
+    let max_label = FolderLabel::try_from("l".repeat(512)).expect("512-byte label");
+    assert_eq!(max_label.as_str().len(), 512);
+    assert!(FolderLabel::try_from("l".repeat(513)).is_err());
+}
+
+#[test]
+fn activation_replaces_latest_location_tuple_without_backfilling_origin() {
+    let mut session = Session::new("cli:location".to_string());
+    assert!(session.origin_location().is_none());
+
+    session.record_successful_activation(SessionLocation::new(
+        FolderIdentity::try_from("native_v1_unix_b64:L2E=".to_string()).unwrap(),
+        Some(FolderLabel::try_from("/a".to_string()).unwrap()),
+        SessionPresentation::try_agent_name("agent-a".to_string()),
+        SessionPresentation::try_branch("main".to_string()),
+    ));
+
+    assert!(
+        session.origin_location().is_none(),
+        "legacy origin is never backfilled"
+    );
+    assert_eq!(
+        session.latest_location().unwrap().agent_name(),
+        Some("agent-a")
+    );
+
+    session.record_successful_activation(SessionLocation::new(
+        FolderIdentity::try_from("native_v1_unix_b64:L2I=".to_string()).unwrap(),
+        Some(FolderLabel::try_from("/b".to_string()).unwrap()),
+        None,
+        None,
+    ));
+
+    let latest = session.latest_location().unwrap();
+    assert_eq!(latest.folder_label(), Some("/b"));
+    assert_eq!(latest.agent_name(), None, "stale agent metadata must clear");
+    assert_eq!(latest.branch(), None, "stale branch metadata must clear");
+}

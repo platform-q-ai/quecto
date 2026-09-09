@@ -298,6 +298,8 @@ async fn forward_get_messages_rejects_stale_historical_before_cursor() {
     let mut fx = Fx::new();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "dead-child".into(),
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,

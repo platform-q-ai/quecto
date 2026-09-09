@@ -212,6 +212,8 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:test".into(),
             messages: vec![Message::user("old-a")],
             workflow_run: None,
@@ -234,6 +236,8 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
         .unwrap();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:other".into(),
             messages: vec![Message::user("old-b")],
             workflow_run: None,
@@ -281,6 +285,8 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:test".into(),
             messages: vec![Message::user("old")],
             workflow_run: None,

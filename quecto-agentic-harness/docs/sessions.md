@@ -3,6 +3,16 @@
 Sessions persist conversation history so the agent remembers context across
 prompts and restarts. They are the primary state mechanism for UDS agents.
 
+## Folder-scoped resume discovery
+
+The TUI `/resume` browser lists only durable `cli:` session families whose **latest successful activation** has the same complete canonical native-folder identity as the harness process's current folder. Matching is exact: repository roots, siblings, nested folders, lossy labels, branches, agent names, fuzzy prefixes, and global fallbacks do not participate.
+
+A native folder identity is version-tagged and lossless, with a final encoded limit of 4096 bytes. Its optional display label is bounded to 512 bytes. Optional owning agent/tab name and named Git branch are presentation-only and each bounded to 256 bytes. Unknown or invalid presentation metadata never blocks activation and is never used for matching or ordering.
+
+A new durable session records `originLocation` when its first successful activation has a known native folder. Origin is immutable and legacy sessions never backfill it. Every successful resume atomically replaces the whole `latestLocation` tuple, clearing optional fields that are no longer known. Browsing, previewing, ordinary saves, rewinds, and compaction do not recanonicalize or invent location history.
+
+When the current folder cannot be canonicalized, is not a directory, cannot be represented on the native platform, or exceeds the identity bound, `ListSessions` returns an explicit unavailable scope with zero rows. The TUI never falls back to an unfiltered list. Direct resume by an existing exact key retains its legacy behavior, including validation, ownership, and ephemeral restrictions; resume does not change cwd, reconstruct an environment, or recreate historical tabs.
+
 ## How sessions work
 
 Each session is identified by a key in the format `<interface>:<name>`:

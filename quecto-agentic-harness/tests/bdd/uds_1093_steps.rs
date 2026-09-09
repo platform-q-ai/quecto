@@ -325,6 +325,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             workspace: &base_for_thread,
             session_key,
             model,
+            activation_agent_name: None,
             ephemeral: false,
             system_prompt: String::new(),
             socket_path: socket_for_thread,

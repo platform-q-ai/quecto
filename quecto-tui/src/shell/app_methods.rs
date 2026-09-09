@@ -217,19 +217,33 @@ impl App {
         data: &serde_json::Value,
         manifest_path: &std::path::Path,
     ) {
-        let mut sessions = session_payloads::parse_resume_sessions(data);
-        // #1466 fix pass item 3: sessions, like workspaces, list most
-        // recently active first (unknown times sink to the bottom).
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
-        let empty_hint = if sessions.is_empty() {
-            if session_payloads::has_session_entries(data) {
-                Some("No resumable CLI sessions found.")
-            } else {
-                Some("No persisted sessions found.")
+        let scoped = match session_payloads::parse_scoped_resume_sessions(data) {
+            Ok(scoped) => scoped,
+            Err(error) => {
+                self.notify(
+                    &format!("Invalid session list response: {error}"),
+                    NotifyLevel::Error,
+                );
+                return;
             }
-        } else {
-            None
         };
+        if scoped.status() == session_payloads::ResumeScopeStatus::CurrentFolderUnavailable {
+            self.notify(
+                &format!(
+                    "Current folder unavailable: {}",
+                    scoped
+                        .explanation()
+                        .unwrap_or("Unable to resolve the current folder.")
+                ),
+                NotifyLevel::Error,
+            );
+            return;
+        }
+        let mut sessions = scoped.sessions().to_vec();
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
+        let empty_hint = sessions
+            .is_empty()
+            .then_some("No resumable sessions found for this folder.");
         let session_items = sessions
             .into_iter()
             .map(|session| {
@@ -237,10 +251,19 @@ impl App {
                     .updated_unix_secs
                     .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
+                let agent = session.agent_name.as_deref().unwrap_or("unknown agent");
+                let branch = session
+                    .branch
+                    .as_deref()
+                    .map(|branch| format!("   {branch}"))
+                    .unwrap_or_default();
                 SelectItem {
                     value: format!("session:{}", session.key),
                     label: session.title,
-                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
+                    description: Some(format!(
+                        "{agent}{branch}   {when}   ({} msgs)",
+                        session.message_count
+                    )),
                 }
             })
             .collect::<Vec<_>>();

@@ -427,6 +427,7 @@ fn resume_selector_sorts_sessions_by_last_active_descending() {
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json"); // empty manifest: sessions only
     let data = serde_json::json!({
+        "scopeStatus": "known_folder",
         "sessions": [
             { "key": "s-old", "title": "older session", "messageCount": 3,
               "updatedUnixSecs": 1_000 },

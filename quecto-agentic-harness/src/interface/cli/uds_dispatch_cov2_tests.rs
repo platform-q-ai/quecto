@@ -44,6 +44,8 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat:one".into(),
             messages: vec![Message::user("hello")],
             workflow_run: None,

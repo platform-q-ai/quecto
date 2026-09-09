@@ -319,6 +319,8 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     ];
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:test".into(),
             messages: vec![Message::user("saved")],
             workflow_run: None,
@@ -357,6 +359,8 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     let store = FileSessionStore::new(tmp.path());
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:test".into(),
             messages: vec![Message::user("saved")],
             workflow_run: None,

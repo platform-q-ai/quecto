@@ -50,6 +50,8 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
             ordinal: 8,
         });
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "cli:roster".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
@@ -130,6 +132,8 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:roster-only".to_string(),
             messages: vec![],
             workflow_run: None,
@@ -154,6 +158,8 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:empty".to_string(),
             messages: vec![],
             workflow_run: None,
@@ -169,6 +175,8 @@ async fn roster_only_updates_replay_as_full_replacements() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let mut session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "cli:roster-delta".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
@@ -200,6 +208,8 @@ async fn compaction_retains_current_subagent_roster() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let mut session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "cli:roster-compact".to_string(),
         messages: vec![make_message(Role::User, "first")],
         workflow_run: None,
@@ -226,6 +236,8 @@ async fn save_delta_compaction_preserves_persisted_subagent_roster() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "cli:roster-delta-compact".to_string(),
         messages: vec![make_message(Role::User, "first")],
         workflow_run: None,

@@ -450,6 +450,8 @@ async fn resume_session_success_loads_messages() {
     // Pre-save a target session into the store.
     let key = Session::build_key("cli", "saved");
     let saved = Session {
+        origin_location: None,
+        latest_location: None,
         key: key.clone(),
         messages: vec![Message::user("restored")],
         workflow_run: None,
@@ -476,6 +478,8 @@ async fn resume_updates_session_aware_tools() {
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: key.clone(),
             messages: vec![Message::user("restored")],
             workflow_run: None,
@@ -500,6 +504,8 @@ async fn resume_loads_chat_session_by_full_key() {
     let mut fx = Fixture::new();
     let key = "chat-1750000000-abc".to_string();
     let saved = Session {
+        origin_location: None,
+        latest_location: None,
         key: key.clone(),
         messages: vec![Message::user("restored chat")],
         workflow_run: None,

@@ -687,6 +687,8 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
     let collapsed = collapsed_message(spill_id);
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:saved".into(),
             messages: vec![collapsed],
             workflow_run: None,

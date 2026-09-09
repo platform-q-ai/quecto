@@ -414,7 +414,7 @@ async fn response_get_session_stats_renders() {
 async fn response_list_sessions_success_and_failure() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 0}]});
     respond(a, None, "list_sessions", true, Some(data), None);
     assert!(a.ac().sessions.resume_selector.is_some());
     respond(a, None, "list_sessions", false, None, Some("err"));

@@ -8,6 +8,10 @@ For the hardening plan, see
 [PRD: Agentic Harness Architecture Hardening](../prd/prd-harness-architecture-hardening.md).
 For the related decisions, see the [ADR index](../architecture-design-records/README.md).
 
+## Session location feature map
+
+Folder identity, bounded presentation values, origin/latest invariants, and scoped outcomes are domain concepts. Application use cases depend on inward-facing context-inspector ports. Native filesystem and bounded Git inspection plus JSONL replay are infrastructure adapters. UDS maps those outcomes onto the existing length-prefixed JSON protocol; the TUI uses an affirmative status/reason allowlist and renders or selects existing keys without owning scope rules.
+
 ## Turn execution
 
 **Primary code:** `src/application/agent_loop.rs` and sibling modules such as

@@ -342,6 +342,8 @@ pub(super) async fn multi_client_loop(
             uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
         };
         let session = Session {
+            origin_location: None,
+            latest_location: None,
             key: session_key,
             messages: std::mem::take(&mut messages),
             workflow_run: wf_state

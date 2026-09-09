@@ -85,7 +85,7 @@ async fn handle_key_routes_to_overlay_when_active() {
     let mut h = harness().await;
     let a = h.app_mut();
     // Open the resume selector to activate an overlay-like state.
-    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 0}]});
     a.open_resume_selector(&data);
     assert!(a.ac().sessions.resume_selector.is_some());
     // Escape should close the selector, not clear the editor.
@@ -125,7 +125,7 @@ async fn switching_active_session_closes_open_overlays() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
-    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
+    let data = serde_json::json!({"scopeStatus": "known_folder", "sessions": [{"key": "alpha", "title": "alpha", "messageCount": 0}]});
     a.open_resume_selector(&data);
     assert!(a.inference.model_selector.is_some());
     assert!(a.ac().sessions.resume_selector.is_some());

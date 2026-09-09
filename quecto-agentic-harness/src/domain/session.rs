@@ -37,6 +37,11 @@ pub struct SessionSummary {
     pub message_count: usize,
     /// Last modification time in Unix seconds, when available.
     pub updated_unix_secs: Option<u64>,
+    /// Latest canonical folder identity, used only by exact scoped discovery.
+    pub latest_folder_identity: Option<FolderIdentity>,
+    /// Optional bounded presentation metadata.
+    pub agent_name: Option<String>,
+    pub branch: Option<String>,
 }
 
 /// Cross-process liveness of a persisted sub-agent roster entry.
@@ -111,6 +116,152 @@ pub struct PersistedSubagentRosterEntry {
     pub pending_message_reports: std::collections::VecDeque<PendingMessageReport>,
 }
 
+/// Maximum lossless encoded native-folder identity size.
+pub const MAX_FOLDER_IDENTITY_BYTES: usize = 4096;
+/// Maximum display-folder label size.
+pub const MAX_FOLDER_LABEL_BYTES: usize = 512;
+/// Maximum optional agent-name or branch presentation size.
+pub const MAX_SESSION_PRESENTATION_BYTES: usize = 256;
+
+/// Complete, lossless, version-tagged native folder identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct FolderIdentity(String);
+
+impl TryFrom<String> for FolderIdentity {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if (1..=MAX_FOLDER_IDENTITY_BYTES).contains(&value.len()) {
+            Ok(Self(value))
+        } else {
+            Err(DomainError::Session(
+                "folder identity must contain 1..=4096 bytes".into(),
+            ))
+        }
+    }
+}
+
+impl FolderIdentity {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Bounded display-only folder label.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct FolderLabel(String);
+
+impl TryFrom<String> for FolderLabel {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if (1..=MAX_FOLDER_LABEL_BYTES).contains(&value.len()) {
+            Ok(Self(value))
+        } else {
+            Err(DomainError::Session(
+                "folder label must contain 1..=512 bytes".into(),
+            ))
+        }
+    }
+}
+
+impl FolderLabel {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Presentation-only bounded session metadata constructors.
+pub struct SessionPresentation;
+
+impl SessionPresentation {
+    pub fn try_agent_name(value: String) -> Option<String> {
+        Self::bounded(value)
+    }
+
+    pub fn try_branch(value: String) -> Option<String> {
+        Self::bounded(value)
+    }
+
+    fn bounded(value: String) -> Option<String> {
+        (1..=MAX_SESSION_PRESENTATION_BYTES)
+            .contains(&value.len())
+            .then_some(value)
+    }
+}
+
+/// Metadata captured for one successful activation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLocation {
+    pub folder_identity: FolderIdentity,
+    pub folder_label: Option<FolderLabel>,
+    pub agent_name: Option<String>,
+    pub branch: Option<String>,
+}
+
+impl SessionLocation {
+    pub fn new(
+        folder_identity: FolderIdentity,
+        folder_label: Option<FolderLabel>,
+        agent_name: Option<String>,
+        branch: Option<String>,
+    ) -> Self {
+        Self {
+            folder_identity,
+            folder_label,
+            agent_name: agent_name.and_then(SessionPresentation::try_agent_name),
+            branch: branch.and_then(SessionPresentation::try_branch),
+        }
+    }
+
+    pub fn folder_label(&self) -> Option<&str> {
+        self.folder_label.as_ref().map(FolderLabel::as_str)
+    }
+
+    pub fn agent_name(&self) -> Option<&str> {
+        self.agent_name.as_deref()
+    }
+
+    pub fn branch(&self) -> Option<&str> {
+        self.branch.as_deref()
+    }
+}
+
+/// Stable, affirmative reason for unavailable current-folder scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderScopeUnavailableReason {
+    CanonicalizationFailed,
+    NotADirectory,
+    UnsupportedPlatform,
+    IdentityTooLarge,
+}
+
+impl FolderScopeUnavailableReason {
+    pub fn wire_code(self) -> &'static str {
+        match self {
+            Self::CanonicalizationFailed => "canonicalization_failed",
+            Self::NotADirectory => "not_a_directory",
+            Self::UnsupportedPlatform => "unsupported_platform",
+            Self::IdentityTooLarge => "identity_too_large",
+        }
+    }
+}
+
+/// Current native folder resolution result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurrentFolderScope {
+    Known(SessionLocation),
+    Unavailable(FolderScopeUnavailableReason),
+}
+
+/// Inward-facing port implemented by native infrastructure.
+pub trait SessionContextInspector: Send + Sync {
+    fn inspect_current(&self) -> CurrentFolderScope;
+}
+
 /// A conversation session identified by a unique key.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -122,6 +273,10 @@ pub struct Session {
     pub workflow_run: Option<super::workflow::WorkflowRunPersisted>,
     /// Persisted sub-agent roster for resumed masters (#1461).
     pub subagent_roster: Vec<PersistedSubagentRosterEntry>,
+    /// Immutable location captured when this durable session was first created.
+    pub origin_location: Option<SessionLocation>,
+    /// Location and presentation metadata from the latest successful activation.
+    pub latest_location: Option<SessionLocation>,
 }
 
 impl Session {
@@ -132,7 +287,23 @@ impl Session {
             messages: vec![],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_location: None,
+            latest_location: None,
         }
+    }
+
+    pub fn origin_location(&self) -> Option<&SessionLocation> {
+        self.origin_location.as_ref()
+    }
+
+    pub fn latest_location(&self) -> Option<&SessionLocation> {
+        self.latest_location.as_ref()
+    }
+
+    /// Replace the complete latest tuple after a successful activation.
+    /// Legacy sessions intentionally keep an unknown origin.
+    pub fn record_successful_activation(&mut self, location: SessionLocation) {
+        self.latest_location = Some(location);
     }
 
     /// Build a session key from channel and user ID.
@@ -181,6 +352,8 @@ pub trait SessionStore: Send + Sync {
             messages: messages.to_vec(),
             workflow_run,
             subagent_roster: Vec::new(),
+            origin_location: None,
+            latest_location: None,
         };
         Box::pin(async move { self.save(&session).await })
     }

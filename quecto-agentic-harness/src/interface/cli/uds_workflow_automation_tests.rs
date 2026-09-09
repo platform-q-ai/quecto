@@ -30,6 +30,8 @@ async fn resume_session_restores_target_workflow_run_state() {
     let key = Session::build_key("cli", "saved");
     env.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: key.clone(),
             messages: vec![crate::domain::message::Message::user("restored")],
             workflow_run: Some(persisted_feature_run(vec![true, false, false])),
@@ -59,6 +61,8 @@ async fn resume_session_clears_workflow_when_target_has_none() {
     env.messages = vec![crate::domain::message::Message::user("current")];
     env.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: Session::build_key("cli", "plain"),
             messages: vec![crate::domain::message::Message::user("plain")],
             workflow_run: None,

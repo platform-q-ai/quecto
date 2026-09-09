@@ -30,8 +30,9 @@ fn resume_selector_ignores_workspace_manifests_and_lists_sessions_directly() {
     store.store(&mpath).unwrap();
 
     let data = serde_json::json!({
+        "scopeStatus": "known_folder",
         "sessions": [
-            {"name": "alpha", "messageCount": 2}
+            {"key": "alpha", "title": "alpha", "messageCount": 2}
         ]
     });
     a.open_resume_selector_at(&data, &mpath);

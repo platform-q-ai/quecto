@@ -13,6 +13,8 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let persisted_key = crate::domain::session::Session::build_key("cli", "default");
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: persisted_key.clone(),
             messages: vec![Message::user("persisted message that /resume must offer")],
             workflow_run: None,
@@ -126,6 +128,8 @@ async fn e2e_resume_restores_transcript_and_prunes_subagent_roster() {
 
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "cli:roster-resume".to_string(),
             messages: vec![
                 Message::user("persisted transcript survives roster restore"),

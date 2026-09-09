@@ -15,6 +15,8 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     fx.messages = vec![Message::user("old-a"), Message::assistant("old-b", vec![])];
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: fx.session_key.clone(),
             messages: fx.messages.clone(),
             workflow_run: None,
@@ -214,6 +216,8 @@ fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
 async fn persist_baseline(fx: &mut Fixture) {
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: fx.session_key.clone(),
             messages: fx.messages.clone(),
             workflow_run: None,

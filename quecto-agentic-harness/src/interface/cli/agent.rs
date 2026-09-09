@@ -532,6 +532,8 @@ pub(crate) fn run_agent_session(
                     messages.remove(idx);
                 }
                 let session = Session {
+                    origin_location: None,
+                    latest_location: None,
                     key: session_key,
                     messages: std::mem::take(&mut messages),
                     workflow_run: None,
@@ -683,6 +685,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         workspace: &build.workspace,
         session_key,
         model,
+        activation_agent_name: flags.session_name.clone(),
         ephemeral,
         system_prompt,
         socket_path,

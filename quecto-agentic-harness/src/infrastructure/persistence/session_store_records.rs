@@ -1,4 +1,4 @@
-use crate::domain::session::PersistedSubagentRosterEntry;
+use crate::domain::session::{PersistedSubagentRosterEntry, SessionLocation};
 use crate::domain::workflow::WorkflowRunPersisted;
 use serde::Deserialize;
 
@@ -42,6 +42,10 @@ pub(super) struct SessionFile {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(super) subagent_roster: Vec<PersistedSubagentRosterEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) origin_location: Option<SessionLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) latest_location: Option<SessionLocation>,
 }
 
 #[derive(serde::Serialize)]
@@ -52,6 +56,10 @@ pub(super) struct SessionFileRef<'a> {
     pub(super) workflow_run: Option<&'a WorkflowRunPersisted>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     pub(super) subagent_roster: &'a [PersistedSubagentRosterEntry],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) origin_location: Option<&'a SessionLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) latest_location: Option<&'a SessionLocation>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -74,6 +82,12 @@ pub(super) enum SessionRecord {
             skip_serializing_if = "Option::is_none"
         )]
         subagent_roster: Option<Vec<PersistedSubagentRosterEntry>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_location: Option<SessionLocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        latest_location: Option<SessionLocation>,
+        #[serde(default, skip_serializing_if = "skip_if_false")]
+        location_metadata_changed: bool,
     },
 }
 
@@ -93,6 +107,12 @@ pub(super) enum SessionRecordRef<'a> {
         workflow_run_cleared: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         subagent_roster: Option<&'a [PersistedSubagentRosterEntry]>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        origin_location: Option<&'a SessionLocation>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        latest_location: Option<&'a SessionLocation>,
+        #[serde(skip_serializing_if = "skip_if_false")]
+        location_metadata_changed: bool,
     },
 }
 
@@ -179,6 +199,10 @@ pub(super) struct SessionHeader<'a> {
     pub(super) key: std::borrow::Cow<'a, str>,
     #[serde(default, borrow)]
     pub(super) messages: Vec<MessageHeader<'a>>,
+    #[serde(default, rename = "originLocation")]
+    pub(super) _origin_location: Option<SessionLocation>,
+    #[serde(default, rename = "latestLocation")]
+    pub(super) latest_location: Option<SessionLocation>,
 }
 
 /// Per-message header: just the role (for counting/title selection) and the

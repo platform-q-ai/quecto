@@ -71,6 +71,8 @@ async fn resume_session_clears_previous_session_ref() {
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key,
             messages: vec![Message::user("restored")],
             workflow_run: None,

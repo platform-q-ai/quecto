@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    ResumeMessagesError, ResumedChatMessage, parse_resume_sessions, parse_resumed_messages,
-    parse_session_stats,
+    ResumeMessagesError, ResumeScopeStatus, ResumedChatMessage, parse_resume_sessions,
+    parse_resumed_messages, parse_scoped_resume_sessions, parse_session_stats,
 };
 
 #[test]
@@ -294,4 +294,68 @@ fn resumed_messages_skip_subagent_notes() {
         vec!["write a poem"],
         "the injected sub-agent note must not resume as a user message"
     );
+}
+
+// Issue #1612: the TUI accepts only the scoped ListSessions wire contract.
+#[test]
+fn parse_scoped_resume_sessions_accepts_known_folder_metadata() {
+    let result = parse_scoped_resume_sessions(&json!({
+        "scopeStatus": "known_folder",
+        "sessions": [{
+            "key": "cli:exact-key",
+            "title": "Fix bug",
+            "messageCount": 12,
+            "updatedUnixSecs": 1781980920u64,
+            "agentName": "builder",
+            "branch": "feature/1612"
+        }]
+    }))
+    .expect("known-folder payload");
+
+    assert_eq!(result.status(), ResumeScopeStatus::KnownFolder);
+    assert_eq!(result.sessions()[0].key, "cli:exact-key");
+    assert_eq!(result.sessions()[0].agent_name.as_deref(), Some("builder"));
+    assert_eq!(result.sessions()[0].branch.as_deref(), Some("feature/1612"));
+}
+
+#[test]
+fn parse_scoped_resume_sessions_requires_allowlisted_unavailable_reason() {
+    let unavailable = parse_scoped_resume_sessions(&json!({
+        "scopeStatus": "current_folder_unavailable",
+        "reason": "identity_too_large",
+        "sessions": []
+    }))
+    .expect("allowlisted reason");
+    assert_eq!(
+        unavailable.status(),
+        ResumeScopeStatus::CurrentFolderUnavailable
+    );
+    assert_eq!(
+        unavailable.explanation(),
+        Some("The current folder identity exceeds 4096 bytes.")
+    );
+
+    for malformed in [
+        json!({"sessions": []}),
+        json!({"scopeStatus": "KNOWN_FOLDER", "sessions": []}),
+        json!({"scopeStatus": "current_folder_unavailable", "reason": "other", "sessions": []}),
+        json!({"scopeStatus": "current_folder_unavailable", "reason": "canonicalization_failed", "sessions": [{"key": "cli:forbidden"}]}),
+    ] {
+        assert!(parse_scoped_resume_sessions(&malformed).is_err());
+    }
+}
+
+#[test]
+fn scoped_resume_wire_rejects_oversized_presentation_metadata() {
+    let payload = json!({
+        "scopeStatus": "known_folder",
+        "sessions": [{
+            "key": "cli:key",
+            "title": "title",
+            "messageCount": 1,
+            "updatedUnixSecs": 1,
+            "agentName": "n".repeat(257)
+        }]
+    });
+    assert!(parse_scoped_resume_sessions(&payload).is_err());
 }

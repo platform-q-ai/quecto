@@ -9,6 +9,7 @@ async fn harness() -> TuiHarness {
 async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
     let mut h = harness().await;
     let data = serde_json::json!({
+        "scopeStatus": "known_folder",
         "sessions": [{
             "key": "chat-123",
             "title": "Fix the auth bug",

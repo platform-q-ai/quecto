@@ -312,8 +312,16 @@ async fn persist_user_prompt_before_run(
     let persisted_len = persisted_messages.len();
     let workflow_run = persisted_workflow_run(ctx);
     let result = if ctx.subagent_registry.is_some() {
+        let locations = ctx
+            .session_store
+            .load(ctx.session_key)
+            .await?
+            .map(|saved| (saved.origin_location, saved.latest_location))
+            .unwrap_or((None, None));
         ctx.session_store
             .save(&Session {
+                origin_location: locations.0,
+                latest_location: locations.1,
                 key: ctx.session_key.to_string(),
                 messages: persisted_messages,
                 workflow_run,

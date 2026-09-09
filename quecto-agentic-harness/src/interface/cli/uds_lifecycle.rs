@@ -28,6 +28,8 @@ pub struct UdsLoopArgs<'a> {
     pub workspace: &'a std::path::Path,
     pub session_key: String,
     pub model: String,
+    /// Immutable authoritative activation label captured at startup.
+    pub activation_agent_name: Option<String>,
     pub ephemeral: bool,
     pub system_prompt: String,
     pub socket_path: std::path::PathBuf,
@@ -65,6 +67,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         workspace,
         session_key,
         model,
+        activation_agent_name,
         ephemeral,
         system_prompt,
         socket_path,
@@ -105,6 +108,27 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         }
     };
     let loaded_message_count = loaded_session.messages.len();
+    if !ephemeral && !session_key.is_empty() {
+        let mut activated = loaded_session.clone();
+        if let Ok(inspector) =
+            crate::infrastructure::session_context::NativeSessionContextInspector::current(
+                activation_agent_name.clone(),
+            )
+        {
+            use crate::domain::session::{CurrentFolderScope, SessionContextInspector};
+            if let CurrentFolderScope::Known(location) = inspector.inspect_current() {
+                if activated.messages.is_empty() && activated.origin_location.is_none() {
+                    activated.origin_location = Some(location.clone());
+                }
+                activated.latest_location = Some(location);
+                if let Err(err) = session_store.save(&activated).await {
+                    eprintln!("failed to persist session activation metadata: {err}");
+                    session_store.release(&session_key);
+                    return 1;
+                }
+            }
+        }
+    }
     let messages = loaded_session.messages;
     if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
@@ -281,7 +305,16 @@ async fn single_client_loop(
 
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
+        let locations = session_store
+            .load(&session_key)
+            .await
+            .ok()
+            .flatten()
+            .map(|saved| (saved.origin_location, saved.latest_location))
+            .unwrap_or((None, None));
         let session = Session {
+            origin_location: locations.0,
+            latest_location: locations.1,
             key: session_key,
             messages: std::mem::take(&mut messages),
             workflow_run: workflow_state

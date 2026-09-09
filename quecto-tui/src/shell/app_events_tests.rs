@@ -291,7 +291,7 @@ async fn handles_response_variants() {
         id: None,
         command: "list_sessions".into(),
         success: true,
-        data: Some(serde_json::json!({"sessions": []})),
+        data: Some(serde_json::json!({"scopeStatus": "known_folder", "sessions": []})),
         error: None,
     });
     app.handle_event(Event::Response {

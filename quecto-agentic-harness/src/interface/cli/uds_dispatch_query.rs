@@ -14,6 +14,8 @@ pub(super) fn session_summary_to_json(
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
+        "agentName": summary.agent_name,
+        "branch": summary.branch,
     })
 }
 
@@ -38,18 +40,40 @@ pub(super) async fn dispatch_fieldless_command(
         return Some(false);
     }
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx.session_store.list(None).await {
-            Ok(sessions) => AgentEvent::ok(
+        use crate::domain::session::{CurrentFolderScope, SessionContextInspector};
+        use crate::infrastructure::session_context::NativeSessionContextInspector;
+
+        let scope = NativeSessionContextInspector::current(None)
+            .map(|inspector| inspector.inspect_current())
+            .unwrap_or(CurrentFolderScope::Unavailable(
+                crate::domain::session::FolderScopeUnavailableReason::CanonicalizationFailed,
+            ));
+        let event = match scope {
+            CurrentFolderScope::Known(location) => match ctx.session_store.list(Some("cli:")).await
+            {
+                Ok(sessions) => AgentEvent::ok(
+                    id,
+                    tn,
+                    Some(serde_json::json!({
+                        "scopeStatus": "known_folder",
+                        "sessions": sessions
+                            .iter()
+                            .filter(|summary| summary.latest_folder_identity.as_ref() == Some(&location.folder_identity))
+                            .map(session_summary_to_json)
+                            .collect::<Vec<_>>()
+                    })),
+                ),
+                Err(err) => AgentEvent::err(id, tn, err.to_string()),
+            },
+            CurrentFolderScope::Unavailable(reason) => AgentEvent::ok(
                 id,
                 tn,
                 Some(serde_json::json!({
-                    "sessions": sessions
-                        .iter()
-                        .map(session_summary_to_json)
-                        .collect::<Vec<_>>()
+                    "scopeStatus": "current_folder_unavailable",
+                    "reason": reason.wire_code(),
+                    "sessions": []
                 })),
             ),
-            Err(err) => AgentEvent::err(id, tn, err.to_string()),
         };
         emit_event_to_broadcast_or_writer(ctx, &event).await;
         return Some(false);

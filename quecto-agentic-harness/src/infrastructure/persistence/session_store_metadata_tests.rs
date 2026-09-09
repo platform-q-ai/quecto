@@ -14,6 +14,8 @@ async fn test_save_and_load_session() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "telegram:12345".to_string(),
         messages: vec![
             make_message(Role::User, "Hello"),
@@ -80,6 +82,8 @@ async fn test_session_with_tool_calls() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:tools".to_string(),
         messages: vec![
             make_message(Role::User, "run a command"),
@@ -116,6 +120,8 @@ async fn test_persistence_across_store_instances() {
     // Save with one store instance
     let store1 = FileSessionStore::new(tmp.path());
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "telegram:persist".to_string(),
         messages: vec![make_message(Role::User, "persisted message")],
         workflow_run: None,
@@ -141,6 +147,8 @@ async fn test_turn_field_survives_round_trip() {
     tool_msg.turn = Some(3);
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:turn".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
@@ -164,6 +172,8 @@ async fn test_is_collapsed_survives_round_trip() {
     tool_msg.is_collapsed = true;
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:collapsed".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
@@ -187,6 +197,8 @@ async fn test_is_manifest_survives_round_trip() {
     manifest.is_pinned = true;
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:manifest".to_string(),
         messages: vec![manifest],
         workflow_run: None,
@@ -209,6 +221,8 @@ async fn test_is_pinned_survives_round_trip() {
     user_msg.is_pinned = true;
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:pinned".to_string(),
         messages: vec![user_msg],
         workflow_run: None,
@@ -231,6 +245,8 @@ async fn test_tool_name_survives_round_trip() {
     tool_msg.tool_name = Some("bash".to_string());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:toolname".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
@@ -254,6 +270,8 @@ async fn test_input_preview_survives_round_trip() {
     tool_msg.input_preview = Some("echo hello".to_string());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:preview".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
@@ -277,6 +295,8 @@ async fn test_spill_id_survives_round_trip() {
     tool_msg.spill_id = Some("turn1:bash:0".to_string());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:spillid".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
@@ -305,6 +325,8 @@ async fn test_workflow_run_survives_round_trip() {
     let store = FileSessionStore::new(tmp.path());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:wf_persist".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(persisted_workflow_run()),
@@ -327,6 +349,8 @@ async fn workflow_only_session_survives_round_trip() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "test:wf_only".to_string(),
             messages: Vec::new(),
             workflow_run: Some(persisted_workflow_run()),
@@ -401,6 +425,8 @@ async fn test_workflow_run_none_survives_round_trip() {
     let store = FileSessionStore::new(tmp.path());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:wf_none".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
@@ -417,6 +443,8 @@ async fn appended_delta_can_clear_previous_workflow_run() {
     let store = FileSessionStore::new(tmp.path());
 
     let mut session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:wf_clear".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(WorkflowRunPersisted {
@@ -449,6 +477,8 @@ async fn test_workflow_run_unknown_template_persists_raw_fields() {
     let store = FileSessionStore::new(tmp.path());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:wf_compat".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(WorkflowRunPersisted {
@@ -473,6 +503,8 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-default".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
@@ -482,6 +514,8 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
         .unwrap();
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-work".to_string(),
             messages: vec![
                 make_message(Role::User, "question"),
@@ -511,6 +545,8 @@ async fn test_list_sessions_skips_corrupt_json_files() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-good".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
@@ -535,6 +571,8 @@ async fn test_system_is_pinned_default_survives_round_trip() {
     let store = FileSessionStore::new(tmp.path());
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "test:sys_pinned".to_string(),
         messages: vec![Message::system("system prompt")],
         workflow_run: None,
@@ -582,6 +620,8 @@ async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
     asst.is_collapsed = true;
 
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "cli:roundtrip".to_string(),
         messages: vec![
             Message::system("sys"),
@@ -705,6 +745,8 @@ fn test_session_header_stays_in_sync_with_full_record() {
         ],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_location: None,
+        latest_location: None,
     };
     let json = serde_json::to_string(&file).unwrap();
 

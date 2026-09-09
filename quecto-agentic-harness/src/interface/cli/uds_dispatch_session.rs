@@ -239,9 +239,22 @@ async fn persist_current_session_with_options(
     };
     let roster =
         snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
-    let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
+    let needs_full_save =
+        force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some();
+    let preserved_locations = if needs_full_save {
+        ctx.session_store
+            .load(ctx.session_key)
+            .await?
+            .map(|saved| (saved.origin_location, saved.latest_location))
+            .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+    let result = if needs_full_save {
         ctx.session_store
             .save(&Session {
+                origin_location: preserved_locations.0,
+                latest_location: preserved_locations.1,
                 key: ctx.session_key.to_string(),
                 messages: ctx.messages.to_vec(),
                 workflow_run,
@@ -397,7 +410,7 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let loaded = match ctx.session_store.load(&new_key).await {
+    let mut loaded = match ctx.session_store.load(&new_key).await {
         Ok(Some(session)) => session,
         Ok(None) => {
             ctx.session_store.release(&new_key);
@@ -412,6 +425,27 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    use crate::domain::session::{CurrentFolderScope, SessionContextInspector};
+    use crate::infrastructure::session_context::NativeSessionContextInspector;
+    let activation = NativeSessionContextInspector::current(None)
+        .map(|inspector| inspector.inspect_current())
+        .unwrap_or(CurrentFolderScope::Unavailable(
+            crate::domain::session::FolderScopeUnavailableReason::CanonicalizationFailed,
+        ));
+    if let CurrentFolderScope::Known(location) = activation {
+        loaded.record_successful_activation(location);
+    }
+    if let Err(err) = ctx.session_store.save(&loaded).await {
+        ctx.session_store.release(&new_key);
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            format!("failed to persist session activation metadata: {err}"),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);

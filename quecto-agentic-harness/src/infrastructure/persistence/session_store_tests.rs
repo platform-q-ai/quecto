@@ -128,6 +128,9 @@ async fn append_reports_directory_open_failure() {
         workflow_run: None,
         workflow_run_cleared: true,
         subagent_roster: None,
+        origin_location: None,
+        latest_location: None,
+        location_metadata_changed: false,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -165,6 +168,9 @@ async fn append_reports_missing_file_when_path_disappears_after_compaction_decis
         workflow_run: None,
         workflow_run_cleared: true,
         subagent_roster: None,
+        origin_location: None,
+        latest_location: None,
+        location_metadata_changed: false,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -520,6 +526,8 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
         <FileSessionStore as SessionStore>::save(
             &store,
             &Session {
+                origin_location: None,
+                latest_location: None,
                 key: "owned:save".to_string(),
                 messages: Vec::new(),
                 workflow_run: None,
@@ -611,6 +619,8 @@ async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
     );
 
     let compacted = Session {
+        origin_location: None,
+        latest_location: None,
         messages: replayed.messages.clone(),
         ..replayed
     };
@@ -631,6 +641,8 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
     let dir = TempDir::new().unwrap();
     let store = FileSessionStore::new(dir.path());
     let session = Session {
+        origin_location: None,
+        latest_location: None,
         key: "ordinals:reload".into(),
         messages: vec![Message::user("one"), Message::assistant("two", vec![])],
         workflow_run: None,
@@ -649,6 +661,8 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
     assert_ne!(loaded.messages[0].id(), session.messages[0].id());
 
     let compacted = Session {
+        origin_location: None,
+        latest_location: None,
         key: "ordinals:reload".into(),
         messages: loaded.messages.clone(),
         workflow_run: None,
@@ -665,4 +679,31 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
         vec![Some(1), Some(2)]
     );
     assert_ne!(reloaded.messages[0].id(), loaded.messages[0].id());
+}
+
+#[tokio::test]
+async fn location_metadata_round_trips_through_metadata_only_append() {
+    use crate::domain::session::{FolderIdentity, FolderLabel, SessionLocation};
+
+    let dir = TempDir::new().unwrap();
+    let store = FileSessionStore::new(dir.path());
+    let mut session = Session::new("cli:location-roundtrip");
+    session.messages.push(Message::user("hello"));
+    store.save(&session).await.unwrap();
+
+    let message_count = session.messages.len();
+    session.latest_location = Some(SessionLocation::new(
+        FolderIdentity::try_from("native_v1_unix_b64:L3RtcA==".to_string()).unwrap(),
+        Some(FolderLabel::try_from("/tmp".to_string()).unwrap()),
+        Some("agent".to_string()),
+        Some("main".to_string()),
+    ));
+    store.save(&session).await.unwrap();
+
+    let loaded = store.load(&session.key).await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), message_count);
+    assert_eq!(loaded.latest_location, session.latest_location);
+    let summaries = store.list(Some("cli:")).await.unwrap();
+    assert_eq!(summaries[0].agent_name.as_deref(), Some("agent"));
+    assert_eq!(summaries[0].branch.as_deref(), Some("main"));
 }

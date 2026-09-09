@@ -23,6 +23,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
     ] {
         store
             .save(&Session {
+                origin_location: None,
+                latest_location: None,
                 key: key.to_string(),
                 messages: vec![chat_message(Role::User, "internal")],
                 workflow_run: None,
@@ -34,6 +36,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-old".to_string(),
             messages: vec![
                 chat_message(Role::User, "older chat title"),
@@ -47,6 +51,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-new".to_string(),
             messages: vec![
                 chat_message(Role::System, "sys"),
@@ -84,6 +90,8 @@ async fn list_extracts_raw_first_user_message() {
 
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-long".to_string(),
             messages: vec![chat_message(Role::User, long)],
             workflow_run: None,
@@ -93,6 +101,8 @@ async fn list_extracts_raw_first_user_message() {
         .unwrap();
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-empty".to_string(),
             messages: vec![chat_message(Role::Assistant, "hello")],
             workflow_run: None,
@@ -102,6 +112,8 @@ async fn list_extracts_raw_first_user_message() {
         .unwrap();
     store
         .save(&Session {
+            origin_location: None,
+            latest_location: None,
             key: "chat-huge".to_string(),
             messages: vec![chat_message(Role::User, &huge)],
             workflow_run: None,

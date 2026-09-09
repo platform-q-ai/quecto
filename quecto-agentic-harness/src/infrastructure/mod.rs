@@ -21,6 +21,7 @@ pub mod reload;
 pub mod repo_local_container_config;
 pub mod runtime_identity;
 pub mod security;
+pub mod session_context;
 pub mod time;
 pub mod tools;
 

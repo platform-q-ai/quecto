@@ -681,6 +681,9 @@ mod progress_clear_tests;
 #[test]
 fn session_summary_to_json_projects_stable_wire_fields() {
     let summary = crate::domain::session::SessionSummary {
+        latest_folder_identity: None,
+        agent_name: None,
+        branch: None,
         key: "cli:demo".into(),
         title: "".into(),
         message_count: 3,

@@ -114,6 +114,9 @@ async fn append_record_rejects_symlinked_session_file() {
         workflow_run: None,
         workflow_run_cleared: true,
         subagent_roster: None,
+        origin_location: None,
+        latest_location: None,
+        location_metadata_changed: false,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -210,6 +213,9 @@ async fn io_error_mapping_closures_report_real_session_failures() {
         workflow_run: None,
         workflow_run_cleared: true,
         subagent_roster: None,
+        origin_location: None,
+        latest_location: None,
+        location_metadata_changed: false,
     };
     let err = append_record(&missing, &append).await.unwrap_err();
     assert!(

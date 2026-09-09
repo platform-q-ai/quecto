@@ -22,11 +22,22 @@ pub struct SessionStats {
 
 /// A persisted session entry suitable for the resume selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionBoundedPresentation;
+
+impl SessionBoundedPresentation {
+    fn parse(value: &str) -> Option<String> {
+        (1..=256).contains(&value.len()).then(|| value.to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeSessionSummary {
     pub key: String,
     pub title: String,
     pub message_count: u64,
     pub updated_unix_secs: Option<u64>,
+    pub agent_name: Option<String>,
+    pub branch: Option<String>,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -141,6 +152,112 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
 /// Parse a `list_sessions` response payload into selector summaries. Entries
 /// without a human-readable title/name are skipped because they cannot be shown
 /// or selected meaningfully.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeScopeStatus {
+    KnownFolder,
+    CurrentFolderUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedResumeSessions {
+    status: ResumeScopeStatus,
+    sessions: Vec<ResumeSessionSummary>,
+    explanation: Option<&'static str>,
+}
+
+impl ScopedResumeSessions {
+    pub fn status(&self) -> ResumeScopeStatus {
+        self.status.clone()
+    }
+    pub fn sessions(&self) -> &[ResumeSessionSummary] {
+        &self.sessions
+    }
+    pub fn explanation(&self) -> Option<&'static str> {
+        self.explanation
+    }
+}
+
+pub fn parse_scoped_resume_sessions(
+    data: &serde_json::Value,
+) -> Result<ScopedResumeSessions, String> {
+    let status = data
+        .get("scopeStatus")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing session scope status".to_string())?;
+    let rows = data
+        .get("sessions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "missing sessions".to_string())?;
+    match status {
+        "known_folder" => Ok(ScopedResumeSessions {
+            status: ResumeScopeStatus::KnownFolder,
+            sessions: parse_resume_rows(rows)?,
+            explanation: None,
+        }),
+        "current_folder_unavailable" => {
+            if !rows.is_empty() {
+                return Err("unavailable folder scope must not contain sessions".into());
+            }
+            let reason = data
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "missing folder unavailable reason".to_string())?;
+            let explanation = match reason {
+                "canonicalization_failed" => "Unable to resolve the current folder.",
+                "not_a_directory" => "The current path is not a directory.",
+                "unsupported_platform" => "This platform cannot encode a native folder identity.",
+                "identity_too_large" => "The current folder identity exceeds 4096 bytes.",
+                _ => return Err("unknown folder unavailable reason".into()),
+            };
+            Ok(ScopedResumeSessions {
+                status: ResumeScopeStatus::CurrentFolderUnavailable,
+                sessions: Vec::new(),
+                explanation: Some(explanation),
+            })
+        }
+        _ => Err("unknown session scope status".into()),
+    }
+}
+
+fn parse_resume_rows(rows: &[serde_json::Value]) -> Result<Vec<ResumeSessionSummary>, String> {
+    rows.iter()
+        .map(|row| {
+            let key = row
+                .get("key")
+                .and_then(|value| value.as_str())
+                .ok_or("invalid key")?;
+            let title = row
+                .get("title")
+                .and_then(|value| value.as_str())
+                .ok_or("invalid title")?;
+            let message_count = row
+                .get("messageCount")
+                .and_then(|value| value.as_u64())
+                .ok_or("invalid message count")?;
+            let updated_unix_secs = row.get("updatedUnixSecs").and_then(|value| value.as_u64());
+            Ok(ResumeSessionSummary {
+                key: key.to_owned(),
+                title: title.to_owned(),
+                message_count,
+                updated_unix_secs,
+                agent_name: bounded_optional(row, "agentName")?,
+                branch: bounded_optional(row, "branch")?,
+            })
+        })
+        .collect()
+}
+
+fn bounded_optional(row: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    match row.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) if (1..=256).contains(&value.len()) => {
+            Ok(Some(value.clone()))
+        }
+        Some(serde_json::Value::String(_)) => Err(format!("invalid {field}")),
+        Some(_) => Err(format!("invalid {field}")),
+    }
+}
+
 pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
     session_values(data)
         .iter()
@@ -161,6 +278,14 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                     .get("updatedUnixSecs")
                     .or_else(|| session.get("updatedAt"))
                     .and_then(|v| v.as_u64()),
+                agent_name: session
+                    .get("agentName")
+                    .and_then(|v| v.as_str())
+                    .and_then(SessionBoundedPresentation::parse),
+                branch: session
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .and_then(SessionBoundedPresentation::parse),
             })
         })
         .collect()
