@@ -743,3 +743,54 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
     assert_eq!(delta["unchanged"], true);
     assert!(delta.to_string().len() < 150);
 }
+
+/// #1715: a run cannot be created while the composition's workflow is
+/// engaged; an idle available engine, or no engine at all, is not engaged.
+#[test]
+fn workflow_engaged_reflects_guards_and_selected_templates_only() {
+    use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
+    let slot: super::swarm_bridge::WorkflowEngineSlot = Default::default();
+    assert!(!super::swarm_bridge::workflow_engaged(&slot), "no engine");
+    let template = crate::domain::workflow::WorkflowTemplate {
+        id: "t".into(),
+        label: "t".into(),
+        description: "test".into(),
+        when_to_use: None,
+        steps: vec![crate::domain::workflow::WorkflowTemplateStep {
+            key: "a".into(),
+            label: "A".into(),
+            phase: "x".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    };
+    let idle = std::sync::Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![template.clone()],
+                ..WorkflowConfig::default()
+            },
+            false,
+        )
+        .unwrap(),
+    ));
+    let _ = slot.set(idle.clone());
+    assert!(!super::swarm_bridge::workflow_engaged(&slot), "idle engine");
+    idle.lock().unwrap().select_template("t", None).unwrap();
+    assert!(
+        super::swarm_bridge::workflow_engaged(&slot),
+        "selected template"
+    );
+    let guarded: super::swarm_bridge::WorkflowEngineSlot = Default::default();
+    let _ = guarded.set(std::sync::Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![template],
+                ..WorkflowConfig::default()
+            },
+            true,
+        )
+        .unwrap(),
+    )));
+    assert!(super::swarm_bridge::workflow_engaged(&guarded), "guards on");
+}

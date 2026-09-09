@@ -62,3 +62,16 @@ availability creating a run) stays green.
 A store-level "create is refused once other members exist" rule was tried and
 reverted: `startup_admission_counts_members_before_run_creation` pins the
 existing contract that early members count toward the limit.
+
+## Mutations
+
+    W1 participates treats setup as swarm, W2 participates never true, W3 creation never refused,
+    W4 spawn gate ignores participation, W6 startup ignores participation, W7 startup never
+    disables workflow, W8 composition ignores the join answer, W10 create ignores an engaged
+    workflow, W11 workflow tool never refuses, W12 join does not record participation,
+    W13 supervisor tick does not record participation, W14 engaged probe ignores a selected
+    template (killed by `workflow_engaged_reflects_guards_and_selected_templates_only`): killed.
+    W5 (context conjunct in the spawn gate): equivalent, removed from the code.
+    W9 (create does not flip participation immediately): masked, the supervisor tick records
+    the same answer on its first observation; the explicit flip closes the window before that
+    tick and stays.
