@@ -193,3 +193,45 @@ pub struct AdmissionLedger {
     pub outstanding: Vec<OutstandingAttempt>,
     pub groups: BTreeMap<GroupId, LedgerGroup>,
 }
+
+/// Where one outbound attempt stands with respect to admission. Orthogonal to
+/// any process or turn lifecycle: a waiting attempt is neither idle nor stalled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionPhase {
+    /// Queued at the authority since `since_ms` (process-monotonic).
+    Waiting { since_ms: u64 },
+    /// Granted at `since_ms`; the transport may run until completion.
+    Admitted { since_ms: u64 },
+}
+
+/// One live attempt as seen by the process that owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptObservation {
+    pub alias: String,
+    pub group: GroupId,
+    pub phase: AdmissionPhase,
+    /// Milliseconds spent in the current phase at `observed_at_ms`.
+    pub elapsed_ms: u64,
+}
+
+/// Bounded per-process admission activity with freshness. Counts saturate;
+/// the live attempt view holds at most `MAX_LIVE_ATTEMPTS` entries.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AdmissionActivity {
+    pub waiting: usize,
+    pub admitted: usize,
+    pub completed: u64,
+    pub refused: u64,
+    pub cancelled: u64,
+    /// Latest group cooldown deadline reported through a permit, if any.
+    pub cooldown_until_ms: Option<u64>,
+    /// Reason of the most recent refusal (queue deadline, quarantine, ...).
+    pub last_refusal: Option<String>,
+    pub attempts: BTreeMap<u64, AttemptObservation>,
+    /// Process-monotonic milliseconds at which this view was taken.
+    pub observed_at_ms: u64,
+}
+
+impl AdmissionActivity {
+    pub const MAX_LIVE_ATTEMPTS: usize = 64;
+}

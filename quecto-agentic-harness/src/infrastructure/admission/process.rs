@@ -74,6 +74,7 @@ pub struct ProcessAdmission {
     context: Arc<AdmissionRuntimeContext>,
     proposal: AdmissionRuntimeProposal,
     client_dir: PathBuf,
+    recorder: Arc<super::observed_gate::AdmissionRecorder>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -102,6 +103,10 @@ impl ProcessAdmission {
     }
     pub fn endpoint(&self) -> PathBuf {
         self.client_dir.join("admission.sock")
+    }
+    /// Bounded, fresh admission activity of this process (P4 observation).
+    pub fn observation(&self) -> Arc<dyn crate::application::ports::AdmissionObservation> {
+        self.recorder.clone()
     }
 }
 
@@ -202,13 +207,20 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
         .map_err(|_| "admission negotiation thread panicked".to_string())?;
     let (connection, client_dir) = joined?;
     let proposal = connection.hello().proposal.clone();
+    let recorder = Arc::new(super::observed_gate::AdmissionRecorder::new());
     let mut gates: BTreeMap<String, Arc<dyn AttemptAdmission>> = BTreeMap::new();
-    for alias in proposal.policy.aliases.keys() {
+    for (alias, group) in &proposal.policy.aliases {
+        let gate = connection
+            .gate(alias)
+            .map_err(|e| format!("admission gate for '{alias}': {e}"))?;
         gates.insert(
             alias.clone(),
-            connection
-                .gate(alias)
-                .map_err(|e| format!("admission gate for '{alias}': {e}"))?,
+            Arc::new(super::observed_gate::ObservedAdmission::new(
+                gate,
+                alias,
+                group.clone(),
+                recorder.clone(),
+            )),
         );
     }
     let client = SingleAttemptClient::build(default_client_builder())
@@ -219,6 +231,7 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
         context: Arc::new(context),
         proposal,
         client_dir,
+        recorder,
         runtime,
     })
 }
