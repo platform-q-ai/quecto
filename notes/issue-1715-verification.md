@@ -16,10 +16,11 @@ The container's coordination store carries a placeholder `setup` run from its
 bootstrap; a swarm exists only once a run has been created. Domain rule
 `swarm::participates(status)` (`!= Setup`) is now the single gate:
 
-- **Startup** (`admit_with`): reads the run status before joining; an ordinary
-  container keeps `--workflow`/guards/spec; a join into a container whose run
-  exists is refused before inference ("swarm admission rejected: workflow is
-  unavailable for swarm agents").
+- **Startup** (`admit_with`): a membership-free `_status` read (deadline of the
+  run) answers whether a run was created; a workflow request into such a
+  container is refused before joining, so no member row is left behind; an
+  ordinary container keeps `--workflow`/guards/spec; the join then records
+  participation and disables the workflow for swarm members.
 - **Composition** (`build_tool_runtime`): the join answer decides whether the
   workflow engine, tool and guards are installed; one shared
   `Participation` handle per composition is injected into the spawn, swarm and
@@ -50,7 +51,7 @@ availability creating a run) stays green.
 
 |Finding|Fix|Proof|
 |---|---|---|
-|H1 startup read the run status through a `summary` RPC before joining, which the store refuses for a non-member, so every join into an existing container failed|the join itself answers the status; workflow is gated on that answer after joining (a refused member exits and is reconciled like any startup failure); the extra RPC and `run_status` are gone|`startup_workflow_follows_swarm_participation_not_containerization` joins as a member the store has never seen|
+|H1 startup read the run status through a `summary` RPC before joining, which the store refuses for a non-member, so every join into an existing container failed|(superseded in round 2) a membership-free `_status` read gates the workflow request before joining; the join records participation|`startup_workflow_follows_swarm_participation_not_containerization` joins as a member the store has never seen|
 |H2 participation was recorded only at composition and by the creator, so a member that joined before the run was created kept a live workflow|one `Participation` handle per process (created with the agent flags, passed to the join and the tool composition); every supervisor tick records participation from the run status, so the workflow tool refuses and launches reject workflows for every member once the run exists. An engine a pre-create member already engaged is not torn down; documented, with "create before spawning"|`a_supervisor_tick_records_participation_from_the_run`; profile test asserts the composition's handle|
 |H3 process-wide workflow-engine `OnceLock` made lib tests order-dependent|per-composition `WorkflowEngineSlot` created in `build_tool_runtime`, injected into the swarm tool|`swarm_bridge::workflow_engaged(&slot)`|
 |M1 docs promised exclusion the code only gave the creator|H2 fix; docs state the pre-create limitation|—|
@@ -75,3 +76,15 @@ existing contract that early members count toward the limit.
     W9 (create does not flip participation immediately): masked, the supervisor tick records
     the same answer on its first observation; the explicit flip closes the window before that
     tick and stays.
+
+## Adversarial review 2 and fixes
+
+|Finding|Fix|Proof|
+|---|---|---|
+|H1 join-before-gate left a live member row with a dead pid; the next reconcile failed the whole run|membership-free `_status` RPC (`SwarmContext::run_created`) gates the workflow request before any join; participation is recorded by the join|`startup_workflow_follows_swarm_participation_not_containerization` asserts no row for the refused member and a `running` status after `reconcile`; `run_created_reads_the_store_without_membership`|
+|M1 `participates` keyed on status, so a bootstrap placeholder failed by a reconcile counted as a swarm|participation means a created run: the placeholder carries deadline 0, `create` requires a future deadline that survives every later status|`only_a_created_run_is_a_swarm`|
+|M2 the selector nudge kept firing for members whose workflow was merely available when the run appeared|`Participation::on_participation` hooks run once on the transition; composition registers `set_selector_nudge(false)` on the engine; an already engaged engine is documented as not torn down|`participation_hooks_run_once_on_the_transition_and_never_revoke`|
+|L1 note contradicted the code|note rewritten|—|
+|L2 launch revalidation test never reached the launch path|drives `launch_uds_agent` with a config validated before the run existed|`swarm_worker_launch_revalidates_workflow_before_effects`|
+|L3 `register_workflow_tool` test-only|cfg-gated with its re-export|—|
+|I engaged probe sampled before `spawn_blocking`|read inside the create step|—|

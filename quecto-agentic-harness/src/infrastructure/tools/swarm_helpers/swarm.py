@@ -147,6 +147,13 @@ class Workbench(Tasks):
             return {'events': page, 'cursor': page[-1]['id'] if page else after,
                     'has_more': len(rows) > limit}
 
+    def _status(self):
+        """Harness-only, membership-free: has a run been created in this container?
+        The bootstrap placeholder carries deadline 0; `create` requires a future one."""
+        with self.store.transaction() as db:
+            row = db.execute('SELECT status, deadline FROM run').fetchone()
+        return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0}
+
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:
             if not db.execute('SELECT 1 FROM run').fetchone():

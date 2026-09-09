@@ -111,12 +111,21 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         "criteria":[{"id":"t","kind":"command","description":"pass"}],
         "member_limit":2,"deadline":deadline});
     let participation = super::super::swarm_bridge::Participation::shared();
+    // An engaged workflow: guards on.
+    let engaged: super::super::swarm_bridge::WorkflowEngineSlot = Default::default();
+    let _ = engaged.set(std::sync::Arc::new(std::sync::Mutex::new(
+        crate::domain::workflow::WorkflowEngine::new(
+            crate::domain::workflow::WorkflowConfig::default(),
+            true,
+        )
+        .unwrap(),
+    )));
     let error = control_with_workflow(
         context.clone(),
         "create",
         input.clone(),
         participation.clone(),
-        true,
+        engaged,
     )
     .await
     .unwrap_err()
@@ -133,7 +142,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         "create",
         input,
         participation.clone(),
-        false,
+        Default::default(),
     )
     .await
     .unwrap();

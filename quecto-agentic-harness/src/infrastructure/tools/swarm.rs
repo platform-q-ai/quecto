@@ -151,7 +151,7 @@ impl Tool for SwarmTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let workflow_engaged = super::swarm_bridge::workflow_engaged(&self.workflow_engine);
+        let workflow_engine = self.workflow_engine.clone();
         let participation = self.participation.clone();
         let context = self.context.clone();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
@@ -182,7 +182,7 @@ impl Tool for SwarmTool {
                         op,
                         v.clone(),
                         participation,
-                        workflow_engaged,
+                        workflow_engine,
                     )
                     .await
                     {

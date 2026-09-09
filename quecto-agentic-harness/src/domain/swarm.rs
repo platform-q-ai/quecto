@@ -10,12 +10,14 @@ pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), Domai
     Ok(())
 }
 
-/// Whether an agent in a container takes part in a swarm. Every container
-/// carries a placeholder `setup` run from its bootstrap; that is an ordinary
-/// container, not a swarm. Once a run has been created (running, paused or
-/// already stopped) every member is a swarm agent (#1715).
-pub fn participates(status: RunStatus) -> bool {
-    !matches!(status, RunStatus::Setup)
+/// Whether an agent in a container takes part in a swarm (#1715). Every
+/// container carries a placeholder run from its bootstrap with deadline 0;
+/// that is an ordinary container whatever status it ends in. `create`
+/// requires a future deadline, and a created run keeps it through every later
+/// status, so a positive deadline means a swarm exists and every member is a
+/// swarm agent.
+pub fn participates(deadline: f64) -> bool {
+    deadline > 0.0
 }
 
 /// Creating a swarm turns the creator into its coordinator, which cannot be

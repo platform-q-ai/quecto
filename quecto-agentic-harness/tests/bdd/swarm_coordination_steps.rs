@@ -182,8 +182,20 @@ fn not_rejected_for_workflow(world: &mut QuectoWorld) {
     );
 }
 
+fn engaged_workflow() -> quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot {
+    let slot: quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot = Default::default();
+    let _ = slot.set(std::sync::Arc::new(std::sync::Mutex::new(
+        quecto::domain::workflow::WorkflowEngine::new(
+            quecto::domain::workflow::WorkflowConfig::default(),
+            true,
+        )
+        .unwrap(),
+    )));
+    slot
+}
+
 #[when("a workflow-enabled agent tries to create a swarm run")]
-async fn workflow_agent_creates(world: &mut QuectoWorld) {
+fn workflow_agent_creates(world: &mut QuectoWorld) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
@@ -196,16 +208,18 @@ async fn workflow_agent_creates(world: &mut QuectoWorld) {
         .unwrap()
         .as_secs()
         + 300;
-    let outcome = quecto::infrastructure::tools::swarm_control::control_with_workflow(
-        context,
-        "create",
-        json!({"goal":"g","constraints":[],
-            "criteria":[{"id":"t","kind":"command","description":"pass"}],
-            "member_limit":2,"deadline":deadline}),
-        quecto::infrastructure::tools::swarm_bridge::Participation::shared(),
-        true,
-    )
-    .await;
+    // The create step runs on a blocking pool, so it needs a Tokio runtime.
+    let outcome = tokio::runtime::Runtime::new().unwrap().block_on(
+        quecto::infrastructure::tools::swarm_control::control_with_workflow(
+            context,
+            "create",
+            json!({"goal":"g","constraints":[],
+                "criteria":[{"id":"t","kind":"command","description":"pass"}],
+                "member_limit":2,"deadline":deadline}),
+            quecto::infrastructure::tools::swarm_bridge::Participation::shared(),
+            engaged_workflow(),
+        ),
+    );
     let is_error = outcome.is_err();
     let content = match outcome {
         Ok(value) => value.to_string(),

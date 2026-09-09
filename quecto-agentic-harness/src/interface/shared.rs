@@ -155,7 +155,9 @@ pub type WorkflowStateHandle =
 
 #[path = "shared_workflow.rs"]
 mod shared_workflow;
-pub use shared_workflow::{register_workflow_tool, register_workflow_tool_with_participation};
+#[cfg(any(test, feature = "test-support"))]
+pub use shared_workflow::register_workflow_tool;
+pub use shared_workflow::register_workflow_tool_with_participation;
 
 /// Resolve an API key for a provider from a credential snapshot.
 ///

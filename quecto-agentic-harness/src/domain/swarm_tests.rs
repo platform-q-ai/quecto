@@ -1,19 +1,14 @@
 use super::*;
 
 #[test]
-fn only_the_bootstrap_placeholder_run_is_not_a_swarm() {
-    assert!(!participates(RunStatus::Setup));
-    for status in [
-        RunStatus::Running,
-        RunStatus::Paused,
-        RunStatus::Succeeded,
-        RunStatus::Blocked,
-        RunStatus::Failed,
-        RunStatus::Cancelled,
-        RunStatus::BudgetExhausted,
-    ] {
-        assert!(participates(status), "{status:?}");
-    }
+fn only_a_created_run_is_a_swarm() {
+    // The bootstrap placeholder carries deadline 0 whatever happens to it
+    // (setup, or failed by a reconcile that saw a member die).
+    assert!(!participates(0.0));
+    assert!(!participates(-1.0));
+    // A created run has a future deadline and stays a swarm afterwards.
+    assert!(participates(1.0));
+    assert!(participates(1_800_000_000.0));
 }
 
 #[test]

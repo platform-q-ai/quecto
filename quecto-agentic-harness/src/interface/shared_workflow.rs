@@ -7,6 +7,7 @@ use super::WorkflowStateHandle;
 ///
 /// Tool construction goes through the bundled native provider seam (#1276 Phase 3)
 /// while engine-handle sharing and optional guard registration stay identical.
+#[cfg(any(test, feature = "test-support"))]
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: crate::domain::workflow::WorkflowConfig,

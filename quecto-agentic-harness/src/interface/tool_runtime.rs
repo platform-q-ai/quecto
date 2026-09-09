@@ -205,14 +205,12 @@ pub(crate) fn build_tool_runtime(
     // Workflow eligibility follows swarm participation, not containerization
     // (#1715): the join answers whether this container's run was created.
     let swarm_agent = match &swarm_context {
-        Some(context) => crate::domain::swarm::participates(
-            crate::infrastructure::tools::swarm_lifecycle::join_current_process(
-                context,
-                crate::infrastructure::tools::swarm_bridge::process_socket(),
-                swarm_participation.clone(),
-            )
-            .map_err(|e| e.to_string())?,
-        ),
+        Some(context) => crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+            context,
+            crate::infrastructure::tools::swarm_bridge::process_socket(),
+            swarm_participation.clone(),
+        )
+        .map_err(|e| e.to_string())?,
         None => false,
     };
     let workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot =
@@ -300,11 +298,18 @@ pub(crate) fn build_tool_runtime(
         config,
         workflow,
         stderr,
-        swarm_participation,
+        swarm_participation.clone(),
     )?;
-    // A swarm cannot be created while this composition's workflow is engaged.
+    // A swarm cannot be created while this composition's workflow is engaged,
+    // and once this process is a swarm agent the selector nudge stops.
     if let Some(engine) = &wf_state {
         let _ = workflow_engine.set(engine.clone());
+        let engine = engine.clone();
+        swarm_participation.on_participation(move || {
+            if let Ok(mut engine) = engine.lock() {
+                engine.set_selector_nudge(false);
+            }
+        });
     }
 
     let ext_registry =

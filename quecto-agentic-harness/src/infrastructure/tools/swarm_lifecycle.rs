@@ -8,16 +8,17 @@ use crate::domain::swarm::{
 };
 use serde_json::{Value, json};
 
-/// Join the container's coordination store; returns the run status so the
-/// caller can tell an ordinary container (`setup`) from a swarm (#1715).
-/// `participation` is this process's shared handle: it is set from the join
-/// answer and kept current by the supervisor, so a member that joined before
-/// the run was created still learns that it became a swarm agent.
+/// Join the container's coordination store; returns whether this container
+/// hosts a created run, so the caller can tell an ordinary container from a
+/// swarm (#1715). `participation` is this process's shared handle: it is set
+/// from the join answer and kept current by the supervisor, so a member that
+/// joined before the run was created still learns that it became a swarm
+/// agent.
 pub fn join_current_process(
     context: &SwarmContext,
     socket: Option<&std::path::Path>,
     participation: super::swarm_bridge::Participation,
-) -> Result<RunStatus, DomainError> {
+) -> Result<bool, DomainError> {
     if !context.database().exists() && std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() != Ok("1")
     {
         return Err(DomainError::Tool("swarm coordination store missing; only the container creator may initialize it; do not reset admission".into()));
@@ -32,12 +33,12 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
-    let status = snapshot.status;
-    participation.set(crate::domain::swarm::participates(status));
-    if needs_supervision(status) {
+    let participates = crate::domain::swarm::participates(snapshot.deadline);
+    participation.set(participates);
+    if needs_supervision(snapshot.status) {
         supervise(context.clone(), snapshot, participation);
     }
-    Ok(status)
+    Ok(participates)
 }
 
 /// Every non-terminal run needs a watcher: a member joining while the run is
@@ -171,7 +172,7 @@ pub(super) fn observe(
             tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
         }
     }
-    participation.set(crate::domain::swarm::participates(snapshot.status));
+    participation.set(crate::domain::swarm::participates(snapshot.deadline));
 }
 
 /// A per-process watcher also observes outcomes set by other members. This

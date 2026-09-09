@@ -13,10 +13,11 @@ pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
 }
 
 /// Workflow eligibility follows swarm participation, not containerization
-/// (#1715): the join answers whether this container's run has been created.
-/// An ordinary container keeps its workflow; a swarm member has it disabled,
-/// and a member that asked for one exits before inference (the join is
-/// reconciled like any other startup failure).
+/// (#1715). A workflow request is checked against a membership-free status
+/// read BEFORE joining, so a refused process never leaves a member row behind
+/// (a live row with a dead pid would fail the whole run at the next
+/// reconcile). The join then records participation; a swarm member has its
+/// workflow disabled, an ordinary container keeps it.
 pub(super) fn admit_with(
     context: Option<SwarmContext>,
     flags: &mut AgentFlags,
@@ -25,24 +26,33 @@ pub(super) fn admit_with(
     let Some(context) = context else {
         return true;
     };
-    let status = match swarm_lifecycle::join_current_process(
-        &context,
-        flags.socket_path.as_deref(),
-        flags.swarm_participation.clone(),
-    ) {
-        Ok(status) => status,
+    let created = match context.run_created() {
+        Ok(created) => created,
         Err(error) => {
             stderr.push_str(&format!("swarm admission rejected: {error}\n"));
             return false;
         }
     };
-    if crate::domain::swarm::participates(status)
-        && let Err(error) = disable_workflow(flags)
-    {
+    if created && let Err(error) = disable_workflow(flags) {
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;
     }
-    true
+    match swarm_lifecycle::join_current_process(
+        &context,
+        flags.socket_path.as_deref(),
+        flags.swarm_participation.clone(),
+    ) {
+        Ok(participates) => {
+            if participates {
+                flags.workflow_disabled = true;
+            }
+            true
+        }
+        Err(error) => {
+            stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+            false
+        }
+    }
 }
 
 pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {

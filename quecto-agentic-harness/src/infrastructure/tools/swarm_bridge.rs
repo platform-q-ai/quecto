@@ -140,6 +140,20 @@ impl SwarmContext {
         self.summary_since(None)
     }
 
+    /// Whether a run has been created in this container, readable before
+    /// joining (no membership needed): a container without a store is at its
+    /// bootstrap placeholder.
+    pub fn run_created(&self) -> Result<bool, DomainError> {
+        if !self.database().exists() {
+            return Ok(false);
+        }
+        let status = self.rpc("_status", json!([]))?;
+        let deadline = status["deadline"]
+            .as_f64()
+            .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
+        Ok(crate::domain::swarm::participates(deadline))
+    }
+
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
         self.rpc("summary", json!([since]))
     }
@@ -193,21 +207,34 @@ pub fn workflow_engaged(slot: &WorkflowEngineSlot) -> bool {
 }
 
 /// Whether this process takes part in a swarm (#1715). One shared handle is
-/// created per composition and injected into the spawn, workflow and swarm
-/// tools; creating a run flips it, so an ordinary container that becomes a
-/// swarm after composition is seen by every tool at once. Tests inject a
-/// fixed answer.
-#[derive(Debug, Clone)]
+/// created per process and injected into the spawn, workflow and swarm
+/// tools; creating a run (or a supervisor tick seeing one) flips it, so an
+/// ordinary container that becomes a swarm after composition is seen by every
+/// tool at once. Hooks run once on the transition into participation (the
+/// workflow selector nudge is switched off there). Tests inject a fixed answer.
+#[derive(Clone)]
 pub enum Participation {
-    Shared(std::sync::Arc<std::sync::atomic::AtomicBool>),
+    Shared(std::sync::Arc<SharedParticipation>),
     Fixed(bool),
+}
+
+type ParticipationHook = Box<dyn Fn() + Send + Sync>;
+
+#[derive(Default)]
+pub struct SharedParticipation {
+    flag: std::sync::atomic::AtomicBool,
+    hooks: std::sync::Mutex<Vec<ParticipationHook>>,
+}
+
+impl std::fmt::Debug for Participation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Participation({})", self.participating())
+    }
 }
 
 impl Participation {
     pub fn shared() -> Self {
-        Self::Shared(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-            false,
-        )))
+        Self::Shared(std::sync::Arc::default())
     }
 
     /// No swarm at all (host-local runtimes and isolated consumers).
@@ -217,15 +244,45 @@ impl Participation {
 
     pub fn participating(&self) -> bool {
         match self {
-            Self::Shared(flag) => flag.load(std::sync::atomic::Ordering::SeqCst),
+            Self::Shared(shared) => shared.flag.load(std::sync::atomic::Ordering::SeqCst),
             Self::Fixed(value) => *value,
         }
     }
 
-    /// Record participation; a fixed answer never changes.
+    /// Run `hook` once when this process becomes a swarm participant (at once
+    /// if it already is). A fixed answer never transitions.
+    pub fn on_participation(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let Self::Shared(shared) = self else {
+            return;
+        };
+        if shared.flag.load(std::sync::atomic::Ordering::SeqCst) {
+            hook();
+            return;
+        }
+        shared
+            .hooks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(Box::new(hook));
+    }
+
+    /// Record participation; a fixed answer never changes. Participation is
+    /// never revoked: a created run stays a swarm through every later status.
     pub fn set(&self, participating: bool) {
-        if let Self::Shared(flag) = self {
-            flag.store(participating, std::sync::atomic::Ordering::SeqCst);
+        let Self::Shared(shared) = self else {
+            return;
+        };
+        if !participating || shared.flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let hooks = std::mem::take(
+            &mut *shared
+                .hooks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        for hook in hooks {
+            hook();
         }
     }
 }
@@ -249,3 +306,6 @@ mod context_tests {
 
 #[path = "swarm_coordination.rs"]
 mod coordination;
+#[cfg(test)]
+#[path = "swarm_participation_tests.rs"]
+mod participation_tests;
