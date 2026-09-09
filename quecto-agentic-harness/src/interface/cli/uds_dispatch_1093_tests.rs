@@ -105,7 +105,6 @@ impl ContextSpillStore for MemSpillStore {
     > {
         Box::pin(async { Ok(Arc::new(Vec::new())) })
     }
-
     fn clear(
         &self,
         _session_key: &str,
@@ -183,6 +182,7 @@ impl Fixture {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
+            workspace: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             conversation_snapshot: Arc::new(tokio::sync::RwLock::new(snapshot_data)),

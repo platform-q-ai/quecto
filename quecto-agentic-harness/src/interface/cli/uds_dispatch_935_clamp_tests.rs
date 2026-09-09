@@ -66,6 +66,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: tmp.path(),
+            workspace: tmp.path(),
             agent: &mut agent,
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(

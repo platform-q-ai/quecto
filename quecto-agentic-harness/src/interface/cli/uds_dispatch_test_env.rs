@@ -171,6 +171,7 @@ impl DispatchTestEnv {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self.tmp.path(),
+            workspace: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(

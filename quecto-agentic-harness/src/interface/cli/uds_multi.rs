@@ -291,6 +291,7 @@ pub(super) async fn multi_client_loop(
         // task re-frames per its own negotiated connection mode (#1059).
         wire_mode: super::uds_wire::ConnectionWireMode::legacy(),
         base_dir,
+        workspace,
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: conversation_snapshot.clone(),

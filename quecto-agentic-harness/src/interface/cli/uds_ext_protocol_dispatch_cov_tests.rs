@@ -44,6 +44,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
+        workspace: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -107,6 +108,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
+        workspace: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -171,6 +173,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
+        workspace: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(

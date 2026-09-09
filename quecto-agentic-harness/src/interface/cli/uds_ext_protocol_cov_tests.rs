@@ -430,6 +430,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
+        workspace: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -525,6 +526,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
+        workspace: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(

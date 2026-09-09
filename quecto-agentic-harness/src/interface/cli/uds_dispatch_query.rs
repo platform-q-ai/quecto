@@ -52,7 +52,7 @@ pub(super) async fn dispatch_fieldless_command(
         // Scope is an execution property owned by the connected server.  The
         // request intentionally has no scope field: accepting one would let a
         // hostile/stale client browse another folder's sessions.
-        let current = super::super::uds_lifecycle::capture_execution_metadata(ctx.base_dir, None);
+        let current = super::super::uds_lifecycle::capture_execution_metadata(ctx.workspace, None);
         let scope = current.folder_identity();
         let scope_available = scope.is_some();
         let event = match ctx.session_store.list(None).await {

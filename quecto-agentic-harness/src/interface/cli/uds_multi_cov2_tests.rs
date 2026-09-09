@@ -282,6 +282,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: dir.path(),
+        workspace: dir.path(),
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: Arc::new(tokio::sync::RwLock::new(Default::default())),

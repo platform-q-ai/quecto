@@ -124,7 +124,10 @@ pub(super) async fn run_command_loop(
 
 pub(crate) struct DispatchCtx<'a> {
     pub wire_mode: super::uds_wire::ConnectionWireMode,
+    /// Centralized configuration and persistence root (normally `~/.quecto`).
     pub base_dir: &'a std::path::Path,
+    /// Execution workspace inherited from the process that launched this agent.
+    pub workspace: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828

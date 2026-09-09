@@ -227,6 +227,89 @@ async fn uds_loop_async_binds_multi_socket_serves_get_state_and_exits() {
     assert_eq!(code, 0);
 }
 
+#[tokio::test]
+async fn owned_tui_agent_records_launch_workspace_not_central_state_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let state_dir = root.path().join("central-state");
+    let launch_workspace = root.path().join("newly-launched-folder");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::create_dir_all(&launch_workspace).unwrap();
+    let seed_store = FileSessionStore::new(&state_dir);
+    seed_store
+        .save(&Session::from_parts(
+            "cli:tui-launch-workspace",
+            vec![Message::user("existing conversation")],
+            None,
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    drop(seed_store);
+    let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+
+    let mut args = loop_args(&state_dir, root.path().join("unused.sock"));
+    args.workspace = &launch_workspace;
+    args.session_key = "cli:tui-launch-workspace".into();
+    args.ephemeral = false;
+    args.socket_override = Some(server);
+
+    let query = std::thread::spawn(move || {
+        use std::io::{BufRead, Write};
+
+        let mut writer = client.try_clone().unwrap();
+        writer
+            .write_all(b"{\"type\":\"list_sessions\",\"id\":\"scope-check\"}\n")
+            .unwrap();
+        writer.flush().unwrap();
+        let mut reader = std::io::BufReader::new(client);
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                reader.read_line(&mut line).unwrap(),
+                0,
+                "agent closed before reply"
+            );
+            let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if event["id"] == "scope-check" {
+                return event;
+            }
+        }
+    });
+    assert_eq!(uds_loop_async(args).await, 0);
+    let list_response = query.join().unwrap();
+    assert_eq!(list_response["success"], true);
+    assert_eq!(list_response["data"]["scopeStatus"], "available");
+    assert!(
+        list_response["data"]["sessions"]
+            .as_array()
+            .is_some_and(|sessions| sessions
+                .iter()
+                .any(|row| { row["key"] == "cli:tui-launch-workspace" })),
+        "the launch workspace's persisted conversation must appear in that workspace's picker: \
+         {list_response}"
+    );
+
+    let saved = FileSessionStore::new(&state_dir)
+        .load("cli:tui-launch-workspace")
+        .await
+        .unwrap()
+        .expect("persistent TUI launch should create session metadata");
+    let metadata = saved
+        .latest_execution_metadata
+        .expect("persistent TUI launch should record execution metadata");
+    assert_eq!(
+        metadata.folder_label().map(|label| label.as_str()),
+        Some(
+            std::fs::canonicalize(&launch_workspace)
+                .unwrap()
+                .to_str()
+                .unwrap()
+        ),
+        "folder-scoped resume must use the agent workspace inherited from the TUI launch, \
+         not the centralized session/config state directory"
+    );
+}
+
 #[test]
 fn run_uds_loop_returns_error_for_unbindable_socket_parent() {
     let dir = tempfile::tempdir().unwrap();

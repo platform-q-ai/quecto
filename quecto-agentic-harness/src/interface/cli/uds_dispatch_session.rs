@@ -413,7 +413,7 @@ pub(super) async fn handle_resume_session(
         }
     };
     let activation_metadata =
-        super::super::uds_lifecycle::capture_execution_metadata(ctx.base_dir, Some("native"));
+        super::super::uds_lifecycle::capture_execution_metadata(ctx.workspace, Some("native"));
     if let Err(err) = ctx
         .session_store
         .save_execution_metadata(

@@ -179,7 +179,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let loaded_message_count = loaded_session.messages.len();
     let messages = loaded_session.messages;
     if !ephemeral && !session_key.is_empty() {
-        let metadata = capture_execution_metadata(base_dir, agent_display_name.as_deref());
+        let metadata = capture_execution_metadata(workspace, agent_display_name.as_deref());
         let metadata_write = if loaded_session.origin_execution_metadata.is_none() {
             crate::domain::execution_metadata::ExecutionMetadataWrite::Initialize(metadata)
         } else {
@@ -330,6 +330,7 @@ async fn single_client_loop(
         &mut DispatchCtx {
             wire_mode,
             base_dir,
+            workspace,
             agent: &mut agent,
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(

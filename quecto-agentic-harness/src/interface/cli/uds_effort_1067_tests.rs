@@ -84,6 +84,7 @@ impl EffortFx {
         DispatchCtx {
             execution_state: self.execution_state.clone(),
             base_dir: self._tmp.path(),
+            workspace: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
