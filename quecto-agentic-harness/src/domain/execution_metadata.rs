@@ -213,6 +213,14 @@ pub enum ExecutionMetadataWrite {
     UpdateLatest(ExecutionMetadata),
 }
 
+impl ExecutionMetadataWrite {
+    pub fn metadata(&self) -> &ExecutionMetadata {
+        match self {
+            Self::Initialize(metadata) | Self::UpdateLatest(metadata) => metadata,
+        }
+    }
+}
+
 fn valid_bounded(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max
 }

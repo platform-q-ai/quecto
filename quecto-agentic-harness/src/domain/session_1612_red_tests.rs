@@ -5,8 +5,8 @@
 //! infrastructure, not to these value objects.
 
 use super::{
-    AgentDisplayName, ExecutionMetadata, FolderDisplayLabel, FolderIdentity, GitBranchDisplay,
-    Session,
+    AgentDisplayName, ExecutionMetadata, ExecutionMetadataWrite, FolderDisplayLabel,
+    FolderIdentity, GitBranchDisplay, Session,
 };
 
 fn complete_metadata(folder_byte: u8, suffix: &str) -> ExecutionMetadata {
@@ -308,6 +308,14 @@ fn session_initializes_origin_once_and_replaces_only_latest_afterward() {
     replacement.inherit_execution_metadata_from(&session);
     assert_eq!(replacement.origin_execution_metadata(), Some(&first));
     assert_eq!(replacement.latest_execution_metadata(), Some(&second));
+    assert_eq!(
+        ExecutionMetadataWrite::Initialize(first.clone()).metadata(),
+        &first
+    );
+    assert_eq!(
+        ExecutionMetadataWrite::UpdateLatest(second.clone()).metadata(),
+        &second
+    );
 
     session.update_latest_execution_metadata(detached.clone());
     assert_eq!(session.origin_execution_metadata(), Some(&first));
