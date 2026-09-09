@@ -188,3 +188,12 @@ pub(crate) fn bounded_u64(
 pub(crate) fn ioerr(e: std::io::Error) -> DomainError {
     DomainError::Other(e.to_string())
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    #[test]
+    fn io_error_is_mapped_without_losing_its_message() {
+        let error = super::ioerr(std::io::Error::other("sentinel"));
+        assert!(error.to_string().contains("sentinel"));
+    }
+}
