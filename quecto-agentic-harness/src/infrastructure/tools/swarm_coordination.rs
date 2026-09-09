@@ -130,6 +130,7 @@ impl SwarmContext {
                     .as_str()
                     .ok_or_else(|| invalid("missing control status"))?,
             )?,
+            wake_warnings: Vec::new(),
             generation: value["generation"]
                 .as_u64()
                 .ok_or_else(|| invalid("missing control generation"))?,

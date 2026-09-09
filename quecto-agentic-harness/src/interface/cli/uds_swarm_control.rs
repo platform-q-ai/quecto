@@ -142,6 +142,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         Action::Status => RunControlAction::Status,
         Action::Wake => unreachable!("wake handled before supervisor control"),
     };
+    let resuming = matches!(action, RunControlAction::Resume);
     let result = match &ctx.turn_control.swarm_control {
         Some(control) => control.apply(action).await,
         None => Err(crate::domain::error::DomainError::Tool(
@@ -149,14 +150,24 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         )),
     };
     let event = match result {
-        Ok(receipt) => super::protocol::AgentEvent::ok(
-            id.as_deref(),
-            "swarm_control",
-            Some(serde_json::json!({
+        Ok(receipt) => {
+            ctx.turn_control
+                .observe_control_generation(receipt.generation);
+            let mut data = serde_json::json!({
                 "status": status_name(receipt.status), "generation": receipt.generation,
                 "applied": true, "budget": receipt.budget
-            })),
-        ),
+            });
+            // #1721: the store's fan-out excludes the resumer, so wake this
+            // process itself: a member suspended by a provider failure
+            // re-arms on that wake.
+            if resuming && let Some(warning) = self_wake(ctx, receipt.generation) {
+                data["warning"] = serde_json::Value::from(warning);
+            }
+            if !receipt.wake_warnings.is_empty() {
+                data["wake_warnings"] = serde_json::Value::from(receipt.wake_warnings);
+            }
+            super::protocol::AgentEvent::ok(id.as_deref(), "swarm_control", Some(data))
+        }
         Err(error) => {
             super::protocol::AgentEvent::err(id.as_deref(), "swarm_control", error.to_string())
         }
@@ -165,6 +176,31 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         let _ = writer.send(event.to_json_line() + "\n").await;
     }
     true
+}
+
+/// Queue a wake for this process. A full command channel only carries the
+/// generation when a wake message is already pending; otherwise the slot is
+/// released again so later wakes are not swallowed, and the caller is warned.
+fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
+    match ctx.cmd_tx.try_reserve() {
+        Ok(permit) => {
+            if ctx.turn_control.queue_swarm_wake(generation) {
+                permit.send(super::uds_multi::ClientMessage::SwarmWake { generation });
+            }
+            None
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
+            if ctx.turn_control.queue_swarm_wake(generation) {
+                ctx.turn_control.take_swarm_wake(0);
+                Some("self-wake queue full; suspended members re-arm on their next wake".into())
+            } else {
+                None
+            }
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+            Some("this agent is shutting down; no self-wake".into())
+        }
+    }
 }
 
 fn status_name(status: RunStatus) -> &'static str {
@@ -183,49 +219,148 @@ fn status_name(status: RunStatus) -> &'static str {
 pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generation: u64) -> bool {
     use super::protocol::AgentEvent;
     use super::uds::emit_event_to_broadcast_or_writer;
+    use crate::domain::swarm::{RunControlAction, RunStatus};
 
     let generation = ctx.turn_control.take_swarm_wake(generation);
-    if ctx.session.automatic_turns_allowed {
-        if let Some(control) = ctx.turn_control.swarm_control.clone() {
-            match control
-                .apply(crate::domain::swarm::RunControlAction::Wake { generation })
-                .await
-            {
-                Ok(receipt) => {
-                    if receipt.wake_allowed {
-                        super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                                id: None, type_name: "swarm_wake".into(),
-                                message: "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable tasks; yield when none remain.".into(),
-                                streaming_behavior: None,
-                            }).await;
-                    }
+    let Some(control) = ctx.turn_control.swarm_control.clone() else {
+        return false;
+    };
+    // #1721: while suspended, learn the control generation without claiming
+    // wake events; a pause/resume since the provider failure re-arms us.
+    if !ctx.session.automatic_turns_allowed {
+        match control.apply(RunControlAction::Status).await {
+            Ok(receipt) => {
+                ctx.turn_control
+                    .observe_control_generation(receipt.generation);
+                if ctx.session.resume_after_control_change(receipt.generation) {
+                    let event = AgentEvent::ok(
+                        None,
+                        "swarm_wake",
+                        Some(serde_json::json!({
+                            "status": "resumed", "generation": receipt.generation,
+                            "reason": "automatic turns re-armed by a swarm resume after a provider failure"
+                        })),
+                    );
+                    emit_event_to_broadcast_or_writer(ctx, &event).await;
                 }
-                Err(error) => match store_failure(&error) {
-                    // Contention: keep the generation for the next wake.
-                    StoreFailure::Transient => {
-                        ctx.turn_control.queue_swarm_wake(generation);
-                        let event = AgentEvent::err(
-                            None,
-                            "swarm_wake",
-                            format!("generation {generation} deferred: {error}"),
-                        );
-                        emit_event_to_broadcast_or_writer(ctx, &event).await;
-                    }
-                    // A durable rejection stops automatic turns until a human prompt.
-                    StoreFailure::Durable => {
-                        ctx.session.automatic_turns_allowed = false;
-                        let event = AgentEvent::err(
-                            None,
-                            "swarm_wake",
-                            format!("generation {generation}: {error}"),
-                        );
-                        emit_event_to_broadcast_or_writer(ctx, &event).await;
-                    }
-                },
+            }
+            Err(error) => {
+                // Contention keeps the generation for the next wake; either
+                // way the suspended member says why it stayed suspended.
+                let deferred = store_failure(&error) == StoreFailure::Transient;
+                if deferred {
+                    ctx.turn_control.defer_swarm_wake(generation);
+                }
+                let event = AgentEvent::err(
+                    None,
+                    "swarm_wake",
+                    format!(
+                        "generation {generation} {} while suspended: {error}",
+                        if deferred { "deferred" } else { "not applied" }
+                    ),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
+                return false;
             }
         }
+        if !ctx.session.automatic_turns_allowed {
+            return false;
+        }
+    }
+    match control.apply(RunControlAction::Wake { generation }).await {
+        Ok(receipt) => {
+            ctx.turn_control
+                .observe_control_generation(receipt.generation);
+            ctx.session
+                .observe_control_generation(Some(receipt.generation));
+            // A re-armed member owes the run a turn to continue its
+            // interrupted work, whether or not this wake targets it.
+            let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
+            let resume_turn = runnable && ctx.session.take_pending_resume_turn();
+            if resume_turn {
+                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
+                    id: None, type_name: "swarm_wake".into(),
+                    message: "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable tasks and yield when none remain.".into(),
+                    streaming_behavior: None,
+                }).await;
+            } else if receipt.wake_allowed {
+                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
+                    id: None, type_name: "swarm_wake".into(),
+                    message: "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable tasks; yield when none remain.".into(),
+                    streaming_behavior: None,
+                }).await;
+            }
+        }
+        Err(error) => match store_failure(&error) {
+            // Contention: keep the generation for the next wake.
+            StoreFailure::Transient => {
+                ctx.turn_control.defer_swarm_wake(generation);
+                let event = AgentEvent::err(
+                    None,
+                    "swarm_wake",
+                    format!("generation {generation} deferred: {error}"),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
+            }
+            // A durable rejection stops automatic turns until a human prompt.
+            StoreFailure::Durable => {
+                ctx.session.suspend_automatic_turns(
+                    super::uds_session::SuspensionCause::StoreRejection,
+                    None,
+                );
+                let event = AgentEvent::err(
+                    None,
+                    "swarm_wake",
+                    format!("generation {generation}: {error}"),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
+            }
+        },
     }
     false
+}
+
+/// #1721: learn the control generation early (off the accept path) so a
+/// provider-failure suspension has a baseline even if the store is busy right
+/// after the failure.
+pub(super) fn seed_control_generation(turn_control: &super::uds_cancel::TurnControlHandle) {
+    let Some(control) = turn_control.swarm_control.clone() else {
+        return;
+    };
+    let seed = std::sync::Arc::clone(turn_control);
+    tokio::spawn(async move {
+        if let Ok(receipt) = control
+            .apply(crate::domain::swarm::RunControlAction::Status)
+            .await
+        {
+            seed.observe_control_generation(receipt.generation);
+        }
+    });
+}
+
+/// #1721: a provider-failure suspension is dated by the control generation
+/// current *after* the failure, so a pause/resume that happened during the
+/// failed turn cannot re-arm it; only a later resume can. Without a swarm,
+/// or when the store cannot answer, the pre-turn generation stands. Runs
+/// after every turn path (prompt, drained, nudged) and only touches a
+/// suspension not yet dated this way, so a later idle drain cannot re-date
+/// an older suspension past a resume it should honour.
+pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'_>) {
+    use crate::domain::swarm::RunControlAction;
+    if !ctx.session.needs_provider_dating() {
+        return;
+    }
+    let Some(control) = ctx.turn_control.swarm_control.clone() else {
+        return;
+    };
+    if let Ok(receipt) = control.apply(RunControlAction::Status).await {
+        ctx.turn_control
+            .observe_control_generation(receipt.generation);
+        ctx.session.suspend_automatic_turns(
+            super::uds_session::SuspensionCause::ProviderFailure,
+            Some(receipt.generation),
+        );
+    }
 }
 
 /// How a coordination-store failure is treated by automatic turns.

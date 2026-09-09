@@ -44,24 +44,23 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 ///   nudge and discard any queued work so the bound workflow does NOT resume.
 /// - `pending_steers` counts admitted redirects: the auto-continue nudge yields
 ///   so the steered instruction is obeyed next instead of being overridden.
-#[derive(Default)]
 pub struct TurnControl {
     pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
+    deferred_swarm_wake: std::sync::atomic::AtomicU64,
     pub(crate) swarm_control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
     abort_requested: std::sync::atomic::AtomicBool,
     pending_steers: std::sync::atomic::AtomicUsize,
+    /// Latest swarm control generation this process has seen from any
+    /// receipt or wake (#1721); `u64::MAX` until one is observed. Shared by
+    /// the reader and the dispatch loop so a suspension can be dated.
+    control_generation: std::sync::atomic::AtomicU64,
 }
 
-impl TurnControl {
-    pub fn with_swarm_control(
-        control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
-    ) -> Self {
-        Self {
-            swarm_control: control,
-            ..Self::default()
-        }
-    }
+#[path = "uds_turn_generation.rs"]
+mod turn_generation;
 
+impl TurnControl {
     /// Reader: record a full-stop abort ahead of dispatch (#895).
     pub fn mark_abort(&self) {
         self.abort_requested
@@ -528,7 +527,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Success
         }
         Some(Err(e)) => {
-            agent_session.automatic_turns_allowed = false;
+            // Dated by the dispatch loop once it knows the control generation.
+            agent_session.suspend_automatic_turns(
+                super::uds_session::SuspensionCause::ProviderFailure,
+                None,
+            );
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error

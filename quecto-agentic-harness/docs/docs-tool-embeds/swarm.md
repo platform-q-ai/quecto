@@ -212,6 +212,9 @@ restricted to native read-only swarm `summary`, `events`, and `usage`; Python,
 Bash, spawning and board mutations are unavailable. Export through the supervisor
 channel and preserve the container until the user authorizes teardown.
 
-After resuming, send an explicit prompt to continue work. Paused instructions remain
-queued; resume restores admission and the deadline without forcing a model turn.
+Paused instructions remain queued; resume restores admission and the deadline.
+A resume also wakes every live member, and a member whose automatic turns were
+suspended by a provider failure re-arms on it and continues its work without a
+prompt or steer. Do not pause a run because one member failed: resume the run
+and, only if the member is still stuck, steer it.
 Terminal completion notices do not trigger automatic report turns.

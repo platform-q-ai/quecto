@@ -82,11 +82,24 @@ impl TurnControl {
         first
     }
     pub fn take_swarm_wake(&self, fallback: u64) -> u64 {
+        let deferred = self
+            .deferred_swarm_wake
+            .swap(0, std::sync::atomic::Ordering::SeqCst);
         self.pending_swarm_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
             .unwrap_or(fallback)
+            .max(deferred)
+    }
+
+    /// Dispatch loop: keep a wake it could not apply (store contention) for
+    /// the next wake the reader delivers. The coalescing slot stays free so
+    /// that reader wake still sends its message; `take_swarm_wake` folds the
+    /// deferred generation in (#1721).
+    pub fn defer_swarm_wake(&self, generation: u64) {
+        self.deferred_swarm_wake
+            .fetch_max(generation, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

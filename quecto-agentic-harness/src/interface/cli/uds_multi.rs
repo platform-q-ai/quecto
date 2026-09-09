@@ -258,6 +258,7 @@ pub(super) async fn multi_client_loop(
     let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control),
     );
+    super::uds_swarm_control::seed_control_generation(&turn_control);
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();

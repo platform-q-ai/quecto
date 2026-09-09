@@ -107,3 +107,15 @@ fn poisoned_locks_are_recovered_by_every_turn_helper() {
     assert!(control.queue_swarm_wake(7));
     assert_eq!(control.take_swarm_wake(0), 7);
 }
+
+/// #1721: the control generation never regresses and is unknown until seen.
+#[test]
+fn control_generation_is_monotonic_and_unknown_until_observed() {
+    let control = TurnControl::default();
+    assert_eq!(control.control_generation(), None);
+    control.observe_control_generation(3);
+    control.observe_control_generation(2);
+    assert_eq!(control.control_generation(), Some(3));
+    control.observe_control_generation(8);
+    assert_eq!(control.control_generation(), Some(8));
+}

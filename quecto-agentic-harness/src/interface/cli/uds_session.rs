@@ -13,6 +13,15 @@ pub struct AgentSession {
     session_key: String,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
+    /// Why automatic turns are off and at which swarm control generation
+    /// (#1721): a later resume re-arms provider-failure suspensions.
+    suspension: Option<TurnSuspension>,
+    /// Latest swarm control generation this session has seen (control
+    /// receipts, the startup probe); dates a suspension when it happens.
+    last_control_generation: Option<u64>,
+    /// A resume re-armed this session: it owes the run one turn to continue
+    /// its interrupted work, taken by the next runnable wake.
+    pending_resume_turn: bool,
     /// Session-local killing barrier; routine/final saves must not undo it.
     pub(crate) killing_exit: bool,
     generation: u64,
@@ -33,25 +42,10 @@ pub struct AgentSession {
     /// survive a saturated queue end-to-end instead of being dropped.
     overflow_notifications: std::collections::VecDeque<PendingMessage>,
 }
-#[derive(Debug, Clone, Default)]
-pub struct SessionUsage {
-    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
-    pub tokens: TokenStats,
-    pub cost_micro_usd: u64,
-}
-impl SessionUsage {
-    pub fn cost_usd(&self) -> f64 {
-        self.cost_micro_usd as f64 / 1_000_000.0
-    }
+#[path = "uds_session_suspension.rs"]
+mod suspension;
+pub use suspension::{SuspensionCause, TurnSuspension};
 
-    pub fn cache_hit_ratio(&self) -> Option<f64> {
-        crate::domain::usage_accounting::cache_hit_ratio(
-            self.tokens.input,
-            self.tokens.cache_read,
-            self.tokens.cache_write,
-        )
-    }
-}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingMessage {
     User(String),
@@ -214,6 +208,9 @@ impl AgentSession {
             session_key,
             streaming: false,
             automatic_turns_allowed: true,
+            suspension: None,
+            last_control_generation: None,
+            pending_resume_turn: false,
             killing_exit: false,
             generation: 1,
             usage: SessionUsage::default(),
@@ -429,7 +426,7 @@ impl AgentSession {
 // ─── Session statistics ───────────────────────────────────────────────────────
 #[path = "uds_session_usage.rs"]
 mod usage_projection;
-pub use usage_projection::{compute_session_stats, compute_session_stats_with_usage};
+pub use usage_projection::{SessionUsage, compute_session_stats, compute_session_stats_with_usage};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
 pub(crate) use uds_session_history::{
@@ -739,3 +736,7 @@ mod failure_tests;
 
 #[path = "uds_session_controls.rs"]
 mod controls;
+
+#[cfg(test)]
+#[path = "uds_session_suspension_tests.rs"]
+mod suspension_tests;

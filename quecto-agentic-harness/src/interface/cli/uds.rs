@@ -362,7 +362,10 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, false).await;
         return false;
     }
-    ctx.session.automatic_turns_allowed = true;
+    ctx.session.resume_automatic_turns();
+    // #1721: a failure during this turn is dated at the generation known now.
+    ctx.session
+        .observe_control_generation(ctx.turn_control.control_generation());
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     let cancel_rx = arm_prompt_cancel(
         ctx,
@@ -462,6 +465,13 @@ pub(super) fn set_before_guarded_turn_admission_test_hook(hook: Box<dyn Fn() + S
 }
 
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    drain_pending_and_nudge_turns(ctx).await;
+    // #1721: whichever turn failed (prompt, drained or nudged), date its
+    // provider-failure suspension by the generation current after it.
+    super::uds_swarm_control::date_provider_suspension(ctx).await;
+}
+
+async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
     // #895: abort = full stop. A pending abort (set by the reader before this
     // command's handler runs) suppresses workflow auto-continue and discards
     // queued work, so the bound workflow does NOT resume at this idle boundary —

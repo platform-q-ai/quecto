@@ -99,3 +99,98 @@ fn observed_budget(world: &mut QuectoWorld) {
             > 0
     );
 }
+
+fn failing_then_recovering(index: usize) -> fixture::Reply {
+    match index {
+        1 => fixture::Reply::Text("READY"),
+        2 => fixture::Reply::TerminalFailure,
+        _ => fixture::Reply::Text("RECOVERED"),
+    }
+}
+
+/// #1721: a member suspended by a terminal provider failure is brought back
+/// by the parent's `swarm_control resume` alone; no prompt or steer.
+#[when("a provider failure suspends the coordinator and the parent resumes the run")]
+fn resume_restores(world: &mut QuectoWorld) {
+    let workspace = world.swarm_workspace.clone().unwrap();
+    let evidence = std::thread::spawn(move || {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(exercise_resume(workspace))
+    })
+    .join()
+    .unwrap_or_else(|payload| {
+        let text = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "opaque panic".into());
+        panic!("resume exercise failed: {text}")
+    });
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content: evidence.to_string(),
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
+}
+
+async fn exercise_resume(workspace: std::path::PathBuf) -> serde_json::Value {
+    let runtime = fixture::Runtime::start_with(&workspace, failing_then_recovering).await;
+    runtime
+        .command(json!({"type":"prompt","message":"Initialise the swarm","ack":"accept"}))
+        .await;
+    runtime.wait_report("READY").await;
+    // Request 2 is the terminal failure: the coordinator suspends itself.
+    let failing = runtime
+        .command(json!({"type":"prompt","message":"Do the work","ack":"accept"}))
+        .await;
+    runtime.wait_receipt(&failing["id"], "failed").await;
+    let suspended = runtime.command(json!({"type":"get_state"})).await;
+    // The parent pauses (as a coordinator reflex would) and then resumes.
+    let paused = runtime
+        .command(json!({"type":"swarm_control","action":"pause","reason":"member failed"}))
+        .await;
+    let resumed = runtime
+        .command(json!({"type":"swarm_control","action":"resume"}))
+        .await;
+    // No prompt, no steer: the resume's own wake re-arms and runs a turn.
+    runtime
+        .wait_state("re-armed after resume", |data| {
+            data["automaticTurnsSuspended"] == false
+        })
+        .await;
+    runtime.wait_report("RECOVERED").await;
+    let restored = runtime.command(json!({"type":"get_state"})).await;
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: workspace.clone(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+    };
+    context.cancel_run().unwrap();
+    let evidence = json!({
+        "suspended": suspended["data"]["automaticTurnsSuspended"],
+        "paused": paused["data"]["status"],
+        "resumed": resumed["data"]["status"],
+        "resume_generation": resumed["data"]["generation"],
+        "pause_generation": paused["data"]["generation"],
+        "restored": restored["data"]["automaticTurnsSuspended"],
+        "requests": runtime.requests.load(std::sync::atomic::Ordering::SeqCst),
+    });
+    runtime.finish().await;
+    evidence
+}
+
+#[then("the coordinator is re-armed by the resume alone and continues its work")]
+fn resumed_without_prompt(world: &mut QuectoWorld) {
+    let evidence = result_json(world);
+    assert_eq!(evidence["suspended"], true, "{evidence}");
+    assert_eq!(evidence["paused"], "paused", "{evidence}");
+    assert_eq!(evidence["resumed"], "running", "{evidence}");
+    assert!(
+        evidence["resume_generation"].as_u64() > evidence["pause_generation"].as_u64(),
+        "{evidence}"
+    );
+    assert_eq!(evidence["restored"], false, "{evidence}");
+    assert!(evidence["requests"].as_u64().unwrap() >= 4, "{evidence}");
+}
