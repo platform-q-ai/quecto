@@ -125,6 +125,48 @@ re-derived on each full read rather than being transitions. See
 `abort` while an attempt waits cancels the wait at the authority and counts
 it under `counters.cancelled`.
 
+## Activation, rollback and quarantine runbook
+
+Activation (per host, per user):
+
+1. Add the `admission` section (groups, aliases, bindings) to the config;
+   every provider slot that must be bounded needs a binding. Measure your own
+   values; none of the numbers in this document are vendor-safe defaults.
+2. Start the authority: `quecto admission-broker run` (a service or a
+   terminal that outlives every session). It refuses to start twice on the
+   same directory.
+3. Verify: `quecto admission-broker status` prints JSON with
+   `"journal_healthy": true`, `"epoch": 1` on a fresh directory and zero
+   active/queued/uncertain counts per group.
+4. Start (or restart) every agent process. Roots register before composing a
+   provider, so a session that cannot reach the authority exits with an error
+   before any inference; a running session never switches policy in place.
+5. Check a session: `get_state` carries `admission`, and a queued attempt
+   shows `progress.state = "waiting"` (TUI: "⏳ waiting for admission").
+
+Rollback:
+
+1. Remove the `admission` section (or stop binding the provider slots).
+2. Restart every agent process; a live reload with a changed section is
+   rejected by design, so nothing changes until the restart.
+3. Stop the authority (SIGTERM). Outstanding remote work is no longer
+   bounded from that moment; rollback does not pretend otherwise.
+
+Quarantine (a group has stopped granting):
+
+1. `quecto admission-broker status` shows `uncertain > 0` for the group: a
+   session disconnected or was killed while an attempt was outstanding, or the
+   authority restarted with work in flight.
+2. If that session is still alive and reconnects with the same capability,
+   completing the attempt clears the entry; wait for it.
+3. Otherwise `quecto admission-broker reset` starts a new epoch. It revokes
+   every capability, so every session must restart, and it gives up the claim
+   that the old remote work is bounded. Cooldown and pacing deadlines survive.
+4. A group in cooldown (`get_state` `admission.groups[].cooldown`) needs no
+   action: the deadline came from the provider's own advice. `unavailable`
+   means the provider advised beyond the configured maximum; treat it as a
+   provider incident, then reset.
+
 ## Limitations
 
 - Same-user, same-host coordination only. Processes holding provider
@@ -132,4 +174,5 @@ it under `counters.cancelled`.
 - Concurrency and pacing do not guarantee provider RPM/TPM compliance; token
   accounting and adaptive concurrency are follow-on work.
 - Closing a connection does not cancel remote provider computation.
-- Waiting/queue observability in the TUI is P4 work; use `status` meanwhile.
+- The TUI shows a session's own wait and forwarded descendant waits; queue
+  position is never promised (ADR-0026).

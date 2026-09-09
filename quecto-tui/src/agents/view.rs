@@ -170,6 +170,9 @@ pub(crate) struct ConnectionRoster {
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
+    /// Forwarded inference-admission labels per child (#1679 P4), cleared
+    /// when a child's view has nothing to show or the child leaves the roster.
+    pub(crate) admission_labels: BTreeMap<String, String>,
     /// Durable UUIDs for terminal rows already displayed for their grace period.
     /// Suppresses repeated historical terminal snapshots while allowing a
     /// nonterminal restart with the same UUID to reappear.
@@ -232,6 +235,7 @@ impl ConnectionRoster {
     pub(crate) fn new() -> Self {
         Self {
             tracked: BTreeMap::new(),
+            admission_labels: BTreeMap::new(),
             expired_terminal_uuids: BTreeSet::new(),
             frame: 0,
             delete_pending: false,

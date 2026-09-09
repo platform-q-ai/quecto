@@ -339,6 +339,7 @@ fn build_shard_plan(
 }
 
 mod mouse_selection_steps;
+mod tui_admission_waiting_steps;
 mod tui_agent_disconnect_steps;
 mod tui_app_behaviors_steps;
 mod tui_autocomplete_steps;

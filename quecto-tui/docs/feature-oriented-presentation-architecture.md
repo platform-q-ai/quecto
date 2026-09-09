@@ -328,6 +328,8 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/admission_payloads.rs` | `protocol` inference-admission view mapper (#1679 P4) |
+| `protocol/client_result_text.rs` | `protocol` tool-result text extraction (split from `client.rs` for the 750-line cap, #1679 P4; protocol-mapper allowlist as a `client.rs` relocation) |
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
@@ -336,6 +338,8 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
+| `shell/app_admission.rs` | `shell` inference-admission label/spinner owner (#1679 P4) |
+| `shell/app_workflow_automation.rs` | `shell` workflow automation flag mirroring (split from `app_response.rs` for the 750-line cap, #1679 P4) |
 | `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |
 | `shell/app_events.rs` | `shell` top-level event routing (relocated, #1257 Phase 6) |
 | `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |

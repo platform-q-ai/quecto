@@ -1282,7 +1282,9 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #1586 phase 3 adds the explicit persist-session command at the existing TUI
 /// tab lifecycle protocol seam so every visible tab can snapshot before exit
 /// (155 → 158); this is required barrier fan-out, not DTO spread.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 158;
+/// #1679 P4 added the `Event::AdmissionStateChanged` dispatch arm in
+/// `shell/app_events.rs` (one usage).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 159;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
@@ -1295,7 +1297,11 @@ const TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST: &[(&str, &str)] =
 /// Narrow, issue-linked allowlist for the PROTOCOL RAW-JSON ratchet only.
 /// The UDS client is the wire seam itself (frame/event field access); mapper
 /// sites remain measured. (#1257 Phase 2)
-const TUI_PROTOCOL_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("protocol/client.rs", "#1257")];
+const TUI_PROTOCOL_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[
+    ("protocol/client.rs", "#1257"),
+    // Pure relocation out of `client.rs` for the 750-line cap (#1679 P4).
+    ("protocol/client_result_text.rs", "#1257 client.rs split"),
+];
 
 /// Wire DTO seam files remain in the measured inventory. Keeping this
 /// allowlist empty ensures that new DTO usage inside a documented seam still

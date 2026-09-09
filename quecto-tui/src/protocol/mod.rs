@@ -8,6 +8,7 @@
 //! (`conversation`, `sessions`, `agents`, `workflow`, `inference`, `workspace`,
 //! `shell`/`components`).
 
+pub mod admission_payloads;
 pub mod agent_ledger_payloads;
 pub mod client;
 pub(crate) mod event_barrier;
