@@ -340,3 +340,22 @@ fn session_initializes_origin_once_and_replaces_only_latest_afterward() {
         "a full latest snapshot explicitly clears a now-unknown branch"
     );
 }
+
+#[test]
+fn execution_metadata_serde_covers_windows_identity_and_missing_fields() {
+    let windows = FolderIdentity::from_windows_units(vec![b'C' as u16, b':' as u16]).unwrap();
+    let encoded = serde_json::to_string(&windows).unwrap();
+    assert_eq!(
+        serde_json::from_str::<FolderIdentity>(&encoded).unwrap(),
+        windows
+    );
+
+    let empty: ExecutionMetadata = serde_json::from_str("{}").unwrap();
+    assert!(empty.folder_identity().is_none());
+    assert!(empty.folder_label().is_none());
+    assert!(empty.agent_name().is_none());
+    assert!(empty.git_branch().is_none());
+
+    assert!(serde_json::from_str::<ExecutionMetadata>("null").is_err());
+    assert!(serde_json::from_str::<ExecutionMetadata>(r#"{"folder_identity":true}"#).is_ok());
+}
