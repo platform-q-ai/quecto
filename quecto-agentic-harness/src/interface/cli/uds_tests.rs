@@ -693,6 +693,21 @@ fn session_summary_to_json_projects_stable_wire_fields() {
     assert_eq!(v["messageCount"], 3);
     assert_eq!(v["updatedUnixSecs"], 1700000000);
     assert_eq!(v["updatedAt"], v["updatedUnixSecs"]);
+
+    let metadata = crate::domain::execution_metadata::ExecutionMetadata::new(
+        crate::domain::execution_metadata::FolderIdentity::from_unix_bytes(b"/work".to_vec()),
+        crate::domain::execution_metadata::FolderDisplayLabel::new("/work"),
+        crate::domain::execution_metadata::AgentDisplayName::new("agent"),
+        crate::domain::execution_metadata::GitBranchDisplay::new("main"),
+    );
+    let populated = session_summary_to_json(&crate::domain::session::SessionSummary {
+        latest_execution_metadata: Some(metadata),
+        ..summary
+    });
+    assert_eq!(populated["folderIdentity"], "unix:2f776f726b");
+    assert_eq!(populated["folderLabel"], "/work");
+    assert_eq!(populated["agentName"], "agent");
+    assert_eq!(populated["gitBranch"], "main");
 }
 
 // ─── #1460: reaping is decided by liveness, not mtime ───────────────────────
