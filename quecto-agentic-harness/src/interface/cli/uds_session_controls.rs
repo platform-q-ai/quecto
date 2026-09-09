@@ -30,6 +30,19 @@ impl AgentSession {
         self.bump_visible_generation();
     }
 
+    /// The latest recorded status of a control receipt, by id.
+    #[cfg(test)]
+    pub(crate) fn control_receipt_status(
+        &self,
+        id: &str,
+    ) -> Option<super::super::protocol::ControlStatus> {
+        self.control_receipts
+            .iter()
+            .rev()
+            .find(|receipt| receipt.id == id)
+            .map(|receipt| receipt.status)
+    }
+
     pub(crate) fn enqueue_control(
         &mut self,
         id: Option<&str>,

@@ -10,11 +10,21 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         // at enqueue; #816 deferral is preserved (this only runs at idle).
         // The reader has admitted an explicit replacement instruction. Yield
         // to command dispatch before consuming buffered automated work.
-        if !ctx.session.automatic_turns_allowed || ctx.turn_control.is_steer_pending() {
+        if ctx.turn_control.is_steer_pending() {
             return;
         }
-        let pending =
-            crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending());
+        let pending = if ctx.session.automatic_turns_allowed {
+            crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
+        } else {
+            // #1712: a suspended member still obeys explicit instructions
+            // (a parent's fast-acked prompt arrives as a queued follow-up);
+            // they re-arm it, while buffered automatic notes wait.
+            let Some(explicit) = take_explicit_instructions(ctx) else {
+                return;
+            };
+            ctx.session.resume_automatic_turns();
+            explicit
+        };
         if pending.is_empty() {
             break;
         }
@@ -85,6 +95,31 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 super::super::uds_snapshots::refresh_busy_snapshots(ctx).await;
             }
         }
+    }
+}
+
+/// Split the pending queue: explicit instructions (user prompts, queued
+/// controls) are returned when there are any; automatic notes go back to
+/// the queue untouched. `None` when nothing explicit is waiting.
+fn take_explicit_instructions(
+    ctx: &mut DispatchCtx<'_>,
+) -> Option<Vec<crate::interface::cli::uds_session::PendingMessage>> {
+    use crate::interface::cli::uds_session::PendingMessage;
+    let (explicit, automatic): (Vec<_>, Vec<_>) = ctx
+        .session
+        .drain_pending()
+        .into_iter()
+        .partition(|message| {
+            matches!(
+                message,
+                PendingMessage::User(_) | PendingMessage::Control { .. }
+            )
+        });
+    ctx.session.restore_pending(automatic.into_iter());
+    if explicit.is_empty() {
+        None
+    } else {
+        Some(explicit)
     }
 }
 

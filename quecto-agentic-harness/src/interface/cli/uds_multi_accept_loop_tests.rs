@@ -39,6 +39,7 @@ fn make_args(
         listener,
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
+        disconnect_tx: tokio::sync::mpsc::unbounded_channel().0,
         cancel_handle: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
         turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),

@@ -424,3 +424,127 @@ async fn a_drained_turn_failure_is_dated_after_the_turn() {
     );
     assert!(ctx.session.resume_after_control_change(7));
 }
+
+/// #1712: an explicit instruction (a parent's fast-acked prompt becomes a
+/// queued follow-up) re-arms a member idle after a provider failure and
+/// runs, while buffered automatic notifications alone never do; a pending
+/// steer still outranks the drain.
+#[tokio::test]
+async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(CountingProvider(calls.clone())),
+    );
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
+    ctx.session
+        .enqueue_subagent_notification("worker".into(), 1, "worker ended".into(), true);
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "an automatic notification alone stays suspended"
+    );
+    assert!(user_prompts(&ctx).is_empty());
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no provider request for an automatic note while suspended"
+    );
+    let kept = ctx.session.drain_pending();
+    assert_eq!(kept.len(), 1, "the note is kept for later: {kept:?}");
+    ctx.session.restore_pending(kept.into_iter());
+
+    ctx.turn_control.mark_steer();
+    ctx.session
+        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), false);
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        user_prompts(&ctx).is_empty(),
+        "a pending steer outranks the drain"
+    );
+    assert!(!ctx.session.automatic_turns_allowed);
+    ctx.turn_control.clear_steer();
+
+    drain_and_run_pending(&mut ctx).await;
+    let prompts = user_prompts(&ctx);
+    assert_eq!(
+        prompts.first().map(String::as_str),
+        Some("carry on"),
+        "{prompts:?}"
+    );
+    assert!(
+        ctx.session.automatic_turns_allowed,
+        "re-armed by the explicit instruction"
+    );
+    assert_eq!(
+        prompts.len(),
+        2,
+        "once re-armed the kept note drains after the instruction: {prompts:?}"
+    );
+    assert!(ctx.session.drain_pending().is_empty());
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        ctx.session.control_receipt_status("f1"),
+        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+    );
+}
+
+/// #1712 (fast-ack path): an idle suspended member receiving the parent's
+/// converted follow-up executes it rather than parking it as queued.
+#[tokio::test]
+async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
+    super::uds_dispatch::handle_follow_up(
+        &mut ctx,
+        Some("p1"),
+        "follow_up",
+        "continue the work".into(),
+    )
+    .await;
+    assert_eq!(user_prompts(&ctx), ["continue the work"]);
+    assert!(ctx.session.automatic_turns_allowed);
+}
+
+/// A provider that succeeds and counts its requests.
+#[derive(Debug)]
+struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl crate::domain::provider::LlmProvider for CountingProvider {
+    fn name(&self) -> &str {
+        "counting"
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn chat(
+        &self,
+        _: crate::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Ok(crate::domain::message::LlmResponse {
+                content: Some("ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}

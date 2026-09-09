@@ -321,6 +321,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         &mut ctx,
         DispatchLoopArgs {
             cmd_rx,
+            disconnect_rx: tokio::sync::mpsc::unbounded_channel().1,
             persist: false,
             shutdown: super::super::uds_shutdown::ShutdownRequest::for_tests().0,
         },
