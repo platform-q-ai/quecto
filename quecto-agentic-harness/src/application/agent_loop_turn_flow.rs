@@ -48,7 +48,7 @@ impl AgentLoopImpl {
         self.audit(
             turn,
             AuditEvent::RequestObserved {
-                observation: record.clone(),
+                observation: Box::new(record.clone()),
             },
         )
         .await;

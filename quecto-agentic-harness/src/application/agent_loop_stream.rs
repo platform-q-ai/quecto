@@ -25,7 +25,7 @@ pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
         Some(StopReason::MaxTokens) => {
             "stream completed without assistant output: stop_reason=max_tokens".to_string()
         }
-        _ => "HTTP 503: stream completed without assistant output".to_string(),
+        _ => "stream completed without assistant output: synthetic=empty_stream".to_string(),
     }
 }
 

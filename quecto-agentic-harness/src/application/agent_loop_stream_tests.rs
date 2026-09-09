@@ -65,10 +65,24 @@ fn empty_stream_error_message_distinguishes_max_tokens_from_provider_empty() {
     );
     assert_eq!(
         empty_stream_error_message(&response(None, vec![], vec![], Some(StopReason::EndTurn))),
-        "HTTP 503: stream completed without assistant output"
+        "stream completed without assistant output: synthetic=empty_stream"
     );
     assert_eq!(
         empty_stream_error_message(&response(None, vec![], vec![], None)),
-        "HTTP 503: stream completed without assistant output"
+        "stream completed without assistant output: synthetic=empty_stream"
     );
+}
+
+#[test]
+fn empty_stream_has_no_wire_status_or_overload_claim() {
+    use crate::domain::provider_error::{classify_provider_error, provider_http_status};
+    let error = DomainError::Provider(empty_stream_error_message(&response(
+        None,
+        vec![],
+        vec![],
+        None,
+    )));
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error).as_str(), "empty_stream");
+    assert!(classify_provider_error(&error).is_retryable());
 }

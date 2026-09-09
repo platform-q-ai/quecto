@@ -542,6 +542,7 @@ impl LlmProvider for AnthropicProvider {
         let (_system, body) = Self::build_request_body(&request, is_oauth);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
 
         Box::pin(async move {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
@@ -553,6 +554,7 @@ impl LlmProvider for AnthropicProvider {
             if let Some(gate) = &self.attempt_admission {
                 return crate::infrastructure::providers::attempt_transport::text(
                     gate,
+                    trace.clone(),
                     cancel.as_ref(),
                     request_builder,
                     Profile::new(Vendor::Anthropic, Surface::Chat),
@@ -614,6 +616,7 @@ impl LlmProvider for AnthropicProvider {
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
 
         Box::pin(async move {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
@@ -623,6 +626,7 @@ impl LlmProvider for AnthropicProvider {
                 let builder = self.apply_headers(self.client.post(&url).json(&body), &model);
                 return crate::infrastructure::providers::attempt_transport::assembled(
                     gate,
+                    trace.clone(),
                     cancel.as_ref(),
                     builder,
                     Profile::new(Vendor::Anthropic, Surface::Assembled),
@@ -662,6 +666,7 @@ impl LlmProvider for AnthropicProvider {
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
 
         // Derived Clone carries every field (crucially `router_name`) into the
         // spawned streaming task. The previous code reconstructed the struct
@@ -683,7 +688,7 @@ impl LlmProvider for AnthropicProvider {
                         provider.apply_headers(provider.client.post(&url).json(&body), &model);
                     crate::infrastructure::providers::attempt_transport::stream(
                         gate,
-                        cancel.as_ref(),
+                        (trace.clone(), cancel.as_ref()),
                         builder,
                         Profile::new(Vendor::Anthropic, Surface::Incremental),
                         tx,

@@ -50,6 +50,15 @@ async fn request_diagnostics_distinguish_missing_usage_from_zero_and_retain_fail
     assert_eq!(records[1].outcome, "failed");
     assert_eq!(records[1].instrumented_attempts, 1);
     assert_eq!(records[1].harness_prefix_unchanged, Some(true));
+    for record in &records {
+        assert!(record.started_unix_ms.is_some());
+        assert!(record.finished_unix_ms.is_some());
+        assert!(
+            record.attempt_diagnostics.is_empty(),
+            "mock wire telemetry is unavailable"
+        );
+    }
+    assert_ne!(records[0].request_id, records[1].request_id);
     assert_eq!(agent.take_unreported_usage().billed_input_tokens, 0);
 }
 

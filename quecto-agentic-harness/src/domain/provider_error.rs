@@ -12,6 +12,8 @@ pub enum ProviderErrorClass {
     Billing,
     Auth,
     Server,
+    /// Locally detected empty terminal stream, not an observed HTTP failure.
+    EmptyStream,
     Client,
     Network,
     Cancelled,
@@ -30,7 +32,10 @@ impl ProviderErrorClass {
     }
 
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::RateLimit | Self::Server | Self::Network)
+        matches!(
+            self,
+            Self::RateLimit | Self::Server | Self::Network | Self::EmptyStream
+        )
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -39,6 +44,7 @@ impl ProviderErrorClass {
             Self::Billing => "billing",
             Self::Auth => "auth",
             Self::Server => "server",
+            Self::EmptyStream => "empty_stream",
             Self::Client => "client",
             Self::Network => "network",
             Self::Cancelled => "cancelled",
@@ -58,6 +64,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         DomainError::Provider(msg) => msg.as_str(),
         _ => return ProviderErrorClass::Unknown,
     };
+
+    if msg.starts_with("stream completed without assistant output: synthetic=empty_stream") {
+        return ProviderErrorClass::EmptyStream;
+    }
 
     let lowered = msg.to_ascii_lowercase();
 

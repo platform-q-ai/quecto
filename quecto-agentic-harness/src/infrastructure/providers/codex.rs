@@ -569,6 +569,7 @@ impl LlmProvider for CodexProvider {
         }
 
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
@@ -578,6 +579,7 @@ impl LlmProvider for CodexProvider {
                 let builder = self.apply_headers(self.client.post(&url)).json(&body);
                 return super::attempt_transport::assembled(
                     gate,
+                    trace.clone(),
                     cancel.as_ref(),
                     builder,
                     Profile::new(Vendor::Codex, Surface::Assembled),
@@ -640,6 +642,7 @@ impl LlmProvider for CodexProvider {
             });
         }
         let cancel = request.cancel_flag.clone();
+        let trace = request.trace.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
@@ -653,7 +656,7 @@ impl LlmProvider for CodexProvider {
                         .json(&body);
                     super::attempt_transport::stream(
                         gate,
-                        cancel.as_ref(),
+                        (trace.clone(), cancel.as_ref()),
                         builder,
                         Profile::new(Vendor::Codex, Surface::Incremental),
                         tx,

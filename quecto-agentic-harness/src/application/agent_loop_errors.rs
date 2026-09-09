@@ -109,6 +109,9 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::RateLimit => Some(
             "Rate limit: the provider throttled the request. It was retried with backoff and still failed — wait and retry later, or reduce request frequency.",
         ),
+        ProviderErrorClass::EmptyStream => Some(
+            "Empty stream: the provider stream ended without assistant output. This is a synthetic classification; no HTTP failure or overload is established.",
+        ),
         ProviderErrorClass::Server => Some(
             "Server/overload: the provider is overloaded or returned a 5xx error. It was retried and still failed — retry later.",
         ),

@@ -62,6 +62,9 @@ impl<'a> ObservationGuard<'a> {
             started: Instant::now(),
             record: Some(RequestObservation {
                 request_id: uuid::Uuid::new_v4().to_string(),
+                started_unix_ms: unix_ms(),
+                finished_unix_ms: None,
+                attempt_diagnostics: Vec::new(),
                 model: request.model.into(),
                 provider: provider.into(),
                 outcome: "cancelled".into(),
@@ -119,6 +122,8 @@ impl<'a> ObservationGuard<'a> {
             .as_millis()
             .try_into()
             .unwrap_or(u64::MAX);
+        record.finished_unix_ms = unix_ms();
+        record.attempt_diagnostics = self.trace.attempt_diagnostics();
         record.instrumented_attempts = self.trace.attempts();
         record.oauth_retries = self.trace.oauth_retries();
         if let Some(outbox) = self.outbox {
@@ -138,4 +143,11 @@ impl Drop for ObservationGuard<'_> {
     fn drop(&mut self) {
         self.publish();
     }
+}
+
+fn unix_ms() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|value| value.as_millis().try_into().ok())
 }
