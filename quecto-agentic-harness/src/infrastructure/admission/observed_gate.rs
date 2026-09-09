@@ -20,9 +20,14 @@ struct Live {
     phase: AdmissionPhase,
 }
 
-#[derive(Debug, Default)]
+/// Receives a fresh view after every transition (never under the recorder lock).
+pub type ActivityHook = Arc<dyn Fn(&AdmissionActivity) + Send + Sync>;
+
+#[derive(Default)]
 struct RecorderState {
     next: u64,
+    revision: u64,
+    hook: Option<ActivityHook>,
     /// Every live attempt (exact counts). Bounded in practice by the
     /// authority's per-group capacity plus queue capacity.
     live: BTreeMap<u64, Live>,
@@ -34,10 +39,17 @@ struct RecorderState {
 }
 
 /// Process-wide admission activity; clock is monotonic from construction.
-#[derive(Debug)]
 pub struct AdmissionRecorder {
     start: Instant,
     state: Mutex<RecorderState>,
+}
+
+impl std::fmt::Debug for AdmissionRecorder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmissionRecorder")
+            .field("revision", &self.lock().revision)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for AdmissionRecorder {
@@ -86,6 +98,23 @@ impl AdmissionRecorder {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Install the transition hook (one per recorder; a later call replaces it).
+    pub fn set_hook(&self, hook: ActivityHook) {
+        self.lock().hook = Some(hook);
+    }
+
+    /// Bump the revision and, outside the lock, hand the hook a fresh view.
+    fn transitioned(&self) {
+        let hook = {
+            let mut state = self.lock();
+            state.revision = state.revision.wrapping_add(1);
+            state.hook.clone()
+        };
+        if let Some(hook) = hook {
+            hook(&self.snapshot());
+        }
+    }
+
     fn begin(&self, alias: &str, group: &GroupId) -> u64 {
         let now = self.now_ms();
         let mut state = self.lock();
@@ -100,13 +129,22 @@ impl AdmissionRecorder {
             },
         );
         state.groups.entry(group.clone()).or_default();
+        drop(state);
+        self.transitioned();
         id
     }
 
     fn admitted(&self, id: u64) {
         let now = self.now_ms();
-        if let Some(live) = self.lock().live.get_mut(&id) {
-            live.phase = AdmissionPhase::Admitted { since_ms: now };
+        let changed = match self.lock().live.get_mut(&id) {
+            Some(live) => {
+                live.phase = AdmissionPhase::Admitted { since_ms: now };
+                true
+            }
+            None => false,
+        };
+        if changed {
+            self.transitioned();
         }
     }
 
@@ -118,19 +156,35 @@ impl AdmissionRecorder {
         state.refused = state.refused.saturating_add(1);
         state.groups.entry(live.group).or_default().last_refusal =
             Some(truncate_bytes(reason, AdmissionActivity::MAX_REFUSAL_BYTES));
+        drop(state);
+        self.transitioned();
     }
 
     fn cancelled(&self, id: u64) {
-        let mut state = self.lock();
-        if state.live.remove(&id).is_some() {
-            state.cancelled = state.cancelled.saturating_add(1);
+        let removed = {
+            let mut state = self.lock();
+            let removed = state.live.remove(&id).is_some();
+            if removed {
+                state.cancelled = state.cancelled.saturating_add(1);
+            }
+            removed
+        };
+        if removed {
+            self.transitioned();
         }
     }
 
     fn abandoned(&self, id: u64) {
-        let mut state = self.lock();
-        if state.live.remove(&id).is_some() {
-            state.abandoned = state.abandoned.saturating_add(1);
+        let removed = {
+            let mut state = self.lock();
+            let removed = state.live.remove(&id).is_some();
+            if removed {
+                state.abandoned = state.abandoned.saturating_add(1);
+            }
+            removed
+        };
+        if removed {
+            self.transitioned();
         }
     }
 
@@ -160,6 +214,8 @@ impl AdmissionRecorder {
             }
             Feedback::Failure => {}
         }
+        drop(state);
+        self.transitioned();
     }
 
     /// Receipt advice for the attempt `id`, anchored at its grant: the
@@ -202,6 +258,8 @@ impl AdmissionRecorder {
             },
             ThrottleFeedback::Unavailable => Some(CooldownState::Unavailable),
         };
+        drop(state);
+        self.transitioned();
     }
 }
 
@@ -262,6 +320,7 @@ impl AdmissionObservation for AdmissionRecorder {
             groups,
             hidden: state.live.len().saturating_sub(attempts.len()),
             attempts,
+            revision: state.revision,
             observed_at_ms: now,
         }
     }

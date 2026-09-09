@@ -252,6 +252,8 @@ pub struct AdmissionActivity {
     pub groups: BTreeMap<GroupId, GroupActivity>,
     pub attempts: BTreeMap<u64, AttemptObservation>,
     pub hidden: usize,
+    /// Advances on every transition; equal revisions mean an unchanged view.
+    pub revision: u64,
     /// Process-monotonic milliseconds at which this view was taken.
     pub observed_at_ms: u64,
 }

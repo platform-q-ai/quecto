@@ -344,3 +344,36 @@ async fn completion_throttle_is_clamped_and_expired_cooldowns_read_as_none() {
         "completion advice beyond the maximum is unavailable, as at the authority"
     );
 }
+
+#[tokio::test]
+async fn transitions_bump_the_revision_and_notify_the_hook() {
+    let recorder = Arc::new(AdmissionRecorder::new());
+    let seen = Arc::new(Mutex::new(Vec::<AdmissionActivity>::new()));
+    let sink = seen.clone();
+    recorder.set_hook(Arc::new(move |activity: &AdmissionActivity| {
+        sink.lock().unwrap().push(activity.clone());
+    }));
+    let gate = observed(Arc::new(Grant::new(0, 10_000)), "acct", "g", &recorder);
+    let before = recorder.snapshot().revision;
+    let permit = gate.acquire().await.unwrap();
+    let admitted = recorder.snapshot().revision;
+    assert!(admitted > before, "begin and grant advance the revision");
+    permit.finish(Feedback::Success);
+    let finished = recorder.snapshot().revision;
+    assert!(finished > admitted);
+    assert_eq!(
+        recorder.snapshot().revision,
+        finished,
+        "reading does not advance it"
+    );
+    let seen = seen.lock().unwrap();
+    let phases: Vec<(usize, usize, u64)> = seen
+        .iter()
+        .map(|a| (a.waiting, a.admitted, a.completed))
+        .collect();
+    assert_eq!(
+        phases,
+        vec![(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+        "the hook sees every transition in order with a fresh view"
+    );
+}
