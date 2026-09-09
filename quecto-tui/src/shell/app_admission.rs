@@ -240,9 +240,8 @@ impl App {
         if let Some((view, observed)) = self.ac().admission_children.get(id) {
             // Terminals are unversioned projections. Keep the authoritative view
             // intact so a same-revision state event can repair cross-feed order.
-            let mut terminal_view = elapsed_view(view, *observed, tokio::time::Instant::now());
-            terminal_view.waiting = 0;
-            terminal_view.longest_wait_seconds = None;
+            let terminal_view =
+                child_projection(view, *observed, tokio::time::Instant::now(), true);
             let label = terminal_view.compact_label();
             self.ac_mut()
                 .admission_unversioned_clears
@@ -259,6 +258,36 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Keep ticking while a clock is active OR its final projection is pending.
+    /// Select may be rebuilt after expiry before the armed timer is serviced.
+    pub(in crate::shell::app) fn needs_admission_tick(&self) -> bool {
+        let now = tokio::time::Instant::now();
+        self.tabs.values().any(|state| {
+            state.admission_view.as_ref().is_some_and(|view| {
+                let projected = elapsed_view(view, state.admission_observed_at, now);
+                projected.waiting > 0
+                    || projected.has_active_dated_cooldown_after(0)
+                    || state.master_session.footer.admission()
+                        != projected.status_label().as_deref()
+            }) || state
+                .admission_children
+                .iter()
+                .any(|(id, (view, observed))| {
+                    let projected = child_projection(
+                        view,
+                        *observed,
+                        now,
+                        state.admission_unversioned_clears.contains(id),
+                    );
+                    state.roster.tracked.contains_key(id)
+                        && (projected.waiting > 0
+                            || projected.has_active_dated_cooldown_after(0)
+                            || state.roster.admission_labels.get(id)
+                                != projected.compact_label().as_ref())
+                })
+        })
     }
 
     /// Transition events are snapshots, not clock ticks. Project elapsed local
@@ -298,17 +327,47 @@ impl App {
                 .admission_labels
                 .retain(|id, _| state.roster.tracked.contains_key(id));
             for (id, (view, observed)) in &state.admission_children {
-                if !state.admission_unversioned_clears.contains(id)
-                    && let Some(label) = elapsed_view(view, *observed, now).compact_label()
-                    && state.roster.admission_labels.get(id) != Some(&label)
-                {
-                    state.roster.admission_labels.insert(id.clone(), label);
+                let projected = child_projection(
+                    view,
+                    *observed,
+                    now,
+                    state.admission_unversioned_clears.contains(id),
+                );
+                let label = projected.compact_label();
+                if state.roster.admission_labels.get(id) != label.as_ref() {
+                    match label {
+                        Some(label) => {
+                            state.roster.admission_labels.insert(id.clone(), label);
+                        }
+                        None => {
+                            state.roster.admission_labels.remove(id);
+                        }
+                    }
                     changed = true;
                 }
             }
         }
         changed
     }
+}
+
+/// Terminal overlays clear only waiting, never the authoritative cooldown clock.
+fn child_projection(
+    view: &AdmissionView,
+    observed: tokio::time::Instant,
+    now: tokio::time::Instant,
+    wait_cleared: bool,
+) -> AdmissionView {
+    let mut projected = elapsed_view(view, observed, now);
+    if wait_cleared {
+        projected.waiting = 0;
+        projected.longest_wait_seconds = None;
+        debug_assert_eq!(
+            projected.revision, view.revision,
+            "terminal overlay preserves revision"
+        );
+    }
+    projected
 }
 
 fn elapsed_view(

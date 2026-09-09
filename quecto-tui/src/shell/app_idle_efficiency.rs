@@ -16,20 +16,7 @@ impl App {
     }
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
-        let now = tokio::time::Instant::now();
-        self.tabs.values().any(|state| {
-            state.admission_view.as_ref().is_some_and(|view| {
-                view.waiting > 0
-                    || view.has_active_dated_cooldown_after(
-                        now.saturating_duration_since(state.admission_observed_at).as_secs(),
-                    )
-            }) || state.admission_children.values().any(|(view, observed)| {
-                view.waiting > 0
-                    || view.has_active_dated_cooldown_after(
-                        now.saturating_duration_since(*observed).as_secs(),
-                    )
-            })
-        })
+        self.needs_admission_tick()
             || kitty_fallback_pending
             || self.ac().spinner.is_some()
             || self.ac().agent_state.is_running()
