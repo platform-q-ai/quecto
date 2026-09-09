@@ -121,6 +121,32 @@ fn presentation_metadata_enforces_utf8_byte_limits_independently() {
     assert!(FolderDisplayLabel::new("").is_none());
     assert!(FolderDisplayLabel::new(" \n ").is_none());
 
+    for value in ["agent", "branch", "/folder"] {
+        let json = serde_json::to_string(value).unwrap();
+        if value == "agent" {
+            assert_eq!(
+                serde_json::from_str::<AgentDisplayName>(&json)
+                    .unwrap()
+                    .as_str(),
+                value
+            );
+        } else if value == "branch" {
+            assert_eq!(
+                serde_json::from_str::<GitBranchDisplay>(&json)
+                    .unwrap()
+                    .as_str(),
+                value
+            );
+        } else {
+            assert_eq!(
+                serde_json::from_str::<FolderDisplayLabel>(&json)
+                    .unwrap()
+                    .as_str(),
+                value
+            );
+        }
+    }
+
     let exact_multibyte_name = format!("{}a", "é".repeat(127));
     assert_eq!(exact_multibyte_name.len(), 255);
     assert!(AgentDisplayName::new(exact_multibyte_name.clone()).is_some());
