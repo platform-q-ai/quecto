@@ -95,6 +95,9 @@ pub struct OfficialToolDeps {
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
     pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    /// The composition's workflow engine slot (#1715); a run cannot be created
+    /// while it is engaged.
+    pub workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -142,7 +145,8 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                     deps.swarm_config,
                 )
                 .with_context(deps.swarm_context)
-                .with_participation(deps.swarm_participation.clone()),
+                .with_participation(deps.swarm_participation.clone())
+                .with_workflow_engine(deps.workflow_engine),
             ),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
@@ -312,6 +316,7 @@ pub fn build_official_tool_registry_with_context(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            workflow_engine: Default::default(),
             swarm_context,
             workspace,
             sandbox,

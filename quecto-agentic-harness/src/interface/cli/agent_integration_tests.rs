@@ -65,6 +65,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

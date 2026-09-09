@@ -4,33 +4,15 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::ProcessIdentity;
 use serde_json::Value;
 
-/// The swarm tool's entry: the composition's shared participation handle and
-/// this process's own workflow engagement.
-pub async fn control_for(
-    context: SwarmContext,
-    op: &str,
-    input: Value,
-    participation: super::swarm_bridge::Participation,
-) -> Result<Value, DomainError> {
-    control_with_workflow(
-        context,
-        op,
-        input,
-        participation,
-        super::swarm_bridge::workflow_engaged(),
-    )
-    .await
-}
-
-/// Convenience for callers outside a tool composition: no shared participation
-/// handle, this process's own workflow engagement.
+/// Test convenience: no shared participation handle, no engaged workflow.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
     control_with_workflow(
         context,
         op,
         input,
         super::swarm_bridge::Participation::none(),
-        super::swarm_bridge::workflow_engaged(),
+        false,
     )
     .await
 }
@@ -54,6 +36,7 @@ pub async fn control_with_workflow(
     );
     let ctx = context.clone();
     let op = op.to_owned();
+    let participation = participation.clone();
     let result = tokio::task::spawn_blocking(move || match op.as_str() {
         "create" => {
             std::fs::create_dir_all(ctx.checkout.join(".quecto"))
@@ -70,7 +53,7 @@ pub async fn control_with_workflow(
             )?;
             // From here on this process and its local children are swarm agents.
             participation.set(true);
-            super::swarm_lifecycle::supervise(ctx.clone(), snapshot);
+            super::swarm_lifecycle::supervise(ctx.clone(), snapshot, participation.clone());
             ctx.summary()
         }
         "usage" => ctx.usage_report(),
@@ -161,11 +144,3 @@ fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainErro
 #[cfg(test)]
 #[path = "swarm_control_tests.rs"]
 mod tests;
-
-impl super::swarm::SwarmTool {
-    /// The composition's shared participation handle (#1715).
-    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
-        self.participation = participation;
-        self
-    }
-}

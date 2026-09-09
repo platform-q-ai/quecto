@@ -35,6 +35,7 @@ fn build_runtime_with_entrypoint(
 
     build_tool_runtime(ToolRuntimeBuildArgs {
         swarm_context: None,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint,
         profile_context,
         base_dir: tmp.path(),

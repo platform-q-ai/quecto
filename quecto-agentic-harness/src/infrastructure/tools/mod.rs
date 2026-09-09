@@ -65,6 +65,7 @@ pub mod swarm_control;
 #[cfg(test)]
 mod swarm_job_tests;
 pub mod swarm_lifecycle;
+mod swarm_output;
 #[cfg(any(test, feature = "test-support"))]
 pub mod swarm_test_support;
 #[cfg(test)]

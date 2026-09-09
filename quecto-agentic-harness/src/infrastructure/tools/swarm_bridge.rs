@@ -140,19 +140,6 @@ impl SwarmContext {
         self.summary_since(None)
     }
 
-    /// The container run's status before joining it: a container without a
-    /// store yet is at the bootstrap placeholder (`setup`).
-    pub fn run_status(&self) -> Result<crate::domain::swarm::RunStatus, DomainError> {
-        if !self.database().exists() {
-            return Ok(crate::domain::swarm::RunStatus::Setup);
-        }
-        let summary = self.summary()?;
-        let status = summary["status"]
-            .as_str()
-            .ok_or_else(|| DomainError::Tool("swarm summary carries no run status".into()))?;
-        coordination::decode_status(status)
-    }
-
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
         self.rpc("summary", json!([since]))
     }
@@ -188,22 +175,16 @@ pub fn process_socket() -> Option<&'static Path> {
     PROCESS_SOCKET.get().map(PathBuf::as_path)
 }
 
-/// This process's workflow engine, when one is installed: a swarm cannot be
-/// created while it is engaged (guards, a bound spec or a selected template).
-static WORKFLOW_ENGINE: std::sync::OnceLock<
-    std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>,
-> = std::sync::OnceLock::new();
+/// A composition's workflow engine slot (#1715): filled once the workflow
+/// runtime is built, read by the swarm tool before creating a run.
+pub type WorkflowEngineSlot = std::sync::Arc<
+    std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>>,
+>;
 
-pub fn bind_workflow_engine(
-    engine: std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>,
-) {
-    let _ = WORKFLOW_ENGINE.set(engine);
-}
-
-/// Whether this process is running a workflow right now: guards on, or a
+/// Whether the composition is running a workflow right now: guards on, or a
 /// template selected/bound. A merely available, idle engine is not engaged.
-pub fn workflow_engaged() -> bool {
-    WORKFLOW_ENGINE.get().is_some_and(|engine| {
+pub fn workflow_engaged(slot: &WorkflowEngineSlot) -> bool {
+    slot.get().is_some_and(|engine| {
         engine
             .lock()
             .map(|engine| engine.guards_enabled() || engine.active_template().is_some())

@@ -18,6 +18,7 @@ fn runtime(
 
     build_tool_runtime(ToolRuntimeBuildArgs {
         swarm_context: None,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::CliAgent,
         profile_context,
         base_dir: tmp.path(),
@@ -250,6 +251,7 @@ fn workflow_enabled_policy<'a>(
 fn runtime_in_container(
     context: crate::infrastructure::tools::swarm_bridge::SwarmContext,
     tmp: &std::path::Path,
+    participation: crate::infrastructure::tools::swarm_bridge::Participation,
 ) -> Result<crate::interface::tool_runtime::ToolRuntimeBuild, String> {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -257,6 +259,7 @@ fn runtime_in_container(
     let mut stderr = String::new();
     build_tool_runtime(ToolRuntimeBuildArgs {
         swarm_context: Some(context),
+        swarm_participation: participation,
         // The UDS entrypoint is the one that supports workflows at all.
         entrypoint: ToolEntrypoint::UdsAgent,
         profile_context: ToolRuntimeProfileContext::Child,
@@ -295,17 +298,24 @@ fn container_runtime_workflow_follows_swarm_participation() {
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
     };
     context.join(&identity, None, None).unwrap();
-    let built = runtime_in_container(context, ordinary.path()).unwrap();
+    let ordinary_handle = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let built = runtime_in_container(context, ordinary.path(), ordinary_handle.clone()).unwrap();
     assert!(
         built.workflow_state.is_some(),
         "an ordinary container keeps its workflow engine"
     );
+    assert!(!ordinary_handle.participating());
     assert!(names_for(&built, ToolProfileContext::Child).contains("workflow"));
     let (swarm_dir, swarm) = crate::swarm_control_fixture::context();
-    let built = runtime_in_container(swarm, swarm_dir.path()).unwrap();
+    let swarm_handle = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let built = runtime_in_container(swarm, swarm_dir.path(), swarm_handle.clone()).unwrap();
     assert!(
         built.workflow_state.is_none(),
         "a created run makes every member a swarm agent"
+    );
+    assert!(
+        swarm_handle.participating(),
+        "the composition's handle is set from the join"
     );
     assert!(!names_for(&built, ToolProfileContext::Child).contains("workflow"));
 }

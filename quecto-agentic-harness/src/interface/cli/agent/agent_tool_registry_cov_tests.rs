@@ -17,6 +17,7 @@ fn flags() -> AgentFlags {
         effort: None,
         workflow: false,
         workflow_guards: false,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         workflow_disabled: true,
         workflow_spec_path: None,
         inherited_tool_policy: None,

@@ -565,7 +565,11 @@ async fn foreground_terminal_watcher(outcome: &str) {
         SwarmConfig::default(),
     )
     .with_context(Some(context.clone()));
-    super::swarm_lifecycle::supervise(context.clone(), context.snapshot().unwrap());
+    super::swarm_lifecycle::supervise(
+        context.clone(),
+        context.snapshot().unwrap(),
+        super::swarm_bridge::Participation::none(),
+    );
     let terminal = if outcome == "succeeded" {
         "board.evidence('tests','proof','R1','command',True); board.complete('R1')"
     } else {

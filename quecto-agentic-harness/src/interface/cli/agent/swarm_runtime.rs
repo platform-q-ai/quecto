@@ -13,8 +13,10 @@ pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
 }
 
 /// Workflow eligibility follows swarm participation, not containerization
-/// (#1715): an ordinary container keeps its workflow; a container whose run
-/// has been created (or a worker launched into one) rejects it before joining.
+/// (#1715): the join answers whether this container's run has been created.
+/// An ordinary container keeps its workflow; a swarm member has it disabled,
+/// and a member that asked for one exits before inference (the join is
+/// reconciled like any other startup failure).
 pub(super) fn admit_with(
     context: Option<SwarmContext>,
     flags: &mut AgentFlags,
@@ -23,7 +25,11 @@ pub(super) fn admit_with(
     let Some(context) = context else {
         return true;
     };
-    let status = match context.run_status() {
+    let status = match swarm_lifecycle::join_current_process(
+        &context,
+        flags.socket_path.as_deref(),
+        flags.swarm_participation.clone(),
+    ) {
         Ok(status) => status,
         Err(error) => {
             stderr.push_str(&format!("swarm admission rejected: {error}\n"));
@@ -32,12 +38,6 @@ pub(super) fn admit_with(
     };
     if crate::domain::swarm::participates(status)
         && let Err(error) = disable_workflow(flags)
-    {
-        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
-        return false;
-    }
-    if let Err(error) =
-        swarm_lifecycle::join_current_process(&context, flags.socket_path.as_deref())
     {
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;

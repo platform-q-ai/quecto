@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::swarm::CoordinationPort;
 use serde_json::json;
 #[tokio::test]
 async fn native_supervisor_validates_budget_and_event_requests_without_mutation() {
@@ -121,8 +122,9 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
     .unwrap_err()
     .to_string();
     assert!(error.contains("cannot create a swarm"), "{error}");
-    assert!(
-        context.run_status().unwrap() == crate::domain::swarm::RunStatus::Setup,
+    assert_eq!(
+        context.snapshot().unwrap().status,
+        crate::domain::swarm::RunStatus::Setup,
         "nothing was created"
     );
     assert!(!participation.participating(), "nothing was created");
@@ -137,7 +139,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
     .unwrap();
     assert_eq!(created["status"], "running");
     assert_eq!(
-        context.run_status().unwrap(),
+        context.snapshot().unwrap().status,
         crate::domain::swarm::RunStatus::Running
     );
     assert!(

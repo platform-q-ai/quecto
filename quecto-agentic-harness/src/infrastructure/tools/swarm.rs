@@ -1,3 +1,4 @@
+use super::swarm_output::{job_id, ok_json, tool_err};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -40,7 +41,9 @@ impl Drop for ActiveGuard {
 pub struct SwarmTool {
     context: Option<super::swarm_bridge::SwarmContext>,
     /// Shared with the spawn and workflow tools (#1715); `create` flips it.
-    pub(super) participation: super::swarm_bridge::Participation,
+    participation: super::swarm_bridge::Participation,
+    /// The composition's workflow engine (#1715); `create` refuses while engaged.
+    workflow_engine: super::swarm_bridge::WorkflowEngineSlot,
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: SwarmConfig,
@@ -77,6 +80,7 @@ impl SwarmTool {
         Self {
             context: None,
             participation: super::swarm_bridge::Participation::none(),
+            workflow_engine: Default::default(),
             workspace,
             sandbox,
             config,
@@ -89,6 +93,16 @@ impl SwarmTool {
 }
 
 impl SwarmTool {
+    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
+        self.participation = participation;
+        self
+    }
+
+    pub fn with_workflow_engine(mut self, slot: super::swarm_bridge::WorkflowEngineSlot) -> Self {
+        self.workflow_engine = slot;
+        self
+    }
+
     pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
         if let Some(ctx) = &context {
             register_context_jobs(ctx, &self.jobs);
@@ -137,6 +151,7 @@ impl Tool for SwarmTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        let workflow_engaged = super::swarm_bridge::workflow_engaged(&self.workflow_engine);
         let participation = self.participation.clone();
         let context = self.context.clone();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
@@ -162,8 +177,14 @@ impl Tool for SwarmTool {
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
                 op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
                 | "events" | "usage" | "usage_budget") => {
-                    match super::swarm_control::control_for(context, op, v.clone(), participation)
-                        .await
+                    match super::swarm_control::control_with_workflow(
+                        context,
+                        op,
+                        v.clone(),
+                        participation,
+                        workflow_engaged,
+                    )
+                    .await
                     {
                         Ok(value) => {
                             if value["status"] == "cancelled" {
@@ -710,28 +731,6 @@ async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResul
     )
 }
 
-fn job_id(v: &serde_json::Value) -> Result<&str, DomainError> {
-    v.get("job_id")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| DomainError::Other("job_id is required".into()))
-}
-
-fn tool_err(content: String) -> Result<ToolResult, DomainError> {
-    Ok(ToolResult {
-        content,
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    })
-}
-fn ok_json(v: serde_json::Value, is_error: bool) -> Result<ToolResult, DomainError> {
-    Ok(ToolResult {
-        content: serde_json::to_string_pretty(&v).unwrap(),
-        is_error,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    })
-}
 #[path = "swarm_support.rs"]
 mod swarm_support;
 pub(crate) use swarm_support::*;

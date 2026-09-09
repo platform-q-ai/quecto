@@ -296,7 +296,11 @@ join into that container with any of them is refused at startup before
 inference, and `create` is rejected while the creator is running a workflow
 (guards, a bound spec or a selected template). An idle, merely available
 workflow tool does not block creation; it refuses every action once the run
-exists. A host-local master may still use a workflow to supervise the swarm.
+exists. Members that joined the container before the run was created become
+swarm agents the moment it exists: their workflow tool refuses and their
+local launches reject workflows, but an engine they already engaged (guards or
+a bound spec) is not torn down, so create the run before spawning members. A
+host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
 with `board.block(task_id, claim_token, reason)`, report the exact question to the

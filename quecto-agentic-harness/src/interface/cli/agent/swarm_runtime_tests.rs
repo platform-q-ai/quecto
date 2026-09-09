@@ -32,17 +32,21 @@ fn swarm_cli_disables_default_workflow_and_rejects_explicit_activation() {
     }
 }
 
-/// A container store at its bootstrap placeholder: what every container
-/// carries before anyone creates a run.
-fn store_context(checkout: &std::path::Path) -> SwarmContext {
+/// A container store at its bootstrap placeholder, created by its
+/// coordinator: what every container carries before anyone creates a run.
+fn bootstrapped(checkout: &std::path::Path) -> SwarmContext {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
-    let context = SwarmContext {
+    let coordinator = member(checkout, "coordinator");
+    coordinator.join(&identity(), None, None).unwrap();
+    coordinator
+}
+
+fn member(checkout: &std::path::Path, name: &str) -> SwarmContext {
+    SwarmContext {
         checkout: checkout.to_path_buf(),
-        member: "coordinator".into(),
+        member: name.into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
-    };
-    context.join(&identity(), None, None).unwrap();
-    context
+    }
 }
 
 fn identity() -> crate::domain::swarm::ProcessIdentity {
@@ -52,27 +56,13 @@ fn identity() -> crate::domain::swarm::ProcessIdentity {
     }
 }
 
-/// #1715: an ordinary container (bootstrap placeholder run) keeps its
-/// workflow; once the run has been created the same startup is refused.
-#[test]
-fn startup_workflow_follows_swarm_participation_not_containerization() {
-    let tmp = tempfile::tempdir().unwrap();
-    let context = store_context(tmp.path());
-    let mut flags = super::super::parse_agent_flags(
-        &["--mode".into(), "uds".into(), "--workflow".into()],
-        &mut String::new(),
-    )
-    .unwrap();
-    let mut stderr = String::new();
-    assert!(
-        admit_with(Some(context.clone()), &mut flags, &mut stderr),
-        "{stderr}"
-    );
-    assert!(
-        !flags.workflow_disabled,
-        "ordinary container keeps workflow"
-    );
-    assert!(flags.workflow);
+fn flags_with(args: &[&str]) -> AgentFlags {
+    let mut all = vec!["--mode".to_string(), "uds".to_string()];
+    all.extend(args.iter().map(|a| a.to_string()));
+    super::super::parse_agent_flags(&all, &mut String::new()).unwrap()
+}
+
+fn create_run(context: &SwarmContext) {
     let deadline = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -87,35 +77,57 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
             None,
         )
         .unwrap();
-    let mut flags = super::super::parse_agent_flags(
-        &["--mode".into(), "uds".into(), "--workflow".into()],
-        &mut String::new(),
-    )
-    .unwrap();
+}
+
+/// #1715: a newcomer joining an ordinary container (bootstrap placeholder
+/// run) keeps its workflow; joining a container whose run has been created
+/// is refused with a workflow request and joins workflow-disabled without.
+/// The newcomer is not a member before the join, as a host-side join is not.
+#[test]
+fn startup_workflow_follows_swarm_participation_not_containerization() {
+    let ordinary = tempfile::tempdir().unwrap();
+    bootstrapped(ordinary.path());
+    let mut flags = flags_with(&["--workflow"]);
     let mut stderr = String::new();
-    assert!(!admit_with(Some(context.clone()), &mut flags, &mut stderr));
+    assert!(
+        admit_with(
+            Some(member(ordinary.path(), "newcomer")),
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(
+        !flags.workflow_disabled,
+        "ordinary container keeps workflow"
+    );
+    assert!(flags.workflow);
+    assert!(!flags.swarm_participation.participating());
+
+    let swarm = tempfile::tempdir().unwrap();
+    create_run(&bootstrapped(swarm.path()));
+    let mut flags = flags_with(&["--workflow"]);
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(swarm.path(), "late-with-workflow")),
+        &mut flags,
+        &mut stderr
+    ));
     assert!(
         stderr.contains("swarm admission rejected")
             && stderr.contains("workflow is unavailable for swarm agents"),
         "{stderr}"
     );
-    // Without a workflow request the join into the swarm proceeds, workflow
-    // disabled, and the process is a participant.
-    let mut flags =
-        super::super::parse_agent_flags(&["--mode".into(), "uds".into()], &mut String::new())
-            .unwrap();
+    let mut flags = flags_with(&[]);
     let mut stderr = String::new();
     assert!(
-        admit_with(Some(context), &mut flags, &mut stderr),
+        admit_with(Some(member(swarm.path(), "late")), &mut flags, &mut stderr),
         "{stderr}"
     );
     assert!(flags.workflow_disabled);
+    assert!(flags.swarm_participation.participating());
     // No container context at all: nothing changes.
-    let mut flags = super::super::parse_agent_flags(
-        &["--mode".into(), "uds".into(), "--workflow".into()],
-        &mut String::new(),
-    )
-    .unwrap();
+    let mut flags = flags_with(&["--workflow"]);
     assert!(admit_with(None, &mut flags, &mut String::new()));
     assert!(!flags.workflow_disabled);
 }

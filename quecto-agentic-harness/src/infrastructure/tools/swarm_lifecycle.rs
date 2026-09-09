@@ -10,9 +10,13 @@ use serde_json::{Value, json};
 
 /// Join the container's coordination store; returns the run status so the
 /// caller can tell an ordinary container (`setup`) from a swarm (#1715).
+/// `participation` is this process's shared handle: it is set from the join
+/// answer and kept current by the supervisor, so a member that joined before
+/// the run was created still learns that it became a swarm agent.
 pub fn join_current_process(
     context: &SwarmContext,
     socket: Option<&std::path::Path>,
+    participation: super::swarm_bridge::Participation,
 ) -> Result<RunStatus, DomainError> {
     if !context.database().exists() && std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() != Ok("1")
     {
@@ -29,8 +33,9 @@ pub fn join_current_process(
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
     let status = snapshot.status;
+    participation.set(crate::domain::swarm::participates(status));
     if needs_supervision(status) {
-        supervise(context.clone(), snapshot);
+        supervise(context.clone(), snapshot, participation);
     }
     Ok(status)
 }
@@ -151,9 +156,31 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
 
+/// One supervisor tick: refresh the snapshot and record swarm participation
+/// from it (#1715), so a member that joined an ordinary container becomes a
+/// swarm agent the moment the run is created by someone else.
+pub(super) fn observe(
+    context: &SwarmContext,
+    snapshot: &mut crate::domain::swarm::Snapshot,
+    participation: &super::swarm_bridge::Participation,
+) {
+    match context.snapshot() {
+        Ok(current) => *snapshot = current,
+        Err(error) => {
+            super::swarm::cancel_context_jobs(context);
+            tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
+        }
+    }
+    participation.set(crate::domain::swarm::participates(snapshot.status));
+}
+
 /// A per-process watcher also observes outcomes set by other members. This
 /// cancels detached local jobs even if a remote turn-abort leaves them alive.
-pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snapshot) {
+pub fn supervise(
+    context: SwarmContext,
+    mut snapshot: crate::domain::swarm::Snapshot,
+    participation: super::swarm_bridge::Participation,
+) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if STARTED.set(()).is_err() {
         return;
@@ -161,13 +188,7 @@ pub fn supervise(context: SwarmContext, mut snapshot: crate::domain::swarm::Snap
     std::thread::spawn(move || {
         let mut suspended = None;
         loop {
-            match context.snapshot() {
-                Ok(current) => snapshot = current,
-                Err(error) => {
-                    super::swarm::cancel_context_jobs(&context);
-                    tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
-                }
-            }
+            observe(&context, &mut snapshot, &participation);
             if snapshot.status == RunStatus::Paused
                 && suspended != Some(snapshot.control_generation)
             {

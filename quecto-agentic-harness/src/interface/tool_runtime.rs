@@ -119,6 +119,9 @@ impl ToolRuntimeProfileContext {
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// Explicit launch context; reusable runtime construction never discovers ambient membership.
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    /// The process's shared swarm participation (#1715), injected into the
+    /// spawn, swarm and workflow tools.
+    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
     pub entrypoint: ToolEntrypoint,
     pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
@@ -178,6 +181,7 @@ pub(crate) fn build_tool_runtime(
 
     let ToolRuntimeBuildArgs {
         swarm_context,
+        swarm_participation,
         entrypoint,
         profile_context,
         base_dir,
@@ -200,18 +204,19 @@ pub(crate) fn build_tool_runtime(
     // have no implicit enrollment side effects from their parent environment.
     // Workflow eligibility follows swarm participation, not containerization
     // (#1715): the join answers whether this container's run was created.
-    let swarm_participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
     let swarm_agent = match &swarm_context {
         Some(context) => crate::domain::swarm::participates(
             crate::infrastructure::tools::swarm_lifecycle::join_current_process(
                 context,
                 crate::infrastructure::tools::swarm_bridge::process_socket(),
+                swarm_participation.clone(),
             )
             .map_err(|e| e.to_string())?,
         ),
         None => false,
     };
-    swarm_participation.set(swarm_agent);
+    let workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot =
+        Default::default();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
@@ -236,6 +241,7 @@ pub(crate) fn build_tool_runtime(
         build_official_tool_extensions(OfficialToolDeps {
             swarm_context: swarm_context.clone(),
             swarm_participation: swarm_participation.clone(),
+            workflow_engine: workflow_engine.clone(),
             workspace,
             sandbox,
             exec_options,
@@ -296,9 +302,9 @@ pub(crate) fn build_tool_runtime(
         stderr,
         swarm_participation,
     )?;
-    // A swarm cannot be created while this process's workflow is engaged.
+    // A swarm cannot be created while this composition's workflow is engaged.
     if let Some(engine) = &wf_state {
-        crate::infrastructure::tools::swarm_bridge::bind_workflow_engine(engine.clone());
+        let _ = workflow_engine.set(engine.clone());
     }
 
     let ext_registry =

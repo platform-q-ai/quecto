@@ -48,7 +48,9 @@ follows swarm participation, not containerization: an ordinary container agent
 like a host-local agent. Never enable them for swarm workers; those launches are
 rejected, a join into a container whose run exists fails before inference, and an
 agent running a workflow (guards, bound spec or selected template) cannot create
-a run; the workflow tool refuses inside a swarm. Use the configured container launch
+a run; the workflow tool refuses inside a swarm, and members that joined
+before the run existed are covered by the same rule once it does (create the
+run before spawning workers). Use the configured container launch
 above; there is no separate swarm daemon or swarm-specific image.
 Give the coordinator the goal, constraints, command/review acceptance criteria,
 fixed member limit (including itself) and deadline. It calls `swarm` `op=create`
