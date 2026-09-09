@@ -13,6 +13,8 @@ mod admission_feedback;
 mod admission_group_fallback;
 #[path = "contracts/admission_journal.rs"]
 mod admission_journal;
+#[path = "contracts/admission_observation.rs"]
+mod admission_observation;
 #[path = "contracts/admission_recovery.rs"]
 mod admission_recovery;
 #[path = "contracts/admission_registry.rs"]

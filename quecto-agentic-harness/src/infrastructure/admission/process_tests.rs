@@ -147,10 +147,16 @@ fn root_install_binds_gates_and_shutdown_retires_the_scope() {
     assert_eq!(binding.proposal().bindings["openai"], "acct");
     assert!(binding.runtime_context().binding("openai").is_ok());
     assert!(format!("{binding:?}").contains("client_dir"));
-    let permit = rt
-        .block_on(binding.connection().gate("acct").unwrap().acquire())
-        .unwrap();
+    let gate = binding.runtime_context().binding("openai").unwrap().gate;
+    let permit = rt.block_on(gate.acquire()).unwrap();
+    let observed = binding.observation().snapshot();
+    assert_eq!(
+        observed.admitted, 1,
+        "the runtime gate is observed: {observed:?}"
+    );
+    assert_eq!(observed.attempts.values().next().unwrap().alias, "acct");
     permit.finish(Feedback::Success);
+    assert_eq!(binding.observation().snapshot().completed, 1);
     let admin = rt
         .block_on(AdminConnection::connect(&server.directory().admin_socket()))
         .unwrap();

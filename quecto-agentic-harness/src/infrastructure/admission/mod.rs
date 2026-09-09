@@ -3,6 +3,7 @@
 pub mod client;
 pub mod directory;
 pub mod journal;
+pub mod observed_gate;
 pub mod process;
 pub mod protocol;
 pub mod remote_gate;
@@ -13,6 +14,7 @@ mod session;
 pub use client::{AdminConnection, AuthorityConnection, ClientError, Hello};
 pub use directory::{AuthorityDirectory, SingletonLock};
 pub use journal::FileJournal;
+pub use observed_gate::{AdmissionRecorder, ObservedAdmission};
 pub use process::{
     AdmissionContext, Negotiation, ProcessAdmission, negotiate, read_admission_context,
     write_admission_context,

@@ -22,6 +22,9 @@ mod admission_dispatcher_contracts;
 #[path = "../tests/contracts/admission_journal.rs"]
 mod admission_journal_contracts;
 #[cfg(test)]
+#[path = "../tests/contracts/admission_observation.rs"]
+mod admission_observation_contracts;
+#[cfg(test)]
 #[path = "../tests/contracts/admission_recovery.rs"]
 mod admission_recovery_contracts;
 #[cfg(test)]
