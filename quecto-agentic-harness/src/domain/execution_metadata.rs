@@ -73,20 +73,6 @@ impl FolderIdentity {
             }
         }
     }
-
-    pub fn unix_bytes(&self) -> Option<&[u8]> {
-        match self {
-            Self::Unix(bytes) => Some(bytes),
-            Self::Windows(_) => None,
-        }
-    }
-
-    pub fn windows_units(&self) -> Option<&[u16]> {
-        match self {
-            Self::Windows(units) => Some(units),
-            Self::Unix(_) => None,
-        }
-    }
 }
 
 impl Serialize for FolderIdentity {

@@ -30,11 +30,6 @@ fn folder_identity_is_lossless_platform_tagged_and_independent_of_display() {
         FolderIdentity::from_unix_bytes(vec![b'/', b'w', 0xff, b'k', b'/', b'n']).unwrap();
     let windows_units = vec![b'C' as u16, b':' as u16, b'\\' as u16, 0xd800];
     let windows = FolderIdentity::from_windows_units(windows_units.clone()).unwrap();
-
-    assert_eq!(same_unix.unix_bytes(), Some(unix_bytes.as_slice()));
-    assert_eq!(same_unix.windows_units(), None);
-    assert_eq!(windows.windows_units(), Some(windows_units.as_slice()));
-    assert_eq!(windows.unix_bytes(), None);
     assert_ne!(
         same_unix, sibling_unix,
         "sibling folders must stay distinct"
@@ -71,17 +66,6 @@ fn persisted_folder_key_round_trips_without_consulting_the_filesystem() {
     assert!(FolderIdentity::from_encoded_key(&format!("unix:{}", "00".repeat(4096))).is_none());
     assert!(FolderIdentity::from_encoded_key("windows-u16le:00").is_none());
     let windows = FolderIdentity::from_windows_units(vec![0x43, 0x3a, 0xd800]).unwrap();
-    assert!(windows.unix_bytes().is_none());
-    assert_eq!(
-        windows.windows_units(),
-        Some([0x43, 0x3a, 0xd800].as_slice())
-    );
-    assert!(
-        FolderIdentity::from_unix_bytes(vec![b'/'])
-            .unwrap()
-            .windows_units()
-            .is_none()
-    );
     assert_eq!(
         FolderIdentity::from_encoded_key(&windows.encoded_key()),
         Some(windows)
@@ -101,7 +85,7 @@ fn complete_tagged_folder_identity_is_bounded_at_four_kibibytes() {
         "the limit applies to the complete platform-tagged encoded value"
     );
 
-    let first_rejected_payload_len = accepted.unix_bytes().unwrap().len() + 1;
+    let first_rejected_payload_len = (FolderIdentity::MAX_ENCODED_BYTES - "unix:".len()) / 2 + 1;
     assert!(
         FolderIdentity::from_unix_bytes(vec![b'x'; first_rejected_payload_len]).is_none(),
         "the next representable identity above the cap becomes unknown, never truncated"
@@ -237,8 +221,8 @@ fn malformed_optional_metadata_degrades_each_component_independently() {
     assert_eq!(
         serde_json::from_str::<FolderIdentity>(&serialized_identity)
             .unwrap()
-            .unix_bytes(),
-        Some([1].as_slice())
+            .encoded_key(),
+        "unix:01"
     );
 
     let serialized = serde_json::to_value(&metadata).unwrap();
