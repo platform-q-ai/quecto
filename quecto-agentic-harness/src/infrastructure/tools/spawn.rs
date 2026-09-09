@@ -127,6 +127,10 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 #[derive(Debug)]
 pub struct SpawnTool {
     pub(super) swarm_context: Option<super::swarm_bridge::SwarmContext>,
+    /// Whether this process takes part in a swarm (#1715); read at launch
+    /// time because a run may be created after composition. Injected by the
+    /// composition root; a tool built without one launches no swarm workers.
+    pub(super) swarm_participation: super::swarm_bridge::Participation,
     /// Allowlist of agent IDs that can be spawned.
     pub(super) allowed_agents: Vec<String>,
     /// Base directory for the child agent process.
@@ -163,9 +167,25 @@ impl SpawnTool {
         self
     }
 
+    pub fn with_swarm_participation(
+        mut self,
+        participation: super::swarm_bridge::Participation,
+    ) -> Self {
+        self.swarm_participation = participation;
+        self
+    }
+
+    /// Children of a swarm participant are swarm-local workers; any other
+    /// launch, containerized or not, keeps workflow eligibility (#1715).
+    /// Participation is only ever recorded for a process with a swarm context.
+    fn launches_swarm_worker(&self) -> bool {
+        self.swarm_participation.participating()
+    }
+
     pub fn new(allowed_agents: Vec<String>) -> Self {
         Self {
             swarm_context: None,
+            swarm_participation: super::swarm_bridge::Participation::none(),
             allowed_agents,
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
@@ -184,6 +204,7 @@ impl SpawnTool {
     pub fn with_base_dir(allowed_agents: Vec<String>, base_dir: PathBuf) -> Self {
         Self {
             swarm_context: None,
+            swarm_participation: super::swarm_bridge::Participation::none(),
             allowed_agents,
             base_dir,
             socket_dir: PathBuf::new(),
@@ -320,11 +341,7 @@ impl SpawnTool {
             .unwrap_or(false);
 
         crate::domain::swarm::validate_workflow(
-            self.swarm_context.is_some()
-                || !matches!(
-                    container,
-                    crate::domain::subagent::ContainerSelection::Local
-                ),
+            self.launches_swarm_worker(),
             workflow || workflow_guards || args.get("workflow_spec").is_some_and(|v| !v.is_null()),
         )
         .map_err(|e| e.to_string())?;
@@ -388,11 +405,7 @@ impl SpawnTool {
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         crate::domain::swarm::validate_workflow(
-            self.swarm_context.is_some()
-                || !matches!(
-                    config.container,
-                    crate::domain::subagent::ContainerSelection::Local
-                ),
+            self.launches_swarm_worker(),
             config.workflow || config.workflow_guards || config.workflow_spec.is_some(),
         )?;
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
@@ -500,7 +513,7 @@ impl Tool for SpawnTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "spawn".into(),
-            description: "Spawn a background subagent. Always set agent_id to a concise, user-friendly label restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Returns when its socket is ready, not when its task is done.\n\nAfter spawning, do not poll, sleep, or wait-loop. End this turn or do unrelated parent work. On a later turn, after the passive completion note, call agent_cmd get_messages using the spawn-returned UUID as agent_id with no count/before for the default unread report. The note is not the report. Before spawning a replacement for the same work after an apparent failure, disconnect, or provider-error recovery case, call agent_cmd get_state on the existing agent to confirm whether it is still running or recovered.\n\nContainers: omit container or set false for local. true starts a new container with the default config. Use {\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"} to select/name a new container, or {\"mode\":\"existing\",\"ref\":\"C1\"} / {\"mode\":\"existing\",\"name\":\"env\"} to join one. Do not pass repo.\n\nContainer/swarm launches reject workflow, workflow_guards and workflow_spec; all swarm agents run without workflow.\n\nWhen spawning a host-local agent with a bound workflow or instructing it to select a workflow, avoid extra instructions that conflict with workflow steps; such as DO NOT PUSH or DO NOT COMMIT etc."
+            description: "Spawn a background subagent. Always set agent_id to a concise, user-friendly label restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Returns when its socket is ready, not when its task is done.\n\nAfter spawning, do not poll, sleep, or wait-loop. End this turn or do unrelated parent work. On a later turn, after the passive completion note, call agent_cmd get_messages using the spawn-returned UUID as agent_id with no count/before for the default unread report. The note is not the report. Before spawning a replacement for the same work after an apparent failure, disconnect, or provider-error recovery case, call agent_cmd get_state on the existing agent to confirm whether it is still running or recovered.\n\nContainers: omit container or set false for local. true starts a new container with the default config. Use {\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"} to select/name a new container, or {\"mode\":\"existing\",\"ref\":\"C1\"} / {\"mode\":\"existing\",\"name\":\"env\"} to join one. Do not pass repo.\n\nOrdinary container launches (new or joined) support workflow, workflow_guards and workflow_spec exactly like host-local agents. Swarm launches reject them: workers spawned by a swarm participant, and joins into a container whose swarm run exists, fail before inference; an agent running a workflow (guards, bound spec or selected template) cannot create a swarm, and the workflow tool refuses inside one.\n\nWhen spawning a host-local agent with a bound workflow or instructing it to select a workflow, avoid extra instructions that conflict with workflow steps; such as DO NOT PUSH or DO NOT COMMIT etc."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"Required label for every spawn: choose a concise, user-friendly agent_id restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Use the spawn-returned UUID as agent_cmd.agent_id."},"task":{"type":"string","description":"Initial task; omit to start idle."},"system":{"type":"string","description":"Child system prompt."},"container":{"description":"Launch location: omit/false=local, true=new default container, {\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"}=new selected container, {\"mode\":\"existing\",\"ref\":\"C1\"} or {\"mode\":\"existing\",\"name\":\"env\"}=join existing. No repo field."},"config":{"type":"string","description":"Optional child --config; for new containers, omit normally or use a trusted absolute path."},"model":{"type":"string","description":"Child model as provider/model; alternative to provider+model_id."},"provider":{"type":"string","description":"Child model provider; use with model_id."},"model_id":{"type":"string","description":"Child model id; use with provider."},"effort":{"type":"string","enum":["none","low","medium","high","xhigh","max"],"description":"Child reasoning effort."},"workflow":{"type":"boolean","description":"Start workflow mode."},"workflow_guards":{"type":"boolean","description":"Enable workflow guards; requires workflow."},"workflow_spec":{"type":"object","description":"Inline workflow template for the child.","properties":{"template":{"type":"object"}}},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable in the child."},"read_only":{"type":"boolean","description":"Hide and disable write/edit; combines with disable_tools. Bash remains mutating-capable; not a sandbox."}}}"#.into(),
         }

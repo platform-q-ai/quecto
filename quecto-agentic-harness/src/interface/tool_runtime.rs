@@ -119,6 +119,9 @@ impl ToolRuntimeProfileContext {
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// Explicit launch context; reusable runtime construction never discovers ambient membership.
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    /// The process's shared swarm participation (#1715), injected into the
+    /// spawn, swarm and workflow tools.
+    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
     pub entrypoint: ToolEntrypoint,
     pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
@@ -178,6 +181,7 @@ pub(crate) fn build_tool_runtime(
 
     let ToolRuntimeBuildArgs {
         swarm_context,
+        swarm_participation,
         entrypoint,
         profile_context,
         base_dir,
@@ -198,19 +202,24 @@ pub(crate) fn build_tool_runtime(
 
     // Entrypoints supply actual launch context; isolated runtime consumers
     // have no implicit enrollment side effects from their parent environment.
-    let swarm_agent = swarm_context.is_some();
+    // Workflow eligibility follows swarm participation, not containerization
+    // (#1715): the join answers whether this container's run was created.
+    let swarm_agent = match &swarm_context {
+        Some(context) => crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+            context,
+            crate::infrastructure::tools::swarm_bridge::process_socket(),
+            swarm_participation.clone(),
+        )
+        .map_err(|e| e.to_string())?,
+        None => false,
+    };
+    let workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot =
+        Default::default();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
     )
     .map_err(|e| e.to_string())?;
-    if let Some(context) = &swarm_context {
-        crate::infrastructure::tools::swarm_lifecycle::join_current_process(
-            context,
-            crate::infrastructure::tools::swarm_bridge::process_socket(),
-        )
-        .map_err(|e| e.to_string())?;
-    }
 
     // PR #1401 review: the parent may have been launched with a RELATIVE
     // `--config` (or hit the relative `.quecto` base-dir fallback). Container
@@ -229,6 +238,8 @@ pub(crate) fn build_tool_runtime(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
             swarm_context: swarm_context.clone(),
+            swarm_participation: swarm_participation.clone(),
+            workflow_engine: workflow_engine.clone(),
             workspace,
             sandbox,
             exec_options,
@@ -263,6 +274,7 @@ pub(crate) fn build_tool_runtime(
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_participation: swarm_participation.clone(),
         swarm_context,
         base_dir: base_dir.to_path_buf(),
         socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
@@ -286,8 +298,19 @@ pub(crate) fn build_tool_runtime(
         config,
         workflow,
         stderr,
-        swarm_agent,
+        swarm_participation.clone(),
     )?;
+    // A swarm cannot be created while this composition's workflow is engaged,
+    // and once this process is a swarm agent the selector nudge stops.
+    if let Some(engine) = &wf_state {
+        let _ = workflow_engine.set(engine.clone());
+        let engine = engine.clone();
+        swarm_participation.on_participation(move || {
+            if let Ok(mut engine) = engine.lock() {
+                engine.set_selector_nudge(false);
+            }
+        });
+    }
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -356,8 +379,9 @@ fn build_workflow_runtime(
     config: &crate::infrastructure::config::Config,
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
-    swarm_agent: bool,
+    swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
 ) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+    let swarm_agent = swarm_participation.participating();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
@@ -429,11 +453,12 @@ fn build_workflow_runtime(
             }
         }
     };
-    let state = crate::interface::shared::register_workflow_tool(
+    let state = crate::interface::shared::register_workflow_tool_with_participation(
         registry,
         wf_config,
         workflow.workflow_guards,
         wf_emitter,
+        swarm_participation,
     )
     .map_err(|error| format!("failed to initialize workflow: {error}"))?;
     if let Some(spec) = bound_spec {

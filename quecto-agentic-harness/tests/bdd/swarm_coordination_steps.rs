@@ -138,15 +138,99 @@ fn apply_approval(world: &mut QuectoWorld) {
     run(world, json!({"op":"summary"}));
 }
 
-#[when("a workflow-enabled swarm container is requested")]
+#[when("a swarm participant requests a workflow-enabled worker")]
 async fn reject_workflow(world: &mut QuectoWorld) {
     use quecto::domain::tool::Tool;
-    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
+    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
+        .with_swarm_context(Some(
+            quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+                checkout: std::env::temp_dir(),
+                member: "coordinator".into(),
+                lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+            },
+        ))
+        .with_swarm_participation(
+            quecto::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
+        );
     world.swarm_result = Some(
-        tool.execute(r#"{"container":true,"workflow":true}"#)
+        tool.execute(r#"{"agent_id":"worker","workflow":true}"#)
             .await
             .unwrap(),
     );
+}
+
+#[when("a workflow-enabled ordinary container is requested")]
+async fn ordinary_container_workflow(world: &mut QuectoWorld) {
+    use quecto::domain::tool::Tool;
+    // No container runtime is configured here, so the launch fails later on
+    // configuration; the point is that validation no longer refuses workflow.
+    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
+    world.swarm_result = Some(
+        tool.execute(r#"{"agent_id":"c2","container":true,"workflow":true}"#)
+            .await
+            .unwrap(),
+    );
+}
+
+#[then("the swarm result should not reject workflow")]
+fn not_rejected_for_workflow(world: &mut QuectoWorld) {
+    let result = world.swarm_result.as_ref().unwrap();
+    assert!(
+        !result.content.contains("workflow is unavailable"),
+        "{}",
+        result.content
+    );
+}
+
+fn engaged_workflow() -> quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot {
+    let slot: quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot = Default::default();
+    let _ = slot.set(std::sync::Arc::new(std::sync::Mutex::new(
+        quecto::domain::workflow::WorkflowEngine::new(
+            quecto::domain::workflow::WorkflowConfig::default(),
+            true,
+        )
+        .unwrap(),
+    )));
+    slot
+}
+
+#[when("a workflow-enabled agent tries to create a swarm run")]
+fn workflow_agent_creates(world: &mut QuectoWorld) {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+    };
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    // The create step runs on a blocking pool, so it needs a Tokio runtime.
+    let outcome = tokio::runtime::Runtime::new().unwrap().block_on(
+        quecto::infrastructure::tools::swarm_control::control_with_workflow(
+            context,
+            "create",
+            json!({"goal":"g","constraints":[],
+                "criteria":[{"id":"t","kind":"command","description":"pass"}],
+                "member_limit":2,"deadline":deadline}),
+            quecto::infrastructure::tools::swarm_bridge::Participation::shared(),
+            engaged_workflow(),
+        ),
+    );
+    let is_error = outcome.is_err();
+    let content = match outcome {
+        Ok(value) => value.to_string(),
+        Err(error) => error.to_string(),
+    };
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content,
+        is_error,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
 }
 
 #[when("a swarm message recipient rejects its wake hint")]

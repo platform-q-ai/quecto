@@ -4,15 +4,42 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::ProcessIdentity;
 use serde_json::Value;
 
+/// Test convenience: no shared participation handle, no engaged workflow.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
+    control_with_workflow(
+        context,
+        op,
+        input,
+        super::swarm_bridge::Participation::none(),
+        Default::default(),
+    )
+    .await
+}
+
+/// `workflow_engine` is this composition's engine slot (guards, bound spec or
+/// selected template make it engaged): creating a run makes the process a
+/// coordinator, which cannot be running a workflow (#1715). The slot is read
+/// inside the create step, not before, so nothing can be selected in between.
+pub async fn control_with_workflow(
+    context: SwarmContext,
+    op: &str,
+    input: Value,
+    participation: super::swarm_bridge::Participation,
+    workflow_engine: super::swarm_bridge::WorkflowEngineSlot,
+) -> Result<Value, DomainError> {
     let settles = matches!(
         op,
         "create" | "reconcile" | "pause" | "resume" | "cancel_run" | "usage_budget"
     );
     let ctx = context.clone();
     let op = op.to_owned();
+    let participation = participation.clone();
     let result = tokio::task::spawn_blocking(move || match op.as_str() {
         "create" => {
+            crate::domain::swarm::validate_swarm_creation(super::swarm_bridge::workflow_engaged(
+                &workflow_engine,
+            ))?;
             std::fs::create_dir_all(ctx.checkout.join(".quecto"))
                 .map_err(|e| DomainError::Tool(e.to_string()))?;
             let process = ProcessIdentity {
@@ -25,7 +52,9 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
                 &process,
                 super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
             )?;
-            super::swarm_lifecycle::supervise(ctx.clone(), snapshot);
+            // From here on this process and its local children are swarm agents.
+            participation.set(true);
+            super::swarm_lifecycle::supervise(ctx.clone(), snapshot, participation.clone());
             ctx.summary()
         }
         "usage" => ctx.usage_report(),

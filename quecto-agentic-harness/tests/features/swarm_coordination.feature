@@ -53,10 +53,19 @@ Feature: Container swarm coordination
     Then the swarm run status is "running"
     And the swarm task status is "submitted"
 
-  Scenario: Workflow-enabled container launches are rejected
-    When a workflow-enabled swarm container is requested
+  Scenario: Workflow-enabled swarm worker launches are rejected
+    When a swarm participant requests a workflow-enabled worker
     Then the swarm result should be an error
     And the swarm result should contain "workflow is unavailable for swarm agents"
+
+  Scenario: Ordinary container launches keep workflow eligibility
+    When a workflow-enabled ordinary container is requested
+    Then the swarm result should not reject workflow
+
+  Scenario: A workflow-enabled agent cannot create a swarm
+    When a workflow-enabled agent tries to create a swarm run
+    Then the swarm result should be an error
+    And the swarm result should contain "cannot create a swarm"
 
   Scenario: Rejected wake delivery preserves the durable message and reports a warning
     When a swarm message recipient rejects its wake hint

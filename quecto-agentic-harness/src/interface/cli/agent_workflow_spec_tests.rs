@@ -21,6 +21,7 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         workflow,
         workflow_guards: false,
         workflow_disabled,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
