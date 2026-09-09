@@ -334,6 +334,16 @@ pub enum Event {
         #[serde(rename = "correlationId", default)]
         correlation_id: Option<String>,
     },
+    /// Inference-admission view of an agent changed (#1679 P4). `agent_id` is
+    /// `None` for the connected agent's own view and a child's id when the
+    /// parent's monitor forwards a descendant's view. Kept as a Value so the
+    /// admission mapper owns its interpretation.
+    AdmissionStateChanged {
+        #[serde(default, alias = "agentId")]
+        agent_id: Option<String>,
+        #[serde(default)]
+        admission: serde_json::Value,
+    },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]
     Unknown,

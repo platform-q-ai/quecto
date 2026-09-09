@@ -50,7 +50,6 @@ impl Spinner {
     }
 
     /// Current status message text (for tests / diagnostics).
-    #[cfg(test)]
     pub fn message(&self) -> &str {
         &self.message
     }

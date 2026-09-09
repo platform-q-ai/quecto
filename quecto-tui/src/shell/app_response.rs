@@ -526,6 +526,11 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
+        // #1679 P4: the slim state carries the admission view when the agent
+        // shares an authority; apply it exactly like the pushed event.
+        if let Some(admission) = snap.admission.as_ref() {
+            self.apply_master_admission(admission);
+        }
     }
 
     fn sync_workflow_automation(&mut self, data: &serde_json::Value) {

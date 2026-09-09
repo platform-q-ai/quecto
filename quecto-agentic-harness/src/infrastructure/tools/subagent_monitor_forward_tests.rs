@@ -449,3 +449,99 @@ fn handle_monitor_line_rejects_oversized_restamped_messages_appended() {
         "the over-cap re-stamped event must be rejected whole"
     );
 }
+
+/// #1679 P4: a child's `admission_state_changed` is forwarded re-stamped with
+/// the child's identity and rebuilt from known, bounded fields; a forwarded
+/// grandchild keeps its own identity; other lines are untouched.
+#[test]
+fn handle_monitor_line_forwards_child_admission_state_bounded_and_restamped() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let groups: Vec<String> = (0..40)
+        .map(|i| format!(r#"{{"group":"g{i}","cooldown":{{"state":"until","remainingSeconds":{i}}},"junk":"x"}}"#))
+        .collect();
+    let line = format!(
+        r#"{{"type":"admission_state_changed","admission":{{"waiting":2,"admitted":1,"longestWaitSeconds":7,"groups":[{}],"counters":{{"completed":3,"refused":0,"cancelled":1,"abandoned":0,"extra":9}},"hidden":0,"revision":5,"secret":"no"}}}}"#,
+        groups.join(",")
+    );
+    super::handle_monitor_line(&line, "child", &registry, None, Some(&tx), Some("root"));
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(fwd["type"], "admission_state_changed");
+    assert_eq!(fwd["agent_id"], "child");
+    assert_eq!(fwd["parent_id"], "root");
+    let admission = &fwd["admission"];
+    assert_eq!(
+        (
+            admission["waiting"].as_u64(),
+            admission["admitted"].as_u64()
+        ),
+        (Some(2), Some(1))
+    );
+    assert_eq!(admission["longestWaitSeconds"], 7);
+    assert_eq!(admission["revision"], 5);
+    assert_eq!(admission["counters"]["cancelled"], 1);
+    assert!(
+        admission["counters"].get("extra").is_none(),
+        "unknown keys are not passed through"
+    );
+    assert!(admission.get("secret").is_none());
+    assert_eq!(
+        admission["groups"].as_array().unwrap().len(),
+        32,
+        "groups are bounded"
+    );
+    assert_eq!(admission["groups"][3]["cooldown"]["remainingSeconds"], 3);
+    assert!(admission["groups"][3].get("junk").is_none());
+    assert!(rx.try_recv().is_err(), "exactly one forwarded line");
+    // A forwarded grandchild keeps its identity; a view without the object is dropped.
+    let line = r#"{"type":"admission_state_changed","agent_id":"grandchild","parent_id":"child","admission":{"waiting":1,"revision":2}}"#;
+    super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(
+        (fwd["agent_id"].as_str(), fwd["parent_id"].as_str()),
+        (Some("grandchild"), Some("child"))
+    );
+    assert!(fwd["admission"].get("longestWaitSeconds").is_none());
+    assert!(fwd["admission"].get("counters").is_none());
+    super::handle_monitor_line(
+        r#"{"type":"admission_state_changed"}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        Some("root"),
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "no admission object, nothing forwarded"
+    );
+}
+
+#[test]
+fn handle_monitor_line_rejects_oversized_restamped_admission_state() {
+    let registry = super::super::subagent_registry::new_registry();
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let budget = crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET;
+    // One group whose name brings the input just under the budget: the
+    // re-stamped copy (identity plus defaulted fields) then crosses it.
+    let frame = |name: &str| {
+        format!(
+            r#"{{"type":"admission_state_changed","admission":{{"waiting":1,"groups":[{{"group":"{name}"}}]}}}}"#
+        )
+    };
+    let name = "g".repeat(budget - 8 - frame("").len());
+    let line = frame(&name);
+    assert!(
+        line.len() <= super::MAX_EVENT_PAYLOAD_BYTES,
+        "input itself is accepted"
+    );
+    super::handle_monitor_line(&line, "child", &registry, None, Some(&tx), Some("root"));
+    assert!(
+        rx.try_recv().is_err(),
+        "oversized forwarded event is dropped whole"
+    );
+}

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_canonical::{
-    canonical_messages_appended_forward, canonical_workflow_forward,
+    canonical_admission_forward, canonical_messages_appended_forward, canonical_workflow_forward,
     forward_child_messages_appended, forward_child_workflow_event,
 };
 pub use super::subagent_monitor_merge::{
@@ -489,6 +489,24 @@ fn handle_monitor_line(
                 let _ = tx.send(fwd);
                 return;
             }
+        }
+        // #1679 P4: a descendant waiting for admission is visible from the
+        // parent's socket. Not a status change: rebuilt from known, bounded
+        // fields, re-stamped, and forwarded without touching the registry.
+        if line.contains("\"admission_state_changed\"") {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                return;
+            };
+            if let Some(fwd) = canonical_admission_forward(&value, agent_id, parent_id) {
+                if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+                    tracing::warn!(agent = %agent_id, len = fwd.len(),
+                        cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                        "monitor: dropping oversized forwarded admission event");
+                    return;
+                }
+                let _ = tx.send(format!("{fwd}\n"));
+            }
+            return;
         }
     }
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {

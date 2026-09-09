@@ -286,6 +286,8 @@ mod connection_state;
 mod app_disconnect;
 // #1257: feature-owned controllers live under their capability modules;
 // shell composes them as App extensions without taking ownership of policy.
+#[path = "app_admission.rs"]
+mod app_admission;
 #[path = "../inference/controller_effort.rs"]
 mod app_effort;
 #[path = "app_event_loop.rs"]

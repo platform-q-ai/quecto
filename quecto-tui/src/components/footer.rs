@@ -21,6 +21,9 @@ pub struct Footer {
     is_streaming: bool,
     /// Active reasoning-effort level (#1067); `None` = effective default.
     effort: Option<String>,
+    /// Inference-admission label (#1679 P4): "waiting for admission 12s",
+    /// "anthropic cooldown 30s"; `None` when nothing is worth showing.
+    admission: Option<String>,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -48,8 +51,18 @@ impl Footer {
             session_cache_hit_ratio: None,
             is_streaming: false,
             effort: None,
+            admission: None,
             pwd,
         }
+    }
+
+    /// Show (or clear) the inference-admission label beside the model.
+    pub fn set_admission(&mut self, label: Option<String>) {
+        self.admission = label;
+    }
+
+    pub fn admission(&self) -> Option<&str> {
+        self.admission.as_deref()
     }
 
     pub fn set_model(&mut self, model: &str) {
@@ -232,7 +245,7 @@ impl Component for Footer {
         // suffix the active effort level (#1067) — "default" when never set,
         // so the effective config/provider default is always visible.
         let effort = self.effort.as_deref().unwrap_or("default");
-        let right = if self.is_streaming {
+        let mut right = if self.is_streaming {
             format!(
                 "{} {} · effort: {}",
                 theme::STREAMING_INDICATOR,
@@ -242,6 +255,11 @@ impl Component for Footer {
         } else {
             format!("{} · effort: {}", self.model, effort)
         };
+        // Admission rides beside the model (#1679 P4): a queued attempt is
+        // visible as waiting, never as an idle or stalled agent.
+        if let Some(admission) = &self.admission {
+            right = format!("{} {admission} · {right}", theme::ADMISSION_INDICATOR);
+        }
         let right = right.as_str();
         let left_width = visible_width(&left);
         let right_width = visible_width(right);

@@ -60,6 +60,10 @@ impl App {
                 error,
             } => self.handle_response(id, command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
+            Event::AdmissionStateChanged {
+                agent_id,
+                admission,
+            } => self.handle_admission_state(agent_id.as_deref(), &admission),
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
@@ -174,6 +178,9 @@ impl App {
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;
         self.ac_mut().master_session.chat.finalize_assistant();
+        // A run that ended holds no attempt; a stale waiting label would be
+        // the very misreport admission observability exists to prevent.
+        self.clear_master_admission_wait();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
         // Flush onto the currently-viewed session (the same place
@@ -531,7 +538,7 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
 
 #[cfg(test)]
 #[path = "app_events_test_support.rs"]
-mod app_events_test_support;
+pub(crate) mod app_events_test_support;
 #[cfg(test)]
 #[path = "app_events_cursor_tests.rs"]
 mod cursor_tests;

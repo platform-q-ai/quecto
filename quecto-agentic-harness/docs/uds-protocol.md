@@ -1085,6 +1085,13 @@ described under [`get_state`](#get_state). Events are delivered in
 process joined an admission authority; the same transition also advances the
 `get_state` generation.
 
+**Forwarding (push observability).** A parent's per-child monitor re-emits a
+child's `admission_state_changed` onto the parent's stream, re-stamped with
+`agent_id` / `parent_id` (a forwarded grandchild keeps its own identity) and
+rebuilt from the known fields above only (groups bounded to 32), so a
+supervisor sees a descendant waiting for admission without polling each child
+socket. Events without `agent_id` are the connected agent's own.
+
 ```json
 {"type":"admission_state_changed","admission":{"waiting":1,"admitted":0,"longestWaitSeconds":3,"groups":[{"group":"anthropic"}],"counters":{"completed":0,"refused":0,"cancelled":0,"abandoned":0},"hidden":0,"revision":1}}
 ```

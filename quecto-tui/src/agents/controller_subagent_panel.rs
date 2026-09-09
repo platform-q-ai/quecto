@@ -614,18 +614,34 @@ impl App {
         };
         let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
         let observer_vis = visible_width(observer);
+        // Admission label (#1679 P4) after the name, truncated before the name
+        // is, so a narrow panel drops the label rather than the identity.
+        let admission = row
+            .admission
+            .as_deref()
+            .map(|label| format!(" {} {label}", theme::ADMISSION_INDICATOR))
+            .unwrap_or_default();
         let usable = width.saturating_sub(1);
-        let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + observer_vis + timer.len());
-        let name = truncate_to_width(&sanitize_panel_label(&row.label), name_avail, Some("…"));
+        let fixed = 1 + stalk_vis + 1 + observer_vis + timer.len();
+        let name_plain = sanitize_panel_label(&row.label);
+        let admission_avail = usable
+            .saturating_sub(fixed + visible_width(&name_plain))
+            .min(visible_width(&admission));
+        let admission = truncate_to_width(&admission, admission_avail, Some(""));
+        let admission_vis = visible_width(&admission);
+        let name_avail = usable.saturating_sub(fixed + admission_vis);
+        let name = truncate_to_width(&name_plain, name_avail, Some("…"));
         let name_vis = visible_width(&name);
         let mut name = status_colored_name(&row.status, &name);
         if active {
             name = theme::bold(&name);
         }
-        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
+        let pad = usable
+            .saturating_sub(1 + stalk_vis + name_vis + admission_vis + observer_vis + timer.len());
         let line = format!(
-            "{selbar}{}{name}{observer}{}{} ",
+            "{selbar}{}{name}{}{observer}{}{} ",
             theme::dim(&row.prefix),
+            theme::dim(&admission),
             " ".repeat(pad),
             theme::dim(&timer),
         );
