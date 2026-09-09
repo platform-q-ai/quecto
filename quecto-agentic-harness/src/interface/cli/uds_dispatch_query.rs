@@ -25,13 +25,16 @@ pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,
 ) -> serde_json::Value {
     let metadata = summary.latest_execution_metadata.as_ref();
+    let folder_identity = metadata
+        .and_then(|value| value.folder_identity())
+        .map(|value| value.encoded_key());
     serde_json::json!({
         "key": summary.key,
         "title": super::display_title(&summary.title),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
-        "folderIdentity": metadata.and_then(|m| m.folder_identity()).map(|v| v.encoded_key()),
+        "folderIdentity": folder_identity,
         "folderLabel": metadata.and_then(|m| m.folder_label()).map(|v| v.as_str()),
         "agentName": metadata.and_then(|m| m.agent_name()).map(|v| v.as_str()),
         "gitBranch": metadata.and_then(|m| m.git_branch()).map(|v| v.as_str()),

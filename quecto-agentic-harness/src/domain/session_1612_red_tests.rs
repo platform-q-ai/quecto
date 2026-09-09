@@ -207,6 +207,18 @@ fn malformed_optional_metadata_degrades_each_component_independently() {
     assert!(metadata.agent_name().is_none());
     assert_eq!(metadata.git_branch().unwrap().as_str(), "main");
 
+    let all_invalid: ExecutionMetadata = serde_json::from_value(serde_json::json!({
+        "folder_identity": "unix:gg",
+        "folder_label": 1,
+        "agent_name": false,
+        "git_branch": []
+    }))
+    .unwrap();
+    assert!(all_invalid.folder_identity().is_none());
+    assert!(all_invalid.folder_label().is_none());
+    assert!(all_invalid.agent_name().is_none());
+    assert!(all_invalid.git_branch().is_none());
+
     let serialized = serde_json::to_value(&metadata).unwrap();
     assert_eq!(serialized["folder_label"], "/work");
     assert_eq!(serialized["git_branch"], "main");
