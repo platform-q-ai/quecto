@@ -84,3 +84,8 @@ poll deadline and partial frames on socket timeouts. Two deterministic framing
 regressions failed against the extracted old reader, then passed with a persistent
 reader and byte buffer, including a UTF-8 character split across timeout boundaries.
 This repairs the test consumer without weakening production completion assertions.
+
+CI then exposed a separate paged-history fixture startup race (`ConnectionRefused`
+after the socket path appeared). The fixture now waits for its actual connection
+within the same five-second budget, retrying only not-found/refused startup states;
+a pathname alone is not treated as listener readiness.

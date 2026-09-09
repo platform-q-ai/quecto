@@ -926,14 +926,6 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             provider_reload_inputs: Some(&provider_reload_inputs),
         })
     });
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !socket_path.exists() {
-        assert!(
-            Instant::now() <= deadline,
-            "timeout waiting for paged socket"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
     world._mc_live_socket = Some(socket_path);
     world._mc_live_handle = Some(handle);
 }
@@ -943,7 +935,23 @@ fn connect_paged_client(world: &mut QuectoWorld, client_id: u32) {
         return;
     }
     let socket_path = world._mc_live_socket.clone().expect("no live socket");
-    let stream = UnixStream::connect(socket_path).expect("connect paged client");
+    // bind creates the pathname before listen makes it connectable. Synchronize
+    // on the connection we will actually use, retaining the original time budget.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let stream = loop {
+        match UnixStream::connect(&socket_path) {
+            Ok(stream) => break stream,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect paged client: {error}"),
+        }
+    };
     stream
         .set_read_timeout(Some(Duration::from_millis(100)))
         .ok();
