@@ -127,7 +127,13 @@ pub(super) enum ClientMessage {
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
 pub(super) struct ClientGuard {
     pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+    /// #1720: sentinels ride their own unbounded channel so a busy
+    /// dispatcher's short-lived poll connections never fill the bounded
+    /// command channel and reject steer/follow_up as "queue full". Growth is
+    /// bounded by poll rate × turn length (tens of bytes per sentinel) and
+    /// drained whenever the command channel is idle, so a client's own
+    /// queued commands are handled before its disconnect.
+    pub(super) disconnect_tx: tokio::sync::mpsc::UnboundedSender<ClientDisconnected>,
     /// Unique client identifier for per-client tool tracking (#352).
     pub(super) client_id: u64,
 }
@@ -138,12 +144,9 @@ impl Drop for ClientGuard {
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         // Best-effort sentinel — if channel is closed the dispatch loop already
         // exited, so the message is not needed.
-        if let Err(e) = self
-            .cmd_tx
-            .try_send(ClientMessage::Disconnected(ClientDisconnected {
-                client_id: self.client_id,
-            }))
-        {
+        if let Err(e) = self.disconnect_tx.send(ClientDisconnected {
+            client_id: self.client_id,
+        }) {
             tracing::debug!("disconnect sentinel not delivered: {e}");
         }
     }
@@ -239,6 +242,7 @@ pub(super) async fn multi_client_loop(
         );
     }
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
+    let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     super::swarm_composition::bind_suspension(
         &cancel_handle,
@@ -267,6 +271,7 @@ pub(super) async fn multi_client_loop(
         listener,
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
+        disconnect_tx,
         cancel_handle: cancel_handle.clone(),
         turn_control: turn_control.clone(),
         live_clients: live_clients.clone(),
@@ -326,6 +331,7 @@ pub(super) async fn multi_client_loop(
         &mut ctx,
         DispatchLoopArgs {
             cmd_rx,
+            disconnect_rx,
             persist,
             shutdown,
         },
@@ -359,6 +365,7 @@ pub(super) async fn multi_client_loop(
 /// Arguments for [`run_dispatch_loop`].
 struct DispatchLoopArgs {
     cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
+    disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
     persist: bool,
     shutdown: super::uds_shutdown::ShutdownRequest,
 }
@@ -373,11 +380,18 @@ async fn run_dispatch_loop(
 ) {
     let DispatchLoopArgs {
         mut cmd_rx,
+        mut disconnect_rx,
         persist,
         shutdown,
     } = args;
     loop {
-        let msg = recv_next_message(&mut cmd_rx, &mut ctx.notification_rx, &shutdown).await;
+        let msg = recv_next_message(
+            &mut cmd_rx,
+            &mut disconnect_rx,
+            &mut ctx.notification_rx,
+            &shutdown,
+        )
+        .await;
         let Some(msg) = msg else { break };
         match msg {
             DispatchMsg::Shutdown => {
@@ -448,33 +462,9 @@ async fn run_dispatch_loop(
     }
 }
 
-enum DispatchMsg {
-    Client(ClientMessage),
-    Notification(crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification),
-    /// A termination signal was handled and its teardown has completed.
-    Shutdown,
-}
-
-async fn recv_next_message(
-    cmd_rx: &mut tokio::sync::mpsc::Receiver<ClientMessage>,
-    notification_rx: &mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
-    shutdown: &super::uds_shutdown::ShutdownRequest,
-) -> Option<DispatchMsg> {
-    if let Some(rx) = notification_rx {
-        tokio::select! {
-            biased;
-            () = shutdown.requested() => Some(DispatchMsg::Shutdown),
-            client_msg = cmd_rx.recv() => client_msg.map(DispatchMsg::Client),
-            Some(notif) = rx.recv() => Some(DispatchMsg::Notification(notif)),
-        }
-    } else {
-        tokio::select! {
-            biased;
-            () = shutdown.requested() => Some(DispatchMsg::Shutdown),
-            client_msg = cmd_rx.recv() => client_msg.map(DispatchMsg::Client),
-        }
-    }
-}
+#[path = "uds_multi_recv.rs"]
+mod recv;
+use recv::{DispatchMsg, recv_next_message};
 
 /// Handle a single client message. Returns `true` if the loop should exit.
 async fn handle_client_msg(

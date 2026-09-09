@@ -11,6 +11,8 @@ pub(super) struct AcceptLoopArgs {
     pub(super) listener: tokio::net::UnixListener,
     pub(super) broadcast_tx: tokio::sync::broadcast::Sender<String>,
     pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+    pub(super) disconnect_tx:
+        tokio::sync::mpsc::UnboundedSender<super::uds_multi::ClientDisconnected>,
     pub(super) cancel_handle: CancelHandle,
     pub(super) turn_control: super::uds_cancel::TurnControlHandle,
     pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
@@ -35,6 +37,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         listener,
         broadcast_tx,
         cmd_tx,
+        disconnect_tx,
         cancel_handle,
         turn_control,
         live_clients,
@@ -68,7 +71,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let guard = ClientGuard {
                         live_clients: live_clients.clone(),
-                        cmd_tx: cmd_tx.clone(),
+                        disconnect_tx: disconnect_tx.clone(),
                         client_id,
                     };
                     let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(64);

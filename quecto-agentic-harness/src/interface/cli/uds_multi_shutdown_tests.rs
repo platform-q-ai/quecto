@@ -16,7 +16,13 @@ async fn completed_shutdown_is_observed_before_pending_client_messages() {
     notify.notify_one();
     let mut no_notifications = None;
     assert!(matches!(
-        recv_next_message(&mut cmd_rx, &mut no_notifications, &shutdown).await,
+        recv_next_message(
+            &mut cmd_rx,
+            &mut tokio::sync::mpsc::unbounded_channel().1,
+            &mut no_notifications,
+            &shutdown,
+        )
+        .await,
         Some(DispatchMsg::Shutdown)
     ));
 }
@@ -30,7 +36,12 @@ async fn shutdown_requested_before_the_loop_waits_is_not_lost() {
     let mut with_notifications = Some(notif_rx);
     let msg = tokio::time::timeout(
         std::time::Duration::from_millis(200),
-        recv_next_message(&mut cmd_rx, &mut with_notifications, &shutdown),
+        recv_next_message(
+            &mut cmd_rx,
+            &mut tokio::sync::mpsc::unbounded_channel().1,
+            &mut with_notifications,
+            &shutdown,
+        ),
     )
     .await
     .expect("a retained shutdown request must wake the loop");

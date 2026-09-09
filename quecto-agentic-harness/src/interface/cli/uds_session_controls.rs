@@ -30,6 +30,19 @@ impl AgentSession {
         self.bump_visible_generation();
     }
 
+    /// The latest recorded status of a control receipt, by id.
+    #[cfg(test)]
+    pub(crate) fn control_receipt_status(
+        &self,
+        id: &str,
+    ) -> Option<super::super::protocol::ControlStatus> {
+        self.control_receipts
+            .iter()
+            .rev()
+            .find(|receipt| receipt.id == id)
+            .map(|receipt| receipt.status)
+    }
+
     pub(crate) fn enqueue_control(
         &mut self,
         id: Option<&str>,
@@ -44,6 +57,10 @@ impl AgentSession {
                     command: command.into(),
                     content,
                 },
+                // A harness nudge carries no id and no human intent.
+                None if command == crate::interface::cli::uds_swarm_control::SWARM_WAKE => {
+                    PendingMessage::Automatic(content)
+                }
                 None => PendingMessage::User(content),
             };
             if steer {

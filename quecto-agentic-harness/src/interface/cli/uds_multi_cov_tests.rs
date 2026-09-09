@@ -19,36 +19,89 @@ fn busy_guard_sets_flag_and_clears_on_drop() {
 
 #[tokio::test]
 async fn client_guard_drop_decrements_and_sends_disconnect() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
     let guard = ClientGuard {
         live_clients: live.clone(),
-        cmd_tx: tx,
+        disconnect_tx: tx,
         client_id: 42,
     };
     drop(guard);
 
     assert_eq!(live.load(Ordering::SeqCst), 0);
-    match rx.recv().await.unwrap() {
-        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 42),
-        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
-            panic!("expected disconnect sentinel")
-        }
-    }
+    assert_eq!(rx.recv().await.unwrap().client_id, 42);
 }
 
 #[tokio::test]
 async fn client_guard_drop_ignores_closed_channel() {
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     drop(rx);
     let live = Arc::new(AtomicU32::new(1));
     let guard = ClientGuard {
         live_clients: live.clone(),
-        cmd_tx: tx,
+        disconnect_tx: tx,
         client_id: 7,
     };
     drop(guard);
     assert_eq!(live.load(Ordering::SeqCst), 0);
+}
+
+/// #1720: a busy dispatcher consumes nothing, so every short-lived poll
+/// connection used to leave a sentinel in the bounded command channel until
+/// it was full and steer/follow_up were rejected as "queue full". Sentinels
+/// now travel on their own channel; the dispatcher still learns about every
+/// disconnect, but a client's queued command is always handled before its
+/// own sentinel, as when both shared one channel.
+#[tokio::test]
+async fn disconnect_sentinels_never_consume_command_capacity() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(1);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let live = Arc::new(AtomicU32::new(300));
+    for client_id in 0..300u64 {
+        drop(ClientGuard {
+            live_clients: live.clone(),
+            disconnect_tx: disconnect_tx.clone(),
+            client_id,
+        });
+    }
+    assert!(
+        cmd_tx.try_reserve().is_ok(),
+        "a steer must still find command capacity after 300 polls"
+    );
+    cmd_tx
+        .send(ClientMessage::SwarmWake { generation: 1 })
+        .await
+        .unwrap();
+    let shutdown = idle_shutdown();
+    let mut none = None;
+    let bounded = std::time::Duration::from_secs(2);
+    let mut order = Vec::new();
+    while let Ok(Some(DispatchMsg::Client(message))) = tokio::time::timeout(
+        bounded,
+        recv_next_message(&mut cmd_rx, &mut disconnect_rx, &mut none, &shutdown),
+    )
+    .await
+    {
+        order.push(match message {
+            ClientMessage::SwarmWake { .. } => "wake",
+            ClientMessage::Disconnected(_) => "disconnect",
+            ClientMessage::Command(_) => "command",
+        });
+        if order.len() == 301 {
+            break;
+        }
+    }
+    assert_eq!(
+        order.first(),
+        Some(&"wake"),
+        "queued work outranks sentinels"
+    );
+    assert_eq!(
+        order.iter().filter(|kind| **kind == "disconnect").count(),
+        300,
+        "every sentinel still reaches the dispatcher: {}",
+        order.len()
+    );
 }
 
 #[tokio::test]
@@ -65,9 +118,14 @@ async fn recv_next_message_prefers_client_message_when_ready() {
         .unwrap();
     let mut maybe_rx = Some(notif_rx);
 
-    match recv_next_message(&mut cmd_rx, &mut maybe_rx, &idle_shutdown())
-        .await
-        .unwrap()
+    match recv_next_message(
+        &mut cmd_rx,
+        &mut fresh_disconnects(),
+        &mut maybe_rx,
+        &idle_shutdown(),
+    )
+    .await
+    .unwrap()
     {
         DispatchMsg::Client(ClientMessage::Command(command)) => {
             assert_eq!(command.client_id, 9);
@@ -95,9 +153,14 @@ async fn recv_next_message_returns_notification_when_no_client_ready() {
         .unwrap();
     let mut maybe_rx = Some(notif_rx);
 
-    match recv_next_message(&mut cmd_rx, &mut maybe_rx, &idle_shutdown())
-        .await
-        .unwrap()
+    match recv_next_message(
+        &mut cmd_rx,
+        &mut fresh_disconnects(),
+        &mut maybe_rx,
+        &idle_shutdown(),
+    )
+    .await
+    .unwrap()
     {
         DispatchMsg::Notification(notification) => {
             assert_eq!(notification.sequence, 3);
@@ -113,9 +176,14 @@ async fn recv_next_message_returns_none_when_command_channel_closed() {
     drop(cmd_tx);
     let mut no_notifications = None;
     assert!(
-        recv_next_message(&mut cmd_rx, &mut no_notifications, &idle_shutdown())
-            .await
-            .is_none()
+        recv_next_message(
+            &mut cmd_rx,
+            &mut fresh_disconnects(),
+            &mut no_notifications,
+            &idle_shutdown()
+        )
+        .await
+        .is_none()
     );
 }
 
@@ -148,7 +216,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
     broadcast_tx.send(r#"{"type":"new"}"#.to_string()).unwrap();
     let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(2);
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(4);
-    let guard_tx = cmd_tx.clone();
+    let (guard_tx, mut disconnects) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
     let turn_control: super::super::uds_cancel::TurnControlHandle = Arc::default();
@@ -173,7 +241,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         broadcast_tx: broadcast_tx.clone(),
         _guard: ClientGuard {
             live_clients: live.clone(),
-            cmd_tx: guard_tx,
+            disconnect_tx: guard_tx,
             client_id: 77,
         },
     }));
@@ -219,12 +287,11 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
             panic!("expected get_state command second")
         }
     }
-    match cmd_rx.recv().await.unwrap() {
-        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 77),
-        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
-            panic!("expected disconnect sentinel")
-        }
-    }
+    assert_eq!(disconnects.recv().await.unwrap().client_id, 77);
+    assert!(
+        cmd_rx.try_recv().is_err(),
+        "no sentinel on the command channel"
+    );
     assert_eq!(live.load(Ordering::SeqCst), 0);
     task.await.unwrap();
 }
@@ -234,7 +301,8 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     let (server, mut client) = tokio::net::UnixStream::pair().unwrap();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(1);
     let (_targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(1);
-    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
     let snapshot = Arc::new(tokio::sync::RwLock::new(
@@ -257,7 +325,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         broadcast_tx: tokio::sync::broadcast::channel::<String>(1).0,
         _guard: ClientGuard {
             live_clients: live.clone(),
-            cmd_tx,
+            disconnect_tx,
             client_id: 88,
         },
     }));
@@ -266,13 +334,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     client.write_all(&[0xFF, 0, 0, 0]).await.unwrap();
     task.await.unwrap();
     assert_eq!(live.load(Ordering::SeqCst), 0);
-    match cmd_rx.recv().await.unwrap() {
-        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 88),
-        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
-            panic!("expected disconnect only")
-        }
-    }
-    assert!(cmd_rx.try_recv().is_err());
+    assert_eq!(disconnect_rx.recv().await.unwrap().client_id, 88);
 }
 
 #[tokio::test]
@@ -392,4 +454,54 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
             .len(),
         1
     );
+}
+
+fn fresh_disconnects() -> tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected> {
+    tokio::sync::mpsc::unbounded_channel().1
+}
+
+/// #1720: the command-first order also holds with a live sub-agent
+/// notification channel (the production shape).
+#[tokio::test]
+async fn commands_outrank_sentinels_with_a_live_notification_channel() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_notif_tx, notif_rx) =
+        crate::infrastructure::tools::subagent_registry::new_notification_channel();
+    let mut with_notifications = Some(notif_rx);
+    disconnect_tx
+        .send(ClientDisconnected { client_id: 5 })
+        .unwrap();
+    cmd_tx
+        .send(ClientMessage::SwarmWake { generation: 1 })
+        .await
+        .unwrap();
+    let shutdown = idle_shutdown();
+    let first = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(
+        matches!(
+            first,
+            Some(DispatchMsg::Client(ClientMessage::SwarmWake { .. }))
+        ),
+        "queued work outranks the sentinel"
+    );
+    let second = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(matches!(
+        second,
+        Some(DispatchMsg::Client(ClientMessage::Disconnected(
+            ClientDisconnected { client_id: 5 }
+        )))
+    ));
 }

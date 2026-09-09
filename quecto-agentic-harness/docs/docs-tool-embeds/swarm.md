@@ -204,8 +204,12 @@ and exceed it, and unavailable usage is not zero. Retry counters measure
 instrumented call attempts, cache-prefix hashes compare logical system/tool
 prefixes, and reported costs are estimates. `get_session_stats` includes request
 diagnostics and runtime identity; unknown build revision/digest stays unknown.
-Quota failures suspend automatic turns. Send an explicit prompt after resolving
-the cause. Do not repeatedly wake or retry ahead of a provider's reset horizon.
+Quota failures suspend automatic turns. Send an explicit prompt, follow_up or
+steer after resolving the cause: any explicit instruction re-arms the member
+once the run admits it (a parent's `agent_cmd prompt` to an idle member
+arrives as a follow-up and executes; a paused run keeps it queued), while
+buffered automatic notifications wait until it is re-armed.
+Do not repeatedly wake or retry ahead of a provider's reset horizon.
 
 Terminal coordinators remain available for reports. Their tool execution is
 restricted to native read-only swarm `summary`, `events`, and `usage`; Python,

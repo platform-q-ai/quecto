@@ -31,7 +31,13 @@ async fn test_926_idle_parent_wakes_on_single_completion() {
         .await
         .unwrap();
 
-    let msg = recv_next_message(&mut cmd_rx, &mut notification_rx, &idle_shutdown()).await;
+    let msg = recv_next_message(
+        &mut cmd_rx,
+        &mut tokio::sync::mpsc::unbounded_channel().1,
+        &mut notification_rx,
+        &idle_shutdown(),
+    )
+    .await;
     match msg {
         Some(DispatchMsg::Notification(notif)) => {
             let (agent_id, sequence) = notif.dedupe_key();
@@ -59,7 +65,12 @@ async fn test_926_dropped_rx_means_completion_cannot_wake_parent() {
     // bound it so the test proves "no wake" instead of hanging.
     let res = tokio::time::timeout(
         std::time::Duration::from_millis(50),
-        recv_next_message(&mut cmd_rx, &mut notification_rx, &idle_shutdown()),
+        recv_next_message(
+            &mut cmd_rx,
+            &mut tokio::sync::mpsc::unbounded_channel().1,
+            &mut notification_rx,
+            &idle_shutdown(),
+        ),
     )
     .await;
     assert!(

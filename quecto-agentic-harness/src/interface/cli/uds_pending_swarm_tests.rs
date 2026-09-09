@@ -424,3 +424,299 @@ async fn a_drained_turn_failure_is_dated_after_the_turn() {
     );
     assert!(ctx.session.resume_after_control_change(7));
 }
+
+/// #1712: an explicit instruction (a parent's fast-acked prompt becomes a
+/// queued follow-up) re-arms a member idle after a provider failure and
+/// runs, while buffered automatic notifications alone never do; a pending
+/// steer still outranks the drain.
+#[tokio::test]
+async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(CountingProvider(calls.clone())),
+    );
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
+    ctx.session
+        .enqueue_subagent_notification("worker".into(), 1, "worker ended".into(), true);
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "an automatic notification alone stays suspended"
+    );
+    assert!(user_prompts(&ctx).is_empty());
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no provider request for an automatic note while suspended"
+    );
+    let kept = ctx.session.drain_pending();
+    assert_eq!(kept.len(), 1, "the note is kept for later: {kept:?}");
+    ctx.session.restore_pending(kept.into_iter());
+
+    ctx.turn_control.mark_steer();
+    ctx.session
+        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), false);
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        user_prompts(&ctx).is_empty(),
+        "a pending steer outranks the drain"
+    );
+    assert!(!ctx.session.automatic_turns_allowed);
+    ctx.turn_control.clear_steer();
+
+    drain_and_run_pending(&mut ctx).await;
+    let prompts = user_prompts(&ctx);
+    assert_eq!(
+        prompts.first().map(String::as_str),
+        Some("carry on"),
+        "{prompts:?}"
+    );
+    assert!(
+        ctx.session.automatic_turns_allowed,
+        "re-armed by the explicit instruction"
+    );
+    assert_eq!(
+        prompts.len(),
+        2,
+        "once re-armed the kept note drains after the instruction: {prompts:?}"
+    );
+    assert!(ctx.session.drain_pending().is_empty());
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        ctx.session.control_receipt_status("f1"),
+        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+    );
+}
+
+/// #1712 (fast-ack path): an idle suspended member receiving the parent's
+/// converted follow-up executes it rather than parking it as queued.
+#[tokio::test]
+async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
+    super::uds_dispatch::handle_follow_up(
+        &mut ctx,
+        Some("p1"),
+        "follow_up",
+        "continue the work".into(),
+    )
+    .await;
+    assert_eq!(user_prompts(&ctx), ["continue the work"]);
+    assert!(ctx.session.automatic_turns_allowed);
+    assert_eq!(
+        ctx.session.control_receipt_status("p1"),
+        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+    );
+}
+
+/// #1712: the re-arm belongs to an admitted instruction. While the run is
+/// paused (or the store cannot answer) the follow-up and the suspension
+/// are both kept; a harness wake nudge parked behind a steer never counts
+/// as an instruction.
+#[tokio::test]
+async fn only_an_admitted_explicit_instruction_re_arms() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(CountingProvider(calls.clone())),
+    );
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::StoreRejection, Some(3));
+    super::pending::queue_prompt(&mut ctx, Some("f2"), "follow_up", "carry on".into(), false).await;
+    with_control(&mut ctx, Answer(Ok((RunStatus::Paused, 3))));
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "paused: nothing admitted"
+    );
+    with_control(&mut ctx, Answer(Err("database is locked")));
+    drain_and_run_pending(&mut ctx).await;
+    assert!(
+        !ctx.session.automatic_turns_allowed,
+        "probe failed: nothing admitted"
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        ctx.session.control_receipt_status("f2"),
+        Some(crate::interface::cli::protocol::ControlStatus::Queued)
+    );
+    // A swarm wake nudge queued behind a steer is automatic, not explicit.
+    ctx.turn_control.mark_steer();
+    super::pending::queue_prompt(
+        &mut ctx,
+        None,
+        "swarm_wake",
+        "Swarm work changed.".into(),
+        false,
+    )
+    .await;
+    ctx.turn_control.clear_steer();
+    with_control(&mut ctx, Answer(Ok((RunStatus::Running, 3))));
+    drain_and_run_pending(&mut ctx).await;
+    let prompts = user_prompts(&ctx);
+    assert!(
+        ctx.session.automatic_turns_allowed,
+        "the follow-up was admitted"
+    );
+    assert_eq!(
+        prompts.first().map(String::as_str),
+        Some("carry on"),
+        "{prompts:?}"
+    );
+    assert_eq!(
+        prompts.len(),
+        2,
+        "the nudge drains after the instruction: {prompts:?}"
+    );
+    // A nudge alone never re-arms.
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(3));
+    super::pending::queue_prompt(
+        &mut ctx,
+        None,
+        "swarm_wake",
+        "Swarm work changed.".into(),
+        false,
+    )
+    .await;
+    drain_and_run_pending(&mut ctx).await;
+    assert!(!ctx.session.automatic_turns_allowed);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(ctx.session.drain_pending().len(), 1, "the nudge is kept");
+}
+
+/// A provider that succeeds and counts its requests.
+#[derive(Debug)]
+struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl crate::domain::provider::LlmProvider for CountingProvider {
+    fn name(&self) -> &str {
+        "counting"
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn chat(
+        &self,
+        _: crate::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Ok(crate::domain::message::LlmResponse {
+                content: Some("ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}
+
+/// #1712: a harness wake nudge is queued as an automatic message; any other
+/// id-less prompt stays a user instruction.
+#[test]
+fn wake_nudges_queue_as_automatic_messages() {
+    use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
+    let mut session = AgentSession::new("m".into(), "k".into());
+    assert!(session.enqueue_control(
+        None,
+        crate::interface::cli::uds_swarm_control::SWARM_WAKE,
+        "Swarm work changed.".into(),
+        false
+    ));
+    assert!(session.enqueue_control(None, "prompt", "do it".into(), false));
+    assert_eq!(
+        session.drain_pending(),
+        [
+            PendingMessage::Automatic("Swarm work changed.".into()),
+            PendingMessage::User("do it".into())
+        ]
+    );
+}
+
+/// #1712/#1721: a follow-up drained on the stale-abort prompt path (the
+/// prompt itself re-armed the session first) is dated after its failure
+/// like any other turn.
+#[tokio::test]
+async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
+    use crate::interface::cli::uds_session::SuspensionCause;
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(FailingProvider),
+    );
+    let mut ctx = env.ctx();
+    ctx.session
+        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(4));
+    super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;
+    // Every status probe sees a later control generation (6, 16, 26, ...):
+    // the prompt's own arming probe, the drain's admission probe, the
+    // drained turn's arming probe, then the post-failure dating probe.
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
+            std::sync::Arc::new(Rising(std::sync::atomic::AtomicU64::new(6))),
+        )),
+    );
+    *ctx.cancel_handle.lock().unwrap() = crate::interface::cli::uds_cancel::CancelSlot::Fired;
+    super::handle_prompt(
+        &mut ctx,
+        super::PromptCommand {
+            id: Some("p".into()),
+            type_name: "prompt".into(),
+            message: "hello".into(),
+            streaming_behavior: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        ctx.session.control_receipt_status("f3"),
+        Some(crate::interface::cli::protocol::ControlStatus::Failed),
+        "the follow-up drained on the stale-abort path and failed"
+    );
+    assert!(!ctx.session.automatic_turns_allowed);
+    assert!(
+        !ctx.session.resume_after_control_change(26),
+        "dated after the failed drained turn (36), not at a generation seen before or during it"
+    );
+    assert!(ctx.session.resume_after_control_change(37));
+}
+
+/// A control port whose generation rises by ten on every probe.
+struct Rising(std::sync::atomic::AtomicU64);
+impl SwarmRunControl for Rising {
+    fn apply(
+        &self,
+        _: RunControlAction,
+    ) -> crate::domain::subagent_launch::LaunchFuture<
+        '_,
+        Result<RunControlReceipt, crate::domain::error::DomainError>,
+    > {
+        Box::pin(async {
+            Ok(RunControlReceipt {
+                budget: None,
+                wake_allowed: false,
+                status: RunStatus::Running,
+                generation: self.0.fetch_add(10, std::sync::atomic::Ordering::SeqCst),
+                wake_warnings: Vec::new(),
+            })
+        })
+    }
+}
