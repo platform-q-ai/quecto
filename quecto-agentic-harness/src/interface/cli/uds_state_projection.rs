@@ -43,35 +43,48 @@ pub(crate) fn slim_progress(state: &SessionState) -> serde_json::Value {
 }
 
 pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
-    let mut data = serde_json::json!({
-        "state": state
+    use crate::domain::state_snapshot::{SnapshotProgress, StateSnapshot};
+    let progress = slim_progress(state);
+    let snapshot = StateSnapshot {
+        state: state
             .execution
             .as_ref()
-            .map(|e| e.phase.as_str())
-            .unwrap_or(if state.is_streaming { "thinking" } else { "idle" }),
-        "effort": state.effort,
-        "effortLevels": state.effort_levels,
-        "model": state.model,
-        "progress": slim_progress(state),
-        // The TUI's only source for its agent's durable session key: it is
-        // persisted into workspace manifests / the tab registry so `/resume`
-        // can restore the conversation (#1534). Must survive slimming.
-        "sessionKey": state.session_key,
-    });
-    if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
-        data["workflow"] = workflow;
-    }
-    if let [_, ..] = state.control_receipts.as_slice() {
-        data["controlReceipts"] = serde_json::json!(state.control_receipts);
-    }
-    data["automaticTurnsSuspended"] = serde_json::json!(state.automatic_turns_suspended);
-    data["repeatedFailureNotifications"] = serde_json::json!(state.repeated_failure_notifications);
-    // #1679 P4: admission rides beside the phase, never inside `state`.
-    if let Some(admission) = state.execution.as_ref().and_then(|e| e.admission.as_ref()) {
-        data["admission"] = serde_json::to_value(admission).unwrap_or_default();
-    }
-    data["generation"] = serde_json::json!(state.generation);
-    data
+            .map(|e| e.phase.clone())
+            .unwrap_or_else(|| {
+                if state.is_streaming {
+                    "thinking"
+                } else {
+                    "idle"
+                }
+                .into()
+            }),
+        effort: state.effort.clone(),
+        effort_levels: state.effort_levels.clone(),
+        model: state.model.clone(),
+        // The durable session key must survive slimming for TUI resume (#1534).
+        session_key: state.session_key.clone(),
+        progress: SnapshotProgress {
+            state: progress["state"]
+                .as_str()
+                .expect("typed progress state")
+                .into(),
+            reason: progress["reason"]
+                .as_str()
+                .expect("typed progress reason")
+                .into(),
+        },
+        generation: state.generation,
+        workflow: state
+            .workflow
+            .as_ref()
+            .and_then(slim_workflow)
+            .and_then(|value| serde_json::from_value(value).ok()),
+        control_receipts: state.control_receipts.clone(),
+        automatic_turns_suspended: state.automatic_turns_suspended,
+        repeated_failure_notifications: state.repeated_failure_notifications,
+        admission: state.execution.as_ref().and_then(|e| e.admission.clone()),
+    };
+    serde_json::to_value(snapshot).expect("typed inspection snapshot serializes")
 }
 
 pub(crate) fn slim_state_response_data(

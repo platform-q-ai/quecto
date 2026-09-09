@@ -38,3 +38,5 @@ pub mod inference_admission_view;
 
 pub mod inference_cooldown;
 pub mod swarm;
+
+pub mod state_snapshot;

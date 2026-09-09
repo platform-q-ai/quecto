@@ -570,23 +570,7 @@ pub use crate::infrastructure::line_cap::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_
 
 // ─── Session state snapshot ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ControlStatus {
-    Queued,
-    Started,
-    Completed,
-    Failed,
-    Cancelled,
-    Rejected,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlReceipt {
-    pub id: String,
-    pub command: String,
-    pub status: ControlStatus,
-}
+pub use crate::domain::state_snapshot::{ControlReceipt, ControlStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -624,6 +608,13 @@ pub struct SessionState {
     pub execution: Option<super::uds_execution_state::ExecutionSnapshot>,
     #[serde(default)]
     pub sync: u8,
+}
+
+impl SessionState {
+    /// Canonical bounded inspection projection shared by live and connect replies.
+    pub fn slim_projection(&self) -> serde_json::Value {
+        super::uds_state_projection::slim_state_projection(self)
+    }
 }
 
 // ─── Session statistics ──────────────────────────────────────────────────────

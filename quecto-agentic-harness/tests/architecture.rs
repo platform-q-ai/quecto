@@ -1135,7 +1135,7 @@ fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
         // when the deprecation window closes (#1059 review, finding 5).
-        "src/infrastructure/tools/subagent_registry.rs",
+        "src/infrastructure/tools/subagent_transport.rs",
         "../quecto-tui/src/protocol/client.rs",
         "../quecto-api/src/infrastructure/uds/client.rs",
     ];
