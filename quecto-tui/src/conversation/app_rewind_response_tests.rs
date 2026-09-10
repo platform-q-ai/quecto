@@ -455,7 +455,14 @@ async fn response_resume_session_success_resets_timer_and_failure_preserves_it()
         message_refs: vec![],
     });
 
-    respond(a, None, "resume_session", false, None, Some("err"));
+    respond(
+        a,
+        Some("tab0:resume"),
+        "resume_session",
+        false,
+        None,
+        Some("err"),
+    );
     assert_eq!(
         a.panel_row_elapsed(None, tokio::time::Instant::now()),
         "0:10",
@@ -463,11 +470,11 @@ async fn response_resume_session_success_resets_timer_and_failure_preserves_it()
     );
 
     let same = serde_json::json!({"session": "original", "sessionKey": "cli:original"});
-    respond(a, None, "resume_session", true, Some(same), None);
+    respond(a, Some("tab0:resume"), "resume_session", true, Some(same), None);
     assert_eq!(a.panel_row_elapsed(None, tokio::time::Instant::now()), "0:10");
 
     let data = serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"});
-    respond(a, None, "resume_session", true, Some(data), None);
+    respond(a, Some("tab0:resume"), "resume_session", true, Some(data), None);
     assert_eq!(
         a.panel_row_elapsed(None, tokio::time::Instant::now()),
         "0:00",

@@ -256,11 +256,9 @@ impl super::App {
         }
         if self.ac().agent_connected {
             self.ac_mut().pending_session_resume = None;
-            self.ac_mut().session_key = Some(session.to_string());
             self.send_resume_session(session);
         } else {
             self.ac_mut().pending_session_resume = Some(session.to_string());
-            self.ac_mut().session_key = Some(session.to_string());
         }
     }
 
@@ -276,7 +274,6 @@ impl super::App {
             self.ac_mut().pending_session_resume = Some(session);
             return;
         }
-        self.ac_mut().session_key = Some(session.clone());
         self.send_resume_session(&session);
         self.persist_default_durability();
     }

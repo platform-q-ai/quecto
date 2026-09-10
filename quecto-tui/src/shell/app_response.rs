@@ -271,11 +271,18 @@ impl App {
                     self.notify_response_error("Could not load tool catalogue", error);
                 }
             }
-            "resume_session" if success => {
+            "resume_session"
+                if success && id.as_deref() == Some(self.ac().namespaced_id("resume").as_str()) =>
+            {
                 self.clear_message_recovery();
                 self.handle_resume_success(data);
             }
-            "resume_session" => self.notify_response_error("Resume failed", error),
+            "resume_session"
+                if id.as_deref() == Some(self.ac().namespaced_id("resume").as_str()) =>
+            {
+                self.notify_response_error("Resume failed", error)
+            }
+            "resume_session" => {},
             "get_messages" if success => {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
