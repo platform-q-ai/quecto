@@ -271,18 +271,11 @@ impl App {
                     self.notify_response_error("Could not load tool catalogue", error);
                 }
             }
-            "resume_session"
-                if success && id.as_deref() == Some(self.ac().namespaced_id("resume").as_str()) =>
-            {
+            "resume_session" if success => {
                 self.clear_message_recovery();
                 self.handle_resume_success(data);
             }
-            "resume_session"
-                if id.as_deref() == Some(self.ac().namespaced_id("resume").as_str()) =>
-            {
-                self.notify_response_error("Resume failed", error)
-            }
-            "resume_session" => {},
+            "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
@@ -573,6 +566,7 @@ impl App {
             }
             self.ac_mut().session_key = Some(key.to_owned());
         }
+        self.ac_mut().pending_session_resume = None;
         let session = data
             .as_ref()
             .map(crate::protocol::state_payloads::parse_resume_session_name)
