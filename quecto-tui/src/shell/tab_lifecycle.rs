@@ -411,9 +411,8 @@ impl super::App {
         state.agent_connected = true;
         state.agent_ever_connected = true;
         state.pending_attach = false;
-        let now = tokio::time::Instant::now();
-        state.started_at = now;
-        state.stopped_at = Some(now);
+        // A fresh attach is a session boundary for the Coordinator clock.
+        state.reset_coordinator_clock(tokio::time::Instant::now());
         // Do not steal focus if the user already navigated away (F9).
         // AC6: if restore deferred a session key while offline, apply it once.
         let _ = self.with_routing_tab(tab, |app| {

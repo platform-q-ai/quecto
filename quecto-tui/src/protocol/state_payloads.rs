@@ -109,11 +109,29 @@ pub fn parse_set_model_id(
 ///
 /// Missing or non-string `session` falls back to the literal `"session"` so the
 /// toast stays user-visible (historical TUI behaviour).
+/// What a successful `resume_session` answer tells the client (#1726).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeSessionAck {
+    /// Display name of the resumed session.
+    pub name: String,
+    /// Durable session key (`cli:<name>`) when the agent reported one.
+    pub session_key: Option<String>,
+}
+
+pub fn parse_resume_session(data: &serde_json::Value) -> ResumeSessionAck {
+    let field = |key: &str| {
+        data.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    ResumeSessionAck {
+        name: field("session").unwrap_or_else(|| "session".to_string()),
+        session_key: field("sessionKey"),
+    }
+}
+
 pub fn parse_resume_session_name(data: &serde_json::Value) -> String {
-    data.get("session")
-        .and_then(|v| v.as_str())
-        .unwrap_or("session")
-        .to_string()
+    parse_resume_session(data).name
 }
 
 #[cfg(test)]

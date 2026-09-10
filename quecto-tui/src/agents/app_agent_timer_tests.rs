@@ -306,3 +306,162 @@ async fn esc_cancel_running_subagent_freezes_parent_roster_timer_and_working_bar
         "interrupted sub-agent timer must stay frozen while no running update arrives"
     );
 }
+
+fn resume_answer(
+    h: &mut TuiHarness,
+    id: Option<&str>,
+    success: bool,
+    data: Option<serde_json::Value>,
+) {
+    if let Some(id) = id {
+        h.app_mut().test_arm_resume_session(id);
+    }
+    h.app_mut().handle_response(
+        id.map(String::from),
+        "resume_session".into(),
+        success,
+        data,
+        (!success).then(|| "err".to_string()),
+    );
+}
+
+fn end_event() -> Event {
+    Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    }
+}
+
+/// The clock starts at zero on the first turn and a repeated start is a
+/// no-op: time before the first prompt, and the start itself, never count.
+#[tokio::test(start_paused = true)]
+async fn coordinator_clock_starts_at_zero_and_ignores_repeated_starts() {
+    let mut h = TuiHarness::new().await;
+    tokio::time::advance(std::time::Duration::from_secs(20)).await;
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:00"
+    );
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10",
+        "pre-prompt time is excluded and a second start keeps the origin"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_agent_error_does_not_add_idle_time_to_coordinator_timer() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    h.event(end_event());
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    h.app_mut()
+        .handle_response(None, "agent_error".into(), false, None, Some("late".into()));
+    h.event(Event::AgentStart);
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10",
+        "a late error while stopped must not incorporate idle time"
+    );
+}
+
+/// A resume answer is a session boundary only when it names a different
+/// session (or one this tab had not learned yet); a failed resume and a
+/// resume into the same session keep the clock.
+#[tokio::test(start_paused = true)]
+async fn resume_resets_the_clock_only_on_a_session_identity_change() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().ac_mut().session_key = Some("cli:original".into());
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    h.event(end_event());
+
+    resume_answer(&mut h, Some("resume-1"), false, None);
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10",
+        "failed resume must preserve current-session runtime"
+    );
+    let same = serde_json::json!({"session": "original", "sessionKey": "cli:original"});
+    resume_answer(&mut h, Some("resume-2"), true, Some(same));
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10"
+    );
+    let other = serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"});
+    resume_answer(&mut h, Some("resume-3"), true, Some(other));
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:00",
+        "successful resume must reset runtime for the new session identity"
+    );
+
+    // A tab that has not learned its session yet treats the first resumed
+    // identity as a boundary too.
+    let mut fresh = TuiHarness::new().await;
+    fresh.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    fresh.event(end_event());
+    resume_answer(
+        &mut fresh,
+        Some("resume-4"),
+        true,
+        Some(serde_json::json!({"session": "beta", "sessionKey": "cli:beta"})),
+    );
+    assert_eq!(
+        fresh
+            .app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:00"
+    );
+}
+
+/// Only this tab's own resume answer settles its resume latches: a foreign
+/// answer (another client resumed the shared agent) still refreshes the view
+/// but leaves the in-flight resume to be answered.
+#[tokio::test(start_paused = true)]
+async fn only_the_owned_resume_answer_settles_the_latches() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().ac_mut().pending_session_resume = Some("cli:mine".into());
+    h.app_mut().test_arm_resume_session("resume-mine");
+    h.app_mut().handle_response(
+        Some("resume-other".into()),
+        "resume_session".into(),
+        true,
+        Some(serde_json::json!({"session": "theirs", "sessionKey": "cli:theirs"})),
+        None,
+    );
+    assert!(
+        h.app_mut().test_pending_resume_messages_id().is_some(),
+        "a foreign resume answer still reloads the transcript"
+    );
+    assert_eq!(
+        h.app_mut().test_pending_session_resume(),
+        (Some("cli:mine"), Some("resume-mine")),
+        "a foreign answer leaves this tab's resume in flight"
+    );
+    h.app_mut().handle_response(
+        Some("resume-mine".into()),
+        "resume_session".into(),
+        false,
+        None,
+        Some("session not found".into()),
+    );
+    assert_eq!(
+        h.app_mut().test_pending_session_resume(),
+        (None, None),
+        "an owned failure clears the deferred session so a reattach cannot replay it"
+    );
+    assert!(!h.app_mut().notifications.is_empty());
+}

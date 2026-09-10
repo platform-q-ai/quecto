@@ -14,6 +14,19 @@ impl App {
         self.ac_mut().pending_resume_messages_id = Some(id.to_string());
     }
 
+    /// Arm this tab's own `resume_session` request id for a synthetic response.
+    pub fn test_arm_resume_session(&mut self, id: &str) {
+        self.ac_mut().pending_session_resume_id = Some(id.to_string());
+    }
+
+    /// Whether a `/resume` answer is still outstanding for this tab.
+    pub fn test_pending_session_resume(&self) -> (Option<&str>, Option<&str>) {
+        (
+            self.ac().pending_session_resume.as_deref(),
+            self.ac().pending_session_resume_id.as_deref(),
+        )
+    }
+
     /// Arm exact-pending rewind-refresh correlation for a synthetic response delivery.
     pub fn test_arm_rewind_refresh(&mut self, id: &str) {
         self.ac_mut().pending_rewind_refresh_id = Some(id.to_string());

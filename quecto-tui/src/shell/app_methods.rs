@@ -173,33 +173,6 @@ impl App {
             .apply_session_stats(&stats);
     }
 
-    pub(super) fn send_list_sessions(&mut self) {
-        self.send_command(Command::ListSessions {
-            id: Some(self.ac().namespaced_id("resume-list")),
-        });
-    }
-
-    pub(super) fn send_resume_session(&mut self, session: &str) {
-        if session.trim().is_empty() {
-            self.send_list_sessions();
-            return;
-        }
-        self.ac_mut().session_resume_seq = self.ac().session_resume_seq.wrapping_add(1);
-        let id = self.ac().namespaced_id(&format!(
-            "resume-{}-{}",
-            super::app_events::uuid_like(),
-            self.ac().session_resume_seq
-        ));
-        self.ac_mut().pending_session_resume_id = Some(id.clone());
-        let sent = self.send_command(Command::ResumeSession {
-            id: Some(id),
-            session: session.trim().to_string(),
-        });
-        if !sent {
-            self.ac_mut().pending_session_resume_id = None;
-        }
-    }
-
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);

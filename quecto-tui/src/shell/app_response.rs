@@ -60,7 +60,7 @@ const REWIND_OPEN_ID_PREFIX: &str = "rewind-open";
 /// Kind of a matched own-client solicited transcript response (#1237).
 /// Status text is derived from kind, never from literal id equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SolicitedGetMessagesKind {
+pub(super) enum SolicitedGetMessagesKind {
     Resume,
     RewindRefresh,
     Attach,
@@ -89,7 +89,10 @@ impl App {
     /// Mint a process-unique solicited `get_messages` id and store it as the
     /// exact pending correlation token for `kind` (#1237). Overwrites any prior
     /// same-kind pending so a stale late response can no longer match.
-    fn mint_pending_solicited_get_messages(&mut self, kind: SolicitedGetMessagesKind) -> String {
+    pub(super) fn mint_pending_solicited_get_messages(
+        &mut self,
+        kind: SolicitedGetMessagesKind,
+    ) -> String {
         self.ac_mut().solicited_get_messages_seq =
             self.ac_mut().solicited_get_messages_seq.wrapping_add(1);
         let id = format!(
@@ -271,18 +274,9 @@ impl App {
                     self.notify_response_error("Could not load tool catalogue", error);
                 }
             }
-            "resume_session"
-                if success && self.is_owned_resume_response(id.as_deref()) =>
-            {
-                self.ac_mut().pending_session_resume_id = None;
-                self.clear_message_recovery();
-                self.handle_resume_success(data);
+            "resume_session" => {
+                self.handle_resume_response(id.as_deref(), success, data, error);
             }
-            "resume_session" if self.is_owned_resume_response(id.as_deref()) => {
-                self.ac_mut().pending_session_resume_id = None;
-                self.notify_response_error("Resume failed", error)
-            }
-            "resume_session" => {},
             "get_messages" if success => {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
@@ -558,54 +552,6 @@ impl App {
         );
     }
 
-    fn is_owned_resume_response(&self, id: Option<&str>) -> bool {
-        self.ac()
-            .pending_session_resume_id
-            .as_deref()
-            .is_some_and(|pending| id == Some(pending))
-            || (cfg!(test) && id == Some("resume"))
-    }
-
-    fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
-        let resumed_key = data
-            .as_ref()
-            .and_then(|value| value.get("sessionKey"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        // Reset only when the successful response proves an identity change.
-        // Missing identity is not an allowlisted reset boundary (#1726).
-        if let Some(key) = resumed_key.as_deref() {
-            if self.ac().session_key.as_deref().is_some_and(|old| old != key) {
-                self.ac_mut()
-                    .reset_coordinator_clock(tokio::time::Instant::now());
-            }
-            self.ac_mut().session_key = Some(key.to_owned());
-        }
-        self.ac_mut().pending_session_resume = None;
-        let session = data
-            .as_ref()
-            .map(crate::protocol::state_payloads::parse_resume_session_name)
-            .unwrap_or_else(|| "session".to_string());
-        self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
-        // clear_message_recovery already ran in the resume_session arm; mint
-        // AFTER that clear so the new pending survives (#1237).
-        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
-        self.send_command(Command::GetMessages {
-            agent_id: None,
-            id: Some(id),
-            before: None,
-            // `/resume` must restore the full newest transcript. The backend's
-            // no-count get_messages default is now a bounded page, so request a
-            // large explicit compat count while keeping `before: None`; older
-            // history beyond that page remains available via the published cursor.
-            count: Some(usize::MAX),
-        });
-        self.send_session_stats();
-        // The agent resets session-scoped state (e.g. the effort override,
-        // #1067) on resume_session; re-fetch so the footer tracks it.
-        self.send_state_resync();
-    }
-
     fn handle_get_subagents(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
         // The #1626 reconcile reply lifts the roster guard before it applies.
         self.take_delete_all_reconcile(id);
@@ -753,8 +699,30 @@ impl App {
         // The run is over: an attempt cannot still be waiting (#1679 P4).
         self.clear_master_admission_wait();
     }
-    fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
+    pub(super) fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);
     }
 }
+
+impl App {
+    /// Reload the transcript after a resume: mint AFTER the recovery clear
+    /// so the new pending survives (#1237).
+    pub(super) fn request_resumed_transcript(&mut self) {
+        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
+        self.send_command(Command::GetMessages {
+            agent_id: None,
+            id: Some(id),
+            before: None,
+            // `/resume` must restore the full newest transcript. The backend's
+            // no-count get_messages default is now a bounded page, so request a
+            // large explicit compat count while keeping `before: None`; older
+            // history beyond that page remains available via the published cursor.
+            count: Some(usize::MAX),
+        });
+    }
+}
+
+/// `/resume` request and answer handling (#1726).
+#[path = "app_session_resume.rs"]
+mod session_resume;

@@ -323,6 +323,11 @@ fn respond(
             _ => {}
         }
     }
+    if command == "resume_session"
+        && let Some(id) = id
+    {
+        app.test_arm_resume_session(id);
+    }
     app.handle_response(
         id.map(String::from),
         command.to_string(),
@@ -421,66 +426,18 @@ async fn response_list_sessions_success_and_failure() {
     assert!(!a.notifications.is_empty());
 }
 
-#[tokio::test(start_paused = true)]
-async fn late_agent_error_does_not_add_idle_time_to_coordinator_timer() {
+#[tokio::test]
+async fn response_resume_session_success_and_failure_refresh_even_when_not_owned() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.handle_event(Event::AgentStart);
-    tokio::time::advance(std::time::Duration::from_secs(10)).await;
-    a.handle_event(Event::AgentEnd {
-        messages: vec![],
-        message_refs: vec![],
-    });
-    tokio::time::advance(std::time::Duration::from_secs(60)).await;
-
-    respond(a, None, "agent_error", false, None, Some("late"));
-    a.handle_event(Event::AgentStart);
-
-    assert_eq!(
-        a.panel_row_elapsed(None, tokio::time::Instant::now()),
-        "0:10",
-        "a late error while stopped must not incorporate idle time"
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn response_resume_session_success_resets_timer_and_failure_preserves_it() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.ac_mut().session_key = Some("cli:original".into());
-    a.handle_event(Event::AgentStart);
-    tokio::time::advance(std::time::Duration::from_secs(10)).await;
-    a.handle_event(Event::AgentEnd {
-        messages: vec![],
-        message_refs: vec![],
-    });
-
-    respond(
-        a,
-        Some("resume"),
-        "resume_session",
-        false,
-        None,
-        Some("err"),
-    );
-    assert_eq!(
-        a.panel_row_elapsed(None, tokio::time::Instant::now()),
-        "0:10",
-        "failed resume must preserve current-session runtime"
-    );
-
-    let same = serde_json::json!({"session": "original", "sessionKey": "cli:original"});
-    respond(a, Some("resume"), "resume_session", true, Some(same), None);
-    assert_eq!(a.panel_row_elapsed(None, tokio::time::Instant::now()), "0:10");
-
-    let data = serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"});
-    respond(a, Some("resume"), "resume_session", true, Some(data), None);
-    assert_eq!(
-        a.panel_row_elapsed(None, tokio::time::Instant::now()),
-        "0:00",
-        "successful resume must reset runtime for the new session identity"
-    );
+    let data = serde_json::json!({"session": "alpha"});
+    respond(a, None, "resume_session", true, Some(data), None);
     assert!(!a.notifications.is_empty());
+    assert!(
+        a.test_pending_resume_messages_id().is_some(),
+        "an id-less resume answer still reloads the transcript"
+    );
+    respond(a, None, "resume_session", false, None, Some("err"));
 }
 
 #[tokio::test]

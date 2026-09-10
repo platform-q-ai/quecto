@@ -65,8 +65,10 @@ pub(crate) struct ConnectionState {
     pub(crate) session_key: Option<String>,
     /// Session key to resume once this tab becomes connected (workspace restore).
     pub(crate) pending_session_resume: Option<String>,
+    /// Request id of this tab's in-flight `resume_session`, so only its own
+    /// answer clears the resume latches; foreign answers (another client
+    /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
-    pub(crate) session_resume_seq: u64,
     /// True while a background spawn/reattach for this tab is in flight (AC2).
     pub(crate) pending_attach: bool,
     /// Generation stamped when the current attach/spawn was kicked; outcomes
@@ -89,11 +91,13 @@ pub(crate) struct ConnectionState {
     /// One "commands are not being sent" notice per disconnect episode
     /// (#1470 r4): reset when a disconnect begins, set on first refusal.
     pub(crate) disconnect_refusal_notified: bool,
-    /// When the Coordinator last started actively processing — drives the Coordinator row
-    /// run-duration timer (#820/#838).
+    /// Origin of the Coordinator row's cumulative active-processing clock
+    /// (#820/#838, #1726): `now - started_at` is the session's total active
+    /// time while running. Restarting after an idle gap shifts this origin
+    /// forward by the gap, so idle time never counts.
     pub(crate) started_at: tokio::time::Instant,
-    /// When the Coordinator last stopped processing. `None` while actively running;
-    /// `Some(started_at)` before the first run so idle frames show `0:00`
+    /// When the clock was frozen. `None` while actively running;
+    /// `Some(started_at)` at a session boundary so idle frames show `0:00`
     /// instead of a wall-clock session uptime.
     pub(crate) stopped_at: Option<tokio::time::Instant>,
     /// In-flight #1060 fetch-on-miss recoveries keyed by minted request id.
@@ -132,31 +136,31 @@ pub(crate) struct ConnectionState {
 }
 
 impl ConnectionState {
-    /// Resume the cumulative Coordinator active-runtime clock. Repeated start
-    /// observations are idempotent; only the allowlisted stopped state moves.
+    /// Resume the cumulative Coordinator active-runtime clock: the frozen
+    /// duration carries over and the idle gap is excluded. A start while
+    /// already running is a no-op.
     pub(crate) fn start_coordinator_clock(&mut self, now: tokio::time::Instant) {
         if let Some(stopped_at) = self.stopped_at {
             let elapsed = stopped_at.saturating_duration_since(self.started_at);
             self.started_at = now - elapsed;
             self.stopped_at = None;
-            debug_assert_eq!(self.stopped_at, None);
         }
     }
 
-    /// Freeze the cumulative clock. Repeated terminal observations are
-    /// idempotent and therefore cannot accidentally count an idle gap.
+    /// Freeze the cumulative clock. A stop while already frozen (a late
+    /// AgentEnd after an abort, a disconnect after the end) is a no-op, so
+    /// it cannot count an idle gap.
     pub(crate) fn stop_coordinator_clock(&mut self, now: tokio::time::Instant) {
         if self.stopped_at.is_none() {
             self.stopped_at = Some(now);
-            debug_assert!(self.stopped_at.is_some());
         }
     }
 
-    /// Reset only at a genuine local session boundary.
+    /// Restart the clock at `0:00`, frozen: a session boundary (new session,
+    /// resume into a different session, fresh attach).
     pub(crate) fn reset_coordinator_clock(&mut self, now: tokio::time::Instant) {
         self.started_at = now;
         self.stopped_at = Some(now);
-        debug_assert_eq!(self.started_at, self.stopped_at.expect("reset clock is stopped"));
     }
 
     /// Bundle a freshly spawned transport with the connected-tab defaults.
@@ -185,7 +189,6 @@ impl ConnectionState {
             session_key: None,
             pending_session_resume: None,
             pending_session_resume_id: None,
-            session_resume_seq: 0,
             pending_attach: false,
             attach_generation: 0,
             editor_draft: String::new(),
