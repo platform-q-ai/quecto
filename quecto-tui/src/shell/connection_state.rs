@@ -130,6 +130,33 @@ pub(crate) struct ConnectionState {
 }
 
 impl ConnectionState {
+    /// Resume the cumulative Coordinator active-runtime clock. Repeated start
+    /// observations are idempotent; only the allowlisted stopped state moves.
+    pub(crate) fn start_coordinator_clock(&mut self, now: tokio::time::Instant) {
+        if let Some(stopped_at) = self.stopped_at {
+            let elapsed = stopped_at.saturating_duration_since(self.started_at);
+            self.started_at = now - elapsed;
+            self.stopped_at = None;
+            debug_assert_eq!(self.stopped_at, None);
+        }
+    }
+
+    /// Freeze the cumulative clock. Repeated terminal observations are
+    /// idempotent and therefore cannot accidentally count an idle gap.
+    pub(crate) fn stop_coordinator_clock(&mut self, now: tokio::time::Instant) {
+        if self.stopped_at.is_none() {
+            self.stopped_at = Some(now);
+            debug_assert!(self.stopped_at.is_some());
+        }
+    }
+
+    /// Reset only at a genuine local session boundary.
+    pub(crate) fn reset_coordinator_clock(&mut self, now: tokio::time::Instant) {
+        self.started_at = now;
+        self.stopped_at = Some(now);
+        debug_assert_eq!(self.started_at, self.stopped_at.expect("reset clock is stopped"));
+    }
+
     /// Bundle a freshly spawned transport with the connected-tab defaults.
     pub(crate) fn new(
         transport: crate::shell::connection::Connection,

@@ -48,6 +48,65 @@ async fn idle_coordinator_panel_timer_is_frozen_across_advancing_now() {
     assert_eq!(v1, "0:00", "a never-run idle coordinator should show 0:00");
 }
 
+/// Coordinator elapsed time is cumulative active processing time for this
+/// connection/session. A later message or wake resumes the frozen value rather
+/// than restarting the visible counter at zero (#1726).
+#[tokio::test(start_paused = true)]
+async fn coordinator_panel_timer_accumulates_across_message_boundaries() {
+    let mut h = TuiHarness::new().await;
+
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    h.event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
+    tokio::time::advance(std::time::Duration::from_secs(90)).await;
+
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:30",
+        "idle time between messages must not count"
+    );
+
+    h.event(Event::AgentStart);
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:30",
+        "a new message or wake must resume the session counter"
+    );
+    tokio::time::advance(std::time::Duration::from_secs(15)).await;
+
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:45",
+        "only active processing time should accumulate"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn coordinator_panel_timer_resets_for_new_session() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    h.event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
+
+    h.app_mut().reset_session("New session started");
+
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:00",
+        "an explicit new-session boundary must reset cumulative runtime"
+    );
+}
+
 /// While the Coordinator is actively running, its timer must still advance so the
 /// TUI can repaint it on the existing active-turn animation tick.
 #[tokio::test]

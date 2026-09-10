@@ -1,0 +1,155 @@
+diff --git a/quecto-tui/src/agents/app_agent_timer_tests.rs b/quecto-tui/src/agents/app_agent_timer_tests.rs
+index 9d99e038..69e6ce7d 100644
+--- a/quecto-tui/src/agents/app_agent_timer_tests.rs
++++ b/quecto-tui/src/agents/app_agent_timer_tests.rs
+@@ -48,6 +48,65 @@ async fn idle_coordinator_panel_timer_is_frozen_across_advancing_now() {
+     assert_eq!(v1, "0:00", "a never-run idle coordinator should show 0:00");
+ }
+ 
++/// Coordinator elapsed time is cumulative active processing time for this
++/// connection/session. A later message or wake resumes the frozen value rather
++/// than restarting the visible counter at zero (#1726).
++#[tokio::test(start_paused = true)]
++async fn coordinator_panel_timer_accumulates_across_message_boundaries() {
++    let mut h = TuiHarness::new().await;
++
++    h.event(Event::AgentStart);
++    tokio::time::advance(std::time::Duration::from_secs(30)).await;
++    h.event(Event::AgentEnd {
++        messages: vec![],
++        message_refs: vec![],
++    });
++    tokio::time::advance(std::time::Duration::from_secs(90)).await;
++
++    assert_eq!(
++        h.app_mut()
++            .panel_row_elapsed(None, tokio::time::Instant::now()),
++        "0:30",
++        "idle time between messages must not count"
++    );
++
++    h.event(Event::AgentStart);
++    assert_eq!(
++        h.app_mut()
++            .panel_row_elapsed(None, tokio::time::Instant::now()),
++        "0:30",
++        "a new message or wake must resume the session counter"
++    );
++    tokio::time::advance(std::time::Duration::from_secs(15)).await;
++
++    assert_eq!(
++        h.app_mut()
++            .panel_row_elapsed(None, tokio::time::Instant::now()),
++        "0:45",
++        "only active processing time should accumulate"
++    );
++}
++
++#[tokio::test(start_paused = true)]
++async fn coordinator_panel_timer_resets_for_new_session() {
++    let mut h = TuiHarness::new().await;
++    h.event(Event::AgentStart);
++    tokio::time::advance(std::time::Duration::from_secs(30)).await;
++    h.event(Event::AgentEnd {
++        messages: vec![],
++        message_refs: vec![],
++    });
++
++    h.app_mut().reset_session("New session started");
++
++    assert_eq!(
++        h.app_mut()
++            .panel_row_elapsed(None, tokio::time::Instant::now()),
++        "0:00",
++        "an explicit new-session boundary must reset cumulative runtime"
++    );
++}
++
+ /// While the Coordinator is actively running, its timer must still advance so the
+ /// TUI can repaint it on the existing active-turn animation tick.
+ #[tokio::test]
+diff --git a/quecto-tui/src/shell/app_events.rs b/quecto-tui/src/shell/app_events.rs
+index 1eed5027..036170e8 100644
+--- a/quecto-tui/src/shell/app_events.rs
++++ b/quecto-tui/src/shell/app_events.rs
+@@ -147,8 +147,10 @@ impl App {
+     fn handle_agent_start(&mut self) {
+         self.ac_mut().agent_state.start();
+         let now = tokio::time::Instant::now();
+-        self.ac_mut().started_at = now;
+-        self.ac_mut().stopped_at = None;
++        // The Coordinator row reports cumulative active processing time for the
++        // current session. Resume from the frozen duration so a new user message
++        // or wake does not restart the counter (#1726); idle time stays excluded.
++        self.ac_mut().start_coordinator_clock(now);
+         self.ac_mut().master_session.tools_this_turn = 0;
+         self.ac_mut().master_session.open_tool_calls = 0;
+         let _ = self
+@@ -178,7 +180,8 @@ impl App {
+     }
+ 
+     fn handle_agent_end(&mut self) {
+-        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
++        self.ac_mut()
++            .stop_coordinator_clock(tokio::time::Instant::now());
+         self.ac_mut().master_session.running = false;
+         self.ac_mut().master_session.footer.set_streaming(false);
+         self.ac_mut().spinner = None;
+diff --git a/quecto-tui/src/shell/app_methods.rs b/quecto-tui/src/shell/app_methods.rs
+index a28af606..8392d3c1 100644
+--- a/quecto-tui/src/shell/app_methods.rs
++++ b/quecto-tui/src/shell/app_methods.rs
+@@ -704,6 +704,10 @@ impl App {
+         // identical to pre-seam master; command acks are phase-2 scope.
+         let was_connected = self.ac().agent_connected;
+         let agent_reset = self.send_new_session();
++        // Clearing the local conversation intentionally abandons the old
++        // session view even when the transport cannot accept new_session.
++        self.ac_mut()
++            .reset_coordinator_clock(tokio::time::Instant::now());
+         self.ac_mut().master_session.chat.clear();
+         // The clear wiped any persistent refusal Status line; re-arm the
+         // once-per-episode latch so the next refusal (send_state_resync
+diff --git a/quecto-tui/src/shell/connection_state.rs b/quecto-tui/src/shell/connection_state.rs
+index fa608542..b5935059 100644
+--- a/quecto-tui/src/shell/connection_state.rs
++++ b/quecto-tui/src/shell/connection_state.rs
+@@ -130,6 +130,33 @@ pub(crate) struct ConnectionState {
+ }
+ 
+ impl ConnectionState {
++    /// Resume the cumulative Coordinator active-runtime clock. Repeated start
++    /// observations are idempotent; only the allowlisted stopped state moves.
++    pub(crate) fn start_coordinator_clock(&mut self, now: tokio::time::Instant) {
++        if let Some(stopped_at) = self.stopped_at {
++            let elapsed = stopped_at.saturating_duration_since(self.started_at);
++            self.started_at = now - elapsed;
++            self.stopped_at = None;
++            debug_assert_eq!(self.stopped_at, None);
++        }
++    }
++
++    /// Freeze the cumulative clock. Repeated terminal observations are
++    /// idempotent and therefore cannot accidentally count an idle gap.
++    pub(crate) fn stop_coordinator_clock(&mut self, now: tokio::time::Instant) {
++        if self.stopped_at.is_none() {
++            self.stopped_at = Some(now);
++            debug_assert!(self.stopped_at.is_some());
++        }
++    }
++
++    /// Reset only at a genuine local session boundary.
++    pub(crate) fn reset_coordinator_clock(&mut self, now: tokio::time::Instant) {
++        self.started_at = now;
++        self.stopped_at = Some(now);
++        debug_assert_eq!(self.started_at, self.stopped_at.expect("reset clock is stopped"));
++    }
++
+     /// Bundle a freshly spawned transport with the connected-tab defaults.
+     pub(crate) fn new(
+         transport: crate::shell::connection::Connection,
+ M quecto-tui/src/agents/app_agent_timer_tests.rs
+ M quecto-tui/src/shell/app_events.rs
+ M quecto-tui/src/shell/app_methods.rs
+ M quecto-tui/src/shell/connection_state.rs
+?? artifacts/

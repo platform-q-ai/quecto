@@ -704,6 +704,10 @@ impl App {
         // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.ac().agent_connected;
         let agent_reset = self.send_new_session();
+        // Clearing the local conversation intentionally abandons the old
+        // session view even when the transport cannot accept new_session.
+        self.ac_mut()
+            .reset_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.chat.clear();
         // The clear wiped any persistent refusal Status line; re-arm the
         // once-per-episode latch so the next refusal (send_state_resync
