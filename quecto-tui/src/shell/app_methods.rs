@@ -180,19 +180,27 @@ impl App {
     }
 
     pub(super) fn send_resume_session(&mut self, session: &str) {
+        static RESUME_REQUEST_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
         if session.trim().is_empty() {
             self.send_list_sessions();
             return;
         }
         self.ac_mut().session_resume_seq = self.ac().session_resume_seq.wrapping_add(1);
-        let id = self
-            .ac()
-            .namespaced_id(&format!("resume-{}", self.ac().session_resume_seq));
+        let process_sequence = RESUME_REQUEST_SEQUENCE
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = self.ac().namespaced_id(&format!(
+            "resume-{process_sequence}-{}",
+            self.ac().session_resume_seq
+        ));
         self.ac_mut().pending_session_resume_id = Some(id.clone());
-        self.send_command(Command::ResumeSession {
+        let sent = self.send_command(Command::ResumeSession {
             id: Some(id),
             session: session.trim().to_string(),
         });
+        if !sent {
+            self.ac_mut().pending_session_resume_id = None;
+        }
     }
 
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
