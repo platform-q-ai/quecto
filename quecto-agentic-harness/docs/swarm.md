@@ -159,9 +159,10 @@ means work completed. `inbox(include_consumed=True)` also reads consumed history
 A message may carry the `revision` it is about, and `send(..., supersedes=id)`
 retires your own earlier unread message to the same recipient in the same
 transaction; `withdraw(id)` retires one without a replacement. Retired messages
-leave the inbox and produce no wake, but stay in the audit as `superseded` (with
-`superseded_by`) or `withdrawn` (#1837). These are vocabulary the members may
-use; nothing requires them.
+leave the inbox and produce no further wake, but stay in the audit as
+`superseded` (with `superseded_by`) or `withdrawn` (#1837). Sending needs a
+running run; `withdraw`, like `ack`, is bookkeeping and also works while the run
+is paused. These are vocabulary the members may use; nothing requires them.
 Messages are at most 8192 UTF-8 bytes; each inbox admits at most 100 unconsumed
 messages. Unknown/dead recipients and full inboxes fail explicitly. The board
 bounds tasks to 1000 and request-ledger entries to 10000 per run. Store large data

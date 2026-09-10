@@ -238,9 +238,10 @@ class Workbench(Tasks):
 
         `revision` (optional) names the revision the message is about, visible
         in the recipient's inbox without parsing the body. `supersedes`
-        (optional) withdraws your own earlier unread message to the same
-        recipient in the same transaction (#1837). Both are vocabulary, not a
-        required practice."""
+        (optional) retires your own earlier unread message to the same
+        recipient as `superseded` in the same transaction (#1837). Both are
+        vocabulary, not a required practice. Sending needs a running run;
+        `withdraw` and `ack` are bookkeeping and also work while paused."""
         bounded(body, 'message', 8192)
         if revision is not None:
             bounded(revision, 'message revision', 256)
@@ -263,19 +264,28 @@ class Workbench(Tasks):
                     self.store.event(db, 'message_superseded', {'message': supersedes, 'superseded_by': cursor.lastrowid})
                 self.store.event(db, 'message_accepted', {'message': cursor.lastrowid, 'recipient': recipient, 'revision': revision})
                 return {'id': cursor.lastrowid, 'status': 'accepted'}
-            return self.store.retry(db, request, ['send', recipient, body, revision, supersedes], send)
+            # Keep the pre-#1837 payload shape for plain sends so request keys
+            # recorded by an older build still replay against this store.
+            payload = ['send', recipient, body]
+            if revision is not None or supersedes is not None:
+                payload += [revision, supersedes]
+            return self.store.retry(db, request, payload, send)
 
     def withdraw(self, message_id):
         """Withdraw your own unread message: it leaves the recipient's inbox and
         the wake path but stays in the audit as `withdrawn` (#1837)."""
+        if type(message_id) is not int or message_id < 1:
+            raise SwarmError('message id must be a positive integer')
         with self.store.operation(active=False) as (db, _):
             self._retire(db, message_id, None, 'withdrawn')
             self.store.event(db, 'message_withdrawn', {'message': message_id})
 
     def _retire(self, db, message_id, recipient, status):
         row = db.execute('SELECT * FROM messages WHERE id=?', (message_id,)).fetchone()
-        if not row or row['sender'] != self.member or (recipient is not None and row['recipient'] != recipient):
-            raise SwarmError(f'only your own message to the same recipient can be {status}')
+        if not row or row['sender'] != self.member:
+            raise SwarmError(f'only your own message can be {status}')
+        if recipient is not None and row['recipient'] != recipient:
+            raise SwarmError(f'only a message to the same recipient can be {status}')
         if row['status'] != 'accepted':
             raise SwarmError(f"message {message_id} is already {row['status']}")
         db.execute('UPDATE messages SET status=? WHERE id=?', (status, message_id))

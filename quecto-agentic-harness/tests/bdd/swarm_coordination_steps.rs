@@ -695,7 +695,12 @@ fn inbox_holds_newer(world: &mut QuectoWorld) {
     let stdout = result_json(world)["stdout"].as_str().unwrap().to_string();
     assert!(stdout.contains("'revision': 'abc2'"), "{stdout}");
     assert!(!stdout.contains("'revision': 'abc1'"), "{stdout}");
-    assert!(stdout.contains("'supersedes': 1"), "{stdout}");
+    assert!(stdout.contains("'supersedes': 1,"), "{stdout}");
+    assert_eq!(
+        stdout.matches("'id': ").count(),
+        1,
+        "exactly one unread message: {stdout}"
+    );
 }
 
 #[then("the superseded message remains in the audit")]

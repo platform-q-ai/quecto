@@ -468,9 +468,10 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'different payload'):
             self.worker.send('r2', 'coordinator', 'review head two', revision='abc3', supersedes=first['id'])
         # Only your own unread message to the same recipient can be superseded.
-        for supersedes in [first['id'], 999, second['id']]:
-            with self.subTest(supersedes=supersedes), self.assertRaises(SwarmError):
-                sender = self.parent if supersedes == second['id'] else self.worker
+        for supersedes, sender, reason in [(first['id'], self.worker, 'already superseded'),
+                                           (999, self.worker, 'only your own'),
+                                           (second['id'], self.parent, 'only your own')]:
+            with self.subTest(supersedes=supersedes), self.assertRaisesRegex(SwarmError, reason):
                 sender.send(f'bad-{supersedes}', 'coordinator', 'x', supersedes=supersedes)
         # A message to another recipient cannot be superseded by this one.
         to_self = self.worker.send('self', 'worker', 'note to self')
@@ -480,14 +481,55 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'message id'):
             self.worker.send('bad-type', 'coordinator', 'x', supersedes=str(second['id']))
         self.assertEqual([m['id'] for m in self.parent.inbox()], [second['id']], 'the refused send changed nothing')
-        with self.assertRaises(SwarmError):
+        with self.assertRaisesRegex(SwarmError, 'message revision'):
             self.worker.send('bad-rev', 'coordinator', 'x', revision='')
         # Acknowledging a superseded message is a no-op; the live one is consumed.
         self.parent.ack(first['id'])
         after = {m['id']: m['status'] for m in self.parent.inbox(include_consumed=True)}
         self.assertEqual(after[first['id']], 'superseded', 'ack must not consume a retired message')
+        self.assertNotEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_consumed')
         self.parent.ack(second['id'])
         self.assertEqual(self.parent.inbox(), [])
+
+    def test_plain_sends_replay_request_keys_recorded_before_message_revisions(self):
+        message = self.worker.send('legacy', 'coordinator', 'hello')
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE requests SET payload=? WHERE actor='worker' AND request='legacy'",
+                       (json.dumps(['send', 'coordinator', 'hello'], sort_keys=True, separators=(',', ':')),))
+            db.commit()
+        self.assertEqual(self.worker.send('legacy', 'coordinator', 'hello'), message, 'an old-shape ledger row still replays')
+        with self.assertRaisesRegex(SwarmError, 'different payload'):
+            self.worker.send('legacy', 'coordinator', 'hello', revision='abc1')
+
+    def test_message_columns_are_migrated_into_an_older_store(self):
+        path = self.root / 'older.sqlite'
+        with closing(sqlite3.connect(path)) as db:
+            db.executescript('''
+                CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,
+                 coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT);
+                CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT, pid INTEGER, started TEXT, socket TEXT);
+                CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT, status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT);
+                CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT);
+                CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT);
+                CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT, actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor));
+                CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT, PRIMARY KEY(actor, request));
+                CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT);
+            ''')
+        older = Workbench(str(path), str(self.root), 'coordinator')
+        older.create('old store', [], [{'id': 'tests', 'kind': 'command', 'description': 'pass'}], 2, time.time() + 300)
+        sent = older.send('m', 'coordinator', 'to self', revision='abc1')
+        self.assertEqual(older.inbox()[0]['revision'], 'abc1')
+        older.withdraw(sent['id'])
+        self.assertEqual(older.inbox(include_consumed=True)[0]['status'], 'withdrawn')
+
+    def test_withdraw_and_ack_take_only_message_ids(self):
+        message = self.worker.send('w', 'coordinator', 'hello')
+        for bad in ['1', True, 0, None]:
+            with self.subTest(bad=bad), self.assertRaisesRegex(SwarmError, 'message id'):
+                self.worker.withdraw(bad)
+        self.assertEqual(self.parent.inbox()[0]['id'], message['id'], 'nothing was withdrawn')
+        with self.assertRaisesRegex(SwarmError, 'only your own message'):
+            self.parent.withdraw(message['id'])
 
     def test_a_withdrawn_message_leaves_the_inbox_and_wakes_nobody(self):
         self.worker._notifications()
