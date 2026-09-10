@@ -552,11 +552,20 @@ impl App {
     }
 
     fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
-        // A successful resume establishes a different session identity. The
-        // backend does not persist this UI-only runtime, so begin honestly at
-        // zero; failed resume responses never enter this method (#1726).
-        self.ac_mut()
-            .reset_coordinator_clock(tokio::time::Instant::now());
+        let resumed_key = data
+            .as_ref()
+            .and_then(|value| value.get("sessionKey"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        // Reset only when the successful response proves an identity change.
+        // Missing identity is not an allowlisted reset boundary (#1726).
+        if let Some(key) = resumed_key.as_deref() {
+            if self.ac().session_key.as_deref().is_some_and(|old| old != key) {
+                self.ac_mut()
+                    .reset_coordinator_clock(tokio::time::Instant::now());
+            }
+            self.ac_mut().session_key = Some(key.to_owned());
+        }
         let session = data
             .as_ref()
             .map(crate::protocol::state_payloads::parse_resume_session_name)

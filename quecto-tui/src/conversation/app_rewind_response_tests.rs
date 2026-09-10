@@ -447,6 +447,7 @@ async fn late_agent_error_does_not_add_idle_time_to_coordinator_timer() {
 async fn response_resume_session_success_resets_timer_and_failure_preserves_it() {
     let mut h = harness().await;
     let a = h.app_mut();
+    a.ac_mut().session_key = Some("cli:original".into());
     a.handle_event(Event::AgentStart);
     tokio::time::advance(std::time::Duration::from_secs(10)).await;
     a.handle_event(Event::AgentEnd {
@@ -461,7 +462,11 @@ async fn response_resume_session_success_resets_timer_and_failure_preserves_it()
         "failed resume must preserve current-session runtime"
     );
 
-    let data = serde_json::json!({"session": "alpha"});
+    let same = serde_json::json!({"session": "original", "sessionKey": "cli:original"});
+    respond(a, None, "resume_session", true, Some(same), None);
+    assert_eq!(a.panel_row_elapsed(None, tokio::time::Instant::now()), "0:10");
+
+    let data = serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"});
     respond(a, None, "resume_session", true, Some(data), None);
     assert_eq!(
         a.panel_row_elapsed(None, tokio::time::Instant::now()),
