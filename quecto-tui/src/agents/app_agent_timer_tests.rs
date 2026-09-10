@@ -88,6 +88,28 @@ async fn coordinator_panel_timer_accumulates_across_message_boundaries() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn coordinator_disconnect_after_end_does_not_count_idle_gap() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    h.event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+
+    h.app_mut().handle_agent_disconnected(None);
+    h.event(Event::AgentStart);
+
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10",
+        "a late disconnect while already stopped must not incorporate idle time"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn coordinator_panel_timer_resets_for_new_session() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
