@@ -180,17 +180,14 @@ impl App {
     }
 
     pub(super) fn send_resume_session(&mut self, session: &str) {
-        static RESUME_REQUEST_SEQUENCE: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(1);
         if session.trim().is_empty() {
             self.send_list_sessions();
             return;
         }
         self.ac_mut().session_resume_seq = self.ac().session_resume_seq.wrapping_add(1);
-        let process_sequence = RESUME_REQUEST_SEQUENCE
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let id = self.ac().namespaced_id(&format!(
-            "resume-{process_sequence}-{}",
+            "resume-{}-{}",
+            super::app_events::uuid_like(),
             self.ac().session_resume_seq
         ));
         self.ac_mut().pending_session_resume_id = Some(id.clone());
