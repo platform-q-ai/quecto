@@ -422,6 +422,28 @@ async fn response_list_sessions_success_and_failure() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn late_agent_error_does_not_add_idle_time_to_coordinator_timer() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    a.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+
+    respond(a, None, "agent_error", false, None, Some("late"));
+    a.handle_event(Event::AgentStart);
+
+    assert_eq!(
+        a.panel_row_elapsed(None, tokio::time::Instant::now()),
+        "0:10",
+        "a late error while stopped must not incorporate idle time"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn response_resume_session_success_resets_timer_and_failure_preserves_it() {
     let mut h = harness().await;
     let a = h.app_mut();
