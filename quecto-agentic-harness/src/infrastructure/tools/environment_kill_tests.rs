@@ -1,7 +1,7 @@
+use crate::application::environment_control::EnvironmentKillPort;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::environment_control_app::EnvironmentKillPort;
 
 use super::ScriptEnvironmentKill;
 use crate::infrastructure::tools::subagent_registry::{

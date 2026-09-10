@@ -221,8 +221,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
     let environment_control = std::sync::Arc::new(
-        crate::environment_control_app::EnvironmentControlUseCase::new(
-            environment_registry,
+        crate::application::environment_control::EnvironmentControlUseCase::new(
+            environment_registry.clone(),
             std::sync::Arc::new(
                 crate::infrastructure::tools::environment_kill::ScriptEnvironmentKill::new(
                     registry.clone(),
@@ -233,6 +233,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     );
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
         .with_broadcast(deps.broadcast_tx)
+        .with_list_environments(std::sync::Arc::new(
+            crate::application::environments::ListEnvironmentsQuery::new(environment_registry),
+        ))
         .with_environment_control(environment_control);
 
     AgentControlToolBuild {

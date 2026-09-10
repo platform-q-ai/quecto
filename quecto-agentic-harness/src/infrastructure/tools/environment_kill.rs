@@ -3,9 +3,9 @@
 //! the environment's retained `kill` argv exactly once. Status transitions
 //! (stopped / cleanup-failed) stay in the application use case.
 
+use crate::application::environment_control::EnvironmentKillPort;
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::environment_control_app::EnvironmentKillPort;
 
 use super::subagent_registry::{ExitSignal, SubagentRegistry};
 

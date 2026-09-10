@@ -13,6 +13,7 @@ pub mod environment_control;
 #[cfg(test)]
 #[path = "environment_control_tests.rs"]
 mod environment_control_tests;
+pub mod environments;
 #[cfg(any(test, feature = "test-support"))]
 pub mod extension_tool;
 pub mod ports;

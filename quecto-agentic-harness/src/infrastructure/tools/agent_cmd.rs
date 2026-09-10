@@ -28,10 +28,11 @@ pub struct AgentCmdTool {
     /// when `kill` cascade-removes an agent's sub-tree, so connected clients (the
     /// TUI panel) drop the dead agents promptly (#831).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// Environment control use case for `get_containers` / `kill_container`
-    /// (#1369 slice 2). This tool only decodes/delegates/encodes.
+    /// Side-effect-free environment inventory query and kill owner.
+    list_environments:
+        Option<std::sync::Arc<crate::application::environments::ListEnvironmentsQuery>>,
     environment_control:
-        Option<std::sync::Arc<crate::environment_control_app::EnvironmentControlUseCase>>,
+        Option<std::sync::Arc<crate::application::environment_control::EnvironmentControlUseCase>>,
 }
 
 impl AgentCmdTool {
@@ -40,16 +41,25 @@ impl AgentCmdTool {
         Self {
             registry,
             broadcast_tx: None,
+            list_environments: None,
             environment_control: None,
         }
     }
 
-    /// Attach the session's environment control use case so `get_containers`
-    /// and `kill_container` can delegate to it (#1369 slice 2).
+    /// Attach the session's side-effect-free inventory query.
+    pub fn with_list_environments(
+        mut self,
+        query: std::sync::Arc<crate::application::environments::ListEnvironmentsQuery>,
+    ) -> Self {
+        self.list_environments = Some(query);
+        self
+    }
+
+    /// Attach the existing kill owner; listing does not depend on this effectful use case.
     pub fn with_environment_control(
         mut self,
         environment_control: std::sync::Arc<
-            crate::environment_control_app::EnvironmentControlUseCase,
+            crate::application::environment_control::EnvironmentControlUseCase,
         >,
     ) -> Self {
         self.environment_control = Some(environment_control);
@@ -505,6 +515,7 @@ impl Tool for AgentCmdTool {
                 // the environment control use case (#1369 slice 2).
                 if super::agent_cmd_containers::is_container_command(value) {
                     return Ok(super::agent_cmd_containers::execute_container_command(
+                        self.list_environments.as_ref(),
                         self.environment_control.as_ref(),
                         value,
                     )

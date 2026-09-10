@@ -1,6 +1,6 @@
 //! Application-level environment control use case (#1369 slice 2).
 //!
-//! `get_containers`, `kill_container`, and ref/name resolution live here.
+//! `kill_container` and ref/name resolution live here.
 //! Interface handlers (tool/UDS) may only decode arguments, delegate to this
 //! use case, and encode its results. The kill side effect (terminating member
 //! agents and running the environment's retained kill argv) stays behind
@@ -42,12 +42,6 @@ impl EnvironmentControlUseCase {
             registry,
             kill_port,
         }
-    }
-
-    /// List every environment this session has committed — running, empty,
-    /// stopped, and failed — straight from the authoritative registry.
-    pub fn get_containers(&self) -> Vec<EnvironmentRecord> {
-        self.registry.entries()
     }
 
     /// Kill one environment by ref or name: claim exclusively (no
