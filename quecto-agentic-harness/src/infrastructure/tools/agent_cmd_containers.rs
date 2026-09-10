@@ -6,9 +6,10 @@
 
 use std::sync::Arc;
 
+use crate::application::environment_control::EnvironmentControlUseCase;
+use crate::application::environments::ListEnvironmentsQuery;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
 use crate::domain::tool::ToolResult;
-use crate::environment_control_app::EnvironmentControlUseCase;
 
 pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
     matches!(
@@ -18,28 +19,33 @@ pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
 }
 
 pub(super) async fn execute_container_command(
+    list_environments: Option<&Arc<ListEnvironmentsQuery>>,
     environment_control: Option<&Arc<EnvironmentControlUseCase>>,
     args: &serde_json::Value,
 ) -> ToolResult {
-    let Some(uc) = environment_control else {
-        return error("environment control is not available in this session".to_string());
-    };
-    if args.get("agent_id").and_then(|v| v.as_str()) != Some("*") {
-        return error("container commands require agent_id '*'".to_string());
+    match args.get("agent_id").and_then(|v| v.as_str()) {
+        Some("*") => {}
+        _ => return error("container commands require agent_id '*'".to_string()),
     }
     match args.get("command").and_then(|v| v.as_str()) {
-        Some("get_containers") => encode_listing(uc.get_containers()),
-        Some("kill_container") => match decode_target(args) {
-            Ok(target) => match uc.kill_container(&target).await {
-                Ok(record) => ToolResult {
-                    content: kill_container_result_json(&record).to_string(),
-                    is_error: false,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
+        Some("get_containers") => match list_environments {
+            Some(query) => encode_listing(query.execute()),
+            None => error("environment listing is not available in this session".to_string()),
+        },
+        Some("kill_container") => match environment_control {
+            None => error("environment control is not available in this session".to_string()),
+            Some(uc) => match decode_target(args) {
+                Ok(target) => match uc.kill_container(&target).await {
+                    Ok(record) => ToolResult {
+                        content: kill_container_result_json(&record).to_string(),
+                        is_error: false,
+                        image_blocks: vec![],
+                        delivery_metadata: None,
+                    },
+                    Err(e) => error(e),
                 },
                 Err(e) => error(e),
             },
-            Err(e) => error(e),
         },
         _ => error("unsupported container command".to_string()),
     }

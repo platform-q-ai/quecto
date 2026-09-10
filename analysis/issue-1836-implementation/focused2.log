@@ -1,0 +1,98 @@
+error: unexpected argument 'infrastructure::tools::agent_cmd_containers' found
+
+Usage: cargo test [OPTIONS] [TESTNAME] [-- [ARGS]...]
+
+For more information, try '--help'.
+   Compiling quecto-agentic-harness v0.107.5 (/home/swq/.quecto/container-environments/env-9aTSg9VupS/workspace/repo/quecto-agentic-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 00s
+     Running unittests src/lib.rs (/cargo-target/debug/deps/quecto-b0e6540c3b1e9443)
+
+running 2 tests
+test application::environments::list_environments_tests::empty_registry_returns_empty_detached_snapshot ... ok
+test application::environments::list_environments_tests::preserves_registry_iteration_order_and_complete_records ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4363 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (/cargo-target/debug/deps/quecto-b0e6540c3b1e9443)
+
+running 6 tests
+test infrastructure::tools::agent_cmd_containers::tests::container_commands_are_recognized ... ok
+test infrastructure::tools::agent_cmd_containers::tests::use_case_debug_is_redacted_but_present ... ok
+test infrastructure::tools::agent_cmd_containers::tests::kill_container_json_caps_long_member_lists ... ok
+test infrastructure::tools::agent_cmd_containers::tests::container_commands_require_wiring_and_star_agent_id ... ok
+test infrastructure::tools::agent_cmd_containers::tests::kill_container_decodes_exactly_one_string_target ... ok
+test infrastructure::tools::agent_cmd_containers::tests::listing_and_kill_round_trip_through_the_use_case ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 4359 filtered out; finished in 0.00s
+
+   Compiling quecto-agentic-harness v0.107.5 (/home/swq/.quecto/container-environments/env-9aTSg9VupS/workspace/repo/quecto-agentic-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.79s
+     Running tests/architecture.rs (/cargo-target/debug/deps/architecture-80cccbc20aa77fdd)
+
+running 47 tests
+test all_architecture_layers_exist ... ok
+test ci_runs_architecture_and_contract_tests ... ok
+test all_four_socket_consumers_read_via_the_shared_frame_reader ... ok
+test hook_installation_checker_verifies_all_local_hooks ... ok
+test lib_rs_has_deny_attributes ... ok
+test list_environments_query_has_only_the_domain_registry_dependency ... ok
+test local_hooks_enforce_formatting_while_ci_owns_strict_lints ... ok
+test multi_client_agent_announces_protocol_version_via_shared_helper ... ok
+test macos_only_text_normalization_dependency_is_not_unconditional ... ok
+test pre_push_runs_contract_tests ... ok
+test normal_build_excludes_removed_tool_installer_archive_dependencies ... ok
+test raw_json_site_count_ignores_ordinary_collections_and_string_accessors ... ok
+test raw_json_site_count_covers_deserialize_and_json_key_shapes ... ok
+test environment_control_orchestration_stays_out_of_interface_handlers ... ok
+test tui_architecture_layers_exist ... ok
+test runtime_manager_domain_is_pure ... ok
+test tui_agents_pure_policy_has_no_outer_layer_imports ... ok
+test tui_main_rs_is_thin_shell_entrypoint ... ok
+test tui_conversation_pure_policy_has_no_outer_layer_imports ... ok
+test tui_shell_owns_app_composition_root ... ok
+test tui_runtime_adapters_live_in_shell ... ok
+test tui_lib_rs_has_deny_attributes ... ok
+test tui_lib_rs_exposes_only_architecture_layers ... ok
+test application_has_no_infrastructure_imports ... ok
+test wire_dto_usage_count_covers_import_gated_unqualified_uses ... ok
+test tui_workspace_files_adapter_does_not_import_presentation_layers ... ok
+test application_has_no_interface_imports ... ok
+test tui_production_files_live_inside_architecture_layers ... ok
+test tui_feature_oriented_architecture_is_documented ... ok
+test domain_has_no_infrastructure_imports ... ok
+test tui_inner_layers_have_no_runtime_io_calls ... ok
+test domain_has_no_application_imports ... ok
+test tui_protocol_has_no_widget_or_terminal_types ... ok
+test domain_has_no_interface_imports ... ok
+test application_layer_has_no_runtime_io_calls ... ok
+test tui_components_do_not_import_protocol_client ... ok
+test tui_protocol_has_no_feature_or_shell_imports ... ok
+test infrastructure_has_no_application_imports ... FAILED
+test tui_public_ports_have_contract_tests ... ok
+test public_ports_have_contract_tests ... ok
+test tui_protocol_raw_json_parsing_sites_do_not_grow ... ok
+test domain_layer_has_no_runtime_io_calls ... ok
+test infrastructure_has_no_interface_imports ... ok
+test production_files_do_not_contain_inline_test_modules ... ok
+test tui_wire_dto_usage_does_not_grow ... ok
+test tui_feature_view_raw_json_parsing_sites_do_not_grow ... ok
+test tui_combined_raw_json_inventory_does_not_grow ... ok
+
+failures:
+
+---- infrastructure_has_no_application_imports stdout ----
+
+thread 'infrastructure_has_no_application_imports' (24182) panicked at quecto-agentic-harness/tests/architecture.rs:205:17:
+Architecture violation in infrastructure: src/infrastructure/extensions/native.rs
+Line: crate::application::environment_control::EnvironmentControlUseCase::new(
+Rule: infrastructure may depend on application only via crate::application::ports
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    infrastructure_has_no_application_imports
+
+test result: FAILED. 46 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `--test architecture`

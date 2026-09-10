@@ -1,0 +1,36 @@
+ .../src/application/environment_control.rs         |  8 +------
+ .../src/application/environment_control_tests.rs   | 19 +---------------
+ quecto-agentic-harness/src/application/mod.rs      |  1 +
+ .../src/infrastructure/extensions/native.rs        |  9 +++++---
+ .../src/infrastructure/tools/agent_cmd.rs          | 15 +++++++------
+ .../infrastructure/tools/agent_cmd_containers.rs   | 17 +++++++++-----
+ .../tools/agent_cmd_containers_tests.rs            | 23 +++++++++++--------
+ .../src/infrastructure/tools/environment_kill.rs   |  2 +-
+ .../infrastructure/tools/environment_kill_tests.rs |  2 +-
+ quecto-agentic-harness/src/lib.rs                  |  1 -
+ quecto-agentic-harness/tests/architecture.rs       | 26 +++++++++++++++++-----
+ 11 files changed, 65 insertions(+), 58 deletions(-)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (/cargo-target/debug/deps/quecto-b0e6540c3b1e9443)
+
+running 2 tests
+test application::environments::list_environments_tests::empty_registry_returns_empty_detached_snapshot ... ok
+test application::environments::list_environments_tests::preserves_registry_iteration_order_and_complete_records ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4363 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (/cargo-target/debug/deps/quecto-b0e6540c3b1e9443)
+
+running 6 tests
+test infrastructure::tools::agent_cmd_containers::tests::container_commands_are_recognized ... ok
+test infrastructure::tools::agent_cmd_containers::tests::use_case_debug_is_redacted_but_present ... ok
+test infrastructure::tools::agent_cmd_containers::tests::kill_container_json_caps_long_member_lists ... ok
+test infrastructure::tools::agent_cmd_containers::tests::container_commands_require_wiring_and_star_agent_id ... ok
+test infrastructure::tools::agent_cmd_containers::tests::kill_container_decodes_exactly_one_string_target ... ok
+test infrastructure::tools::agent_cmd_containers::tests::listing_and_kill_round_trip_through_the_use_case ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 4359 filtered out; finished in 0.00s
+
+error: 'cargo-clippy' is not installed for the toolchain '1.97.1-x86_64-unknown-linux-gnu'.
+help: run `rustup component add clippy` to install it

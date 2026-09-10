@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::application::environment_control::EnvironmentControlUseCase;
+use crate::application::environments::ListEnvironmentsQuery;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::environment_control_app::EnvironmentControlUseCase;
 
 fn use_case(registry: EnvironmentRegistry) -> Arc<EnvironmentControlUseCase> {
     let kill_port = Arc::new(super::super::environment_kill::ScriptEnvironmentKill::new(
@@ -62,12 +63,16 @@ fn container_commands_are_recognized() {
 fn container_commands_require_wiring_and_star_agent_id() {
     let missing = block_on(execute_container_command(
         None,
+        None,
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
     assert!(missing.is_error && missing.content.contains("not available"));
 
-    let uc = use_case(EnvironmentRegistry::new());
+    let registry = EnvironmentRegistry::new();
+    let uc = use_case(registry.clone());
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
     let wrong_target = block_on(execute_container_command(
+        Some(&query),
         Some(&uc),
         &serde_json::json!({"agent_id":"child","command":"get_containers"}),
     ));
@@ -82,15 +87,18 @@ fn kill_container_decodes_exactly_one_string_target() {
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C1","name":"x"}),
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":1}),
     ] {
-        let result = block_on(execute_container_command(Some(&uc), &args));
+        let result = block_on(execute_container_command(None, Some(&uc), &args));
         assert!(result.is_error, "{}", result.content);
     }
 }
 
 #[test]
 fn listing_and_kill_round_trip_through_the_use_case() {
-    let uc = use_case(committed_registry());
+    let registry = committed_registry();
+    let uc = use_case(registry.clone());
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
     let listing = block_on(execute_container_command(
+        Some(&query),
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
@@ -100,6 +108,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     assert_eq!(parsed["containers"][0]["status"], "running");
 
     let killed = block_on(execute_container_command(
+        None,
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","name":"tool-env"}),
     ));
@@ -111,6 +120,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     );
 
     let unknown = block_on(execute_container_command(
+        None,
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C9"}),
     ));

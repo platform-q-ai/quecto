@@ -1,0 +1,55 @@
+   Compiling quecto-agentic-harness v0.107.5 (/home/swq/.quecto/container-environments/env-9aTSg9VupS/workspace/repo/quecto-agentic-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running tests/architecture.rs (/cargo-target/debug/deps/architecture-80cccbc20aa77fdd)
+
+running 47 tests
+test all_architecture_layers_exist ... ok
+test ci_runs_architecture_and_contract_tests ... ok
+test all_four_socket_consumers_read_via_the_shared_frame_reader ... ok
+test hook_installation_checker_verifies_all_local_hooks ... ok
+test lib_rs_has_deny_attributes ... ok
+test list_environments_query_has_only_the_domain_registry_dependency ... ok
+test macos_only_text_normalization_dependency_is_not_unconditional ... ok
+test local_hooks_enforce_formatting_while_ci_owns_strict_lints ... ok
+test multi_client_agent_announces_protocol_version_via_shared_helper ... ok
+test normal_build_excludes_removed_tool_installer_archive_dependencies ... ok
+test pre_push_runs_contract_tests ... ok
+test raw_json_site_count_covers_deserialize_and_json_key_shapes ... ok
+test raw_json_site_count_ignores_ordinary_collections_and_string_accessors ... ok
+test runtime_manager_domain_is_pure ... ok
+test tui_architecture_layers_exist ... ok
+test environment_control_orchestration_stays_out_of_interface_handlers ... ok
+test tui_main_rs_is_thin_shell_entrypoint ... ok
+test tui_agents_pure_policy_has_no_outer_layer_imports ... ok
+test tui_runtime_adapters_live_in_shell ... ok
+test wire_dto_usage_count_covers_import_gated_unqualified_uses ... ok
+test tui_lib_rs_exposes_only_architecture_layers ... ok
+test tui_lib_rs_has_deny_attributes ... ok
+test tui_shell_owns_app_composition_root ... ok
+test tui_conversation_pure_policy_has_no_outer_layer_imports ... ok
+test tui_production_files_live_inside_architecture_layers ... ok
+test application_has_no_interface_imports ... ok
+test tui_workspace_files_adapter_does_not_import_presentation_layers ... ok
+test application_has_no_infrastructure_imports ... ok
+test domain_has_no_infrastructure_imports ... ok
+test domain_has_no_interface_imports ... ok
+test tui_inner_layers_have_no_runtime_io_calls ... ok
+test tui_feature_oriented_architecture_is_documented ... ok
+test tui_protocol_has_no_widget_or_terminal_types ... ok
+test domain_has_no_application_imports ... ok
+test tui_components_do_not_import_protocol_client ... ok
+test tui_protocol_raw_json_parsing_sites_do_not_grow ... ok
+test tui_protocol_has_no_feature_or_shell_imports ... ok
+test application_layer_has_no_runtime_io_calls ... ok
+test tui_public_ports_have_contract_tests ... ok
+test domain_layer_has_no_runtime_io_calls ... ok
+test public_ports_have_contract_tests ... ok
+test infrastructure_has_no_application_imports ... ok
+test infrastructure_has_no_interface_imports ... ok
+test production_files_do_not_contain_inline_test_modules ... ok
+test tui_wire_dto_usage_does_not_grow ... ok
+test tui_feature_view_raw_json_parsing_sites_do_not_grow ... ok
+test tui_combined_raw_json_inventory_does_not_grow ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

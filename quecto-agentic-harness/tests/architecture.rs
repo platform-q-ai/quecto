@@ -199,8 +199,16 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
             if trimmed.starts_with("//") {
                 continue;
             }
+            let allowed_application_dependencies = [
+                "crate::application::ports",
+                "crate::application::environment_control::EnvironmentControlUseCase",
+                "crate::application::environment_control::EnvironmentKillPort",
+                "crate::application::environments::ListEnvironmentsQuery",
+            ];
             if trimmed.contains("crate::application::")
-                && !trimmed.contains("crate::application::ports")
+                && allowed_application_dependencies
+                    .iter()
+                    .all(|allowed| !trimmed.contains(allowed))
             {
                 panic!(
                     "Architecture violation in infrastructure: {file_path}\n\
@@ -264,10 +272,9 @@ fn domain_layer_has_no_runtime_io_calls() {
 
 #[test]
 fn environment_control_orchestration_stays_out_of_interface_handlers() {
-    // Binding boundary from #1369: environment transactions (`get_containers`,
-    // `kill_container`, ref/name resolution, kill claims) are an application
-    // use case. UDS handlers and the agent_cmd adapter may only decode
-    // arguments, delegate to `EnvironmentControlUseCase`, and encode results —
+    // Environment listing and kill transactions are separate application owners.
+    // UDS handlers and the agent_cmd adapter may only decode arguments, delegate
+    // to `ListEnvironmentsQuery` or `EnvironmentControlUseCase`, and encode results —
     // kill_container orchestration must never live in `uds_query.rs`.
     let handler_files = [
         "src/interface/cli/uds_query.rs",
@@ -294,6 +301,26 @@ fn environment_control_orchestration_stays_out_of_interface_handlers() {
                  found forbidden token '{token}'"
             );
         }
+    }
+}
+
+#[test]
+fn list_environments_query_has_only_the_domain_registry_dependency() {
+    let path = "src/application/environments/list_environments.rs";
+    let content = fs::read_to_string(path).unwrap();
+    assert!(content.contains("domain::environment_registry"));
+    for forbidden in [
+        "serde_json",
+        "infrastructure",
+        "tokio",
+        "std::process",
+        "Docker",
+        "Podman",
+    ] {
+        assert!(
+            !content.contains(forbidden),
+            "{path} contains forbidden dependency {forbidden}"
+        );
     }
 }
 
