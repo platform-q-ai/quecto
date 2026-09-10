@@ -173,23 +173,6 @@ impl App {
             .apply_session_stats(&stats);
     }
 
-    pub(super) fn send_list_sessions(&mut self) {
-        self.send_command(Command::ListSessions {
-            id: Some(self.ac().namespaced_id("resume-list")),
-        });
-    }
-
-    pub(super) fn send_resume_session(&mut self, session: &str) {
-        if session.trim().is_empty() {
-            self.send_list_sessions();
-            return;
-        }
-        self.send_command(Command::ResumeSession {
-            id: Some(self.ac().namespaced_id("resume")),
-            session: session.trim().to_string(),
-        });
-    }
-
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
@@ -704,6 +687,10 @@ impl App {
         // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.ac().agent_connected;
         let agent_reset = self.send_new_session();
+        // Clearing the local conversation intentionally abandons the old
+        // session view even when the transport cannot accept new_session.
+        self.ac_mut()
+            .reset_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.chat.clear();
         // The clear wiped any persistent refusal Status line; re-arm the
         // once-per-episode latch so the next refusal (send_state_resync

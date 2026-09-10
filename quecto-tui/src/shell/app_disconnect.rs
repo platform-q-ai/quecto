@@ -53,7 +53,12 @@ impl App {
         // the guard must not outlive it and freeze the roster (#1626).
         self.ac_mut().roster.take_delete_pending();
         self.ac_mut().agent_state.reset();
-        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
+        self.ac_mut()
+            .stop_coordinator_clock(tokio::time::Instant::now());
+        // The answer to an in-flight resume died with the connection; a
+        // `/resume` still latched in `pending_session_resume` is re-sent by
+        // the next attach.
+        self.ac_mut().pending_session_resume_id = None;
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;
         self.ac_mut().master_session.chat.finalize_assistant();

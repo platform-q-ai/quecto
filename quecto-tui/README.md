@@ -191,6 +191,17 @@ down from their transition snapshot using local monotonic time. At local expiry
 they remain visible as `cooldown elapsed` until an authoritative update arrives;
 this presentation does not claim admission availability.
 
+### Coordinator timer
+
+The Coordinator row's timer is the session's cumulative active-processing
+time: it runs while the agent is processing (from `agent_start` to
+`agent_end`, an abort, an error or a disconnect) and freezes in between, so
+idle time between your messages and the agent's wakes never counts and a new
+message resumes the frozen value rather than restarting at `0:00` (#1726). It
+restarts at `0:00` only at a session boundary: `/new` or `/clear`, a
+`/resume` into a different session, or an attach of the tab to an agent
+(including a reconnect after a disconnect, which froze the previous value).
+
 ### Subagent transcript freshness
 
 Direct child-socket feeds display live token events. Open subagent feeds also

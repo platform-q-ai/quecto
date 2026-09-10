@@ -352,6 +352,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
 | `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
+| `shell/app_session_resume.rs` | `shell` `/resume` request and answer handling (split from `app_response.rs` for the 750-line cap, #1726) |
 | `shell/app_session_stats_text.rs` | `shell` session stats status text formatting (line-count split, #1567) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |

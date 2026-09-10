@@ -147,8 +147,10 @@ impl App {
     fn handle_agent_start(&mut self) {
         self.ac_mut().agent_state.start();
         let now = tokio::time::Instant::now();
-        self.ac_mut().started_at = now;
-        self.ac_mut().stopped_at = None;
+        // The Coordinator row reports cumulative active processing time for the
+        // current session. Resume from the frozen duration so a new user message
+        // or wake does not restart the counter (#1726); idle time stays excluded.
+        self.ac_mut().start_coordinator_clock(now);
         self.ac_mut().master_session.tools_this_turn = 0;
         self.ac_mut().master_session.open_tool_calls = 0;
         let _ = self
@@ -178,7 +180,8 @@ impl App {
     }
 
     fn handle_agent_end(&mut self) {
-        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
+        self.ac_mut()
+            .stop_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.running = false;
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;

@@ -323,6 +323,11 @@ fn respond(
             _ => {}
         }
     }
+    if command == "resume_session"
+        && let Some(id) = id
+    {
+        app.test_arm_resume_session(id);
+    }
     app.handle_response(
         id.map(String::from),
         command.to_string(),
@@ -422,13 +427,22 @@ async fn response_list_sessions_success_and_failure() {
 }
 
 #[tokio::test]
-async fn response_resume_session_success_and_failure() {
+async fn response_resume_session_success_and_failure_refresh_even_when_not_owned() {
     let mut h = harness().await;
     let a = h.app_mut();
     let data = serde_json::json!({"session": "alpha"});
     respond(a, None, "resume_session", true, Some(data), None);
     assert!(!a.notifications.is_empty());
+    assert!(
+        a.test_pending_resume_messages_id().is_some(),
+        "an id-less resume answer still reloads the transcript"
+    );
+    let before = a.notifications.messages().len();
     respond(a, None, "resume_session", false, None, Some("err"));
+    assert!(
+        a.notifications.messages().len() > before,
+        "an id-less failure still toasts"
+    );
 }
 
 #[tokio::test]

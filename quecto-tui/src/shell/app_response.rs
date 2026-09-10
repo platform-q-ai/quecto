@@ -271,11 +271,9 @@ impl App {
                     self.notify_response_error("Could not load tool catalogue", error);
                 }
             }
-            "resume_session" if success => {
-                self.clear_message_recovery();
-                self.handle_resume_success(data);
+            "resume_session" => {
+                self.handle_resume_response(id.as_deref(), success, data, error);
             }
-            "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
@@ -551,31 +549,6 @@ impl App {
         );
     }
 
-    fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
-        let session = data
-            .as_ref()
-            .map(crate::protocol::state_payloads::parse_resume_session_name)
-            .unwrap_or_else(|| "session".to_string());
-        self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
-        // clear_message_recovery already ran in the resume_session arm; mint
-        // AFTER that clear so the new pending survives (#1237).
-        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
-        self.send_command(Command::GetMessages {
-            agent_id: None,
-            id: Some(id),
-            before: None,
-            // `/resume` must restore the full newest transcript. The backend's
-            // no-count get_messages default is now a bounded page, so request a
-            // large explicit compat count while keeping `before: None`; older
-            // history beyond that page remains available via the published cursor.
-            count: Some(usize::MAX),
-        });
-        self.send_session_stats();
-        // The agent resets session-scoped state (e.g. the effort override,
-        // #1067) on resume_session; re-fetch so the footer tracks it.
-        self.send_state_resync();
-    }
-
     fn handle_get_subagents(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
         // The #1626 reconcile reply lifts the roster guard before it applies.
         self.take_delete_all_reconcile(id);
@@ -715,7 +688,8 @@ impl App {
                 text: format!("Error: {}", msg),
             });
         self.ac_mut().agent_state.reset();
-        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
+        self.ac_mut()
+            .stop_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.running = false;
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;
@@ -727,3 +701,25 @@ impl App {
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);
     }
 }
+
+impl App {
+    /// Reload the transcript after a resume: mint AFTER the recovery clear
+    /// so the new pending survives (#1237).
+    fn request_resumed_transcript(&mut self) {
+        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
+        self.send_command(Command::GetMessages {
+            agent_id: None,
+            id: Some(id),
+            before: None,
+            // `/resume` must restore the full newest transcript. The backend's
+            // no-count get_messages default is now a bounded page, so request a
+            // large explicit compat count while keeping `before: None`; older
+            // history beyond that page remains available via the published cursor.
+            count: Some(usize::MAX),
+        });
+    }
+}
+
+/// `/resume` request and answer handling (#1726).
+#[path = "app_session_resume.rs"]
+mod session_resume;
