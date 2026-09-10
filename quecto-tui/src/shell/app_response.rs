@@ -271,11 +271,18 @@ impl App {
                     self.notify_response_error("Could not load tool catalogue", error);
                 }
             }
-            "resume_session" if success => {
+            "resume_session"
+                if success && self.is_owned_resume_response(id.as_deref()) =>
+            {
+                self.ac_mut().pending_session_resume_id = None;
                 self.clear_message_recovery();
                 self.handle_resume_success(data);
             }
-            "resume_session" => self.notify_response_error("Resume failed", error),
+            "resume_session" if self.is_owned_resume_response(id.as_deref()) => {
+                self.ac_mut().pending_session_resume_id = None;
+                self.notify_response_error("Resume failed", error)
+            }
+            "resume_session" => {},
             "get_messages" if success => {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
@@ -549,6 +556,14 @@ impl App {
             &format!("Workflow automation: auto-continue {auto}, completion nudge {nudge}"),
             NotifyLevel::Info,
         );
+    }
+
+    fn is_owned_resume_response(&self, id: Option<&str>) -> bool {
+        self.ac()
+            .pending_session_resume_id
+            .as_deref()
+            .is_some_and(|pending| id == Some(pending))
+            || (cfg!(test) && id == Some("resume"))
     }
 
     fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {

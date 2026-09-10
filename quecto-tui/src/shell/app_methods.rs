@@ -184,8 +184,13 @@ impl App {
             self.send_list_sessions();
             return;
         }
+        self.ac_mut().session_resume_seq = self.ac().session_resume_seq.wrapping_add(1);
+        let id = self
+            .ac()
+            .namespaced_id(&format!("resume-{}", self.ac().session_resume_seq));
+        self.ac_mut().pending_session_resume_id = Some(id.clone());
         self.send_command(Command::ResumeSession {
-            id: Some(self.ac().namespaced_id("resume")),
+            id: Some(id),
             session: session.trim().to_string(),
         });
     }

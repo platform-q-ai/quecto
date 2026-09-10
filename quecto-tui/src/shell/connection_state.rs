@@ -65,6 +65,8 @@ pub(crate) struct ConnectionState {
     pub(crate) session_key: Option<String>,
     /// Session key to resume once this tab becomes connected (workspace restore).
     pub(crate) pending_session_resume: Option<String>,
+    pub(crate) pending_session_resume_id: Option<String>,
+    pub(crate) session_resume_seq: u64,
     /// True while a background spawn/reattach for this tab is in flight (AC2).
     pub(crate) pending_attach: bool,
     /// Generation stamped when the current attach/spawn was kicked; outcomes
@@ -182,6 +184,8 @@ impl ConnectionState {
             socket_path: None,
             session_key: None,
             pending_session_resume: None,
+            pending_session_resume_id: None,
+            session_resume_seq: 0,
             pending_attach: false,
             attach_generation: 0,
             editor_draft: String::new(),
