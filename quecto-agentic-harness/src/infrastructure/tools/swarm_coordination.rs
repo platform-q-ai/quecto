@@ -19,6 +19,8 @@ struct WireMember {
 struct WireSnapshot {
     control_generation: u64,
     status: String,
+    #[serde(default)]
+    outcome: Option<String>,
     coordinator: String,
     deadline: f64,
     members: Vec<WireMember>,
@@ -50,9 +52,11 @@ fn decode(value: Value) -> Result<Snapshot, DomainError> {
     if !members.iter().any(|m| m.id == wire.coordinator) {
         return Err(invalid("coordinator missing from membership"));
     }
+    let outcome = wire.outcome.as_deref().map(decode_status).transpose()?;
     Ok(Snapshot {
         control_generation: wire.control_generation,
         status,
+        outcome,
         coordinator: wire.coordinator,
         deadline: wire.deadline,
         members,
@@ -130,6 +134,8 @@ impl SwarmContext {
                     .as_str()
                     .ok_or_else(|| invalid("missing control status"))?,
             )?,
+            outcome: value["outcome"].as_str().map(decode_status).transpose()?,
+            reason: value["reason"].as_str().map(str::to_owned),
             wake_warnings: Vec::new(),
             generation: value["generation"]
                 .as_u64()

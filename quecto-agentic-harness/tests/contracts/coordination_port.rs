@@ -40,7 +40,10 @@ fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scop
     assert!(port.confirm_unlaunched("replacement").is_err());
     port.quarantine("replacement").unwrap();
     let snapshot = port.snapshot().unwrap();
-    assert_eq!(snapshot.status, RunStatus::Failed);
+    // A lost harness ends the run as a pause holding `failed` (#1729).
+    assert_eq!(snapshot.status, RunStatus::Paused);
+    assert_eq!(snapshot.outcome, Some(RunStatus::Failed));
+    assert!(snapshot.ended());
     assert_eq!(
         snapshot.members[0].endpoint.as_deref(),
         Some("/test-endpoint")

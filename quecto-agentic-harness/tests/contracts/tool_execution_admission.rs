@@ -5,7 +5,7 @@ async fn terminal_tools_are_explicitly_allowlisted_and_pause_denies_every_tool()
     context.check("bash", "{}").await.unwrap();
     context.pause("approval").unwrap();
     assert!(context.check("swarm", r#"{"op":"summary"}"#).await.is_err());
-    context.resume().unwrap();
+    context.resume_external().unwrap();
     context.cancel_run().unwrap();
     for op in ["summary", "events", "usage"] {
         context

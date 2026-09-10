@@ -114,6 +114,8 @@ impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
         Box::pin(async {
             Ok(crate::domain::swarm::RunControlReceipt {
                 budget: None,
+                outcome: None,
+                reason: None,
                 wake_warnings: Vec::new(),
                 wake_allowed: false,
                 status: crate::domain::swarm::RunStatus::Paused,
@@ -208,4 +210,69 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
         response["success"], false,
         "targeted command must not mutate the receiver"
     );
+}
+
+/// #1729: `extend` needs positive seconds; `close` reaches the control port
+/// below the model like every other supervisor control.
+#[tokio::test]
+async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+    super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+    let (commands, _receiver) = tokio::sync::mpsc::channel(1);
+    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let (broadcast, _) = tokio::sync::broadcast::channel(4);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
+        std::sync::Arc::new(TestSwarmControl),
+    ));
+    for (line, expect_error) in [
+        (
+            r#"{"type":"swarm_control","action":"extend","id":"x1"}"#,
+            true,
+        ),
+        (
+            r#"{"type":"swarm_control","action":"extend","id":"x2","deadline_seconds":0}"#,
+            true,
+        ),
+        (
+            r#"{"type":"swarm_control","action":"extend","id":"x3","deadline_seconds":600}"#,
+            false,
+        ),
+        (
+            r#"{"type":"swarm_control","action":"close","id":"c1"}"#,
+            false,
+        ),
+    ] {
+        assert!(
+            dispatch(ReaderDispatchCtx {
+                line: line.into(),
+                cancel_handle: &cancel,
+                turn_control: &control,
+                snapshot: &snapshot,
+                registry: &registry,
+                subagent_registry: &None,
+                broadcast_tx: &broadcast,
+                client_id: 1,
+                cmd_tx: &commands,
+            })
+            .await
+        );
+        let response: serde_json::Value =
+            serde_json::from_str(&replies.recv().await.unwrap()).unwrap();
+        assert_eq!(response["success"], !expect_error, "{line}: {response}");
+        if expect_error {
+            assert!(
+                response["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("deadline_seconds"),
+                "{response}"
+            );
+        } else {
+            assert_eq!(response["data"]["generation"], 42, "{response}");
+        }
+    }
 }

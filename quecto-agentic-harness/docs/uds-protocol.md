@@ -1344,10 +1344,13 @@ All flags for `quecto agent` that affect UDS mode:
 
 `{"type":"swarm_control","id":"pause-1","action":"pause","reason":"approval"}`
 applies a durable pause independently of the prompt queue. Actions are `pause`,
-`resume`, `status`, and `usage_budget`; the latter requires `token_limit` (positive
-integer or explicit null) and optionally `strict_unknown` (default true). Add
+`resume`, `close`, `extend`, `status`, and `usage_budget`; `usage_budget` requires
+`token_limit` (positive integer or explicit null) and optionally `strict_unknown`
+(default true); `extend` requires `deadline_seconds` (positive integer). Add
 `agent_id` to route to a descendant. Successful responses include `applied`,
-`status`, `generation`, and `budget`. The internal `wake` action carries a durable
+`status`, `generation`, `budget`, and, for a run holding a proposed outcome
+(#1729), `outcome` and `reason`. Every end of a run is such a pause; only these
+supervisor controls resume (`resume`) or finish (`close`) it. The internal `wake` action carries a durable
 event generation and is rechecked for actionability at dispatch; it answers
 `{"status":"accepted"}` when a wake turn is queued, `{"status":"coalesced"}` when
 the generation joined an already pending wake, or an error (`wake unavailable`,

@@ -18,7 +18,7 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
     };
     context.pause("old pause").unwrap();
     let old = context.snapshot().unwrap();
-    context.resume().unwrap();
+    context.resume_external().unwrap();
     let started = tool.execute(r#"{"op":"run","code":"import time; time.sleep(0.1); print('resumed')","background":true}"#).await.unwrap();
     let started: Value = serde_json::from_str(&started.content).unwrap();
     crate::application::swarm::settle(&old, &context.member, &RuntimeProcesses(&context))

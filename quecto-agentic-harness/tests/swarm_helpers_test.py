@@ -84,13 +84,16 @@ class WorkbenchBehavior(unittest.TestCase):
         warnings = [event for event in self.parent.events(limit=100)['events'] if event['action'] == 'usage-warning']
         self.assertEqual(len(warnings), 1)
         self.worker._record_request(dict(first, request_id='r2', context_input_tokens=20, output_tokens=5))
-        self.assertEqual(self.parent.summary()['status'], 'paused')
+        paused = self.parent.summary()
+        self.assertEqual((paused['status'], paused['outcome']), ('paused', 'budget-exhausted'))
         self.assertEqual(self.worker.task(task['id'])['token'], claim['token'])
-        self.parent.resume()
+        with self.assertRaisesRegex(SwarmError, 'token budget'):
+            self.parent._resume_external()
         self.assertEqual(self.parent._request_admission()['status'], 'paused')
         self.parent.usage_budget(200)
-        self.parent.resume()
-        self.assertEqual(self.parent._request_admission()['status'], 'running')
+        self.parent._resume_external()
+        admission = self.parent._request_admission()
+        self.assertEqual((admission['status'], admission['outcome']), ('running', None))
 
     def test_unknown_usage_is_explicit_and_strict_budget_suspends(self):
         self.parent.usage_budget(100, strict_unknown=True)
@@ -120,7 +123,9 @@ class WorkbenchBehavior(unittest.TestCase):
                 self.task('cannot start during pause')
             with self.assertRaises(SwarmError):
                 self.worker.resume()
-            paused.resume()
+            with self.assertRaisesRegex(SwarmError, 'outside the swarm'):
+                paused.resume()
+            paused._resume_external()
             resumed = paused.summary()
             self.assertEqual(resumed['status'], 'running')
             self.assertAlmostEqual(resumed['deadline'] - (deadline + 500), deadline - now, places=3)
@@ -152,7 +157,7 @@ class WorkbenchBehavior(unittest.TestCase):
                                      'outcome': 'cancelled'})
         self.assertEqual(self.parent.usage_report()['totals']['unknown_usage_requests'], 0)
         self.parent.pause('supervisor pause')
-        self.parent.resume()
+        self.parent._resume_external()
         self.assertEqual(self.parent.summary()['status'], 'running')
         self.worker._record_request({'request_id': 'hidden', 'instrumented_attempts': 1,
                                      'outcome': 'failed'})
@@ -164,7 +169,7 @@ class WorkbenchBehavior(unittest.TestCase):
         generation = self.parent.summary()['event_cursor']
         self.parent.pause('hold')
         self.assertFalse(self.parent._accept_wake(generation))
-        self.parent.resume()
+        self.parent._resume_external()
         self.assertTrue(self.parent._accept_wake(generation), 'the generation was not consumed while paused')
         with self.assertRaises(SwarmError):
             self.parent._accept_wake(self.parent.summary()['event_cursor'] + 1)
@@ -269,7 +274,7 @@ class WorkbenchBehavior(unittest.TestCase):
             self.parent.revalidate_task(a['id'], 'R2', a['evidence'] or [{'artifact': 'old', 'revision': 'R1'}])
         self.parent.revalidate_task(a['id'], 'R2', evidence)
         self.parent.complete('R2')
-        self.assertEqual(self.parent.summary()['status'], 'succeeded')
+        self.assertEqual((self.parent.summary()['status'], self.parent.summary()['outcome']), ('paused', 'succeeded'))
 
     def test_unchanged_blocker_does_not_repeat_idle_wake_cycles(self):
         task = self.task()
@@ -326,7 +331,7 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(self.parent._notifications(), [], 'acknowledgment must not wake the pool')
         self.worker.send('late-question', 'coordinator', 'Late result')
         self.parent.stop('blocked', 'report partial progress')
-        self.assertEqual(self.worker._notifications(), [], 'terminal state must suppress queued work hints')
+        self.assertEqual(self.worker._notifications(), [], 'an ended run must suppress queued work hints')
 
     def test_an_observers_read_does_not_broadcast_another_members_changes(self):
         self.parent._notifications()
@@ -482,7 +487,7 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'evidence'):
             self.parent.complete('changed')
         self.parent.complete('abc')
-        self.assertEqual(self.parent.summary()['status'], 'succeeded')
+        self.assertEqual((self.parent.summary()['status'], self.parent.summary()['outcome']), ('paused', 'succeeded'))
 
     def test_workers_cannot_accept_overall_completion(self):
         with self.assertRaisesRegex(SwarmError, 'coordinator'):
@@ -506,14 +511,30 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'budget-exhausted'):
             self.worker.claim(task['id'])
         summary = self.parent.summary()
-        self.assertEqual(summary['status'], 'budget-exhausted')
+        self.assertEqual((summary['status'], summary['outcome'], summary['outcome_reason']),
+                         ('paused', 'budget-exhausted', 'deadline'))
         self.assertEqual(len(summary['tasks']), 1)
+        self.assertEqual(self.worker.summary()['members'][1]['status'], 'live', 'expiry kills nobody')
+        with self.assertRaisesRegex(SwarmError, 'extend the deadline'):
+            self.parent._resume_external()
+        with self.assertRaises(SwarmError):
+            self.parent._extend_deadline(0)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute('UPDATE run SET deadline=1')  # long expired: the grant is future time
+            db.commit()
+        self.parent._extend_deadline(600)
+        self.parent._resume_external()
+        resumed = self.parent.summary()
+        self.assertEqual((resumed['status'], resumed['outcome']), ('running', None))
+        self.assertGreater(resumed['deadline'], time.time() + 500)
+        self.assertLess(resumed['deadline'], time.time() + 700)
+        self.worker.claim(task['id'])
 
     def test_coordinator_death_leaves_readable_failed_progress(self):
         self.task()
         self.worker._confirmed_dead('coordinator')
         summary = self.parent.summary()
-        self.assertEqual(summary['status'], 'failed')
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
         self.assertEqual(summary['task_count'], 1)
         with self.assertRaises(SwarmError):
             self.task('after-parent-death')
@@ -538,6 +559,128 @@ class WorkbenchBehavior(unittest.TestCase):
         self.db.write_bytes(b'corrupt')
         with self.assertRaisesRegex(SwarmError, 'coordination'):
             self.parent.summary()
+
+    def test_coordinator_stop_is_a_resumable_pause_only_the_supervisor_lifts(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.parent.stop('blocked', 'needs a decision from the master')
+        ended = self.parent.summary()
+        self.assertEqual((ended['status'], ended['outcome'], ended['outcome_reason']),
+                         ('paused', 'blocked', 'needs a decision from the master'))
+        self.assertEqual([m['status'] for m in ended['members']], ['live', 'live'], 'nobody is terminated')
+        self.assertEqual(self.worker.task(task['id'])['token'], claim['token'], 'claims survive the end')
+        self.assertEqual(self.parent._control_status()['outcome'], 'blocked')
+        with self.assertRaisesRegex(SwarmError, 'no new work'):
+            self.task('nothing new while ended')
+        with self.assertRaisesRegex(SwarmError, 'outside the swarm'):
+            self.parent.resume()
+        with self.assertRaisesRegex(SwarmError, 'outside the swarm'):
+            self.worker.resume()
+        self.parent.stop('blocked', 'needs a decision from the master')  # idempotent
+        with self.assertRaisesRegex(SwarmError, 'already paused'):
+            self.parent.stop('failed', 'a different verdict while ended')
+        self.parent._resume_external()
+        resumed = self.parent.summary()
+        self.assertEqual((resumed['status'], resumed['outcome']), ('running', None))
+        self.assertEqual(self.worker.task(task['id'])['token'], claim['token'])
+        actions = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(actions[-3:], ['stop', 'paused', 'resumed'])
+
+    def test_completion_holds_success_until_the_supervisor_closes_it(self):
+        self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
+        self.parent.evidence('review', 'review.md', 'R1', 'review', True)
+        with self.assertRaisesRegex(SwarmError, 'without a proposed outcome'):
+            self.parent._close()
+        self.parent.pause('a plain pause holds nothing to close')
+        with self.assertRaisesRegex(SwarmError, 'without a proposed outcome'):
+            self.parent._close()
+        self.parent._resume_external()
+        self.parent.complete('R1')
+        held = self.parent.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'succeeded'))
+        self.assertEqual([m['status'] for m in held['members']], ['live', 'live'])
+        with self.assertRaisesRegex(SwarmError, 'outside the swarm'):
+            self.parent.coordination.close()
+        self.parent._close()
+        closed = self.parent.summary()
+        self.assertEqual((closed['status'], closed['outcome']), ('succeeded', 'succeeded'))
+        with self.assertRaisesRegex(SwarmError, 'succeeded'):
+            self.task('after close')
+        with self.assertRaisesRegex(SwarmError, 'only a paused run'):
+            self.parent._resume_external()
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'closed')
+
+    def test_cancellation_stays_terminal_even_while_ended(self):
+        self.parent.stop('failed', 'unrecoverable')
+        with self.assertRaisesRegex(SwarmError, r'paused \(failed'):
+            self.parent.stop('blocked', 'a second verdict while ended')
+        self.parent.stop('cancelled', 'user gave up')
+        cancelled = self.parent.summary()
+        self.assertEqual((cancelled['status'], cancelled['outcome']), ('cancelled', None))
+        with self.assertRaisesRegex(SwarmError, 'only a paused run'):
+            self.parent._resume_external()
+        with self.assertRaises(SwarmError):
+            self.parent._extend_deadline(60)
+
+    def test_a_closed_run_cannot_be_cancelled_over(self):
+        self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
+        self.parent.evidence('review', 'review.md', 'R1', 'review', True)
+        self.parent.complete('R1')
+        self.parent._close()
+        with self.assertRaisesRegex(SwarmError, 'already succeeded'):
+            self.parent.stop('cancelled', 'too late')
+        self.assertEqual(self.parent.summary()['status'], 'succeeded')
+        placeholder = self.client('other')
+        with self.assertRaisesRegex(SwarmError, 'unknown'):
+            placeholder.stop('cancelled', 'not a member')
+        fresh = Workbench(str(self.root / 'fresh.sqlite'), str(self.root), 'boot')
+        fresh._bootstrap(1, 'start-b', '/tmp/b.sock')
+        with self.assertRaisesRegex(SwarmError, 'not created yet'):
+            fresh.stop('cancelled', 'nothing to cancel')
+        self.assertEqual(fresh._status()['status'], 'setup')
+
+    def test_a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused(self):
+        self.parent.pause('hold')
+        self.worker._confirmed_dead('coordinator')
+        held = self.worker.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'failed'))
+        self.assertIn('coordinator death', held['outcome_reason'])
+        with self.assertRaises(SwarmError):
+            self.task('after-parent-death')
+        actions = [e['action'] for e in self.worker.events(limit=100)['events']]
+        self.assertEqual(actions.count('paused'), 1, 'a loss during a pause does not restart the pause clock')
+
+    def test_a_loss_during_a_pause_keeps_the_frozen_budget(self):
+        from unittest.mock import patch
+        now = time.time()
+        deadline = self.parent.summary()['deadline']
+        self.parent.coordination.clock = lambda: time.time()
+        with patch('time.time', return_value=now):
+            self.parent.pause('hold')
+        with patch('time.time', return_value=now + 100):
+            self.parent._quarantine('worker')
+        held = self.parent.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'failed'))
+        with patch('time.time', return_value=now + 500):
+            self.parent._resume_external()
+            self.assertAlmostEqual(self.parent.summary()['deadline'], deadline + 500, places=3)
+
+    def test_a_worker_loss_keeps_the_verdict_the_coordinator_already_proposed(self):
+        self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
+        self.parent.evidence('review', 'review.md', 'R1', 'review', True)
+        self.parent.complete('R1')
+        self.parent._quarantine('worker')
+        held = self.parent.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'succeeded'))
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'scope_unknown')
+        self.parent._close()
+        self.assertEqual(self.parent.summary()['status'], 'succeeded')
+
+    def test_deadline_extension_is_capped_at_seven_days_ahead(self):
+        with self.assertRaisesRegex(SwarmError, 'seven days'):
+            self.parent._extend_deadline(604800)
+        self.parent._extend_deadline(3600)
+        self.assertGreater(self.parent.summary()['deadline'], time.time() + 3000)
 
 
 if __name__ == '__main__':

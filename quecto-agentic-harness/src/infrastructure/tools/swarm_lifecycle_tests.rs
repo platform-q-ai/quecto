@@ -98,31 +98,27 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
     context.pause("again").unwrap();
-    let tool =
+    // The coordinator's own `swarm resume` op is refused (#1729); only the
+    // supervisor's control port resumes, and it wakes everyone.
+    let refused =
         super::super::swarm_control::control(context.clone(), "resume", serde_json::json!({}))
             .await
-            .unwrap();
-    let tool_generation = tool["generation"].as_u64().unwrap();
-    assert!(tool_generation > receipt.generation, "{tool}");
-    assert!(tool.get("wake_warnings").is_none(), "{tool}");
+            .expect_err("members cannot resume");
+    assert!(
+        refused.to_string().contains("outside the swarm"),
+        "{refused}"
+    );
+    let second = context.apply(RunControlAction::Resume).await.unwrap();
+    assert!(second.generation > receipt.generation, "{second:?}");
+    assert!(second.wake_warnings.is_empty(), "{second:?}");
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     let generations = sink.await.unwrap();
-    assert_eq!(generations, [receipt.generation, tool_generation]);
+    assert_eq!(generations, [receipt.generation, second.generation]);
     // A member that cannot be reached is reported, not fatal.
     std::fs::remove_file(&socket).unwrap();
-    context.pause("once more").unwrap();
-    let tool =
-        super::super::swarm_control::control(context.clone(), "resume", serde_json::json!({}))
-            .await
-            .unwrap();
-    assert_eq!(tool["status"], "running", "{tool}");
-    assert_eq!(
-        tool["wake_warnings"].as_array().map(Vec::len),
-        Some(1),
-        "{tool}"
-    );
     context.pause("and again").unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
+    assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
     assert!(receipt.wake_warnings[0].contains("worker"), "{receipt:?}");
 }

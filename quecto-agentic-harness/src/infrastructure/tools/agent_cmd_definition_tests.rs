@@ -76,3 +76,38 @@ fn report_export_option_is_preserved_and_type_checked() {
         true
     );
 }
+
+/// #1729: the supervisor closes an ended run or grants it deadline time.
+#[test]
+fn supervisor_close_and_extend_commands_are_typed() {
+    let (_, wire, _) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+        "agent_id":"11111111-1111-4111-8111-111111111111", "command":"swarm_control",
+        "action":"extend", "deadline_seconds":600
+    }))
+    .unwrap();
+    let command: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(command["action"], "extend");
+    assert_eq!(command["deadline_seconds"], 600);
+    let (_, wire, _) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+        "agent_id":"11111111-1111-4111-8111-111111111111", "command":"swarm_control",
+        "action":"close"
+    }))
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&wire).unwrap()["action"],
+        "close"
+    );
+    for seconds in [
+        serde_json::json!(0),
+        serde_json::json!(-5),
+        serde_json::json!("600"),
+        serde_json::Value::Null,
+    ] {
+        let refused = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+            "agent_id":"11111111-1111-4111-8111-111111111111", "command":"swarm_control",
+            "action":"extend", "deadline_seconds":seconds
+        }))
+        .expect_err("extend needs positive seconds");
+        assert!(refused.contains("deadline_seconds"), "{refused}");
+    }
+}

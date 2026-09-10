@@ -32,7 +32,7 @@ without the documentation files being present in the container checkout.
 | Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
 | Detailed live task/file pages | Coordinator uses `board.tasks()` / `board.file_owners()` while the run is running |
 | Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
-| Final result | Read summary status, final revision and criterion evidence; distinguish `succeeded` from blocked/failed/cancelled/budget-exhausted |
+| Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
 
 There are no dedicated public swarm creation, update, inspection or result UDS
@@ -89,9 +89,11 @@ Launch reservations precede process launch. Only reservations for processes that
 never started are released automatically. Launched processes are identified by
 PID and kernel start time, avoiding recycled-PID mistakes. `op=reconcile` detects
 harness death, but a dead harness does **not** prove that its Bash/Python execution
-groups stopped: those children can survive and be reparented. Therefore the run
-fails, membership and file ownership stay reserved, and replacement claims are
-rejected. Stop and discard that container environment before starting a fresh run.
+groups stopped: those children can survive and be reparented. Therefore a running
+run pauses holding `failed` (a paused run keeps its pause clock and any verdict
+the coordinator had already proposed), membership and file ownership stay
+reserved, and replacement claims are rejected. Close and discard that container
+environment before starting a fresh run.
 The current adapter cannot safely recover an abruptly exited worker in place;
 `recover` requires independently confirmed execution-scope death, which ordinary
 harness reconciliation deliberately does not assert. Post-launch rollback is also
@@ -195,16 +197,29 @@ contract. Existing audit events from older versions are not retroactively recons
 `op=summary` reports goal, status, membership usage/limit, task counts and the first 50 task/file details,
 blockers and evidence. History is opt-in through `op=events` (`after`, `limit` 1–100); `since=event_cursor` suppresses unchanged summary payloads. Total counts include
 entries beyond the first page. File reservations are bounded to 1000 per run. The full
-audit remains in SQLite. `stop(status, reason)` distinguishes `blocked`, `failed`,
-`cancelled`, and `budget-exhausted`; success is `succeeded`. `op=cancel_run` is the
-parent cancellation operation. New work and admission stop at terminal state;
-settlement cancels local foreground and background Python processes before attempting UDS turn abort,
-then terminates workers through the process adapter. Every member's watcher checks
-for remote terminal outcomes at 500 ms intervals, including while idle, and cancels
-its own execution registry, including coordinator Python. The coordinator harness
-remains available for reporting after every terminal outcome; put final report
-data on the board before calling `complete` or `stop`, since the interpreter may
-be killed as soon as the watcher observes the outcome. The registry closes against concurrent new launches. Each Python invocation owns
+audit remains in SQLite. Every end of a run is a resumable pause that only the
+supervisor outside the swarm lifts (#1729): `stop(status, reason)` with
+`blocked`, `failed` or `budget-exhausted`, `complete(revision)` (`succeeded`),
+an observed-token budget and the wall-clock deadline all move the run to
+`paused` holding that outcome and reason (`summary.outcome`,
+`summary.outcome_reason`, the control receipt's `outcome`). Nothing is killed:
+members stay live with their claims, reservations, inboxes and evidence; their
+execution and inference suspend as for any pause, while the coordinator keeps
+reporting (native `summary`, `events`, `usage`; its own finished interpreter is
+cancelled). The supervisor then either resumes the same run (`swarm_control
+resume`, which extends the deadline by the paused time, clears the outcome and
+wakes every member) or closes it (`swarm_control close`), which makes the held
+outcome terminal and settles: local Python is cancelled, workers are aborted
+and terminated through the process adapter, and the coordinator harness stays
+for reporting. A run paused for `budget-exhausted` refuses to resume until
+the supervisor grants budget (`swarm_control extend` with `deadline_seconds`,
+or `usage_budget`); the refusal names what to grant. Members, including the
+coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
+`cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
+once. Put final report data on the board before calling `complete` or `stop`:
+the interpreter that proposes the outcome is cancelled as soon as the watcher
+observes it, and the execution registry admits nothing but native reads until
+the supervisor resumes the run (it closes for good only on close or cancel). Each Python invocation owns
 its ordinary process group until cleanup: even if Python returns first, remaining
 ordinary children are terminated before its result is published. On Linux, the
 interpreter is reaped only after group cleanup, preventing PID reuse during
@@ -304,9 +319,10 @@ host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
 with `board.block(task_id, claim_token, reason)`, report the exact question to the
-master and yield the turn. Do not sleep/poll or use `board.stop('blocked', ...)`
-as a pause: a blocked **run** is terminal, closes Python execution and settles
-workers. A blocked **task** retains its claim; use `unblock(id, token, reason)` after the answer arrives. For a whole-run wait, use durable `pause`/`resume`: the deadline is extended by the paused interval.
+master and yield the turn. Do not sleep/poll. `board.stop('blocked', ...)` ends
+the run: it becomes a pause holding `blocked` that only the master can resume or
+close, so use it when the whole run cannot proceed without the master, not to wait
+for one task. A blocked **task** retains its claim; use `unblock(id, token, reason)` after the answer arrives. For a whole-run wait the coordinator may `pause`; only the master resumes (the deadline is extended by the paused interval).
 
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
 it must interrupt a busy coordinator. A queued `follow_up` waits for the current
@@ -331,8 +347,8 @@ An accepted steering request takes priority over buffered follow-up work at the 
 
 The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
 contains supervisor command examples, receipt semantics, raw export and budget
-configuration. `swarm_control` pause/resume/status/usage_budget bypass the model
-queue and route through ancestors to the addressed member. Swarm creation and a
+configuration. `swarm_control` pause/resume/close/extend/status/usage_budget
+bypass the model queue and route through ancestors to the addressed member. Swarm creation and a
 general dashboard event API remain separate follow-on work.
 
 Each attempted logical request records available provider input/output/cache
@@ -368,7 +384,8 @@ concurrent appends. The manifest states this scope. Previously cleared/evicted
 messages are not reconstructed. Use normal container artifact transport to copy
 these files to the host.
 
-Resume restores admission and extends the deadline. It also re-arms every
+Resume (supervisor only) restores admission, clears any outcome the run was
+holding and extends the deadline. It also re-arms every
 member whose automatic turns were suspended by a provider failure: the
 suspension is dated by the control generation current after the failed turn
 (a pause and a resume each bump it), a resume wakes every live member with

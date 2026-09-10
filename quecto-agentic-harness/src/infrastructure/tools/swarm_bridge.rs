@@ -113,8 +113,24 @@ impl SwarmContext {
         self.rpc("pause", json!([reason]))
     }
 
+    /// The coordinator's own resume: refused by the store (#1729).
     pub fn resume(&self) -> Result<Value, DomainError> {
         self.rpc("resume", json!([]))
+    }
+
+    /// Supervisor resume from outside the swarm (#1729).
+    pub fn resume_external(&self) -> Result<Value, DomainError> {
+        self.rpc("_resume_external", json!([]))
+    }
+
+    /// Supervisor close: the held outcome becomes terminal (#1729).
+    pub fn close(&self) -> Result<Value, DomainError> {
+        self.rpc("_close", json!([]))
+    }
+
+    /// Supervisor deadline extension in seconds (#1729).
+    pub fn extend_deadline(&self, seconds: u64) -> Result<Value, DomainError> {
+        self.rpc("_extend_deadline", json!([seconds]))
     }
 
     pub fn control_status(&self) -> Result<Value, DomainError> {

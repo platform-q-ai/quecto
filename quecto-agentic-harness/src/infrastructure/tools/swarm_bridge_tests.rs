@@ -262,7 +262,12 @@ async fn ready_failure_retains_launched_scope_after_child_rollback() {
     assert_eq!(context.summary().unwrap()["usage"], 2);
     prepared.rollback_once().await;
     assert_eq!(context.summary().unwrap()["usage"], 2);
-    assert_eq!(context.summary().unwrap()["status"], "failed");
+    // A lost harness ends the run as a pause holding `failed` (#1729).
+    let summary = context.summary().unwrap();
+    assert_eq!(
+        (summary["status"].as_str(), summary["outcome"].as_str()),
+        (Some("paused"), Some("failed"))
+    );
 }
 
 #[tokio::test]
@@ -401,7 +406,10 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
         "harness death cannot prove its execution scope stopped"
     );
     assert_eq!(snapshot["usage"], 2);
-    assert_eq!(snapshot["status"], "failed");
+    assert_eq!(
+        (snapshot["status"].as_str(), snapshot["outcome"].as_str()),
+        (Some("paused"), Some("failed"))
+    );
     assert!(parent.call("recover", json!([task["id"]])).is_err());
 }
 
@@ -474,9 +482,13 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
         tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
             .await
             .is_err(),
-        "terminal run queued another wake hint"
+        "an ended run queued another wake hint"
     );
-    assert_eq!(context.summary().unwrap()["status"], "blocked");
+    let summary = context.summary().unwrap();
+    assert_eq!(
+        (summary["status"].as_str(), summary["outcome"].as_str()),
+        (Some("paused"), Some("blocked"))
+    );
 }
 
 #[tokio::test]
@@ -586,7 +598,21 @@ async fn foreground_terminal_watcher(outcome: &str) {
         !workspace.join("late-write").exists(),
         "foreground interpreter survived terminal settlement"
     );
-    assert_eq!(context.summary().unwrap()["status"], outcome);
+    // Completion ends the run as a resumable pause holding `succeeded`;
+    // cancellation stays terminal (#1729).
+    let summary = context.summary().unwrap();
+    let expected = if outcome == "succeeded" {
+        ("paused", Some("succeeded"))
+    } else {
+        (outcome, None)
+    };
+    assert_eq!(
+        (
+            summary["status"].as_str().unwrap(),
+            summary["outcome"].as_str()
+        ),
+        expected
+    );
     assert!(result.content.contains("cancelled"), "{}", result.content);
 }
 
@@ -602,35 +628,15 @@ fn pause_receipt_uses_control_generation_and_is_idempotent() {
         .expect("transaction control generation");
     assert!(generation > 0);
     assert_eq!(context.pause("same pause").unwrap(), paused);
-    let resumed = context.resume().unwrap();
+    let refused = context.resume().expect_err("members cannot resume");
+    assert!(
+        refused.to_string().contains("outside the swarm"),
+        "{refused}"
+    );
+    let resumed = context.resume_external().unwrap();
     assert_eq!(resumed["status"], "running");
     assert!(resumed["generation"].as_u64().unwrap() > generation);
-    assert_eq!(context.resume().unwrap(), resumed);
-}
-
-#[tokio::test]
-async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
-    use crate::domain::provider::RequestAdmission;
-    for status in ["failed", "blocked", "cancelled"] {
-        let directory = tempfile::tempdir().unwrap();
-        let parent = context(&directory);
-        create(&parent, 2);
-        parent
-            .call("stop", json!([status, "retain diagnostic report"]))
-            .unwrap();
-        assert!(
-            parent.check().await.is_ok(),
-            "coordinator report unavailable for {status}"
-        );
-        let worker = SwarmContext {
-            member: "worker".into(),
-            ..parent.clone()
-        };
-        assert!(
-            worker.check().await.is_err(),
-            "terminal worker admitted for {status}"
-        );
-    }
+    assert_eq!(context.resume_external().unwrap(), resumed);
 }
 
 #[tokio::test]
@@ -682,7 +688,7 @@ async fn resumed_swarm_can_start_python_jobs_after_suspension() {
     super::swarm_lifecycle::settle(context.clone())
         .await
         .unwrap();
-    context.resume().unwrap();
+    context.resume_external().unwrap();
     let result = tool
         .execute(r#"{"code":"print('resumed')"}"#)
         .await
@@ -693,41 +699,6 @@ async fn resumed_swarm_can_start_python_jobs_after_suspension() {
         result.content
     );
     assert!(result.content.contains("resumed"));
-}
-
-#[tokio::test]
-async fn terminal_tool_admission_allows_only_native_read_operations() {
-    use crate::domain::tool::ToolExecutionAdmission;
-    let directory = tempfile::tempdir().unwrap();
-    let parent = context(&directory);
-    create(&parent, 2);
-    parent.call("stop", json!(["failed", "report"])).unwrap();
-    for op in ["summary", "events", "usage"] {
-        assert!(
-            parent
-                .check("swarm", &json!({"op":op}).to_string())
-                .await
-                .is_ok()
-        );
-    }
-    for (name, args) in [
-        ("bash", "{}"),
-        ("spawn_agent", "{}"),
-        ("swarm", r#"{"op":"run","code":"print(1)"}"#),
-        ("swarm", r#"{"op":"resume"}"#),
-        ("swarm", "{}"),
-        ("swarm", "invalid"),
-    ] {
-        assert!(
-            parent.check(name, args).await.is_err(),
-            "admitted {name}: {args}"
-        );
-    }
-    let worker = SwarmContext {
-        member: "worker".into(),
-        ..parent
-    };
-    assert!(worker.check("swarm", r#"{"op":"summary"}"#).await.is_err());
 }
 
 #[tokio::test]
@@ -743,3 +714,6 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
     assert_eq!(delta["unchanged"], true);
     assert!(delta.to_string().len() < 150);
 }
+
+#[path = "swarm_bridge_admission_tests.rs"]
+mod admission_tests;

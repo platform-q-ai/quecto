@@ -13,6 +13,8 @@ impl SwarmRunControl for Control {
         Box::pin(async {
             Ok(RunControlReceipt {
                 budget: None,
+                outcome: None,
+                reason: None,
                 wake_warnings: Vec::new(),
                 wake_allowed: false,
                 status: self.0,
@@ -131,7 +133,7 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
         receiver.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Closed)
     );
-    context.resume().unwrap();
+    context.resume_external().unwrap();
     let (sender, mut receiver) = tokio::sync::oneshot::channel();
     *handle.lock().unwrap() = CancelSlot::ScopedArmed(sender, RunStatus::Running, 0);
     suspend(RunStatus::Paused, generation);
@@ -155,6 +157,8 @@ impl SwarmRunControl for RunningAt {
         Box::pin(async {
             Ok(RunControlReceipt {
                 budget: None,
+                outcome: None,
+                reason: None,
                 wake_warnings: Vec::new(),
                 wake_allowed: false,
                 status: RunStatus::Running,
@@ -229,6 +233,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
 
 /// A control port answering with a fixed status/generation or an error.
 struct Answer(Result<(RunStatus, u64), &'static str>);
+
 impl SwarmRunControl for Answer {
     fn apply(
         &self,
@@ -241,6 +246,8 @@ impl SwarmRunControl for Answer {
             match self.0 {
                 Ok((status, generation)) => Ok(RunControlReceipt {
                     budget: None,
+                    outcome: None,
+                    reason: None,
                     wake_warnings: Vec::new(),
                     wake_allowed: false,
                     status,
@@ -712,6 +719,8 @@ impl SwarmRunControl for Rising {
         Box::pin(async {
             Ok(RunControlReceipt {
                 budget: None,
+                outcome: None,
+                reason: None,
                 wake_allowed: false,
                 status: RunStatus::Running,
                 generation: self.0.fetch_add(10, std::sync::atomic::Ordering::SeqCst),
@@ -720,3 +729,6 @@ impl SwarmRunControl for Rising {
         })
     }
 }
+
+#[path = "uds_pending_ended_tests.rs"]
+mod ended_tests;

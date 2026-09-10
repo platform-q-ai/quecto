@@ -41,13 +41,21 @@ class Transaction:
     def set_outcome(self, status):
         self.connection.execute('UPDATE run SET status=?', (status,))
 
+    def propose_outcome(self, outcome, reason):
+        self.connection.execute("UPDATE run SET status='paused', outcome=?, outcome_reason=?", (outcome, reason))
+
+    def clear_outcome(self):
+        self.connection.execute('UPDATE run SET outcome=NULL, outcome_reason=NULL')
+
     def event(self, action, detail):
         self.store.event(self.connection, action, detail)
 
     def control_receipt(self):
         row = self.connection.execute("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')").fetchone()
         report = self.usage_report()
-        return {'status': self.run()['status'], 'generation': row[0], 'budget': dict(report['budget'], observed_tokens=report['totals']['observed_tokens'], unknown_usage_requests=report['totals']['unknown_usage_requests'])}
+        run = self.run()
+        return {'status': run['status'], 'outcome': run.get('outcome'), 'reason': run.get('outcome_reason'), 'generation': row[0],
+                'budget': dict(report['budget'], observed_tokens=report['totals']['observed_tokens'], unknown_usage_requests=report['totals']['unknown_usage_requests'])}
 
     def pause_started(self):
         row = self.connection.execute("SELECT detail FROM events WHERE action='paused' ORDER BY id DESC LIMIT 1").fetchone()

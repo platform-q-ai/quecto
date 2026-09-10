@@ -73,6 +73,16 @@ impl RunStatus {
     pub fn abort_coordinator(self) -> bool {
         matches!(self, Self::Failed | Self::BudgetExhausted)
     }
+
+    /// Outcomes a coordinator may propose when it ends a run (#1729); each
+    /// holds the run as a resumable pause until the supervisor outside the
+    /// swarm resumes or closes it.
+    pub fn proposable(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Blocked | Self::Failed | Self::BudgetExhausted
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,9 +110,33 @@ pub struct Member {
 pub struct Snapshot {
     pub control_generation: u64,
     pub status: RunStatus,
+    /// The outcome a paused run holds after the coordinator ended it, a
+    /// budget ran out, the deadline passed or its harness was lost (#1729);
+    /// a closed run keeps the outcome it reached. `None` for a plain
+    /// supervisor pause, a cancelled run and every live status.
+    pub outcome: Option<RunStatus>,
     pub coordinator: String,
     pub deadline: f64,
     pub members: Vec<Member>,
+}
+
+impl Snapshot {
+    /// A run its coordinator ended (or that ran out of budget), waiting for
+    /// the supervisor outside the swarm to resume or close it.
+    pub fn ended(&self) -> bool {
+        self.status == RunStatus::Paused && self.outcome.is_some_and(RunStatus::proposable)
+    }
+
+    /// Whether `actor` may run model inference: an ended run keeps its
+    /// coordinator available for reporting, exactly like a terminal one.
+    pub fn admits_inference(&self, actor: &str) -> bool {
+        let coordinator = actor == self.coordinator;
+        if self.ended() {
+            coordinator
+        } else {
+            self.status.admits_inference(coordinator)
+        }
+    }
 }
 
 /// Implementations atomically enforce membership policy before reserving slots.
@@ -172,7 +206,14 @@ pub enum RunControlAction {
     Pause {
         reason: String,
     },
+    /// Supervisor-only: lift a pause, including one holding an outcome.
     Resume,
+    /// Supervisor-only: make the outcome a paused run holds terminal (#1729).
+    Close,
+    /// Supervisor-only: grant wall-clock budget before resuming (#1729).
+    ExtendDeadline {
+        seconds: u64,
+    },
     Status,
 }
 
@@ -181,6 +222,9 @@ pub struct RunControlReceipt {
     pub budget: Option<UsageBudgetStatus>,
     pub wake_allowed: bool,
     pub status: RunStatus,
+    /// Outcome held by a paused run and the reason it was proposed (#1729).
+    pub outcome: Option<RunStatus>,
+    pub reason: Option<String>,
     pub generation: u64,
     /// Members a resume could not wake (#1721); empty for other actions.
     pub wake_warnings: Vec<String>,
