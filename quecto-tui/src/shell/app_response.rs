@@ -552,6 +552,11 @@ impl App {
     }
 
     fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
+        // A successful resume establishes a different session identity. The
+        // backend does not persist this UI-only runtime, so begin honestly at
+        // zero; failed resume responses never enter this method (#1726).
+        self.ac_mut()
+            .reset_coordinator_clock(tokio::time::Instant::now());
         let session = data
             .as_ref()
             .map(crate::protocol::state_payloads::parse_resume_session_name)
@@ -715,7 +720,8 @@ impl App {
                 text: format!("Error: {}", msg),
             });
         self.ac_mut().agent_state.reset();
-        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
+        self.ac_mut()
+            .stop_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.running = false;
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;
