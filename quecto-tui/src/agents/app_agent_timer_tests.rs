@@ -475,6 +475,11 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
 #[tokio::test(start_paused = true)]
 async fn a_resume_into_another_session_persists_the_new_key() {
     let mut h = TuiHarness::new().await;
+    let data_home = tempfile::tempdir().expect("isolated tui data");
+    // SAFETY: redirects the durable write away from the developer's own registry (as app_event_loop_tests does).
+    unsafe {
+        std::env::set_var("XDG_DATA_HOME", data_home.path());
+    }
     h.app_mut().ac_mut().session_key = Some("cli:original".into());
     let before = h.app_mut().ac().durability_writes;
     resume_answer(
