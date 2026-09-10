@@ -1,8 +1,0 @@
-64:    let missing = block_on(execute_container_command(
-73:    let wrong_target = block_on(execute_container_command(
-88:        let result = block_on(execute_container_command(None, Some(&uc), &args));
-98:    let listing = block_on(execute_container_command(
-107:    let killed = block_on(execute_container_command(
-118:    let unknown = block_on(execute_container_command(
-    Checking quecto-agentic-harness v0.107.5 (/home/swq/.quecto/container-environments/env-9aTSg9VupS/workspace/repo/quecto-agentic-harness)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.79s

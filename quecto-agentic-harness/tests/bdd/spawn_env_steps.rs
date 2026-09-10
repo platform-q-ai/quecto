@@ -209,6 +209,9 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
             None,
         ),
     );
+    let list_environments = std::sync::Arc::new(
+        quecto::application::environments::ListEnvironmentsQuery::new(environment_registry.clone()),
+    );
     let environment_control = std::sync::Arc::new(
         quecto::application::environment_control::EnvironmentControlUseCase::new(
             environment_registry,
@@ -217,6 +220,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     );
     world.agent_cmd_tool = Some(
         quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry)
+            .with_list_environments(list_environments)
             .with_environment_control(environment_control),
     );
 }
