@@ -678,3 +678,34 @@ fn python_again(world: &mut QuectoWorld) {
         "running"
     );
 }
+
+// ── #1837: messages carry a revision and can be superseded ──────────────
+
+#[when("a swarm member sends a message and then supersedes it with a newer revision")]
+fn supersede_message(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; first=board.send('r1','coordinator','review head one',revision='abc1'); second=board.send('r2','coordinator','review head two',revision='abc2',supersedes=first['id']); print(board.inbox())"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+}
+
+#[then("the recipient inbox holds only the newer message with its revision")]
+fn inbox_holds_newer(world: &mut QuectoWorld) {
+    let stdout = result_json(world)["stdout"].as_str().unwrap().to_string();
+    assert!(stdout.contains("'revision': 'abc2'"), "{stdout}");
+    assert!(!stdout.contains("'revision': 'abc1'"), "{stdout}");
+    assert!(stdout.contains("'supersedes': 1"), "{stdout}");
+}
+
+#[then("the superseded message remains in the audit")]
+fn superseded_in_audit(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; print([(m['id'], m['status'], m['superseded_by']) for m in board.inbox(include_consumed=True)])"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    let stdout = result_json(world)["stdout"].as_str().unwrap().to_string();
+    assert!(stdout.contains("(1, 'superseded', 2)"), "{stdout}");
+    assert!(stdout.contains("(2, 'accepted', None)"), "{stdout}");
+}

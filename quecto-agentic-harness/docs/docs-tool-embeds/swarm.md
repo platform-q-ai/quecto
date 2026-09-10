@@ -63,8 +63,9 @@ content in artifacts, not messages or evidence fields.
 | `submit(id, token, evidence)` | Submit `Evidence` for coordinator verification; submission is not completion |
 | `reserve(id, token, paths)` | `list[str]`, 1–100 checkout-contained paths, all-or-nothing; returns reservation token |
 | `release_files(id, token, reservation)` | Release that reservation token for this claim |
-| `send(request, recipient, body)` | Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; returns message ID/status |
-| `inbox(include_consumed=False)` / `ack(message_id)` | Read at most 100 own messages; acknowledge after reading |
+| `send(request, recipient, body, revision=None, supersedes=None)` | Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
+| `withdraw(message_id)` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
+| `inbox(include_consumed=False)` / `ack(message_id)` | Read at most 100 own unread messages (`revision`, `supersedes`, `superseded_by` included); `include_consumed=True` adds consumed, superseded and withdrawn history; acknowledge after reading |
 | `evidence(criterion, artifact, revision, kind, passed)` | Strings plus `passed: bool`; workers record proposals with **accepted=0**. Only coordinator calls with `passed=True` accept evidence |
 
 For example:

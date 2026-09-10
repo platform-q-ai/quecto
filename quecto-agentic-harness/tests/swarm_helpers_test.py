@@ -447,6 +447,60 @@ class WorkbenchBehavior(unittest.TestCase):
             self.worker.send(f'fill-{i}', 'coordinator', 'hello')
         with self.assertRaisesRegex(SwarmError, 'full'):
             self.worker.send('overflow', 'coordinator', 'hello')
+        # Superseding one of the hundred makes room for its replacement.
+        full = self.parent.inbox()[0]['id']
+        self.worker.send('replace', 'coordinator', 'newer', supersedes=full)
+
+    def test_messages_carry_a_revision_and_can_be_superseded_or_withdrawn(self):
+        self.worker._notifications()
+        first = self.worker.send('r1', 'coordinator', 'review head one', revision='abc1')
+        second = self.worker.send('r2', 'coordinator', 'review head two', revision='abc2', supersedes=first['id'])
+        inbox = self.parent.inbox()
+        self.assertEqual([(m['id'], m['revision'], m['supersedes']) for m in inbox], [(second['id'], 'abc2', first['id'])])
+        audit = {m['id']: m for m in self.parent.inbox(include_consumed=True)}
+        self.assertEqual((audit[first['id']]['status'], audit[first['id']]['superseded_by']), ('superseded', second['id']))
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'], 'one hint for the live message')
+        events = self.parent.events(limit=100)['events']
+        self.assertEqual([e['action'] for e in events[-3:]], ['message_accepted', 'message_superseded', 'message_accepted'])
+        self.assertEqual(json.loads(events[-1]['detail'])['revision'], 'abc2')
+        # Idempotent replay returns the original receipt; a changed field is a mismatch.
+        self.assertEqual(self.worker.send('r2', 'coordinator', 'review head two', revision='abc2', supersedes=first['id']), second)
+        with self.assertRaisesRegex(SwarmError, 'different payload'):
+            self.worker.send('r2', 'coordinator', 'review head two', revision='abc3', supersedes=first['id'])
+        # Only your own unread message to the same recipient can be superseded.
+        for supersedes in [first['id'], 999, second['id']]:
+            with self.subTest(supersedes=supersedes), self.assertRaises(SwarmError):
+                sender = self.parent if supersedes == second['id'] else self.worker
+                sender.send(f'bad-{supersedes}', 'coordinator', 'x', supersedes=supersedes)
+        # A message to another recipient cannot be superseded by this one.
+        to_self = self.worker.send('self', 'worker', 'note to self')
+        with self.assertRaisesRegex(SwarmError, 'same recipient'):
+            self.worker.send('cross', 'coordinator', 'x', supersedes=to_self['id'])
+        # The id must be an int: SQLite would happily coerce a numeric string.
+        with self.assertRaisesRegex(SwarmError, 'message id'):
+            self.worker.send('bad-type', 'coordinator', 'x', supersedes=str(second['id']))
+        self.assertEqual([m['id'] for m in self.parent.inbox()], [second['id']], 'the refused send changed nothing')
+        with self.assertRaises(SwarmError):
+            self.worker.send('bad-rev', 'coordinator', 'x', revision='')
+        # Acknowledging a superseded message is a no-op; the live one is consumed.
+        self.parent.ack(first['id'])
+        after = {m['id']: m['status'] for m in self.parent.inbox(include_consumed=True)}
+        self.assertEqual(after[first['id']], 'superseded', 'ack must not consume a retired message')
+        self.parent.ack(second['id'])
+        self.assertEqual(self.parent.inbox(), [])
+
+    def test_a_withdrawn_message_leaves_the_inbox_and_wakes_nobody(self):
+        self.worker._notifications()
+        message = self.worker.send('w1', 'coordinator', 'never mind', revision='abc1')
+        self.worker.withdraw(message['id'])
+        self.assertEqual(self.parent.inbox(), [])
+        self.assertEqual(self.parent.inbox(include_consumed=True)[-1]['status'], 'withdrawn')
+        self.assertEqual(self.worker._notifications(), [], 'a withdrawn message must not wake its recipient')
+        with self.assertRaisesRegex(SwarmError, 'already withdrawn'):
+            self.worker.withdraw(message['id'])
+        with self.assertRaisesRegex(SwarmError, 'own message'):
+            self.parent.withdraw(message['id'])
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_withdrawn')
 
     def test_file_reservations_are_atomic_normalized_and_token_owned(self):
         first = self.task()

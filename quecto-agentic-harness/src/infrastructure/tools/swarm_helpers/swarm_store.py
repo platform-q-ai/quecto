@@ -27,15 +27,21 @@ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, actor TEXT, time REAL
 CREATE INDEX IF NOT EXISTS events_by_actor ON events(actor,id);
 CREATE TABLE IF NOT EXISTS notification_cursors (actor TEXT PRIMARY KEY, event INTEGER);
 '''
-# #1729: a paused run may hold the outcome the coordinator proposed.
-RUN_OUTCOME_COLUMNS = ('outcome', 'outcome_reason')
+# Columns added after the first release, migrated in place on every open:
+# #1729 a paused run may hold the outcome the coordinator proposed; #1837 a
+# message may name a revision and supersede an earlier one.
+ADDED_COLUMNS = {
+    'run': (('outcome', 'TEXT'), ('outcome_reason', 'TEXT')),
+    'messages': (('revision', 'TEXT'), ('supersedes', 'INTEGER'), ('superseded_by', 'INTEGER')),
+}
 
 
-def ensure_run_outcome_columns(db):
-    present = {row[1] for row in db.execute('PRAGMA table_info(run)')}
-    for column in RUN_OUTCOME_COLUMNS:
-        if column not in present:
-            db.execute(f'ALTER TABLE run ADD COLUMN {column} TEXT')
+def ensure_columns(db):
+    for table, columns in ADDED_COLUMNS.items():
+        present = {row[1] for row in db.execute(f'PRAGMA table_info({table})')}
+        for column, kind in columns:
+            if column not in present:
+                db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {kind}')
 
 
 def encode(value):
@@ -67,7 +73,7 @@ class Store:
                 for statement in SCHEMA.split(';'):
                     if statement.strip():
                         db.execute(statement)
-            ensure_run_outcome_columns(db)
+            ensure_columns(db)
             yield db
             db.commit()
         except sqlite3.Error as error:

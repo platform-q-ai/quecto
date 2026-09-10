@@ -69,6 +69,10 @@ class PolicyContract(unittest.TestCase):
         self.assertEqual(notification_targets(run, 'worker', members, events, state), [])
         events += [{'action':'submitted','detail':{'task':1}}, {'action':'message_accepted','detail':{'message':1,'recipient':'parent'}}]
         self.assertEqual([m['id'] for m in notification_targets(run, 'worker', members, events, state)], ['parent'])
+        # A message that is no longer unread (superseded or withdrawn, #1837) wakes nobody.
+        retired = {'tasks': [], 'messages': []}
+        accepted_only = [{'action':'message_accepted','detail':{'message':1,'recipient':'parent'}}]
+        self.assertEqual(notification_targets(run, 'worker', members, accepted_only, retired), [])
         run['status'] = 'succeeded'
         self.assertEqual(notification_targets(run, 'worker', members, events, state), [])
 
