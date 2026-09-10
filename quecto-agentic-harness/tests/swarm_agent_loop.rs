@@ -75,7 +75,10 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         member: "coordinator".into(),
     };
     let summary = context.summary().unwrap();
-    assert_eq!(summary["status"], "succeeded");
+    assert_eq!(
+        (summary["status"].as_str(), summary["outcome"].as_str()),
+        (Some("paused"), Some("succeeded"))
+    );
     assert_eq!(summary["counts"]["completed"], 2);
     assert!(
         context.events(0, 100).unwrap()["events"]

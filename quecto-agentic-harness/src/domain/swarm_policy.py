@@ -5,6 +5,20 @@ class SwarmError(RuntimeError):
     pass
 
 
+# Outcomes a coordinator may propose. Each ends the run as a resumable pause;
+# only the supervisor outside the swarm resumes it or closes it into the
+# terminal state of the same name (#1729). Cancellation is terminal at once.
+PROPOSED_OUTCOMES = ('succeeded', 'blocked', 'failed', 'budget-exhausted')
+STOP_STATUSES = PROPOSED_OUTCOMES[1:] + ('cancelled',)
+
+
+def describe(run):
+    """Status text for errors: a paused run names the outcome it is holding."""
+    if run['status'] == 'paused' and run.get('outcome'):
+        return f"paused ({run['outcome']}: {run.get('outcome_reason') or 'no reason'})"
+    return run['status']
+
+
 def authorize(run, actor, member, active=False, coordinator=False, read_only=False):
     if run is None:
         raise SwarmError('coordination run missing')
@@ -13,7 +27,7 @@ def authorize(run, actor, member, active=False, coordinator=False, read_only=Fal
     if member is None or (member['status'] == 'dead' and not read_only):
         raise SwarmError('invoking member is unknown or death confirmed')
     if active and run['status'] != 'running':
-        raise SwarmError(f"run is {run['status']}; no new work permitted")
+        raise SwarmError(f"run is {describe(run)}; no new work permitted")
 
 
 def expired(run, now):
@@ -22,7 +36,23 @@ def expired(run, now):
 
 def require_budget(run, now):
     if expired(run, now):
-        raise SwarmError('run is budget-exhausted; no new work permitted')
+        raise SwarmError('run is paused (budget-exhausted: deadline); no new work permitted')
+
+
+def resume_blockers(run, resumed_deadline, now, budget_decision):
+    """Why a resume would pause again at once; empty when it may proceed."""
+    blockers = []
+    if resumed_deadline <= now:
+        blockers.append('extend the deadline (swarm_control extend) before resuming')
+    if budget_decision == 'pause':
+        blockers.append('raise or disable the token budget (swarm_control usage_budget) before resuming')
+    return blockers
+
+
+def validate_extension(seconds):
+    if type(seconds) is not int or not 0 < seconds <= 7 * 24 * 3600:
+        raise SwarmError('deadline extension must be 1..604800 seconds')
+    return seconds
 
 
 def admission(run, prior, reservation, usage, now):

@@ -68,9 +68,24 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         "swarm_control" => {
             let action = args["action"]
                 .as_str()
-                .filter(|action| matches!(*action, "pause" | "resume" | "status" | "usage_budget"))
-                .ok_or("swarm_control action must be pause, resume, status or usage_budget")?;
+                .filter(|action| {
+                    matches!(
+                        *action,
+                        "pause" | "resume" | "close" | "extend" | "status" | "usage_budget"
+                    )
+                })
+                .ok_or(
+                    "swarm_control action must be pause, resume, close, extend, status or usage_budget",
+                )?;
             let mut command = serde_json::json!({"type":"swarm_control","action":action});
+            if action == "extend" {
+                let seconds = args
+                    .get("deadline_seconds")
+                    .and_then(serde_json::Value::as_u64)
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or("deadline_seconds must be a positive integer for extend")?;
+                command["deadline_seconds"] = serde_json::json!(seconds);
+            }
             if action == "usage_budget" {
                 let limit = args
                     .get("token_limit")

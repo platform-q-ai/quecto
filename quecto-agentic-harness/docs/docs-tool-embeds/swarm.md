@@ -157,21 +157,31 @@ turn to finish. The coordinator should explicitly acknowledge the answer and
 apply it to the task before optional inbox work. Transport acceptance means the
 command was queued, not that the model read or acted on it; retrieve the report
 with `get_messages` to verify handling. A full/closed dispatch queue returns an
-explicit failure instead of falsely accepting the clarification. A terminal run
-cannot be revived by steering: preserve its report and start a fresh environment
-when further implementation is authorized.
+explicit failure instead of falsely accepting the clarification. A run the
+coordinator ended (`stop` or `complete`) is a pause holding its outcome: the
+master resumes it with `swarm_control resume` to continue the same run, or
+closes it with `swarm_control close`; only a closed or cancelled run is
+terminal and cannot be revived.
 
 Ordinary Bash build/test commands strip swarm launch-context variables, so their test runtimes do not enroll in this live pool. Launch participating agents with managed `spawn`. Wake delivery checks current unread messages and claimable tasks, but queued hints can become stale; inspect the board before acting. Steering takes priority over buffered idle work. Forwarded controls return `data.status: "accepted"` on queue admission and retain that response ID through dispatch; inspect the report for actual acknowledgment and results.
 
 ## Durable supervisor controls and reports
 
 The master can call `agent_cmd` with `command:"swarm_control"` and
-`action:"pause"`, `"resume"`, or `"status"`. Pause needs no model turn and bypasses
-the prompt queue. It preserves claims, artifacts and agents, cancels current
-execution, suppresses automatic wakes and freezes the wall-clock deadline until
-resume. Use this for a whole-run approval wait. `stop("blocked", ...)` remains
-terminal. Native coordinator operations `swarm {"op":"pause","reason":"..."}`
-and `swarm {"op":"resume"}` offer the same durable state transition.
+`action:"pause"`, `"resume"`, `"close"`, `"extend"` (with `deadline_seconds`)
+or `"status"`. Pause needs no model turn and bypasses the prompt queue. It
+preserves claims, artifacts and agents, suspends current execution,
+suppresses automatic wakes and freezes the wall-clock deadline until resume.
+Every end of a run is the same kind of pause holding an outcome: the
+coordinator's `stop("blocked"|"failed"|"budget-exhausted", ...)`, its
+`complete(...)` (`succeeded`), a spent token budget and a passed deadline.
+`status` reports `outcome` and `reason`. Only the master resumes (`resume`
+continues the same run with everything intact) or closes (`close` makes the
+held outcome terminal and settles the members). A run holding
+`budget-exhausted` resumes only after `extend` or a raised `usage_budget`.
+The coordinator may `swarm {"op":"pause","reason":"..."}`; `swarm
+{"op":"resume"}` is refused for every member, and `cancel_run` is the only
+immediate terminal transition.
 
 After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by
 command ID. `queued`, `started`, `completed`, `failed`, `cancelled`, and `rejected`
@@ -211,10 +221,11 @@ arrives as a follow-up and executes; a paused run keeps it queued), while
 buffered automatic notifications wait until it is re-armed.
 Do not repeatedly wake or retry ahead of a provider's reset horizon.
 
-Terminal coordinators remain available for reports. Their tool execution is
-restricted to native read-only swarm `summary`, `events`, and `usage`; Python,
-Bash, spawning and board mutations are unavailable. Export through the supervisor
-channel and preserve the container until the user authorizes teardown.
+Coordinators of an ended or terminal run remain available for reports. Their
+tool execution is restricted to native read-only swarm `summary`, `events`, and
+`usage`; Python, Bash, spawning and board mutations are unavailable until the
+master resumes the run. Export through the supervisor channel and preserve the
+container until the user authorizes teardown.
 
 Paused instructions remain queued; resume restores admission and the deadline.
 A resume also wakes every live member, and a member whose automatic turns were

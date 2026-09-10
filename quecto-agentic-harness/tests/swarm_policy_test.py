@@ -48,6 +48,12 @@ class MemoryRepository:
     def set_outcome(self, status):
         assert self.inside
         self.state['run']['status'] = status
+    def propose_outcome(self, outcome, reason):
+        assert self.inside
+        self.state['run'].update(status='paused', outcome=outcome, outcome_reason=reason)
+    def clear_outcome(self):
+        assert self.inside
+        self.state['run'].update(outcome=None, outcome_reason=None)
     def event(self, action, detail):
         assert self.inside
         self.state['events'].append((action, detail))
@@ -73,8 +79,9 @@ class PolicyContract(unittest.TestCase):
             service.complete('R2')
         service.revalidate_task(1, 'R2', [{'artifact': 'rerun', 'revision': 'R2'}])
         service.complete('R2')
-        self.assertEqual(repo.run()['status'], 'succeeded')
-        self.assertEqual(repo.state['events'][-2][1]['previous_evidence'][0]['revision'], 'R1')
+        self.assertEqual((repo.run()['status'], repo.run()['outcome']), ('paused', 'succeeded'))
+        self.assertEqual([e[0] for e in repo.state['events'][-3:]], ['completed', 'stop', 'paused'])
+        self.assertEqual(repo.state['events'][-4][1]['previous_evidence'][0]['revision'], 'R1')
 
     def test_completion_rejects_each_unsatisfied_requirement(self):
         baseline = MemoryRepository().state
@@ -102,8 +109,10 @@ class PolicyContract(unittest.TestCase):
         service = Coordination(repo, 'parent', lambda: 100)
         with self.assertRaisesRegex(SwarmError, 'budget-exhausted'):
             service.complete('R2')
-        self.assertEqual(repo.run()['status'], 'budget-exhausted')
-        self.assertEqual(repo.state['events'], [('stop', {'status':'budget-exhausted','reason':'deadline'})])
+        self.assertEqual((repo.run()['status'], repo.run()['outcome']), ('paused', 'budget-exhausted'))
+        self.assertEqual(repo.state['events'][0], ('stop', {'status':'budget-exhausted','reason':'deadline'}))
+        self.assertEqual(repo.state['events'][1][0], 'paused')
+        self.assertEqual(repo.state['events'][1][1]['outcome'], 'budget-exhausted')
 
     def test_admission_retries_and_capacity_use_same_atomic_port(self):
         repo = MemoryRepository()

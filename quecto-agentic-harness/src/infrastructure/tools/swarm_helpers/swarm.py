@@ -55,7 +55,7 @@ class Workbench(Tasks):
                 db.execute('UPDATE run SET goal=?,constraints=?,criteria=?,member_limit=?,deadline=?,status=?',
                            (goal, encode(constraints), encode(criteria), member_limit, deadline, 'running'))
             else:
-                db.execute('INSERT INTO run VALUES(?,?,?,?,?,?,?,?,?)',
+                db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, goal, encode(constraints), encode(criteria), self.member,
                             self.member, member_limit, deadline, 'running'))
                 db.execute("INSERT INTO members VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
@@ -94,7 +94,19 @@ class Workbench(Tasks):
         return self.coordination.pause(reason)
 
     def resume(self):
-        return self.coordination.resume()
+        return self.coordination.resume(external=False)
+
+    def _resume_external(self):
+        """Harness-only: the supervisor outside the swarm resumes the run (#1729)."""
+        return self.coordination.resume(external=True)
+
+    def _close(self):
+        """Harness-only: the supervisor makes the held outcome terminal (#1729)."""
+        return self.coordination.close(external=True)
+
+    def _extend_deadline(self, seconds):
+        """Harness-only: the supervisor grants wall-clock budget (#1729)."""
+        return self.coordination.extend_deadline(seconds, external=True)
 
     def _accept_wake(self, generation):
         return self.coordination.accept_wake(generation)
@@ -105,6 +117,7 @@ class Workbench(Tasks):
     def _snapshot(self):
         with self.store.operation(active=False, read_only=True) as (db, run):
             return {'status': run['status'], 'coordinator': run['coordinator'],
+                    'outcome': run['outcome'],
                     'control_generation': db.execute("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')").fetchone()[0],
                     'deadline': run['deadline'],
                     'members': [dict(r) for r in db.execute('SELECT * FROM members')]}
@@ -157,7 +170,7 @@ class Workbench(Tasks):
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:
             if not db.execute('SELECT 1 FROM run').fetchone():
-                db.execute('INSERT INTO run VALUES(?,?,?,?,?,?,?,?,?)',
+                db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, '', '[]', '[]', self.member, self.member, 10, 0, 'setup'))
                 db.execute("INSERT INTO members VALUES(?,?,'live',?,?,?)",
                            (self.member, uuid.uuid4().hex, pid, started, socket))
@@ -287,16 +300,10 @@ class Workbench(Tasks):
                     'reason': 'harness exited; execution scope unconfirmed; discard environment'})
 
     def stop(self, status, reason):
-        if status not in ('blocked', 'failed', 'cancelled', 'budget-exhausted'):
-            raise SwarmError('invalid non-success outcome')
+        """End the run: every status but `cancelled` is a resumable pause holding
+        that outcome for the supervisor outside the swarm (#1729)."""
         bounded(reason, 'stop reason')
-        with self.store.operation(active=False, coordinator=True) as (db, run):
-            if run['status'] != 'running':
-                if run['status'] != status:
-                    raise SwarmError(f"run already {run['status']}")
-                return
-            db.execute('UPDATE run SET status=?', (status,))
-            self.store.event(db, 'stop', {'status': status, 'reason': reason})
+        return self.coordination.stop(status, reason)
 
 
 board = None  # bound by the compiled harness bootstrap, never PYTHONPATH

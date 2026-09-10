@@ -35,7 +35,14 @@ async fn native_supervisor_validates_budget_and_event_requests_without_mutation(
         .await
         .unwrap();
     assert_eq!(paused["status"], "paused");
-    let resumed = control(context.clone(), "resume", json!({})).await.unwrap();
+    let refused = control(context.clone(), "resume", json!({}))
+        .await
+        .expect_err("a member cannot resume the run");
+    assert!(
+        refused.to_string().contains("outside the swarm"),
+        "{refused}"
+    );
+    let resumed = context.resume_external().unwrap();
     assert_eq!(resumed["status"], "running");
     let cancelled = control(context, "cancel_run", json!({})).await.unwrap();
     assert_eq!(cancelled["status"], "cancelled");

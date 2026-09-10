@@ -507,8 +507,10 @@ fn durable_pause(world: &mut QuectoWorld) {
 
 #[when("the supervisor resumes the swarm")]
 fn durable_resume(world: &mut QuectoWorld) {
-    run(world, json!({"op":"resume"}));
-    run(world, json!({"op":"summary"}));
+    // Only the supervisor outside the swarm resumes (#1729); the member-side
+    // `swarm resume` op is refused.
+    supervise(world, quecto::domain::swarm::RunControlAction::Resume);
+    assert!(!result(world).is_error, "{}", result(world).content);
 }
 
 #[when("the supervisor inspects the unchanged swarm cursor")]
@@ -524,4 +526,142 @@ fn unchanged_board(world: &mut QuectoWorld) {
     assert!(value.get("tasks").is_none());
     assert!(value.get("events").is_none());
     assert!(result(world).content.len() < 150);
+}
+
+// ── #1729: every end is a pause only the supervisor lifts ────────────────
+
+fn supervisor_context(
+    world: &QuectoWorld,
+) -> quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: world.swarm_workspace.clone().unwrap(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+    }
+}
+
+/// Apply a supervisor control through the same port the parent's
+/// `swarm_control` command uses, recording the receipt or error as the result.
+fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlAction) {
+    use quecto::domain::swarm::SwarmRunControl;
+    let context = supervisor_context(world);
+    let outcome = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(context.apply(action))
+    })
+    .join()
+    .unwrap();
+    let (content, is_error) = match outcome {
+        Ok(receipt) => (
+            json!({"status": format!("{:?}", receipt.status).to_lowercase(), "generation": receipt.generation})
+                .to_string(),
+            false,
+        ),
+        Err(error) => (error.to_string(), true),
+    };
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content,
+        is_error,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
+    if !is_error {
+        run(world, json!({"op":"summary"}));
+    }
+}
+
+#[when(expr = "the coordinator stops the run as {string}")]
+fn coordinator_stops(world: &mut QuectoWorld, status: String) {
+    run(
+        world,
+        json!({"op":"run","code":format!("from swarm import board; a=board.task_create('a','first',['pass'],[]); board.claim(a['id']); board.stop('{status}','needs the master')")}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("the coordinator completes the run with accepted evidence")]
+fn coordinator_completes(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; board.evidence('tests','proof','R1','command',True); board.complete('R1')"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}
+
+#[when("the swarm deadline has passed")]
+fn deadline_passed(world: &mut QuectoWorld) {
+    // The first tool use creates the run; then age its deadline in place.
+    run(world, json!({"op":"summary"}));
+    assert!(!result(world).is_error, "{}", result(world).content);
+    let store = world
+        .swarm_workspace
+        .clone()
+        .unwrap()
+        .join(".quecto")
+        .join("swarm.sqlite");
+    let status = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute('UPDATE run SET deadline=1'); db.commit()",
+        ])
+        .arg(&store)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    run(world, json!({"op":"summary"}));
+}
+
+#[then(expr = "the swarm run is paused holding {string}")]
+fn paused_holding(world: &mut QuectoWorld, outcome: String) {
+    let value = result_json(world);
+    assert_eq!(value["status"], "paused", "{value}");
+    assert_eq!(value["outcome"], outcome, "{value}");
+}
+
+#[then("every swarm member is still live")]
+fn members_live(world: &mut QuectoWorld) {
+    let value = result_json(world);
+    let members = value["members"].as_array().unwrap();
+    assert!(!members.is_empty());
+    assert!(members.iter().all(|m| m["status"] == "live"), "{value}");
+}
+
+#[when("a swarm member tries to resume the run")]
+fn member_resumes(world: &mut QuectoWorld) {
+    run(world, json!({"op":"resume"}));
+    assert!(result(world).is_error, "{}", result(world).content);
+}
+
+#[when("the supervisor outside the swarm resumes the run")]
+fn supervisor_resumes(world: &mut QuectoWorld) {
+    supervise(world, quecto::domain::swarm::RunControlAction::Resume);
+}
+
+#[when("the supervisor outside the swarm closes the run")]
+fn supervisor_closes(world: &mut QuectoWorld) {
+    supervise(world, quecto::domain::swarm::RunControlAction::Close);
+    assert!(!result(world).is_error, "{}", result(world).content);
+}
+
+#[when(expr = "the supervisor outside the swarm extends the deadline by {int} seconds")]
+fn supervisor_extends(world: &mut QuectoWorld, seconds: u64) {
+    supervise(
+        world,
+        quecto::domain::swarm::RunControlAction::ExtendDeadline { seconds },
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+}
+
+#[then("a swarm member can no longer create work")]
+fn no_new_work(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; board.task_create('late','work',['pass'],[])"}),
+    );
+    assert!(result(world).is_error, "{}", result(world).content);
 }

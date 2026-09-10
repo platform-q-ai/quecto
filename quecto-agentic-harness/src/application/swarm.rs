@@ -30,6 +30,15 @@ pub async fn settle(
     processes: &(impl ProcessControl + ?Sized),
 ) -> Result<(), DomainError> {
     if snapshot.status == crate::domain::swarm::RunStatus::Paused {
+        // An ended run (#1729) keeps its coordinator's turn alive so it can
+        // report the outcome it proposed; the interpreter that proposed it
+        // is done and is cancelled like a terminal one. Every other member,
+        // and every plain pause, suspends executions and inference so the
+        // work resumes intact.
+        if snapshot.ended() && actor == snapshot.coordinator {
+            processes.cancel_local_executions();
+            return Ok(());
+        }
         processes.suspend_local_executions(snapshot);
         processes.suspend_local_inference(snapshot);
         return Ok(());
@@ -64,8 +73,10 @@ pub fn observed_outcome(
     clock: &(impl crate::domain::swarm::Clock + ?Sized),
 ) -> crate::domain::swarm::RunStatus {
     use crate::domain::swarm::RunStatus;
+    // A passed deadline ends the run as a resumable pause holding
+    // `budget-exhausted` (#1729); the store records it on its next operation.
     if snapshot.status == RunStatus::Running && clock.now_seconds() >= snapshot.deadline {
-        RunStatus::BudgetExhausted
+        RunStatus::Paused
     } else {
         snapshot.status
     }

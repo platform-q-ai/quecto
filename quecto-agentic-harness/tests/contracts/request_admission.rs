@@ -5,7 +5,8 @@ async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     context.check().await.unwrap();
     context.pause("approval").unwrap();
     assert!(context.check().await.is_err());
-    context.resume().unwrap();
+    assert!(context.resume().is_err(), "members cannot resume (#1729)");
+    context.resume_external().unwrap();
     context.check().await.unwrap();
     context.cancel_run().unwrap();
     context.check().await.unwrap();

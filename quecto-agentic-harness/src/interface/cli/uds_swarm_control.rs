@@ -11,6 +11,8 @@ pub(super) const SWARM_WAKE: &str = "swarm_wake";
 enum Action {
     Pause,
     Resume,
+    Close,
+    Extend,
     Status,
     Wake,
     UsageBudget,
@@ -27,6 +29,7 @@ enum Command {
         agent_id: Option<String>,
         token_limit: Option<u64>,
         strict_unknown: Option<bool>,
+        deadline_seconds: Option<u64>,
     },
 }
 
@@ -39,6 +42,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         agent_id,
         token_limit,
         strict_unknown,
+        deadline_seconds,
     }) = serde_json::from_str(&ctx.line)
     else {
         return false;
@@ -142,6 +146,26 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             reason: reason.unwrap_or_else(|| "supervisor requested pause".into()),
         },
         Action::Resume => RunControlAction::Resume,
+        Action::Close => RunControlAction::Close,
+        Action::Extend => match deadline_seconds {
+            Some(seconds) if seconds > 0 => RunControlAction::ExtendDeadline { seconds },
+            _ => {
+                let event = super::protocol::AgentEvent::err(
+                    id.as_deref(),
+                    "swarm_control",
+                    "deadline_seconds is required and must be positive",
+                );
+                super::uds_busy_subagents::write_event(
+                    ctx.registry,
+                    ctx.client_id,
+                    id.as_deref(),
+                    "swarm_control",
+                    &event,
+                )
+                .await;
+                return true;
+            }
+        },
         Action::Status => RunControlAction::Status,
         Action::Wake => unreachable!("wake handled before supervisor control"),
     };
@@ -158,6 +182,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                 .observe_control_generation(receipt.generation);
             let mut data = serde_json::json!({
                 "status": status_name(receipt.status), "generation": receipt.generation,
+                "outcome": receipt.outcome.map(status_name), "reason": receipt.reason,
                 "applied": true, "budget": receipt.budget
             });
             // #1721: the store's fan-out excludes the resumer, so wake this

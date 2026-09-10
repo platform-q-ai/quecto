@@ -69,7 +69,7 @@ A terminal coordinator permits read-only swarm reports and supervisor-channel ex
 for Python inbox/ack execution after completion. Request the final revision,
 criterion evidence and any blockers, and preserve artifacts before teardown.
 Artifact references resolve against the returned container `artifact_base`.
-Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `status`, and `usage_budget` bypass the model queue. General swarm creation/update/result events and a dashboard remain follow-on work. Read the swarm manual for receipt and budget semantics.
+Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `close`, `extend`, `status`, and `usage_budget` bypass the model queue; every end of a swarm run is a pause only these controls resume or close. General swarm creation/update/result events and a dashboard remain follow-on work. Read the swarm manual for receipt and budget semantics.
 
 ## See also
 

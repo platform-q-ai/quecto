@@ -47,18 +47,25 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     ctx.session
                         .observe_control_generation(Some(receipt.generation));
                 }
+                let explicit = matches!(
+                    pending_msg,
+                    PendingMessage::User(_) | PendingMessage::Control { .. }
+                );
                 let admission = match status {
                     Ok(receipt) => match receipt.status {
                         RunStatus::Setup | RunStatus::Running => Some(true),
+                        // A run the coordinator ended still takes explicit
+                        // instructions so it can report (#1729); a plain
+                        // pause keeps everything queued.
+                        RunStatus::Paused if receipt.outcome.is_some_and(RunStatus::proposable) => {
+                            Some(explicit)
+                        }
                         RunStatus::Paused => None,
                         RunStatus::Succeeded
                         | RunStatus::Blocked
                         | RunStatus::Failed
                         | RunStatus::Cancelled
-                        | RunStatus::BudgetExhausted => Some(matches!(
-                            pending_msg,
-                            PendingMessage::User(_) | PendingMessage::Control { .. }
-                        )),
+                        | RunStatus::BudgetExhausted => Some(explicit),
                     },
                     Err(error) => {
                         let event =

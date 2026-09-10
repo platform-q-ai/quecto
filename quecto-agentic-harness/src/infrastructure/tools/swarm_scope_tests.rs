@@ -90,7 +90,8 @@ async fn settled_descendants(background: bool, success: bool) {
     }
     assert_eq!(
         context.summary().unwrap()["status"],
-        if success { "succeeded" } else { "cancelled" }
+        if success { "paused" } else { "cancelled" },
+        "completion ends the run as a resumable pause (#1729)"
     );
     let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
         .unwrap()

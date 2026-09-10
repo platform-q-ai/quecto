@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 pub(super) fn snapshot() -> Snapshot {
     Snapshot {
+        outcome: None,
         control_generation: 0,
         status: RunStatus::Running,
         coordinator: "worker".into(),
@@ -93,8 +94,15 @@ async fn injected_application_service_runs_through_its_public_contract() {
     service.settle(&snapshot, "parent", &effects).await.unwrap();
     assert!(effects.0.lock().unwrap().is_empty());
     snapshot.status = service.observed_outcome(&snapshot, &Time(100.));
+    assert_eq!(snapshot.status, RunStatus::Paused);
     service.settle(&snapshot, "parent", &effects).await.unwrap();
-    assert_eq!(*effects.0.lock().unwrap(), ["cancel", "abort", "terminate"]);
+    assert_eq!(*effects.0.lock().unwrap(), ["suspend"]);
+    snapshot.status = RunStatus::Cancelled;
+    service.settle(&snapshot, "parent", &effects).await.unwrap();
+    assert_eq!(
+        *effects.0.lock().unwrap(),
+        ["suspend", "cancel", "abort", "terminate"]
+    );
     let board = Board(Mutex::new(vec![]));
     service.reconcile(&board, &Observation).unwrap();
     assert_eq!(*board.0.lock().unwrap(), ["worker"]);

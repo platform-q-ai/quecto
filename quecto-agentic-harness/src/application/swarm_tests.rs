@@ -43,6 +43,7 @@ fn snapshot(status: RunStatus) -> Snapshot {
     Snapshot {
         control_generation: 0,
         status,
+        outcome: None,
         coordinator: "parent".into(),
         deadline: 100.,
         members: ["parent", "worker"]
@@ -125,7 +126,12 @@ impl crate::domain::swarm::Clock for Time {
 #[test]
 fn deadline_and_terminal_outcomes_trigger_settlement_with_a_fake_clock() {
     assert!(!settlement_due(&snapshot(RunStatus::Running), &Time(99.)));
-    assert!(settlement_due(&snapshot(RunStatus::Running), &Time(100.)));
+    // A passed deadline is a resumable pause, not a settlement (#1729).
+    assert_eq!(
+        observed_outcome(&snapshot(RunStatus::Running), &Time(100.)),
+        RunStatus::Paused
+    );
+    assert!(!settlement_due(&snapshot(RunStatus::Running), &Time(100.)));
     assert!(settlement_due(&snapshot(RunStatus::Failed), &Time(0.)));
     assert!(!settlement_due(&snapshot(RunStatus::Setup), &Time(1000.)));
     assert!(!settlement_due(&snapshot(RunStatus::Paused), &Time(1000.)));
@@ -201,4 +207,47 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
             "worker cleanup still required"
         );
     }
+}
+
+/// #1729: a run its coordinator ended is a pause that keeps the coordinator
+/// reporting (its finished interpreter is cancelled, its turn is not) while
+/// every other member suspends intact; nobody is aborted or terminated.
+#[tokio::test]
+async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() {
+    let mut ended = snapshot(RunStatus::Paused);
+    ended.outcome = Some(RunStatus::Succeeded);
+    assert!(ended.ended());
+    assert!(ended.admits_inference("parent"));
+    assert!(!ended.admits_inference("worker"));
+    let coordinator = Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+    };
+    settle(&ended, "parent", &coordinator).await.unwrap();
+    assert_eq!(*coordinator.events.lock().unwrap(), ["cancel-jobs"]);
+    let worker = Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+    };
+    settle(&ended, "worker", &worker).await.unwrap();
+    assert_eq!(
+        *worker.events.lock().unwrap(),
+        ["suspend-jobs", "suspend-local"]
+    );
+    // A plain pause suspends the coordinator too, and admits nobody.
+    let plain = snapshot(RunStatus::Paused);
+    assert!(!plain.ended() && !plain.admits_inference("parent"));
+    let processes = Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+    };
+    settle(&plain, "parent", &processes).await.unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["suspend-jobs", "suspend-local"]
+    );
+    // Only proposable outcomes end a run.
+    let mut odd = snapshot(RunStatus::Paused);
+    odd.outcome = Some(RunStatus::Cancelled);
+    assert!(!odd.ended());
 }

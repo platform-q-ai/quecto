@@ -267,10 +267,7 @@ impl crate::domain::provider::RequestAdmission for SwarmContext {
             let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())
                 .await
                 .map_err(|error| DomainError::Tool(error.to_string()))??;
-            if snapshot
-                .status
-                .admits_inference(actor == snapshot.coordinator)
-            {
+            if snapshot.admits_inference(&actor) {
                 Ok(())
             } else {
                 Err(DomainError::Tool(format!(
@@ -316,7 +313,11 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
                         context.control_status()?
                     }
                     RunControlAction::Pause { reason } => context.pause(&reason)?,
-                    RunControlAction::Resume => context.resume()?,
+                    RunControlAction::Resume => context.resume_external()?,
+                    RunControlAction::Close => context.close()?,
+                    RunControlAction::ExtendDeadline { seconds } => {
+                        context.extend_deadline(seconds)?
+                    }
                     RunControlAction::Status => context.control_status()?,
                 };
                 SwarmContext::decode_control_receipt(value, wake_allowed)
@@ -343,22 +344,25 @@ impl crate::domain::tool::ToolExecutionAdmission for SwarmContext {
                 .await
                 .map_err(|error| DomainError::Tool(error.to_string()))??;
             use crate::domain::swarm::RunStatus;
+            // A reporting coordinator (terminal run, or a run it ended and
+            // that now waits for the supervisor, #1729) keeps native reads.
+            let reporting_only = || {
+                self.member == snapshot.coordinator
+                    && name == "swarm"
+                    && serde_json::from_str::<serde_json::Value>(arguments)
+                        .ok()
+                        .is_some_and(|input| {
+                            matches!(input["op"].as_str(), Some("summary" | "events" | "usage"))
+                        })
+            };
             let admitted = match snapshot.status {
                 RunStatus::Setup | RunStatus::Running => true,
-                RunStatus::Paused => false,
+                RunStatus::Paused => snapshot.ended() && reporting_only(),
                 RunStatus::Succeeded
                 | RunStatus::Blocked
                 | RunStatus::Failed
                 | RunStatus::Cancelled
-                | RunStatus::BudgetExhausted => {
-                    self.member == snapshot.coordinator
-                        && name == "swarm"
-                        && serde_json::from_str::<serde_json::Value>(arguments)
-                            .ok()
-                            .is_some_and(|input| {
-                                matches!(input["op"].as_str(), Some("summary" | "events" | "usage"))
-                            })
-                }
+                | RunStatus::BudgetExhausted => reporting_only(),
             };
             if admitted {
                 Ok(())

@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, actor TEXT, time REAL
 CREATE INDEX IF NOT EXISTS events_by_actor ON events(actor,id);
 CREATE TABLE IF NOT EXISTS notification_cursors (actor TEXT PRIMARY KEY, event INTEGER);
 '''
+# #1729: a paused run may hold the outcome the coordinator proposed.
+RUN_OUTCOME_COLUMNS = ('outcome', 'outcome_reason')
+
+
+def ensure_run_outcome_columns(db):
+    present = {row[1] for row in db.execute('PRAGMA table_info(run)')}
+    for column in RUN_OUTCOME_COLUMNS:
+        if column not in present:
+            db.execute(f'ALTER TABLE run ADD COLUMN {column} TEXT')
 
 
 def encode(value):
@@ -58,6 +67,7 @@ class Store:
                 for statement in SCHEMA.split(';'):
                     if statement.strip():
                         db.execute(statement)
+            ensure_run_outcome_columns(db)
             yield db
             db.commit()
         except sqlite3.Error as error:

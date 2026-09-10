@@ -135,7 +135,10 @@ async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
     std::fs::write(workspace.join("report.txt"), "final-evidence").unwrap();
     execute(&tool, json!({"op":"run","code":"from swarm import board; board.evidence('tests','report.txt','R1','command',True); board.complete('R1')"})).await;
     let summary = execute(&tool, json!({"op":"summary"})).await;
-    assert_eq!(summary["status"], "succeeded");
+    assert_eq!(
+        (summary["status"].as_str(), summary["outcome"].as_str()),
+        (Some("paused"), Some("succeeded"))
+    );
     let rejected = tool
         .execute(r#"{"op":"run","code":"from swarm import board; board.inbox()"}"#)
         .await

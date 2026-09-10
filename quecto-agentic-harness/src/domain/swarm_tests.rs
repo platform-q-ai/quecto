@@ -30,3 +30,26 @@ fn workflow_is_refused_only_for_swarm_agents_that_request_it() {
             .contains("workflow is unavailable for swarm agents")
     );
 }
+
+/// #1729: only the outcomes a coordinator may propose end a run as a pause.
+#[test]
+fn only_proposable_outcomes_end_a_run() {
+    use super::RunStatus;
+    for status in [
+        RunStatus::Succeeded,
+        RunStatus::Blocked,
+        RunStatus::Failed,
+        RunStatus::BudgetExhausted,
+    ] {
+        assert!(status.proposable(), "{status:?}");
+        assert!(status.terminal(), "{status:?} closes into a terminal state");
+    }
+    for status in [
+        RunStatus::Setup,
+        RunStatus::Running,
+        RunStatus::Paused,
+        RunStatus::Cancelled,
+    ] {
+        assert!(!status.proposable(), "{status:?}");
+    }
+}

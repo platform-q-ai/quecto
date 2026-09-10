@@ -38,7 +38,7 @@ Feature: Container swarm coordination
   Scenario: Completed dependent work can be revalidated at the final revision
     When the coordinator completes dependent tasks at different revisions
     And revalidates earlier work with fresh final revision evidence
-    Then the swarm run status is "succeeded"
+    Then the swarm run is paused holding "succeeded"
 
   Scenario: Task validation explains the required acceptance type
     When a swarm member supplies acceptance as a string
@@ -110,6 +110,31 @@ Feature: Container swarm coordination
     When the supervisor resumes the swarm
     Then the swarm run status is "running"
     And a later swarm execution sees the acceptance task
+
+  Scenario: A coordinator stop ends the run as a pause only the supervisor resumes
+    When the coordinator stops the run as "blocked"
+    Then the swarm run is paused holding "blocked"
+    And every swarm member is still live
+    When a swarm member tries to resume the run
+    Then the swarm result should contain "outside the swarm"
+    When the supervisor outside the swarm resumes the run
+    Then the swarm run status is "running"
+
+  Scenario: Completion holds success until the supervisor closes it
+    When the coordinator completes the run with accepted evidence
+    Then the swarm run is paused holding "succeeded"
+    When the supervisor outside the swarm closes the run
+    Then the swarm run status is "succeeded"
+    And a swarm member can no longer create work
+
+  Scenario: Deadline expiry pauses the run until the supervisor grants more time
+    When the swarm deadline has passed
+    Then the swarm run is paused holding "budget-exhausted"
+    When the supervisor outside the swarm resumes the run
+    Then the swarm result should contain "extend the deadline"
+    When the supervisor outside the swarm extends the deadline by 600 seconds
+    And the supervisor outside the swarm resumes the run
+    Then the swarm run status is "running"
 
   Scenario: Repeated paused inspection returns a compact delta
     When the supervisor durably pauses the swarm
