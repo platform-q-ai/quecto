@@ -463,5 +463,41 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
         (None, None),
         "an owned failure clears the deferred session so a reattach cannot replay it"
     );
-    assert!(!h.app_mut().notifications.is_empty());
+    let notes = h.app_mut().notifications.messages();
+    assert!(
+        notes.iter().any(|note| note.contains("Resume failed")),
+        "the failure is toasted: {notes:?}"
+    );
+}
+
+/// Learning the key from the resume answer must not skip the durable write
+/// the get_state snapshot path would have made (#1726 review).
+#[tokio::test(start_paused = true)]
+async fn a_resume_into_another_session_persists_the_new_key() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().ac_mut().session_key = Some("cli:original".into());
+    let before = h.app_mut().ac().durability_writes;
+    resume_answer(
+        &mut h,
+        Some("resume-5"),
+        true,
+        Some(serde_json::json!({"session": "original", "sessionKey": "cli:original"})),
+    );
+    assert_eq!(
+        h.app_mut().ac().durability_writes,
+        before,
+        "resuming the session already shown writes nothing"
+    );
+    resume_answer(
+        &mut h,
+        Some("resume-6"),
+        true,
+        Some(serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"})),
+    );
+    assert_eq!(h.app_mut().ac().session_key.as_deref(), Some("cli:alpha"));
+    assert_eq!(
+        h.app_mut().ac().durability_writes,
+        before + 1,
+        "a new session identity reaches the durable registry"
+    );
 }

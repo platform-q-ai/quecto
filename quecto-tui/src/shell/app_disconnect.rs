@@ -55,8 +55,9 @@ impl App {
         self.ac_mut().agent_state.reset();
         self.ac_mut()
             .stop_coordinator_clock(tokio::time::Instant::now());
-        // The answer to an in-flight resume died with the connection; the
-        // deferred session (if any) is retried by the next attach.
+        // The answer to an in-flight resume died with the connection; a
+        // `/resume` still latched in `pending_session_resume` is re-sent by
+        // the next attach.
         self.ac_mut().pending_session_resume_id = None;
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;

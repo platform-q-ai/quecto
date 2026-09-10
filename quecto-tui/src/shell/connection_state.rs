@@ -69,6 +69,9 @@ pub(crate) struct ConnectionState {
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
+    /// Test seam: durable registry/manifest writes made through this tab.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) durability_writes: usize,
     /// True while a background spawn/reattach for this tab is in flight (AC2).
     pub(crate) pending_attach: bool,
     /// Generation stamped when the current attach/spawn was kicked; outcomes
@@ -189,6 +192,8 @@ impl ConnectionState {
             session_key: None,
             pending_session_resume: None,
             pending_session_resume_id: None,
+            #[cfg(any(test, feature = "test-harness"))]
+            durability_writes: 0,
             pending_attach: false,
             attach_generation: 0,
             editor_draft: String::new(),

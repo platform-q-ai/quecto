@@ -194,6 +194,10 @@ impl super::App {
 
     /// Best-effort default-path durability write after lifecycle changes.
     pub(crate) fn persist_default_durability(&mut self) {
+        #[cfg(any(test, feature = "test-harness"))]
+        {
+            self.ac_mut().durability_writes += 1;
+        }
         let reg = crate::shell::tab_registry::default_registry_path();
         if let Some(parent) = reg.parent() {
             let _ = std::fs::create_dir_all(parent);

@@ -60,7 +60,7 @@ const REWIND_OPEN_ID_PREFIX: &str = "rewind-open";
 /// Kind of a matched own-client solicited transcript response (#1237).
 /// Status text is derived from kind, never from literal id equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SolicitedGetMessagesKind {
+enum SolicitedGetMessagesKind {
     Resume,
     RewindRefresh,
     Attach,
@@ -89,10 +89,7 @@ impl App {
     /// Mint a process-unique solicited `get_messages` id and store it as the
     /// exact pending correlation token for `kind` (#1237). Overwrites any prior
     /// same-kind pending so a stale late response can no longer match.
-    pub(super) fn mint_pending_solicited_get_messages(
-        &mut self,
-        kind: SolicitedGetMessagesKind,
-    ) -> String {
+    fn mint_pending_solicited_get_messages(&mut self, kind: SolicitedGetMessagesKind) -> String {
         self.ac_mut().solicited_get_messages_seq =
             self.ac_mut().solicited_get_messages_seq.wrapping_add(1);
         let id = format!(
@@ -699,7 +696,7 @@ impl App {
         // The run is over: an attempt cannot still be waiting (#1679 P4).
         self.clear_master_admission_wait();
     }
-    pub(super) fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
+    fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);
     }
@@ -708,7 +705,7 @@ impl App {
 impl App {
     /// Reload the transcript after a resume: mint AFTER the recovery clear
     /// so the new pending survives (#1237).
-    pub(super) fn request_resumed_transcript(&mut self) {
+    fn request_resumed_transcript(&mut self) {
         let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
         self.send_command(Command::GetMessages {
             agent_id: None,

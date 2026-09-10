@@ -5,13 +5,13 @@
 use super::super::*;
 
 impl App {
-    pub(crate) fn send_list_sessions(&mut self) {
+    pub(in crate::shell) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
             id: Some(self.ac().namespaced_id("resume-list")),
         });
     }
 
-    pub(crate) fn send_resume_session(&mut self, session: &str) {
+    pub(in crate::shell) fn send_resume_session(&mut self, session: &str) {
         if session.trim().is_empty() {
             self.send_list_sessions();
             return;
@@ -32,7 +32,7 @@ impl App {
     /// Every `resume_session` answer refreshes the view (the agent's session
     /// changed for all its clients); only this tab's own answer settles the
     /// resume latches, so a foreign answer cannot cancel an in-flight resume.
-    pub(crate) fn handle_resume_response(
+    pub(in crate::shell) fn handle_resume_response(
         &mut self,
         id: Option<&str>,
         success: bool,
@@ -66,11 +66,17 @@ impl App {
         // (including one it has not learned yet) is a session boundary for
         // the Coordinator clock. An answer without an identity is not.
         if let Some(key) = ack.as_ref().and_then(|ack| ack.session_key.as_deref()) {
-            if self.ac().session_key.as_deref() != Some(key) {
+            let changed = self.ac().session_key.as_deref() != Some(key);
+            if changed {
                 self.ac_mut()
                     .reset_coordinator_clock(tokio::time::Instant::now());
             }
             self.ac_mut().session_key = Some(key.to_owned());
+            // Learning the key here pre-empts the get_state snapshot path, so
+            // the durable registry/manifest must be written here too.
+            if changed {
+                self.persist_default_durability();
+            }
         }
         let session = ack.map_or_else(|| "session".to_string(), |ack| ack.name);
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);

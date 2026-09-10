@@ -93,8 +93,8 @@ fn parse_set_model_id_reads_echoed_model() {
 
 #[test]
 fn parse_resume_session_name_defaults_when_missing() {
-    assert_eq!(parse_resume_session_name(&json!({"session": "abc"})), "abc");
-    assert_eq!(parse_resume_session_name(&json!({})), "session");
+    assert_eq!(parse_resume_session(&json!({"session": "abc"})).name, "abc");
+    assert_eq!(parse_resume_session(&json!({})).name, "session");
 }
 
 #[test]
