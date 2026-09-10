@@ -560,10 +560,6 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'coordination'):
             self.parent.summary()
 
-
-if __name__ == '__main__':
-    unittest.main()
-
     def test_coordinator_stop_is_a_resumable_pause_only_the_supervisor_lifts(self):
         task = self.task()
         claim = self.worker.claim(task['id'])
@@ -595,6 +591,10 @@ if __name__ == '__main__':
         self.parent.evidence('review', 'review.md', 'R1', 'review', True)
         with self.assertRaisesRegex(SwarmError, 'without a proposed outcome'):
             self.parent._close()
+        self.parent.pause('a plain pause holds nothing to close')
+        with self.assertRaisesRegex(SwarmError, 'without a proposed outcome'):
+            self.parent._close()
+        self.parent._resume_external()
         self.parent.complete('R1')
         held = self.parent.summary()
         self.assertEqual((held['status'], held['outcome']), ('paused', 'succeeded'))
@@ -619,3 +619,6 @@ if __name__ == '__main__':
         with self.assertRaises(SwarmError):
             self.parent._extend_deadline(60)
 
+
+if __name__ == '__main__':
+    unittest.main()
