@@ -181,43 +181,19 @@ fn infrastructure_has_no_application_imports() {
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
-/// Application references from infrastructure are allowed only through
-/// `crate::application::ports`. See `infrastructure_has_no_application_imports`.
+/// Application references use the explicit port and environment-owner surface.
+/// Parse each dependency independently, including grouped and qualified paths.
 fn assert_application_imports_are_ports_only(dir: &Path) {
     let mut files = Vec::new();
     collect_rs_files(dir, &mut files);
 
     for file_content in &files {
         let (file_path, _) = file_content.split_once(":\n").unwrap();
-        for line in file_content.lines().skip(1) {
-            let trimmed = line.trim();
-            // Convention (see assert_no_imports): #[cfg(test)] ends the
-            // production portion of a file.
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            let allowed_application_dependencies = [
-                "crate::application::ports",
-                "crate::application::environment_control::EnvironmentControlUseCase",
-                "crate::application::environment_control::EnvironmentKillPort",
-                "crate::application::environments::ListEnvironmentsQuery",
-            ];
-            if trimmed.contains("crate::application::")
-                && allowed_application_dependencies
-                    .iter()
-                    .all(|allowed| !trimmed.contains(allowed))
-            {
-                panic!(
-                    "Architecture violation in infrastructure: {file_path}\n\
-                     Line: {trimmed}\n\
-                     Rule: infrastructure may depend on application only via \
-                     crate::application::ports"
-                );
-            }
-        }
+        let (_, source) = file_content.split_once(":\n").unwrap();
+        assert!(
+            application_dependencies_allowed(source),
+            "Architecture violation in infrastructure: {file_path}"
+        );
     }
 }
 
@@ -308,20 +284,190 @@ fn environment_control_orchestration_stays_out_of_interface_handlers() {
 fn list_environments_query_has_only_the_domain_registry_dependency() {
     let path = "src/application/environments/list_environments.rs";
     let content = fs::read_to_string(path).unwrap();
-    assert!(content.contains("domain::environment_registry"));
-    for forbidden in [
-        "serde_json",
-        "infrastructure",
-        "tokio",
-        "std::process",
-        "Docker",
-        "Podman",
-    ] {
-        assert!(
-            !content.contains(forbidden),
-            "{path} contains forbidden dependency {forbidden}"
-        );
+    assert!(
+        query_dependencies_allowed(&content),
+        "{:?}",
+        dependency_paths(&content)
+    );
+}
+
+fn query_dependencies_allowed(content: &str) -> bool {
+    dependency_paths(content).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            matches!(
+                path.as_str(),
+                "crate::domain::environment_registry::EnvironmentRecord"
+                    | "crate::domain::environment_registry::EnvironmentRegistry"
+                    | "EnvironmentRecord"
+                    | "EnvironmentRegistry"
+                    | "EnvironmentRegistry::entries"
+                    | "ListEnvironmentsQuery"
+                    | "Self"
+                    | "Vec"
+                    | "Clone"
+                    | "Debug"
+                    | "registry"
+                    | "self"
+            )
+        })
+    })
+}
+
+fn application_dependencies_allowed(content: &str) -> bool {
+    dependency_paths(content).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                ["crate", "application", "ports", ..] => true,
+                [
+                    "crate",
+                    "application",
+                    "environment_control",
+                    "EnvironmentControlUseCase" | "EnvironmentKillPort",
+                    ..,
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "environments",
+                    "ListEnvironmentsQuery",
+                    ..,
+                ] => true,
+                ["crate", "application", ..] => false,
+                _ => true,
+            }
+        })
+    })
+}
+
+/// Parse syntax, not lines: comments cannot authorize dependencies and grouped
+/// imports are expanded to their individual paths. Unknown query paths fail closed.
+fn dependency_paths(content: &str) -> Option<Vec<String>> {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Paths(Vec<String>);
+    fn test_only(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        })
     }
+    fn imports(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                imports(&path.tree, &format!("{prefix}{}::", path.ident), paths)
+            }
+            syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Rename(name) => paths.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Glob(_) => paths.push(format!("{prefix}*")),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    imports(item, prefix, paths);
+                }
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Paths {
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            if attr.path().is_ident("doc") {
+                return;
+            }
+            if attr.path().is_ident("derive") {
+                match attr.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                ) {
+                    Ok(paths) => {
+                        for path in paths {
+                            self.0.push(
+                                path.segments
+                                    .iter()
+                                    .map(|s| s.ident.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("::"),
+                            );
+                        }
+                    }
+                    Err(_) => self.0.push("<unparsed attribute>".into()),
+                }
+                return;
+            }
+            self.0.push(
+                attr.path()
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            );
+        }
+        fn visit_field_value(&mut self, field: &'ast syn::FieldValue) {
+            if test_only(&field.attrs) {
+                return;
+            }
+            syn::visit::visit_field_value(self, field);
+        }
+        fn visit_expr_method_call(&mut self, expr: &'ast syn::ExprMethodCall) {
+            if test_only(&expr.attrs) {
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, expr);
+        }
+
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let attrs = match item {
+                syn::Item::Use(i) => &i.attrs,
+                syn::Item::Mod(i) => &i.attrs,
+                syn::Item::Fn(i) => &i.attrs,
+                syn::Item::Struct(i) => &i.attrs,
+                syn::Item::Impl(i) => &i.attrs,
+                _ => {
+                    syn::visit::visit_item(self, item);
+                    return;
+                }
+            };
+            if test_only(attrs) {
+                return;
+            }
+            syn::visit::visit_item(self, item);
+        }
+        fn visit_field(&mut self, field: &'ast syn::Field) {
+            if test_only(&field.attrs) {
+                return;
+            }
+            syn::visit::visit_field(self, field);
+        }
+        fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+            if test_only(&method.attrs) {
+                return;
+            }
+            syn::visit::visit_impl_item_fn(self, method);
+        }
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            imports(&item.tree, "", &mut self.0);
+        }
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.0.push(
+                path.segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            );
+            syn::visit::visit_path(self, path);
+        }
+    }
+    let file = syn::parse_file(content).ok()?;
+    let mut paths = Paths::default();
+    paths.visit_file(&file);
+    Some(paths.0)
+}
+
+#[test]
+fn query_dependency_guard_rejects_filesystem_imports() {
+    let source = "use crate::domain::environment_registry::EnvironmentRegistry; use std::fs; fn effect() { let _ = fs::read(\"x\"); }";
+    assert!(!query_dependencies_allowed(source));
 }
 
 #[test]
@@ -1654,4 +1800,37 @@ fn tui_shell_owns_app_composition_root() {
         !Path::new("../quecto-tui/src/interface").exists(),
         "interface/ must be fully retired after #1257 Phase 6"
     );
+}
+
+#[test]
+fn dependency_allowlists_use_paths_not_substrings() {
+    for source in [
+        "use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};",
+        "use crate::domain::environment_registry::EnvironmentRegistry as Registry;",
+    ] {
+        assert!(query_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "#[derive(serde::Serialize)] struct ListEnvironmentsQuery;",
+        "use std::{fs, path::Path};",
+        "fn effect() { std::fs::read(\"x\"); }",
+        "use crate::domain::environment_registry::*;",
+        "use crate::domain::environment_registry::Unexpected;",
+    ] {
+        assert!(!query_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::application::ports::EnvironmentRuntime;",
+        "use crate::application::{ports::EnvironmentRuntime, environments::ListEnvironmentsQuery};",
+    ] {
+        assert!(application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::application::secret::Bad; // crate::application::ports",
+        "use crate::application::{ports::Good, secret::Bad};",
+        "fn effect() { crate::application::secret::run(); }",
+        "use crate::application::environments::ListEnvironmentsQueryExtra;",
+    ] {
+        assert!(!application_dependencies_allowed(source), "{source}");
+    }
 }
