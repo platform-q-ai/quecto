@@ -273,22 +273,32 @@ class Workbench(Tasks):
 
     def withdraw(self, message_id):
         """Withdraw your own unread message: it leaves the recipient's inbox and
-        the wake path but stays in the audit as `withdrawn` (#1837)."""
-        if type(message_id) is not int or message_id < 1:
-            raise SwarmError('message id must be a positive integer')
+        the wake path but stays in the audit as `withdrawn` (#1837). Repeating
+        a withdrawal is a no-op, like repeating an acknowledgment."""
+        message_id = self._message_id(message_id)
         with self.store.operation(active=False) as (db, _):
-            self._retire(db, message_id, None, 'withdrawn')
-            self.store.event(db, 'message_withdrawn', {'message': message_id})
+            if self._retire(db, message_id, None, 'withdrawn'):
+                self.store.event(db, 'message_withdrawn', {'message': message_id})
+
+    @staticmethod
+    def _message_id(value):
+        if type(value) is not int or value < 1:
+            raise SwarmError('message id must be a positive integer')
+        return value
 
     def _retire(self, db, message_id, recipient, status):
+        """Move your own unread message to `status`; False when it already is."""
         row = db.execute('SELECT * FROM messages WHERE id=?', (message_id,)).fetchone()
         if not row or row['sender'] != self.member:
             raise SwarmError(f'only your own message can be {status}')
         if recipient is not None and row['recipient'] != recipient:
             raise SwarmError(f'only a message to the same recipient can be {status}')
+        if row['status'] == status and status == 'withdrawn':
+            return False
         if row['status'] != 'accepted':
             raise SwarmError(f"message {message_id} is already {row['status']}")
         db.execute('UPDATE messages SET status=? WHERE id=?', (status, message_id))
+        return True
 
     def inbox(self, include_consumed=False):
         """Unread messages to you; `include_consumed=True` adds the audit of
@@ -299,6 +309,7 @@ class Workbench(Tasks):
                 (self.member, include_consumed))]
 
     def ack(self, message_id):
+        message_id = self._message_id(message_id)
         with self.store.operation(active=False) as (db, _):
             row = db.execute('SELECT * FROM messages WHERE id=? AND recipient=?', (message_id, self.member)).fetchone()
             if not row:

@@ -527,7 +527,9 @@ class WorkbenchBehavior(unittest.TestCase):
         for bad in ['1', True, 0, None]:
             with self.subTest(bad=bad), self.assertRaisesRegex(SwarmError, 'message id'):
                 self.worker.withdraw(bad)
-        self.assertEqual(self.parent.inbox()[0]['id'], message['id'], 'nothing was withdrawn')
+            with self.subTest(bad=bad), self.assertRaisesRegex(SwarmError, 'message id'):
+                self.parent.ack(bad)
+        self.assertEqual([m['id'] for m in self.parent.inbox()], [message['id']], 'nothing was withdrawn or acknowledged')
         with self.assertRaisesRegex(SwarmError, 'only your own message'):
             self.parent.withdraw(message['id'])
 
@@ -538,11 +540,14 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(self.parent.inbox(), [])
         self.assertEqual(self.parent.inbox(include_consumed=True)[-1]['status'], 'withdrawn')
         self.assertEqual(self.worker._notifications(), [], 'a withdrawn message must not wake its recipient')
-        with self.assertRaisesRegex(SwarmError, 'already withdrawn'):
-            self.worker.withdraw(message['id'])
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_withdrawn')
+        self.worker.withdraw(message['id'])  # repeating a withdrawal is a no-op, like ack
+        events = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(events.count('message_withdrawn'), 1)
         with self.assertRaisesRegex(SwarmError, 'own message'):
             self.parent.withdraw(message['id'])
-        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_withdrawn')
+        self.parent.ack(message['id'])
+        self.assertEqual(self.parent.inbox(include_consumed=True)[-1]['status'], 'withdrawn', 'ack cannot revive a withdrawn message')
 
     def test_file_reservations_are_atomic_normalized_and_token_owned(self):
         first = self.task()
