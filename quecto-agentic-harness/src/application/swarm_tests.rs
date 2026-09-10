@@ -210,7 +210,7 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
 }
 
 /// #1729: a run its coordinator ended is a pause that keeps the coordinator
-/// reporting (its finished interpreter is cancelled, its turn is not) while
+/// reporting (its finished interpreter is suspended, its turn is not) while
 /// every other member suspends intact; nobody is aborted or terminated.
 #[tokio::test]
 async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() {
@@ -224,7 +224,11 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
     };
     settle(&ended, "parent", &coordinator).await.unwrap();
-    assert_eq!(*coordinator.events.lock().unwrap(), ["cancel-jobs"]);
+    assert_eq!(
+        *coordinator.events.lock().unwrap(),
+        ["suspend-jobs"],
+        "the registry stays open for the resume; the turn keeps reporting"
+    );
     let worker = Processes {
         events: Mutex::new(vec![]),
         accepts: true,

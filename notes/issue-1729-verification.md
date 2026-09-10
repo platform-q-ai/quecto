@@ -24,9 +24,17 @@ than complete it).
 - Domain: `Snapshot.outcome`, `Snapshot::ended`, `Snapshot::admits_inference`
   (an ended run keeps its coordinator reporting); `RunStatus::proposable`.
   Application: `observed_outcome` turns a passed deadline into `Paused`;
-  `settle` on an ended run cancels the coordinator's finished interpreter
-  and suspends every other member; the supervisor loop keeps running across
-  pause/resume and settles only on close or cancel.
+  `settle` on any pause suspends local executions up to the control
+  generation and keeps the execution registry open for a resume (a
+  cancelled registry can never run Python again, which review round 1
+  caught); an ended run keeps its coordinator's inference so it can report.
+  The supervisor loop keeps running across pause/resume and settles only on
+  close or cancel.
+- A lost harness (`_confirmed_dead`, `_quarantine`) ends a live or paused
+  run as a pause holding `failed` with the reason; only a setup placeholder
+  still fails outright. Cancellation is allowed only from a running or
+  paused run and clears any held outcome; a closed run cannot be cancelled
+  over. Extensions are capped at seven days ahead, as at creation.
 - Interface: `swarm_control` `close` and `extend` (`deadline_seconds`),
   receipts and status events carry `outcome`/`reason`; pending explicit
   instructions are admitted for an ended run so the coordinator can report.
@@ -37,8 +45,10 @@ than complete it).
 Python contract (`tests/swarm_helpers_test.py`, `tests/swarm_policy_test.py`):
 stop → paused holding the outcome, members live, claims kept, member resume
 refused, supervisor resume; completion held until close; deadline expiry
-paused, resume refused until extended; token budget pause resumed only after a
-raised budget; cancellation terminal even while ended. Rust: domain/application
+paused, resume refused until extended, extension grants future time and is
+capped; token budget pause resumed only after a raised budget; cancellation
+terminal even while ended, refused over a closed run; a lost coordinator ends a
+paused run as `failed`. A resumed coordinator runs Python again (Rust and BDD). Rust: domain/application
 unit tests (ended settle keeps the coordinator; deadline is a pause), control
 parse and reader-dispatch tests for close/extend, contracts, and the swarm BDD
 scenarios "A coordinator stop ends the run as a pause only the supervisor

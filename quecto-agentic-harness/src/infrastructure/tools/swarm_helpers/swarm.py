@@ -230,9 +230,8 @@ class Workbench(Tasks):
             db.execute("UPDATE tasks SET status='blocked',blocker='worker death confirmed; coordinator recovery required' WHERE owner=? AND status IN ('claimed','blocked','submitted')", (member,))
             db.execute('DELETE FROM files WHERE owner=?', (member,))
             self.store.event(db, 'death_confirmed', {'member': member})
-            if member == run['coordinator'] and run['status'] in ('setup', 'running'):
-                db.execute("UPDATE run SET status='failed'")
-                self.store.event(db, 'stop', {'status': 'failed', 'reason': 'coordinator death confirmed'})
+            if member == run['coordinator']:
+                self._end_by_loss(db, run, 'coordinator death confirmed')
 
     def send(self, request: str, recipient: str, body: str):
         """Send a durable string message (8192 UTF-8 bytes maximum), not a dict."""
@@ -294,10 +293,20 @@ class Workbench(Tasks):
         # A missing harness is not proof that its independent execution groups
         # stopped. Keep all ownership until the environment is discarded.
         with self.store.operation(active=False) as (db, run):
-            if run['status'] in ('setup', 'running'):
-                db.execute("UPDATE run SET status='failed'")
-                self.store.event(db, 'scope_unknown', {'member': member,
-                    'reason': 'harness exited; execution scope unconfirmed; discard environment'})
+            self.store.event(db, 'scope_unknown', {'member': member,
+                'reason': 'harness exited; execution scope unconfirmed; discard environment'})
+            self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+
+    def _end_by_loss(self, db, run, reason):
+        """A lost harness ends a live run as a pause holding `failed` (#1729): the
+        supervisor decides whether to close it; a setup placeholder just fails."""
+        if run['status'] == 'setup':
+            db.execute("UPDATE run SET status='failed'")
+            self.store.event(db, 'stop', {'status': 'failed', 'reason': reason})
+        elif run['status'] in ('running', 'paused') and run.get('outcome') != 'failed':
+            db.execute("UPDATE run SET status='paused', outcome='failed', outcome_reason=?", (reason,))
+            self.store.event(db, 'stop', {'status': 'failed', 'reason': reason})
+            self.store.event(db, 'paused', {'reason': reason, 'started': time.time(), 'outcome': 'failed'})
 
     def stop(self, status, reason):
         """End the run: every status but `cancelled` is a resumable pause holding

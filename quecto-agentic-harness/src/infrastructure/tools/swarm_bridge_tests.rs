@@ -262,7 +262,12 @@ async fn ready_failure_retains_launched_scope_after_child_rollback() {
     assert_eq!(context.summary().unwrap()["usage"], 2);
     prepared.rollback_once().await;
     assert_eq!(context.summary().unwrap()["usage"], 2);
-    assert_eq!(context.summary().unwrap()["status"], "failed");
+    // A lost harness ends the run as a pause holding `failed` (#1729).
+    let summary = context.summary().unwrap();
+    assert_eq!(
+        (summary["status"].as_str(), summary["outcome"].as_str()),
+        (Some("paused"), Some("failed"))
+    );
 }
 
 #[tokio::test]
@@ -401,7 +406,10 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
         "harness death cannot prove its execution scope stopped"
     );
     assert_eq!(snapshot["usage"], 2);
-    assert_eq!(snapshot["status"], "failed");
+    assert_eq!(
+        (snapshot["status"].as_str(), snapshot["outcome"].as_str()),
+        (Some("paused"), Some("failed"))
+    );
     assert!(parent.call("recover", json!([task["id"]])).is_err());
 }
 

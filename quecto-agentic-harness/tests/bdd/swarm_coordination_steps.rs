@@ -665,3 +665,16 @@ fn no_new_work(world: &mut QuectoWorld) {
     );
     assert!(result(world).is_error, "{}", result(world).content);
 }
+
+#[then("the coordinator can run Python on the board again")]
+fn python_again(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; print(board.summary()['status'])"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    assert_eq!(
+        result_json(world)["stdout"].as_str().unwrap().trim(),
+        "running"
+    );
+}

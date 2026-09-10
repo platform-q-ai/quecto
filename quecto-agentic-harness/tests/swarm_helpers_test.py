@@ -534,7 +534,7 @@ class WorkbenchBehavior(unittest.TestCase):
         self.task()
         self.worker._confirmed_dead('coordinator')
         summary = self.parent.summary()
-        self.assertEqual(summary['status'], 'failed')
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
         self.assertEqual(summary['task_count'], 1)
         with self.assertRaises(SwarmError):
             self.task('after-parent-death')
@@ -612,12 +612,39 @@ class WorkbenchBehavior(unittest.TestCase):
 
     def test_cancellation_stays_terminal_even_while_ended(self):
         self.parent.stop('failed', 'unrecoverable')
+        with self.assertRaisesRegex(SwarmError, r'paused \(failed'):
+            self.parent.stop('blocked', 'a second verdict while ended')
         self.parent.stop('cancelled', 'user gave up')
-        self.assertEqual(self.parent.summary()['status'], 'cancelled')
+        cancelled = self.parent.summary()
+        self.assertEqual((cancelled['status'], cancelled['outcome']), ('cancelled', None))
         with self.assertRaisesRegex(SwarmError, 'only a paused run'):
             self.parent._resume_external()
         with self.assertRaises(SwarmError):
             self.parent._extend_deadline(60)
+
+    def test_a_closed_run_cannot_be_cancelled_over(self):
+        self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
+        self.parent.evidence('review', 'review.md', 'R1', 'review', True)
+        self.parent.complete('R1')
+        self.parent._close()
+        with self.assertRaisesRegex(SwarmError, 'already succeeded'):
+            self.parent.stop('cancelled', 'too late')
+        self.assertEqual(self.parent.summary()['status'], 'succeeded')
+
+    def test_a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused(self):
+        self.parent.pause('hold')
+        self.worker._confirmed_dead('coordinator')
+        held = self.worker.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'failed'))
+        self.assertIn('coordinator death', held['outcome_reason'])
+        with self.assertRaises(SwarmError):
+            self.task('after-parent-death')
+
+    def test_deadline_extension_is_capped_at_seven_days_ahead(self):
+        with self.assertRaisesRegex(SwarmError, 'seven days'):
+            self.parent._extend_deadline(604800)
+        self.parent._extend_deadline(3600)
+        self.assertGreater(self.parent.summary()['deadline'], time.time() + 3000)
 
 
 if __name__ == '__main__':

@@ -32,7 +32,7 @@ without the documentation files being present in the container checkout.
 | Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
 | Detailed live task/file pages | Coordinator uses `board.tasks()` / `board.file_owners()` while the run is running |
 | Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
-| Final result | Read summary status, final revision and criterion evidence; distinguish `succeeded` from blocked/failed/cancelled/budget-exhausted |
+| Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
 
 There are no dedicated public swarm creation, update, inspection or result UDS

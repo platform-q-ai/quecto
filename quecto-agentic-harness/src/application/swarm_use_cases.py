@@ -5,7 +5,7 @@ All decisions and writes occur within the same atomic transaction.
 """
 from contextlib import contextmanager
 from typing import Protocol
-from swarm_policy import (SwarmError, PROPOSED_OUTCOMES, STOP_STATUSES, authorize, expired, require_budget, admission, completion,
+from swarm_policy import (SwarmError, PROPOSED_OUTCOMES, STOP_STATUSES, describe, authorize, expired, require_budget, admission, completion,
                           revalidation, notification_targets, usage_budget_decision, request_measurement, resume_blockers,
                           validate_extension)
 
@@ -88,13 +88,16 @@ class Coordination:
             if status == 'cancelled':
                 if run['status'] == 'cancelled':
                     return tx.control_receipt()
+                if run['status'] not in ('running', 'paused'):
+                    raise SwarmError(f"run already {describe(run)}")
+                tx.clear_outcome()
                 tx.set_outcome('cancelled')
                 tx.event('stop', {'status': status, 'reason': reason})
                 return tx.control_receipt()
             if run['status'] == 'paused' and run.get('outcome') == status:
                 return tx.control_receipt()
             if run['status'] != 'running':
-                raise SwarmError(f"run already {run['status']}")
+                raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it")
             self._end(tx, status, reason)
             return tx.control_receipt()
 
@@ -166,6 +169,8 @@ class Coordination:
             base = run['deadline']
             if run['status'] == 'paused':
                 base = max(base, tx.pause_started())
+            if base + seconds > self.clock() + 604800:
+                raise SwarmError('deadline may be at most seven days ahead, as at creation')
             tx.set_deadline(base + seconds)
             tx.event('extended', {'seconds': seconds, 'deadline': base + seconds})
             return tx.control_receipt()

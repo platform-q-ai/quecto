@@ -119,6 +119,7 @@ Feature: Container swarm coordination
     Then the swarm result should contain "outside the swarm"
     When the supervisor outside the swarm resumes the run
     Then the swarm run status is "running"
+    And the coordinator can run Python on the board again
 
   Scenario: Completion holds success until the supervisor closes it
     When the coordinator completes the run with accepted evidence
