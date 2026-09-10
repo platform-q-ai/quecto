@@ -633,6 +633,11 @@ class WorkbenchBehavior(unittest.TestCase):
         placeholder = self.client('other')
         with self.assertRaisesRegex(SwarmError, 'unknown'):
             placeholder.stop('cancelled', 'not a member')
+        fresh = Workbench(str(self.root / 'fresh.sqlite'), str(self.root), 'boot')
+        fresh._bootstrap(1, 'start-b', '/tmp/b.sock')
+        with self.assertRaisesRegex(SwarmError, 'not created yet'):
+            fresh.stop('cancelled', 'nothing to cancel')
+        self.assertEqual(fresh._status()['status'], 'setup')
 
     def test_a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused(self):
         self.parent.pause('hold')
