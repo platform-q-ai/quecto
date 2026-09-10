@@ -89,9 +89,11 @@ Launch reservations precede process launch. Only reservations for processes that
 never started are released automatically. Launched processes are identified by
 PID and kernel start time, avoiding recycled-PID mistakes. `op=reconcile` detects
 harness death, but a dead harness does **not** prove that its Bash/Python execution
-groups stopped: those children can survive and be reparented. Therefore the run
-fails, membership and file ownership stay reserved, and replacement claims are
-rejected. Stop and discard that container environment before starting a fresh run.
+groups stopped: those children can survive and be reparented. Therefore a running
+run pauses holding `failed` (a paused run keeps its pause clock and any verdict
+the coordinator had already proposed), membership and file ownership stay
+reserved, and replacement claims are rejected. Close and discard that container
+environment before starting a fresh run.
 The current adapter cannot safely recover an abruptly exited worker in place;
 `recover` requires independently confirmed execution-scope death, which ordinary
 harness reconciliation deliberately does not assert. Post-launch rollback is also
@@ -216,7 +218,8 @@ coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
 `cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
 once. Put final report data on the board before calling `complete` or `stop`:
 the interpreter that proposes the outcome is cancelled as soon as the watcher
-observes it. The registry closes against concurrent new launches. Each Python invocation owns
+observes it, and the execution registry admits nothing but native reads until
+the supervisor resumes the run (it closes for good only on close or cancel). Each Python invocation owns
 its ordinary process group until cleanup: even if Python returns first, remaining
 ordinary children are terminated before its result is published. On Linux, the
 interpreter is reaped only after group cleanup, preventing PID reuse during

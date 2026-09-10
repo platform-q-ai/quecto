@@ -630,6 +630,9 @@ class WorkbenchBehavior(unittest.TestCase):
         with self.assertRaisesRegex(SwarmError, 'already succeeded'):
             self.parent.stop('cancelled', 'too late')
         self.assertEqual(self.parent.summary()['status'], 'succeeded')
+        placeholder = self.client('other')
+        with self.assertRaisesRegex(SwarmError, 'unknown'):
+            placeholder.stop('cancelled', 'not a member')
 
     def test_a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused(self):
         self.parent.pause('hold')
@@ -639,6 +642,34 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertIn('coordinator death', held['outcome_reason'])
         with self.assertRaises(SwarmError):
             self.task('after-parent-death')
+        actions = [e['action'] for e in self.worker.events(limit=100)['events']]
+        self.assertEqual(actions.count('paused'), 1, 'a loss during a pause does not restart the pause clock')
+
+    def test_a_loss_during_a_pause_keeps_the_frozen_budget(self):
+        from unittest.mock import patch
+        now = time.time()
+        deadline = self.parent.summary()['deadline']
+        self.parent.coordination.clock = lambda: time.time()
+        with patch('time.time', return_value=now):
+            self.parent.pause('hold')
+        with patch('time.time', return_value=now + 100):
+            self.parent._quarantine('worker')
+        held = self.parent.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'failed'))
+        with patch('time.time', return_value=now + 500):
+            self.parent._resume_external()
+            self.assertAlmostEqual(self.parent.summary()['deadline'], deadline + 500, places=3)
+
+    def test_a_worker_loss_keeps_the_verdict_the_coordinator_already_proposed(self):
+        self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
+        self.parent.evidence('review', 'review.md', 'R1', 'review', True)
+        self.parent.complete('R1')
+        self.parent._quarantine('worker')
+        held = self.parent.summary()
+        self.assertEqual((held['status'], held['outcome']), ('paused', 'succeeded'))
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'scope_unknown')
+        self.parent._close()
+        self.assertEqual(self.parent.summary()['status'], 'succeeded')
 
     def test_deadline_extension_is_capped_at_seven_days_ahead(self):
         with self.assertRaisesRegex(SwarmError, 'seven days'):

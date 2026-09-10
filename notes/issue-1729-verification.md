@@ -30,8 +30,10 @@ than complete it).
   caught); an ended run keeps its coordinator's inference so it can report.
   The supervisor loop keeps running across pause/resume and settles only on
   close or cancel.
-- A lost harness (`_confirmed_dead`, `_quarantine`) ends a live or paused
-  run as a pause holding `failed` with the reason; only a setup placeholder
+- A lost harness (`_confirmed_dead`, `_quarantine`) ends a running run as a
+  pause holding `failed` with the reason; a run already paused keeps its
+  pause clock (the frozen budget) and any verdict the coordinator had
+  proposed, taking `failed` only when it held nothing; a setup placeholder
   still fails outright. Cancellation is allowed only from a running or
   paused run and clears any held outcome; a closed run cannot be cancelled
   over. Extensions are capped at seven days ahead, as at creation.

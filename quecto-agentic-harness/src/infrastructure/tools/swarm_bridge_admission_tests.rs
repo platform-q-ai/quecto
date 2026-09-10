@@ -86,7 +86,13 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
         .execute(r#"{"code":"print('while ended')"}"#)
         .await
         .unwrap();
-    assert!(refused.is_error, "{}", refused.content);
+    assert!(
+        refused.is_error
+            && refused.content.contains("paused")
+            && !refused.content.contains("registry"),
+        "an ended run refuses by its pause, not by a stopped registry: {}",
+        refused.content
+    );
     context.resume_external().unwrap();
     let again = tool
         .execute(r#"{"code":"from swarm import board; print(board.summary()['status'])"}"#)

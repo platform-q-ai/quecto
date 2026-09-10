@@ -298,15 +298,21 @@ class Workbench(Tasks):
             self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
 
     def _end_by_loss(self, db, run, reason):
-        """A lost harness ends a live run as a pause holding `failed` (#1729): the
-        supervisor decides whether to close it; a setup placeholder just fails."""
+        """A lost harness ends a running run as a pause holding `failed` (#1729);
+        the supervisor decides whether to close it. A run already paused keeps
+        its pause start (the frozen budget) and any verdict the coordinator had
+        proposed; only an outcome-less pause takes `failed`. A setup placeholder
+        (no run created) just fails."""
         if run['status'] == 'setup':
             db.execute("UPDATE run SET status='failed'")
             self.store.event(db, 'stop', {'status': 'failed', 'reason': reason})
-        elif run['status'] in ('running', 'paused') and run.get('outcome') != 'failed':
+        elif run['status'] == 'running':
             db.execute("UPDATE run SET status='paused', outcome='failed', outcome_reason=?", (reason,))
             self.store.event(db, 'stop', {'status': 'failed', 'reason': reason})
             self.store.event(db, 'paused', {'reason': reason, 'started': time.time(), 'outcome': 'failed'})
+        elif run['status'] == 'paused' and not run.get('outcome'):
+            db.execute("UPDATE run SET outcome='failed', outcome_reason=?", (reason,))
+            self.store.event(db, 'stop', {'status': 'failed', 'reason': reason})
 
     def stop(self, status, reason):
         """End the run: every status but `cancelled` is a resumable pause holding

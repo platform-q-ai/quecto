@@ -97,8 +97,9 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
 - `stop(status, reason)` accepts `blocked`, `failed`, `cancelled`, or
   `budget-exhausted`; use tool `op=cancel_run` for parent cancellation.
 - `recover(id)` requires proof the entire former owner's execution scope stopped.
-  The current adapter cannot establish that from harness death alone: it fails
-  the run and retains ownership. Stop/discard that environment; do not reassign.
+  The current adapter cannot establish that from harness death alone: it pauses
+  the run holding `failed` (a verdict already proposed is kept) and retains
+  ownership for the master to close. Do not reassign.
 
 Actually inspect command results and independent review before accepting them.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.
@@ -147,9 +148,10 @@ host-local master may still use a workflow to supervise the swarm.
 For a clarification or approval, keep the run **running**, mark the affected task
 with `board.block(task_id, claim_token, reason)`, report the exact question to the
 master and yield the turn. Do not sleep/poll or use `board.stop('blocked', ...)`
-as a pause: a blocked **run** is terminal, closes Python execution and settles
-workers. A blocked **task** retains its claim and can be submitted after the
-answer arrives and work is completed. The original deadline continues to apply.
+to wait for one task: a blocked **run** is a pause holding `blocked` that only
+the master can resume or close. A blocked **task** retains its claim and can be
+submitted after the answer arrives and work is completed. The original deadline
+continues to apply.
 
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
 it must interrupt a busy coordinator. A queued `follow_up` waits for the current
