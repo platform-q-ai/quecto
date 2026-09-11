@@ -120,26 +120,6 @@ fn parent_playbook_contract_is_excluded_from_children() {
         "platform-q-ai/quecto only",
         "merge-requested",
         "resets on failure",
-        "user authorization and repository process permit",
-        "may auto-merge",
-        "actual run targets the intended SHA",
-        "push alone",
-        "inspect triggers",
-        "blind label toggles or retry loops",
-        "committed accessible branch",
-        "tests/CI at the current SHA",
-        "separate swarm review",
-        "findings resolved or user-accepted",
-        "closing references and state",
-        "implemented, PR opened, CI passing, reviewed, merged, and issue closed",
-        "preserving artifacts",
-        "precise question",
-        "resumable work",
-        "missing access, failed commands, or an empty board",
-        "failure, prevention, applicability, and verification",
-        "approved lessons",
-        "designated playbook",
-        "secrets",
     ];
     for parent in [
         build_system_prompt(&None, false),
@@ -166,6 +146,56 @@ fn parent_playbook_contract_is_excluded_from_children() {
                 !child.contains(requirement),
                 "parent policy leaked to child: {requirement}"
             );
+        }
+    }
+}
+
+/// User review amendments replace earlier policy, without leaking into children.
+#[test]
+fn parent_playbook_applies_user_review_amendments() {
+    let additions = [
+        "while you, the parent, remain available to the user",
+        "Prefer swarms for nearly all software development and team based work.",
+        "Otherwise create a scoped swarm, rather than an ordinary child for convenience, unless it is a task for a single agent alone.",
+        "Unless an assigned Epic or Issue contains full instructions, handoffs must include requirements",
+        "Ensure swarms understand that the `merge-requested` label is required to start/restart relevant CI and resets on failure.",
+    ];
+    let removals = [
+        "Read delegated reports and critical evidence",
+        "Before replacing work",
+        "When blocked",
+        "Missing evidence is a blocker",
+        "### Completion and learning",
+        "Completion requires all applicable gates",
+        "From corrections",
+        "Persist approved lessons",
+        "Inspect labels, PR head, and workflows",
+        "Apply the label when ready",
+        "Confirm the actual run",
+        "After failure, diagnose",
+        "push alone",
+        "If the label is present",
+        "Avoid blind label",
+        "Treat this as a repository-scoped rule",
+    ];
+    for parent in [
+        build_system_prompt(&None, false),
+        build_agent_system_prompt(None, None, false, ""),
+    ] {
+        for text in additions {
+            assert!(parent.contains(text), "missing user amendment: {text}");
+        }
+        for text in removals {
+            assert!(!parent.contains(text), "removed policy remains: {text}");
+        }
+        assert!(parent.contains("### Repository CI: platform-q-ai/quecto only"));
+    }
+    for child in [
+        build_system_prompt(&None, true),
+        build_agent_system_prompt(None, None, true, ""),
+    ] {
+        for text in additions {
+            assert!(!child.contains(text), "parent amendment leaked: {text}");
         }
     }
 }
@@ -224,7 +254,6 @@ fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
         assert!(!child.contains("Prefer swarms for nearly all software development"));
         assert!(parent.contains(agent_role_preamble()));
         assert!(parent.contains("Prefer swarms for nearly all software development"));
-        assert!(parent.contains("Read delegated reports and critical evidence"));
         assert!(!parent.contains("Common loops"));
         assert!(!parent.contains("quick-start"));
         assert!(!child.contains("quick-start"));
