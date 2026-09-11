@@ -643,3 +643,32 @@ fn builtin_xai_grok_43_removed() {
     let registry = ModelRegistry::builtin();
     assert!(registry.find("xai", "grok-4.3").is_none());
 }
+
+#[test]
+fn builtin_models_exclude_removed_fireworks_defaults() {
+    let registry = ModelRegistry::builtin();
+    for id in ["glm-5p2", "kimi-k2p7-code"] {
+        assert!(
+            registry
+                .find("fireworks", &format!("accounts/fireworks/models/{id}"))
+                .is_none(),
+            "removed Fireworks model must not appear in built-in registry: {id}"
+        );
+    }
+}
+
+#[test]
+fn removed_fireworks_defaults_remain_available_when_user_configured() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(&path, r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://example.test/v1","models":[{"id":"accounts/fireworks/models/glm-5p2"},{"id":"accounts/fireworks/models/kimi-k2p7-code"}]}}}"#).unwrap();
+    let registry = ModelRegistry::load_from_path(&path).unwrap();
+    for id in ["glm-5p2", "kimi-k2p7-code"] {
+        let opaque_id = format!("accounts/fireworks/models/{id}");
+        let model = registry
+            .find("fireworks", &opaque_id)
+            .expect("explicit user model remains routable");
+        assert_eq!(model.qualified_id(), format!("fireworks/{opaque_id}"));
+        assert_eq!(model.api, ProviderApi::OpenAiCompletions);
+    }
+}

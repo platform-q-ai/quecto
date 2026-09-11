@@ -99,22 +99,15 @@ fn known_models_include_latest_openai_reasoning_models_for_both_auth_modes() {
 }
 
 #[test]
-fn known_models_include_fireworks_serverless_models() {
-    let known_ids: Vec<String> = known_ids();
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "fireworks/accounts/fireworks/models/glm-5p2"),
-        "known models should include Fireworks GLM 5.2: {:?}",
-        known_ids
-    );
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "fireworks/accounts/fireworks/models/kimi-k2p7-code"),
-        "known models should include Fireworks Kimi K2.7 Code: {:?}",
-        known_ids
-    );
+fn known_models_exclude_removed_fireworks_defaults() {
+    let ids = known_ids();
+    for id in ["glm-5p2", "kimi-k2p7-code"] {
+        assert!(
+            ids.iter()
+                .all(|known| known != &format!("fireworks/accounts/fireworks/models/{id}")),
+            "removed Fireworks model must not appear in fallback models: {id}"
+        );
+    }
 }
 
 #[test]
@@ -307,7 +300,7 @@ fn shared_list_selection_clamps_when_filter_narrows() {
     for _ in 0..5 {
         sel.handle_input(&Key::Down);
     }
-    for c in "fireworks".chars() {
+    for c in "gpt-6-astra".chars() {
         sel.handle_input(&Key::Char(c));
     }
     assert_eq!(
@@ -323,7 +316,7 @@ fn shared_list_suggestions_track_filter_changes() {
     // change must actually replace the shared list's values (which only
     // works because `value` is the model id, not a hollow placeholder).
     let mut sel = ModelSelector::new(None);
-    for c in "fireworks".chars() {
+    for c in "gpt-6-astra".chars() {
         sel.handle_input(&Key::Char(c));
     }
     let values: Vec<&str> = sel
@@ -332,12 +325,12 @@ fn shared_list_suggestions_track_filter_changes() {
         .iter()
         .map(|s| s.value.as_str())
         .collect();
-    assert_eq!(values.len(), 2, "two fireworks models match");
+    assert_eq!(values.len(), 2, "two GPT 6 Astra auth modes match");
     assert!(
-        values.iter().all(|v| v.starts_with("fireworks/")),
+        values.iter().all(|v| v.ends_with("/gpt-6-astra")),
         "{values:?}"
     );
-    for _ in 0.."fireworks".len() {
+    for _ in 0.."gpt-6-astra".len() {
         sel.handle_input(&Key::Backspace);
     }
     assert_eq!(
@@ -438,4 +431,22 @@ fn custom_model_with_control_chars_sanitized() {
         "should preserve text: {}",
         custom_entry.id
     );
+}
+
+#[test]
+fn removed_fireworks_defaults_remain_selectable_when_user_configured() {
+    for id in ["glm-5p2", "kimi-k2p7-code"] {
+        let id = format!("fireworks/accounts/fireworks/models/{id}");
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: id.clone(),
+                provider: "Fireworks".into(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
+        sel.handle_input(&Key::Enter);
+        assert_eq!(sel.take_result(), ModelSelectorResult::Selected(id));
+    }
 }

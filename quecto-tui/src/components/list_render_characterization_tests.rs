@@ -286,8 +286,8 @@ fn model_selector_overflow_indicator_pixels() {
     let lines = sel.render(80);
     let plain = strip_ansi(lines.last().unwrap());
     assert_eq!(
-        plain, "  (1/40)",
-        "12-row window over the 40 known models shows the indicator"
+        plain, "  (1/38)",
+        "12-row window over the 38 known models shows the indicator"
     );
 }
 
@@ -320,14 +320,14 @@ fn model_selector_filter_change_clamps_selection() {
     for _ in 0..5 {
         sel.handle_input(&Key::Down);
     }
-    for c in "fireworks".chars() {
+    for c in "gpt-6-astra".chars() {
         sel.handle_input(&Key::Char(c));
     }
-    assert_eq!(sel.visible_count(), 2, "two fireworks models match");
+    assert_eq!(sel.visible_count(), 2, "two GPT 6 Astra auth modes match");
     let selected = sel.selected_model().expect("clamped selection").id.clone();
-    // Clamped to the LAST match (index 1, kimi), not reset to row 0 (glm).
+    // Clamped to the LAST match (index 1, OAuth), not reset to row 0 (API).
     assert!(
-        selected.contains("kimi"),
+        selected == "openai-oauth/gpt-6-astra",
         "selection must clamp to the last match, not reset to the first: {selected}"
     );
 }

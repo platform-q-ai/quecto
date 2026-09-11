@@ -15,7 +15,7 @@ use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
 /// list: every Anthropic/OpenAI model is offered through both its `api` and
-/// `oauth` provider; the Fireworks serverless ids are single-provider.
+/// `oauth` provider.
 fn known_models() -> Vec<ModelEntry> {
     const ANTHROPIC: &[&str] = &[
         "claude-fable-5-1",
@@ -50,12 +50,6 @@ fn known_models() -> Vec<ModelEntry> {
                 pairs.push((format!("{vendor}-{auth}/{id}"), format!("{brand} {label}")));
             }
         }
-    }
-    for id in ["glm-5p2", "kimi-k2p7-code"] {
-        pairs.push((
-            format!("fireworks/accounts/fireworks/models/{id}"),
-            "Fireworks".into(),
-        ));
     }
     pairs
         .into_iter()
