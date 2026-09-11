@@ -89,7 +89,85 @@ fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
-    assert!(result.ends_with("Confirm live template ids if unsure."));
+    assert!(result.contains("## Parent orchestration playbook"));
+}
+
+/// Given either prompt builder, the approved playbook belongs only to the parent.
+#[test]
+fn parent_playbook_contract_is_excluded_from_children() {
+    let requirements = [
+        "communication, scope, orchestration, approvals, and synthesis",
+        "ALL",
+        "small, localized, low-risk",
+        "clear requirements and files",
+        "no substantial investigation, planning, or independent review",
+        "brief edit and focused verification",
+        "ordinary child for convenience",
+        "Planning must not roll into delivery",
+        "epics, issues, acceptance criteria, and dependencies",
+        "features, refactors, bugfixes, and chores",
+        "independent investigation",
+        "independent verification",
+        "PR review",
+        "fresh boards and separate containers/checkouts",
+        "collaboration, not independent review",
+        "Swarms cannot use workflow",
+        "issue/PR links",
+        "exact branch and SHA",
+        "before consulting delivery reasoning",
+        "revision-bound",
+        "recheck affected changes",
+        "platform-q-ai/quecto only",
+        "merge-requested",
+        "resets on failure",
+        "user authorization and repository process permit",
+        "may auto-merge",
+        "actual run targets the intended SHA",
+        "push alone",
+        "inspect triggers",
+        "blind label toggles or retry loops",
+        "committed accessible branch",
+        "tests/CI at the current SHA",
+        "separate swarm review",
+        "findings resolved or user-accepted",
+        "closing references and state",
+        "implemented, PR opened, CI passing, reviewed, merged, and issue closed",
+        "preserving artifacts",
+        "precise question",
+        "resumable work",
+        "missing access, failed commands, or an empty board",
+        "failure, prevention, applicability, and verification",
+        "approved lessons",
+        "designated playbook",
+        "secrets",
+    ];
+    for parent in [
+        build_system_prompt(&None, false),
+        build_agent_system_prompt(None, None, false, ""),
+    ] {
+        for requirement in requirements {
+            assert!(
+                parent.contains(requirement),
+                "missing approved parent policy: {requirement}"
+            );
+        }
+        assert!(!parent.contains("prefer a child with `workflow: true`"));
+        assert!(!parent.contains("Handle directly in the parent when the task is focused"));
+    }
+    for child in [
+        build_system_prompt(&None, true),
+        build_agent_system_prompt(None, None, true, ""),
+    ] {
+        assert!(child.starts_with(child_role_preamble()));
+        assert!(!child.contains(agent_role_preamble()));
+        assert!(!child.contains(parent_coordination_policy()));
+        for requirement in requirements {
+            assert!(
+                !child.contains(requirement),
+                "parent policy leaked to child: {requirement}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -114,10 +192,10 @@ fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
         let parent = build_system_prompt(&custom, false);
         assert!(child.contains(child_role));
         assert!(!child.contains("Parent Agent"));
-        assert!(!child.contains("Delegate to a subagent when the work is broad"));
+        assert!(!child.contains("Prefer swarms for nearly all software development"));
         assert!(parent.contains(agent_role_preamble()));
-        assert!(parent.contains("Delegate to a subagent when the work is broad"));
-        assert!(parent.contains("Once delegated, do not repeat the same investigation"));
+        assert!(parent.contains("Prefer swarms for nearly all software development"));
+        assert!(parent.contains("Read delegated reports and critical evidence"));
         assert!(!parent.contains("Common loops"));
         assert!(!parent.contains("quick-start"));
         assert!(!child.contains("quick-start"));
