@@ -712,3 +712,7 @@ mod tests;
 #[cfg(test)]
 #[path = "shared_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "shared_parent_policy_tests.rs"]
+mod parent_policy_tests;
