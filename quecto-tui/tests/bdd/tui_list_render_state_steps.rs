@@ -195,9 +195,25 @@ fn marker_fixture() -> ModelSelector {
     ModelSelector::with_models(models, Some("model-bb-long"))
 }
 
-#[given("a model selector over the known models")]
-fn model_selector_known(world: &mut TuiWorld) {
-    world.tui_list_model_selector = Some(crate::DebugModelSelector(ModelSelector::new(None)));
+#[given("a model selector over six fixture models")]
+fn model_selector_fixture(world: &mut TuiWorld) {
+    use quecto_tui::components::model_selector::ModelEntry;
+
+    // Selection behavior must not depend on the evolving built-in catalog.
+    let models = (1..=6)
+        .map(|n| ModelEntry {
+            id: format!(
+                "{}/model-{n}",
+                if n <= 2 { "fixture-match" } else { "other" }
+            ),
+            provider: "Fixture".to_string(),
+            auth: None,
+            is_current: false,
+        })
+        .collect();
+    world.tui_list_model_selector = Some(crate::DebugModelSelector(ModelSelector::with_models(
+        models, None,
+    )));
 }
 
 #[given("a model selector whose current model has the longest id")]
@@ -232,9 +248,9 @@ fn model_selection_clamped(world: &mut TuiWorld, n: usize) {
     let sel = &mut world.tui_list_model_selector.as_mut().expect("selector").0;
     assert_eq!(sel.visible_count(), n, "filter should leave {n} matches");
     let selected = sel.selected_model().expect("clamped selection").id.clone();
-    assert!(
-        selected.contains("kimi"),
-        "selection must CLAMP to the last match (kimi), not reset to row 0: {selected}"
+    assert_eq!(
+        selected, "fixture-match/model-2",
+        "selection must CLAMP to the last match, not reset to row 0"
     );
 }
 

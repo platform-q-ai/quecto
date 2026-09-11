@@ -282,16 +282,6 @@ impl ModelRegistry {
                 ("grok-4.5", "Grok 4.5 (SuperGrok OAuth)"),
             ],
         );
-        group(
-            "fireworks",
-            ProviderApi::OpenAiCompletions,
-            AuthMode::ApiKey,
-            None,
-            &[
-                ("accounts/fireworks/models/glm-5p2", "GLM 5.2"),
-                ("accounts/fireworks/models/kimi-k2p7-code", "Kimi K2.7 Code"),
-            ],
-        );
         v
     }
 

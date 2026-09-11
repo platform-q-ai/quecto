@@ -276,6 +276,7 @@ forwards a descendant's view re-stamped with its identity. The TUI paints the
 label on the footer and working spinner (master) and on the panel row
 (descendants) without touching any lifecycle state. `abort` while waiting cancels
 the wait at the authority. Evidence and the measured fake-workload comparison
-(four roots, burst versus C=2) are in `notes/1679-p4-3-verification.md`; the
+(four roots, burst versus C=2) are retained in commit `77bd895c`
+(`notes/1679-p4-3-verification.md`); the
 activation/rollback/quarantine runbook is in `docs/inference-admission.md`.
 Adaptive concurrency, token-aware pacing and multi-host authority stay deferred.
