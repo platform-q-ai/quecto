@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::environment_control::EnvironmentControlUseCase;
-use crate::application::environments::ListEnvironmentsQuery;
+use crate::application::environments::use_cases::ListEnvironmentsQuery;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };

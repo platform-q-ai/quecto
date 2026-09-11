@@ -234,7 +234,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
         .with_broadcast(deps.broadcast_tx)
         .with_list_environments(std::sync::Arc::new(
-            crate::application::environments::ListEnvironmentsQuery::new(environment_registry),
+            crate::application::environments::use_cases::ListEnvironmentsQuery::new(
+                environment_registry,
+            ),
         ))
         .with_environment_control(environment_control);
 

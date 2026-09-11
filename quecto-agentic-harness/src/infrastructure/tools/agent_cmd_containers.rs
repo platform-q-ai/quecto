@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::application::environment_control::EnvironmentControlUseCase;
-use crate::application::environments::ListEnvironmentsQuery;
+use crate::application::environments::use_cases::ListEnvironmentsQuery;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
 use crate::domain::tool::ToolResult;
 
