@@ -1531,6 +1531,10 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        quecto::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace,
         sandbox,
         quecto::infrastructure::tools::bash::ExecOptions {

@@ -17,6 +17,10 @@ fn test_headless_agent_registry_includes_spawn_tool() {
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace.clone()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace.clone(),
         sandbox,
         crate::infrastructure::tools::bash::ExecOptions {

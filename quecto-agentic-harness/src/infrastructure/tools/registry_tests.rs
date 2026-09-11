@@ -9,6 +9,10 @@ pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let reg = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((tmp.path().to_path_buf()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         tmp.path().to_path_buf(),
         sandbox,
         Default::default(),
@@ -429,6 +433,10 @@ fn test_rebuild_definitions_no_duplicates_after_re_register() {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let mut reg = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((tmp.path().to_path_buf()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         tmp.path().to_path_buf(),
         sandbox.clone(),
         Default::default(),

@@ -175,9 +175,8 @@ fn application_has_no_interface_imports() {
 fn infrastructure_has_no_application_imports() {
     // Dependency inversion (epic #1193): infrastructure adapters implement
     // application-defined contracts, so references to `crate::application` are
-    // allowed only through `crate::application::ports`, the module that names
-    // the inward-facing surface. Anything else is a use-case dependency
-    // pointing the wrong way.
+    // allowed through explicit ports and named environment/find contracts.
+    // Find use-case construction remains outside infrastructure.
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
@@ -319,6 +318,15 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
+                [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "find",
+                    "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+                    ..,
+                ] => true,
                 [
                     "crate",
                     "application",
@@ -1833,5 +1841,367 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
+    }
+}
+
+#[test]
+fn find_vertical_slice_has_one_owner_per_role() {
+    for path in [
+        "src/application/agent_turn/use_cases/find.rs",
+        "src/interface/tools/find.rs",
+        "src/infrastructure/tools/find_fd.rs",
+        "src/composition/find.rs",
+    ] {
+        assert!(Path::new(path).is_file(), "missing find role owner: {path}");
+    }
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/infrastructure/tools"), &mut files);
+    for file in files {
+        let (path, _) = file.split_once(":\n").expect("collected source");
+        let name = Path::new(path).file_name().unwrap().to_str().unwrap();
+        if name.starts_with("find") {
+            assert!(
+                matches!(name, "find_fd.rs" | "find_fd_tests.rs"),
+                "superseded find owner: {path}"
+            );
+        }
+    }
+}
+
+/// Concrete find vertices may only be named by their owner or composition.
+/// Inspect imports as well as calls so renaming a constructor cannot evade scope.
+fn find_graph_dependencies_allowed(file: &str, source: &str) -> bool {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Aliases(Vec<(String, String)>);
+    impl<'ast> Visit<'ast> for Aliases {
+        fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+            self.0
+                .push((rename.rename.to_string(), rename.ident.to_string()));
+        }
+    }
+    let mut aliases = Aliases::default();
+    let Ok(parsed) = syn::parse_file(source) else {
+        return false;
+    };
+    aliases.visit_file(&parsed);
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let expanded = path
+                .split("::")
+                .map(|part| {
+                    aliases
+                        .0
+                        .iter()
+                        .find(|(alias, _)| alias == part)
+                        .map_or(part, |(_, original)| original.as_str())
+                })
+                .collect::<Vec<_>>()
+                .join("::");
+            let path = &expanded;
+            let parts: Vec<_> = path.split("::").collect();
+            if parts.windows(2).any(|pair| {
+                matches!(
+                    pair,
+                    ["FindUseCase", "new"]
+                        | ["FindTool", "new"]
+                        | ["FdFindPaths", "new" | "with_fd_binary"]
+                )
+            }) {
+                return file == "src/composition/find.rs";
+            }
+            path.split("::").all(|part| match part {
+                "FdFindPaths" => matches!(
+                    file,
+                    "src/infrastructure/tools/find_fd.rs" | "src/composition/find.rs"
+                ),
+                "FindTool" => matches!(
+                    file,
+                    "src/interface/tools/find.rs" | "src/composition/find.rs"
+                ),
+                "FindUseCase" => matches!(
+                    file,
+                    "src/application/agent_turn/use_cases/find.rs"
+                        | "src/interface/tools/find.rs"
+                        | "src/composition/find.rs"
+                ),
+                _ => true,
+            })
+        })
+    })
+}
+
+fn infrastructure_outward_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                ["crate", layer, ..] => matches!(
+                    *layer,
+                    "application"
+                        | "domain"
+                        | "infrastructure"
+                        | "test_support"
+                        | "subagent_launch_app"
+                        | "swarm_control_fixture"
+                ),
+                _ => true,
+            }
+        })
+    })
+}
+
+#[test]
+fn find_concrete_graph_is_owned_by_composition() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in files {
+        let (path, source) = file.split_once(":\n").expect("collected source");
+        assert!(find_graph_dependencies_allowed(path, source), "{path}");
+    }
+}
+
+#[test]
+fn infrastructure_outward_paths_follow_layer_allowlist() {
+    for path in [
+        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/extensions/native.rs",
+    ] {
+        let source = fs::read_to_string(path).expect("find effect/registration owner");
+        assert!(
+            infrastructure_outward_dependencies_allowed(&source),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn find_graph_guards_parse_grouping_aliases_and_calls() {
+    for source in [
+        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
+        "use crate::{infrastructure::tools::find_fd::FdFindPaths, domain::Tool};",
+        "fn build() { crate::infrastructure::tools::find_fd::FdFindPaths::new(); }",
+    ] {
+        assert!(find_graph_dependencies_allowed(
+            "src/composition/find.rs",
+            source
+        ));
+        for file in [
+            "src/interface/tool_runtime.rs",
+            "src/interface/shared.rs",
+            "src/interface/tools/find.rs",
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, source),
+                "{file}: {source}"
+            );
+        }
+    }
+    assert!(find_graph_dependencies_allowed(
+        "src/interface/shared.rs",
+        "// FdFindPaths::new()\nfn allowed() { NotFdFindPaths::new(); }"
+    ));
+    for source in [
+        "use crate::interface::tools::find::FindTool as Tool;",
+        "use crate::{domain::Tool, composition::find};",
+        "fn build() { crate::composition::find::build_find_tool(); }",
+        "use crate::interfaces::NearMatch; // crate::domain",
+    ] {
+        assert!(
+            !infrastructure_outward_dependencies_allowed(source),
+            "{source}"
+        );
+    }
+}
+
+fn find_application_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                ["std", "sync", "Arc"] | ["std", "future", "Future"] | ["std", "pin", "Pin"] => {
+                    true
+                }
+                ["std", ..] | ["crate", ..] => false,
+                [name, ..] => matches!(
+                    *name,
+                    "FindRequest"
+                        | "FindPathsRequest"
+                        | "FindOutput"
+                        | "FindError"
+                        | "FindPaths"
+                        | "FindUseCase"
+                        | "FindResult"
+                        | "String"
+                        | "Vec"
+                        | "Option"
+                        | "Some"
+                        | "None"
+                        | "Result"
+                        | "Ok"
+                        | "Err"
+                        | "Self"
+                        | "Arc"
+                        | "Future"
+                        | "Pin"
+                        | "Box"
+                        | "Send"
+                        | "Sync"
+                        | "Clone"
+                        | "Debug"
+                        | "PartialEq"
+                        | "Eq"
+                        | "Default"
+                        | "f64"
+                        | "usize"
+                        | "self"
+                        | "bool"
+                        | "request"
+                        | "value"
+                        | "limit"
+                        | "output"
+                        | "paths"
+                        | "assert"
+                        | "DEFAULT_LIMIT"
+                        | "MAX_LIMIT"
+                ),
+                [] => false,
+            }
+        })
+    })
+}
+
+fn find_interface_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "find",
+                    ..,
+                ]
+                | ["crate", "domain", ..] => true,
+                ["crate", ..] => false,
+                _ => true,
+            }
+        })
+    })
+}
+
+fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                [
+                    "crate",
+                    "composition",
+                    "find",
+                    "build_find_tool" | "build_find_tool_with_binary",
+                ] => matches!(
+                    file,
+                    "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
+                ),
+                ["crate", "composition", ..] => file == "src/composition/find.rs",
+                _ => true,
+            }
+        })
+    })
+}
+
+#[test]
+fn find_inward_boundaries_are_typed_and_effect_free() {
+    let source = fs::read_to_string("src/application/agent_turn/use_cases/find.rs").unwrap();
+    assert!(
+        find_application_dependencies_allowed(&source),
+        "{:?}",
+        dependency_paths(&source)
+    );
+    let source = fs::read_to_string("src/interface/tools/find.rs").unwrap();
+    assert!(
+        find_interface_dependencies_allowed(&source),
+        "{:?}",
+        dependency_paths(&source)
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        assert!(find_composition_delegation_allowed(path, source), "{path}");
+    }
+}
+
+#[test]
+fn find_boundary_allowlists_reject_unauthorized_siblings() {
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::{FindPaths, FindOutput as Output};",
+        "fn classify() { crate::application::agent_turn::use_cases::find::FindError::Io(String::new()); }",
+    ] {
+        assert!(application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::{FindPaths, FindUseCase};",
+        "use crate::application::agent_turn::use_cases::find::*;",
+        "use crate::application::agent_turn::use_cases::find::FindPathsExtra;",
+        "use crate::application::agent_turn::use_cases::other::FindPaths;",
+        "fn build() { crate::application::agent_turn::use_cases::find::FindUseCase::new(); }",
+    ] {
+        assert!(!application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use serde_json::Value as Request;",
+        "use tokio::{process::Child, io::AsyncRead};",
+        "use crate::domain::{ToolResult, ToolDefinition};",
+        "use std::process::ExitStatus;",
+        "fn run() { tokio::process::Command::new(\"fd\"); } // std::sync::Arc",
+    ] {
+        assert!(!find_application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
+        "use crate::{domain::Tool, infrastructure::tools::truncate::format_size};",
+        "fn run() { crate::composition::find::build_find_tool(); }",
+    ] {
+        assert!(!find_interface_dependencies_allowed(source), "{source}");
+    }
+    for file in ["src/interface/tool_runtime.rs", "src/interface/shared.rs"] {
+        assert!(find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::build_find_tool as build;"
+        ));
+        assert!(!find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::{build_find_tool, unexpected};"
+        ));
+        assert!(!find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::*;"
+        ));
+    }
+    assert!(!find_composition_delegation_allowed(
+        "src/interface/tools/find.rs",
+        "fn build() { crate::composition::find::build_find_tool(); }"
+    ));
+}
+
+#[test]
+fn find_constructor_aliases_cannot_build_graph_in_interface() {
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::FindUseCase as Case; fn build() { Case::new(); }",
+        "fn build() { crate::application::agent_turn::use_cases::find::FindUseCase::new(); }",
+        "fn build() { FindTool::new(); }",
+    ] {
+        assert!(
+            !find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+        assert!(
+            find_graph_dependencies_allowed("src/composition/find.rs", source),
+            "{source}"
+        );
     }
 }

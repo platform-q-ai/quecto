@@ -7,7 +7,7 @@ pub mod command_match;
 pub mod docs;
 pub mod environment_kill;
 pub mod filesystem;
-pub mod find;
+pub mod find_fd;
 pub mod grep;
 pub(crate) mod inherited_tool_policy;
 #[cfg(test)]

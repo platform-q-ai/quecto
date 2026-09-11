@@ -92,6 +92,7 @@ impl Extension for NativeExtension {
 /// consume `Extension` objects and register their tools through the same
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
+    pub find_tool: Arc<dyn crate::domain::tool::Tool>,
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
     pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
@@ -148,9 +149,7 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 .with_participation(deps.swarm_participation.clone())
                 .with_workflow_engine(deps.workflow_engine),
             ),
-            Arc::new(crate::infrastructure::tools::find::FindTool::new(
-                workspace, sandbox,
-            )),
+            deps.find_tool,
             // Quecto operating manual, embedded in the binary. Runtime profile
             // policy owns availability; the docs tool only receives explicit
             // role-compatible construction; manual content is shared by all agents.
@@ -303,14 +302,16 @@ pub fn register_bundled_native_tools_with_scope(
 }
 
 pub fn build_official_tool_registry(
+    find_tool: Arc<dyn crate::domain::tool::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
-    build_official_tool_registry_with_context(workspace, sandbox, exec_options, None)
+    build_official_tool_registry_with_context(find_tool, workspace, sandbox, exec_options, None)
 }
 
 pub fn build_official_tool_registry_with_context(
+    find_tool: Arc<dyn crate::domain::tool::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -320,6 +321,7 @@ pub fn build_official_tool_registry_with_context(
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            find_tool,
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
             swarm_context,
