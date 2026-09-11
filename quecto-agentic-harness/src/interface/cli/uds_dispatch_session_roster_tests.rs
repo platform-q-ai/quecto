@@ -636,3 +636,35 @@ fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
         "a peer that does not report its pid must stay unowned"
     );
 }
+
+#[test]
+fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "worker".into(),
+        crate::infrastructure::tools::subagent_registry::SubagentEntry::new(
+            "/tmp/worker.sock".into(),
+            0,
+        ),
+    );
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err());
+    let roster = snapshot_subagent_roster_with_restore_reason(
+        &Some(registry.clone()),
+        crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+    );
+    assert_eq!(roster.len(), 1);
+    // Restoring an unverifiable roster into the poisoned registry clears it.
+    restore_persisted_subagent_roster(&Some(registry.clone()), roster);
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    );
+}

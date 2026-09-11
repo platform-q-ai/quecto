@@ -229,3 +229,53 @@ async fn kill_unknown_agent_returns_error_and_no_broadcast() {
     assert!(result.content.contains("not found"));
     assert!(rx.try_recv().is_err(), "no broadcast for unknown agent");
 }
+
+#[tokio::test]
+async fn kill_reports_unsignalled_when_only_lease_less_pids_are_removed() {
+    // A restored/merged row with a pid but no lease: dropped, not signalled.
+    let registry = new_registry();
+    {
+        let mut g = registry.lock().unwrap();
+        let mut foreign = SubagentEntry::new(PathBuf::from("/tmp/foreign.sock"), 4242);
+        foreign.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
+        g.insert("foreign".to_string(), foreign);
+        // A stub entry (pid 0) is neither signalled nor reported unsignalled.
+        g.insert(
+            "stub".to_string(),
+            SubagentEntry::new(PathBuf::from("/tmp/stub.sock"), 0),
+        );
+    }
+    let tool = AgentCmdTool::new(registry.clone());
+    let foreign = tool.kill_agent("foreign").await;
+    assert!(!foreign.is_error);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&foreign.content).unwrap(),
+        serde_json::json!({"killed":["foreign"],"signalled":[],"unsignalled":["foreign"]})
+    );
+    let stub = tool.kill_agent("stub").await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stub.content).unwrap(),
+        serde_json::json!({"killed":["stub"],"signalled":[],"unsignalled":[]})
+    );
+}
+
+#[tokio::test]
+async fn kill_recovers_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "solo".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/solo.sock"), 0),
+    );
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    let tool = AgentCmdTool::new(registry.clone());
+    let result = tool.kill_agent("solo").await;
+    assert!(!result.is_error, "{}", result.content);
+    let missing = tool.kill_agent("nope").await;
+    assert!(missing.is_error);
+}

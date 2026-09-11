@@ -343,3 +343,56 @@ fn prune_retires_the_shared_lease_so_removed_clones_cannot_signal() {
     assert!(!signalled);
     assert!(log.is_empty(), "retired clone dispatched: {log:?}");
 }
+
+/// Legacy snapshots key descendants by `agentId` only (or carry an empty
+/// `agentUuid`); the chain walk resolves those keys the same way the upsert
+/// does, so a legacy all-local chain still grants.
+#[test]
+fn legacy_agent_id_keys_resolve_in_the_chain_walk() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("a-uuid".into(), launched_a());
+    let snapshot = serde_json::json!({"type": "subagent_state_changed", "subagents": [
+        {"agentUuid": "", "agentId": "legacy-b", "parentId": "a-uuid", "status": "running",
+         "pid": 4100, "executionBackend": "local"},
+        {"agentId": "legacy-c", "parentId": "legacy-b", "status": "running",
+         "pid": 4101, "executionBackend": "local"},
+        // No key at all: upserted under a minted uuid, never signallable.
+        {"displayName": "nameless", "parentId": "a-uuid", "status": "running",
+         "pid": 4102, "executionBackend": "local"}
+    ]});
+    merge_and_forward_state_changed(&snapshot, &registry, "a-uuid");
+    let guard = registry.lock().unwrap();
+    assert!(guard["legacy-b"].process_ownership.is_owned());
+    assert!(guard["legacy-c"].process_ownership.is_owned());
+    let nameless = guard
+        .values()
+        .find(|e| e.display_name == "nameless")
+        .expect("nameless descendant upserted under a minted key");
+    assert!(!nameless.process_ownership.is_owned());
+}
+
+#[test]
+fn merge_recovers_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("a-uuid".into(), launched_a());
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err());
+    merge_and_forward_state_changed(
+        &snapshot_from_a(4242, Some(BACKEND_LOCAL)),
+        &registry,
+        "a-uuid",
+    );
+    let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(guard["b-uuid"].process_ownership.is_owned());
+}

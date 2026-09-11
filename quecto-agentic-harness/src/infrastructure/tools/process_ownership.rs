@@ -18,6 +18,9 @@
 //! signalled: a fixture pid of 2 once SIGTERMed a swarm coordinator.
 
 #[cfg(test)]
+#[path = "process_ownership_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "process_ownership_tests.rs"]
 mod tests;
 

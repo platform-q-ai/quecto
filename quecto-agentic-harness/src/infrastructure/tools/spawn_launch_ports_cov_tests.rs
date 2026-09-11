@@ -282,3 +282,74 @@ async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_chil
     }
     assert!(gone, "shutdown_all must terminate the launched child");
 }
+
+fn poison<T: Send + 'static>(mutex: &std::sync::Arc<std::sync::Mutex<T>>) {
+    let shared = mutex.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison for coverage");
+    })
+    .join();
+    assert!(mutex.lock().is_err());
+}
+
+/// Poisoned registry / parent-id locks are recovered on every launch step,
+/// and `uncommit_registered` of a launched child terminates it through the
+/// same lease as a cascade would (#1925).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child() {
+    let tool = tool();
+    poison(&tool.registry);
+    poison(&tool.parent_id);
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    assert!(!args.is_empty());
+    let child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep");
+    let pid = child.id().expect("live child pid");
+    let mut prepared = PreparedChild::new_for_test(Some(child), None, None);
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .expect("local registration succeeds on a poisoned registry");
+
+    ports.uncommit_registered(&identity.registry_key).await;
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key)
+    );
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut gone = false;
+    while std::time::Instant::now() < deadline {
+        let zombie = std::fs::read_to_string(proc_dir.join("stat"))
+            .map(|stat| stat.contains(") Z "))
+            .unwrap_or(false);
+        if !proc_dir.exists() || zombie {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    if !gone {
+        // SAFETY: best-effort cleanup of the leaked sleep child.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "uncommit must terminate the launched child");
+}

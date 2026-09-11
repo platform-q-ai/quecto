@@ -370,3 +370,29 @@ async fn command_reader_finalizes_older_unchanged_get_state_snapshot_to_caller_c
         serde_json::json!({ "unchanged": true, "generation": 8 })
     );
 }
+
+#[test]
+fn lookup_subagent_socket_recovers_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    let mut live = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::new("live-uuid"),
+        "live".into(),
+        "/tmp/live.sock".into(),
+        0,
+    );
+    live.status = SubagentStatus::Idle;
+    registry.lock().unwrap().insert("live-uuid".into(), live);
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err());
+    assert_eq!(
+        lookup_subagent_socket(&registry, "live").unwrap(),
+        std::path::PathBuf::from("/tmp/live.sock")
+    );
+    let missing = lookup_subagent_socket(&registry, "ghost").unwrap_err();
+    assert!(missing.contains("ghost"), "{missing}");
+}
