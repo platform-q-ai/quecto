@@ -1,11 +1,21 @@
-//! A shared signaling lease for a locally owned child. Registry removal and
+//! A shared signaling lease for a subagent's OS process. Registry removal and
 //! cloning do not transfer or extend the child's OS identity lifetime.
 //!
-//! The lease starts *unowned*: only the local launch path that actually
-//! spawned a child may claim it ([`ProcessOwnership::launched`]). Entries
-//! built by `SubagentEntry::new`/`with_identity`, merged from a child snapshot
-//! or restored from persisted session state therefore carry a pid the harness
-//! never signals (#1925: a fixture pid of 2 SIGTERMed a swarm coordinator).
+//! The lease is an allowlist of provenance (#1925). It starts [`Lease::Unowned`]
+//! and only two facts grant signal authority:
+//!
+//! - [`ProcessOwnership::launched`]: this process spawned the child and holds
+//!   its handle. The reaper retires the lease when it reaps.
+//! - [`ProcessOwnership::reported`] with `same_namespace: true`: the pid was self-reported
+//!   over a verified socket by a harness that provably shares our pid
+//!   namespace (a host-local descendant merged from a host-local forwarding
+//!   child, or a restored session child whose socket round-trip confirmed the
+//!   persisted pid).
+//!
+//! Everything else — fixtures built by `SubagentEntry::new`/`with_identity`,
+//! descendants reported from inside a container (another pid namespace),
+//! restored rows whose pid was not confirmed — stays unowned and is never
+//! signalled: a fixture pid of 2 once SIGTERMed a swarm coordinator.
 
 #[cfg(test)]
 #[path = "process_ownership_tests.rs"]
@@ -14,14 +24,38 @@ mod tests;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Lease {
+    /// No signal authority (default, fixtures, foreign namespaces, reaped).
+    Unowned,
+    /// This process spawned the child and holds its handle.
+    Launched,
+    /// The pid was self-reported over a verified socket by a harness in our
+    /// pid namespace. `same_namespace: false` records a report from another
+    /// namespace (a container) and grants nothing.
+    Reported { same_namespace: bool },
+}
+
+impl Lease {
+    fn may_signal(self) -> bool {
+        matches!(
+            self,
+            Lease::Launched
+                | Lease::Reported {
+                    same_namespace: true
+                }
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct ProcessOwnership(Arc<Mutex<bool>>);
+pub(crate) struct ProcessOwnership(Arc<Mutex<Lease>>);
 
 impl ProcessOwnership {
     /// A lease with no signal authority: the default for every entry whose
-    /// process this harness did not launch itself.
+    /// process provenance is unknown to this harness.
     pub(crate) fn unowned() -> Self {
-        Self(Arc::new(Mutex::new(false)))
+        Self(Arc::new(Mutex::new(Lease::Unowned)))
     }
 
     /// Claim signal authority over a child this process just spawned. The
@@ -32,20 +66,50 @@ impl ProcessOwnership {
             child.id().is_some(),
             "launched ownership requires a live child"
         );
-        Self(Arc::new(Mutex::new(child.id().is_some())))
+        let lease = if child.id().is_some() {
+            Lease::Launched
+        } else {
+            Lease::Unowned
+        };
+        Self(Arc::new(Mutex::new(lease)))
     }
 
-    /// Test seam: claim authority over a process the test spawned by other
-    /// means (for example `std::process::Command`).
+    /// A pid self-reported over a verified socket by a harness that shares
+    /// our pid namespace (see module docs for the two admitted sources).
+    pub(crate) fn reported(same_namespace: bool) -> Self {
+        Self(Arc::new(Mutex::new(Lease::Reported { same_namespace })))
+    }
+
+    /// Test seam: claim launched authority over a process the test spawned by
+    /// other means (for example `std::process::Command`).
     #[cfg(test)]
     pub(crate) fn launched_for_test() -> Self {
-        Self(Arc::new(Mutex::new(true)))
+        Self(Arc::new(Mutex::new(Lease::Launched)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lease(&self) -> Lease {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// True while this lease still authorises signalling the child.
     #[cfg(test)]
     pub(crate) fn is_owned(&self) -> bool {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.lease().may_signal()
+    }
+
+    /// True while this lease is the launched-child lease held by a reaper.
+    pub(crate) fn is_launched(&self) -> bool {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) == Lease::Launched
+    }
+
+    /// True when a harness reached through this entry provably shares our pid
+    /// namespace, so pids IT reports for its own local children do too.
+    pub(crate) fn is_same_namespace(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .may_signal()
     }
 
     /// Signal the owned process tree. Returns `true` only when a signal was
@@ -55,13 +119,13 @@ impl ProcessOwnership {
     }
 
     fn dispatch(&self, signal: impl FnOnce()) -> bool {
-        let owned = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if *owned {
+        let lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if lease.may_signal() {
             // Reaping cannot run while dispatch is in progress, including both
             // TERM and KILL of a local group. No existence check proves identity.
             signal();
         }
-        *owned
+        lease.may_signal()
     }
 
     pub(crate) async fn wait(
@@ -71,12 +135,12 @@ impl ProcessOwnership {
         use std::future::Future;
         let mut wait = Box::pin(child.wait());
         std::future::poll_fn(|cx| {
-            let mut owned = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
             let result = wait.as_mut().poll(cx);
             if matches!(result, Poll::Ready(_)) {
                 // Invalidate every retained clone in the same critical section
                 // that reaps. Even wait errors retire numeric signal authority.
-                *owned = false;
+                *lease = Lease::Unowned;
             }
             result
         })

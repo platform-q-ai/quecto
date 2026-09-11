@@ -220,3 +220,65 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
         .collect();
     assert!(!args3.iter().any(|a| a == "--config"));
 }
+
+/// #1925: the local launch path is the ONLY place a spawned child becomes
+/// signallable. Registering a real child must yield a launched lease, and a
+/// later `shutdown_all` must actually terminate that child.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_child() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep");
+    let pid = child.id().expect("live child pid");
+    let mut prepared = PreparedChild::new_for_test(Some(child), None, None);
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .expect("local registration succeeds");
+    {
+        let entries = tool.registry.lock().unwrap();
+        let entry = &entries[&identity.registry_key];
+        assert_eq!(entry.pid, pid);
+        assert!(
+            entry.process_ownership.is_owned(),
+            "a locally launched child must carry a launched lease"
+        );
+    }
+
+    super::super::spawn_registry::shutdown_all(&tool.registry);
+
+    // The reaper task owns the child handle; once the SIGTERM lands it reaps,
+    // and /proc/<pid> disappears. A skipped signal leaves sleep alive.
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut gone = false;
+    while std::time::Instant::now() < deadline {
+        let zombie = std::fs::read_to_string(proc_dir.join("stat"))
+            .map(|stat| stat.contains(") Z "))
+            .unwrap_or(false);
+        if !proc_dir.exists() || zombie {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    if !gone {
+        // SAFETY: best-effort cleanup of the leaked sleep child.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "shutdown_all must terminate the launched child");
+}

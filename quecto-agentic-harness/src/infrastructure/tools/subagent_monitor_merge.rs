@@ -85,6 +85,16 @@ fn merge_descendants(
         guard.get(forwarding_child_id).is_some_and(|entry| {
             entry.environment_ref.is_some() || entry.forwarded_environment.is_some()
         });
+    // #1925: a descendant's pid is only signallable when it provably lives in
+    // OUR pid namespace: the forwarding child must itself be reachable in our
+    // namespace (launched by us, or reported same-namespace) and must not sit
+    // behind an environment boundary; the descendant must then report itself
+    // as local to that child. Anything else (container children, script
+    // backends, legacy snapshots without a backend) is a foreign pid.
+    let forwarding_child_same_namespace = !forwarding_child_crosses_environment
+        && guard
+            .get(forwarding_child_id)
+            .is_some_and(|entry| entry.process_ownership.is_same_namespace());
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut next_sequence = guard
         .values()
@@ -135,10 +145,19 @@ fn merge_descendants(
                 .unwrap_or_default()
         };
         let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let descendant_same_namespace = forwarding_child_same_namespace
+            && d.get("executionBackend").and_then(|v| v.as_str())
+                == Some(super::subagent_environment_wire::BACKEND_LOCAL);
         let agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         let entry = guard.entry(registry_key.clone()).or_insert_with(|| {
             SubagentEntry::with_identity(agent_uuid, display_name.clone(), socket_path.clone(), pid)
         });
+        // The snapshot is authoritative for provenance too. A launched lease
+        // is shared with a reaper and is never replaced.
+        if !entry.process_ownership.is_launched() {
+            entry.process_ownership =
+                super::process_ownership::ProcessOwnership::reported(descendant_same_namespace);
+        }
         // Keep identity fields authoritative from the child's snapshot.
         entry.agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         entry.display_name = display_name;
@@ -200,6 +219,11 @@ fn merge_descendants(
             }
             super::subagent_cascade::mark_entry_dead(entry, next_sequence);
             super::subagent_cascade::clear_cleanup_ownership(entry);
+            // The forwarding child already reaped this descendant; its pid is
+            // free for reuse, so any reported lease is retired (#1925).
+            if !entry.process_ownership.is_launched() {
+                entry.process_ownership = super::process_ownership::ProcessOwnership::unowned();
+            }
             next_sequence = next_sequence.saturating_add(1);
             entry.updated_at = Instant::now();
         }
@@ -256,3 +280,7 @@ pub fn forward_child_state_changed(
 #[cfg(test)]
 #[path = "subagent_monitor_merge_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "subagent_monitor_merge_ownership_tests.rs"]
+mod ownership_tests;

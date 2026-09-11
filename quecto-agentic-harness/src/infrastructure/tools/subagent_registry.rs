@@ -136,6 +136,15 @@ impl SubagentEntry {
         Self::with_identity(AgentUuid::mint(), display_name, socket_path, pid)
     }
 
+    /// Grant a signallable lease because the harness answering on this entry's
+    /// socket self-reported `self.pid` as its own pid in our namespace (#1925,
+    /// restored sessions). Never replaces a launched lease held by a reaper.
+    pub(crate) fn confirm_reported_pid_in_our_namespace(&mut self) {
+        if self.pid != 0 && !self.process_ownership.is_launched() {
+            self.process_ownership = super::process_ownership::ProcessOwnership::reported(true);
+        }
+    }
+
     /// Create a new entry with explicit hidden identity and display label.
     pub fn with_identity(
         agent_uuid: AgentUuid,

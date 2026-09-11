@@ -30,10 +30,24 @@ pub(crate) fn terminate_owned_process_tree(pid: u32, owner: ProcessOwner) {
     }) {
         return;
     }
+    // Critical-path invariant (#1925): a lease can only name a child of ours
+    // or a same-namespace descendant, never this harness or its parent (the
+    // swarm coordinator when running inside a container).
+    #[cfg(unix)]
+    debug_assert!(
+        pid != std::process::id() && i64::from(pid) != i64::from(parent_pid()),
+        "signal lease named this harness or its parent (pid {pid})"
+    );
     match owner {
         ProcessOwner::DirectPid => sigterm_pid(pid),
         ProcessOwner::LocalProcessGroup => terminate_local_process_group(pid),
     }
+}
+
+#[cfg(unix)]
+fn parent_pid() -> libc::pid_t {
+    // SAFETY: getppid has no preconditions and cannot fail.
+    unsafe { libc::getppid() }
 }
 
 pub(crate) fn sigterm_pid(pid: u32) {

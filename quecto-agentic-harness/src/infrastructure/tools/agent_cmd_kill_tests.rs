@@ -134,12 +134,12 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
 }
 
 #[tokio::test]
-async fn kill_parent_sigterms_owned_process_and_skips_unowned_descendant_pid() {
+async fn kill_parent_sigterms_owned_process_and_skips_container_descendant_pid() {
     // #831 wanted descendants terminated on a parent kill; #1925 narrows HOW:
-    // this harness only signals pids it launched itself. A descendant merged
-    // from the child's snapshot carries a pid from another process (possibly
-    // another pid namespace), so the root must not signal it directly — the
-    // child harness tears its own subtree down when it receives SIGTERM.
+    // this harness signals pids it launched or that were reported from its
+    // own pid namespace. A descendant reported from inside a container carries
+    // a pid from another namespace, so the root must not signal it directly —
+    // the container child tears its own subtree down when it receives SIGTERM.
     let spawn_sleep = || {
         std::process::Command::new("sleep")
             .arg("30")
@@ -160,9 +160,13 @@ async fn kill_parent_sigterms_owned_process_and_skips_unowned_descendant_pid() {
         parent.process_ownership =
             crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
         g.insert("parent".to_string(), parent);
-        // Snapshot-merged descendant: nonzero pid, never launched by us.
+        // Descendant merged from a CONTAINER child's snapshot: the merge
+        // records a foreign-namespace report (see
+        // subagent_monitor_merge_ownership_tests), so the pid is never ours.
         let mut gc = child_entry("parent");
         gc.pid = gchild_pid;
+        gc.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
         g.insert("gchild".to_string(), gc);
     }
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
@@ -189,7 +193,7 @@ async fn kill_parent_sigterms_owned_process_and_skips_unowned_descendant_pid() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(
         matches!(gchild_proc.try_wait(), Ok(None)),
-        "an unowned descendant pid must not be signalled (#1925)"
+        "a container-reported descendant pid must not be signalled (#1925)"
     );
     let _ = gchild_proc.kill();
     let _ = gchild_proc.wait();

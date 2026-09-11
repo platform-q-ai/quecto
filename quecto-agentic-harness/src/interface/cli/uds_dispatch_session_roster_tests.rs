@@ -120,14 +120,8 @@ fn restore_rejects_dead_rows_even_if_marked_ordinary_exit_stopped() {
 
 #[test]
 fn verify_persisted_live_subagent_rejects_empty_uuid_or_socket() {
-    assert!(!verify_persisted_live_subagent(&roster_entry(
-        "",
-        "/tmp/live.sock".into()
-    )));
-    assert!(!verify_persisted_live_subagent(&roster_entry(
-        "child",
-        "".into()
-    )));
+    assert!(verify_persisted_live_subagent(&roster_entry("", "/tmp/live.sock".into())).is_none());
+    assert!(verify_persisted_live_subagent(&roster_entry("child", "".into())).is_none());
 }
 
 #[tokio::test]
@@ -167,9 +161,10 @@ async fn verify_persisted_live_subagent_requires_matching_session_stats_identity
     let mut entry = roster_entry("child", socket);
     entry.session_key = "cli:child".into();
     assert!(
-        !tokio::task::spawn_blocking(move || verify_persisted_live_subagent(&entry))
+        tokio::task::spawn_blocking(move || verify_persisted_live_subagent(&entry))
             .await
             .unwrap()
+            .is_none()
     );
     server.await.unwrap();
 }
@@ -180,6 +175,16 @@ async fn verify_persisted_live_subagent_requires_matching_session_stats_identity
 fn serve_matching_session_stats(
     listener: std::os::unix::net::UnixListener,
     session_key: &'static str,
+) -> std::thread::JoinHandle<()> {
+    serve_session_stats_reporting_pid(listener, session_key, 0)
+}
+
+/// Serve one `get_session_stats` reply for `session_key`, self-reporting
+/// `reported_pid` under `runtime.pid` (0 = a pre-#1925 peer that omits it).
+fn serve_session_stats_reporting_pid(
+    listener: std::os::unix::net::UnixListener,
+    session_key: &'static str,
+    reported_pid: u32,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         use std::io::{Read, Write};
@@ -200,6 +205,19 @@ fn serve_matching_session_stats(
             "success": true,
             "data": {
                 "sessionKey": session_key,
+                "runtime": if reported_pid == 0 {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::json!({
+                        "pid": reported_pid,
+                        "process_instance_id": "peer",
+                        "executable_digest_pending": false,
+                        "package_version": "0.0.0",
+                        "build_source_revision": null,
+                        "build_dirty": null,
+                        "executable_sha256": null
+                    })
+                },
                 "userMessages": 0,
                 "assistantMessages": 0,
                 "toolCalls": 0,
@@ -544,4 +562,64 @@ fn ordinary_exit_resume_full_refresh_never_reintroduces_stopped_or_preexisting_d
         }
         assert!(restored.lock().unwrap().is_empty());
     }
+}
+
+/// #1925: a restored row is signallable only when the live socket round-trip
+/// confirmed the persisted pid is the answering harness's own pid. A peer that
+/// omits `runtime.pid` (older build) or reports a different pid (container
+/// namespace, pid reuse) stays unowned; the socket identity match alone is not
+/// enough.
+#[test]
+fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let confirmed_socket = dir.path().join("confirmed.sock");
+    let mismatch_socket = dir.path().join("mismatch.sock");
+    let silent_socket = dir.path().join("silent.sock");
+    let confirmed_server = serve_session_stats_reporting_pid(
+        std::os::unix::net::UnixListener::bind(&confirmed_socket).unwrap(),
+        "confirmed",
+        4242,
+    );
+    let mismatch_server = serve_session_stats_reporting_pid(
+        std::os::unix::net::UnixListener::bind(&mismatch_socket).unwrap(),
+        "mismatch",
+        9999,
+    );
+    let silent_server = serve_matching_session_stats(
+        std::os::unix::net::UnixListener::bind(&silent_socket).unwrap(),
+        "silent",
+    );
+
+    let mut confirmed = roster_entry("confirmed", confirmed_socket);
+    confirmed.pid = 4242;
+    let mut mismatch = roster_entry("mismatch", mismatch_socket);
+    mismatch.pid = 4242;
+    let mut silent = roster_entry("silent", silent_socket);
+    silent.pid = 4242;
+
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![confirmed, mismatch, silent]);
+    confirmed_server.join().unwrap();
+    mismatch_server.join().unwrap();
+    silent_server.join().unwrap();
+
+    let entries = registry.lock().unwrap();
+    assert_eq!(
+        entries.len(),
+        3,
+        "all three verified live and were restored"
+    );
+    assert!(
+        entries["confirmed"].process_ownership.is_owned(),
+        "pid confirmed over the socket must be signallable"
+    );
+    assert_eq!(entries["confirmed"].pid, 4242);
+    assert!(
+        !entries["mismatch"].process_ownership.is_owned(),
+        "a peer reporting another pid must stay unowned"
+    );
+    assert!(
+        !entries["silent"].process_ownership.is_owned(),
+        "a peer that does not report its pid must stay unowned"
+    );
 }
