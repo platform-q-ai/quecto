@@ -89,7 +89,7 @@ fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
-    assert!(result.contains("## Parent orchestration playbook"));
+    assert!(result.contains("## Parent Software Development Orchestration Playbook:"));
 }
 
 #[test]
