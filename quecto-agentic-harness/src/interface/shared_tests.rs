@@ -170,6 +170,35 @@ fn parent_playbook_contract_is_excluded_from_children() {
     }
 }
 
+/// A successor must receive durable evidence, not merely an in-conversation summary.
+#[test]
+fn parent_handoff_requires_persisted_accessible_artifacts_and_successor_references() {
+    let artifact_policy = "Persist handoffs and evidence as durable, accessible artifacts; pass their references to successor swarms and confirm those swarms can access them.";
+    for parent in [
+        build_system_prompt(&None, false),
+        build_agent_system_prompt(None, None, false, ""),
+    ] {
+        let handoff = parent
+            .split_once("### Handoff and evidence\n")
+            .expect("parent has a handoff policy")
+            .1
+            .split_once("\n### Repository CI")
+            .expect("handoff policy has a section boundary")
+            .0;
+        assert!(
+            handoff.contains(artifact_policy),
+            "handoffs must persist evidence and transfer accessible artifact references"
+        );
+    }
+    for child in [
+        build_system_prompt(&None, true),
+        build_agent_system_prompt(None, None, true, ""),
+    ] {
+        assert!(!child.contains(artifact_policy));
+        assert!(!child.contains("### Handoff and evidence"));
+    }
+}
+
 #[test]
 fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()), false);
