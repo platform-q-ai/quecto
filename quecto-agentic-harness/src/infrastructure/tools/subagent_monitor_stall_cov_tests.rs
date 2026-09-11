@@ -29,7 +29,7 @@ fn note(seq: u64) -> SequencedSubagentNotification {
 #[test]
 fn take_stalled_snapshot_consumes_latch_and_honors_terminal_guards() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.workflow = Some(WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 1,
@@ -58,7 +58,7 @@ fn completion_armed_is_one_shot() {
     registry
         .lock()
         .unwrap()
-        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 0));
     assert!(take_completion_armed(&registry, "bot"));
     assert!(!take_completion_armed(&registry, "bot"));
     assert!(!take_completion_armed(&registry, "missing"));
@@ -67,7 +67,7 @@ fn completion_armed_is_one_shot() {
 #[tokio::test]
 async fn retry_pending_stalls_claims_and_resends_retained_alerts() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.workflow = Some(WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 1,
@@ -86,7 +86,7 @@ async fn retry_pending_stalls_claims_and_resends_retained_alerts() {
 #[tokio::test]
 async fn classify_workflow_idle_only_sends_exhausted_stalls() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.workflow = Some(WorkflowSnapshot {
         mode: "selecting_template".into(),
         steps_completed: 0,
@@ -120,7 +120,7 @@ async fn stall_delivery_retains_on_full_channel_and_retry_no_tx_is_noop() {
     registry
         .lock()
         .unwrap()
-        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 0));
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tx.try_send(note(1)).unwrap();
 
@@ -141,7 +141,7 @@ async fn stall_delivery_retains_on_full_channel_and_retry_no_tx_is_noop() {
 #[test]
 fn claim_pending_stall_rejects_mismatch_and_missing_agent() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.workflow = Some(WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 1,
@@ -168,7 +168,7 @@ fn claim_pending_stall_rejects_mismatch_and_missing_agent() {
 #[test]
 fn stall_helpers_recover_from_poisoned_registry_lock() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.workflow = Some(WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 1,
@@ -198,7 +198,7 @@ async fn retain_pending_stall_without_runtime_and_closed_channel_are_safe() {
     registry
         .lock()
         .unwrap()
-        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 0));
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     drop(rx);
     deliver_or_retain_stall(&registry, &tx, "missing", note(1));
@@ -219,7 +219,7 @@ fn retain_pending_stall_from_sync_context_does_not_require_runtime() {
     registry
         .lock()
         .unwrap()
-        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 0));
     let (tx, rx) = tokio::sync::mpsc::channel::<SequencedSubagentNotification>(1);
     drop(rx);
     deliver_or_retain_stall(&registry, &tx, "bot", note(3));
@@ -238,13 +238,13 @@ fn take_stalled_snapshot_none_for_missing_no_workflow_complete_and_unknown_modes
     let registry = new_registry();
     assert!(take_stalled_snapshot(&registry, "missing").is_none());
 
-    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
     entry.stalled_armed = true;
     registry.lock().unwrap().insert("bot".into(), entry);
     assert!(take_stalled_snapshot(&registry, "bot").is_none());
 
     for mode in ["complete", "unknown"] {
-        let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+        let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 0);
         entry.stalled_armed = true;
         entry.workflow = Some(WorkflowSnapshot {
             mode: mode.into(),
@@ -259,7 +259,7 @@ fn take_stalled_snapshot_none_for_missing_no_workflow_complete_and_unknown_modes
 #[test]
 fn claim_pending_stall_with_active_descendant_returns_without_lock_reentry_deadlock() {
     let registry = new_registry();
-    let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 1);
+    let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 0);
     parent.workflow = Some(WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 1,
@@ -268,7 +268,7 @@ fn claim_pending_stall_with_active_descendant_returns_without_lock_reentry_deadl
     parent.stalled_armed = false;
     parent.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
     parent.pending_stall = Some(note(7));
-    let mut child = SubagentEntry::new("/tmp/child.sock".into(), 2);
+    let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
     child.parent_id = Some("bot".into());
     child.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Running;
     {

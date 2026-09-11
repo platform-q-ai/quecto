@@ -71,7 +71,7 @@ fn notification_messages_cover_stalled_and_exited_reason_branches() {
 
 #[test]
 fn seed_bound_workflow_none_leaves_entry_without_snapshot() {
-    let mut entry = SubagentEntry::new("/tmp/no-workflow.sock".into(), 1);
+    let mut entry = SubagentEntry::new("/tmp/no-workflow.sock".into(), 0);
     seed_bound_workflow(&mut entry, None);
     assert!(entry.workflow.is_none());
 }
@@ -113,7 +113,7 @@ fn effective_display_name_uses_display_only_for_uuid_keyed_entries() {
         AgentUuid::from("uuid".to_string()),
         "friendly".to_string(),
         "/tmp/friendly.sock".into(),
-        1,
+        0,
     );
     assert_eq!(entry.effective_display_name("uuid"), "friendly");
     assert_eq!(entry.effective_display_name("legacy-key"), "legacy-key");
@@ -128,7 +128,7 @@ fn active_descendant_for_agent_covers_missing_parent_fallback_and_none_registry(
     let reg = new_registry();
     {
         let mut entries = reg.lock().unwrap();
-        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
         child.status = SubagentStatus::Idle;
         child.parent_id = Some("parent".to_string());
         entries.insert("child".to_string(), child);
@@ -190,7 +190,7 @@ fn lookup_subagent_socket_covers_success_non_live_and_non_connectable() {
             AgentUuid::from("uuid-live-socket".to_string()),
             "live".to_string(),
             "/tmp/live.sock".into(),
-            1,
+            0,
         );
         live.status = SubagentStatus::Idle;
         entries.insert("uuid-live-socket".to_string(), live);
@@ -199,7 +199,7 @@ fn lookup_subagent_socket_covers_success_non_live_and_non_connectable() {
             AgentUuid::from("uuid-detached".to_string()),
             "detached".to_string(),
             "/tmp/detached.sock".into(),
-            2,
+            0,
         );
         detached.status = SubagentStatus::Idle;
         detached.persisted_liveness = SubagentLiveness::Detached;
@@ -209,7 +209,7 @@ fn lookup_subagent_socket_covers_success_non_live_and_non_connectable() {
             AgentUuid::from("uuid-empty-socket".to_string()),
             "uuid-empty-socket".to_string(),
             std::path::PathBuf::new(),
-            3,
+            0,
         );
         empty_socket.status = SubagentStatus::Idle;
         entries.insert("uuid-empty-socket".to_string(), empty_socket);
@@ -238,7 +238,7 @@ fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
         AgentUuid::from("uuid-live".to_string()),
         "friendly".to_string(),
         "/tmp/friendly.sock".into(),
-        42,
+        0,
     );
     entry.status = SubagentStatus::Idle;
     entries.insert("uuid-live".to_string(), entry);
@@ -369,4 +369,30 @@ async fn command_reader_finalizes_older_unchanged_get_state_snapshot_to_caller_c
         json["data"],
         serde_json::json!({ "unchanged": true, "generation": 8 })
     );
+}
+
+#[test]
+fn lookup_subagent_socket_recovers_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    let mut live = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::new("live-uuid"),
+        "live".into(),
+        "/tmp/live.sock".into(),
+        0,
+    );
+    live.status = SubagentStatus::Idle;
+    registry.lock().unwrap().insert("live-uuid".into(), live);
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err());
+    assert_eq!(
+        lookup_subagent_socket(&registry, "live").unwrap(),
+        std::path::PathBuf::from("/tmp/live.sock")
+    );
+    let missing = lookup_subagent_socket(&registry, "ghost").unwrap_err();
+    assert!(missing.contains("ghost"), "{missing}");
 }

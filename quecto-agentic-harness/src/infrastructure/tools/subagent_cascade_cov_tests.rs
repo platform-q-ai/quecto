@@ -111,7 +111,7 @@ fn cascade_helpers_recover_from_poisoned_registry_lock() {
 #[test]
 fn cascade_tombstone_retained_in_registry_releases_cleanup_ownership() {
     let registry = new_registry();
-    let mut entry = SubagentEntry::new("/tmp/dead.sock".into(), 7);
+    let mut entry = SubagentEntry::new("/tmp/dead.sock".into(), 0);
     entry.cleanup_environment_id = Some("env-owned".into());
     entry.cleanup_argv = vec!["cleanup".into()];
     entry.environment_ref = Some("C1".into());

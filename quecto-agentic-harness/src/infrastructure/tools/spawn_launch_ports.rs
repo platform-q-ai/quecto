@@ -373,7 +373,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 .clone();
             let (cleanup_environment_id, cleanup_argv) = prepared.cleanup_plan();
             let (exit_tx, _exit_rx) = new_exit_signal_channel();
-            let entry = initial_registry_entry(InitialRegistryEntrySpec {
+            let mut entry = initial_registry_entry(InitialRegistryEntrySpec {
                 agent_uuid,
                 display_name: identity.session_name.clone(),
                 socket_path: runtime.socket_path.clone(),
@@ -395,6 +395,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 environment_ref: prepared.environment_ref.clone(),
                 process_owner: prepared.process_owner,
             });
+            // Only a LOCAL launch holds the child it spawned; that handle is
+            // the sole source of signal authority over `runtime.pid` (#1925).
+            if let Some(child) = prepared.child.as_ref() {
+                entry.process_ownership =
+                    super::process_ownership::ProcessOwnership::launched(child);
+            }
             // Retain the lease before publication; shutdown can drain the
             // registry before the reaper task starts.
             let ownership = entry.process_ownership.clone();

@@ -47,10 +47,10 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 10);
+        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 0);
         live.status = SubagentStatus::Idle;
         guard.insert("live".to_string(), live);
-        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 11);
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.status = SubagentStatus::Exited;
         dead.persisted_liveness = crate::domain::session::SubagentLiveness::Dead;
         guard.insert("dead".to_string(), dead);
@@ -67,7 +67,7 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 12);
+        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 0);
         detached.status = SubagentStatus::Exited;
         detached.persisted_liveness = crate::domain::session::SubagentLiveness::Detached;
         guard.insert("detached".to_string(), detached);
@@ -90,20 +90,20 @@ fn build_live_subagent_info_list_omits_dead_detached_and_effectively_exited_tomb
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 1);
+        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 0);
         live.status = SubagentStatus::Idle;
         guard.insert("live".to_string(), live);
 
-        let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 2);
+        let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 0);
         exited.status = SubagentStatus::Exited;
         guard.insert("exited".to_string(), exited);
 
-        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 3);
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.status = SubagentStatus::Idle;
         dead.persisted_liveness = SubagentLiveness::Dead;
         guard.insert("dead".to_string(), dead);
 
-        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 4);
+        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 0);
         detached.status = SubagentStatus::Running;
         detached.persisted_liveness = SubagentLiveness::Detached;
         guard.insert("detached".to_string(), detached);

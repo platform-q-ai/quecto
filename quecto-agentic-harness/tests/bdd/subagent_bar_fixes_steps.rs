@@ -37,7 +37,7 @@ fn given_registry_with_agent(world: &mut QuectoWorld, agent_id: String, status: 
     let registry = new_registry();
     {
         let mut guard = registry.lock().unwrap();
-        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 42);
+        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
         entry.status = match status.as_str() {
             "running" => SubagentStatus::Running,
             "idle" => SubagentStatus::Idle,

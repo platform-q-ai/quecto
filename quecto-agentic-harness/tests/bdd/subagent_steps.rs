@@ -117,7 +117,7 @@ fn given_subagent_named_exited(world: &mut QuectoWorld, name: String) {
         old_uuid.clone(),
         name.clone(),
         std::path::PathBuf::from("/tmp/bdd-old.sock"),
-        1,
+        0,
     );
     entry.status = SubagentStatus::Exited;
     let registry = new_registry();
@@ -139,7 +139,7 @@ fn given_live_subagent_named(world: &mut QuectoWorld, name: String) {
         uuid.clone(),
         name.clone(),
         std::path::PathBuf::from("/tmp/bdd-live.sock"),
-        2,
+        0,
     );
     let registry = new_registry();
     registry.lock().unwrap().insert(uuid.to_string(), entry);
