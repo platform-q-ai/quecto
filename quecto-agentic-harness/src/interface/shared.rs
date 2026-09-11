@@ -46,20 +46,23 @@ pub fn merge_prompts(user_prompt: &Option<String>) -> String {
 
 /// Parent identity and coordination policy; never injected into spawned children.
 pub fn agent_role_preamble() -> &'static str {
-    "You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user."
+    "You are the Parent Agent operating inside Quecto, an agentic coding harness. Own user communication, scope, orchestration, approvals, and synthesis; keep substantial working context in scoped swarms rather than in the parent while you, the parent, remain available to the user."
 }
 
 /// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
-    r#"## Route the work
+    r#"## Parent orchestration playbook
 
-Handle directly in the parent when the task is focused, short-lived, low-context, already localized, or requires user-facing synthesis/judgment.
+### Route and isolate
+Prefer swarms for nearly all software development and team based work. Work directly only when ALL conditions hold: small, localized, low-risk work; clear requirements and files; no substantial investigation, planning, or independent review; and a brief edit and focused verification. Otherwise create a scoped swarm, rather than an ordinary child for convenience, unless it is a task for a single agent alone.
 
-Delegate to a subagent when the work is broad, noisy, long-running, independently parallelizable, review-shaped, or likely to produce lots of intermediate evidence while the parent only needs conclusions.
+Use separate fresh swarms for planning (epics, issues, acceptance criteria, and dependencies), delivery (features, refactors, bugfixes, and chores), independent investigation, independent verification, and PR review. Planning must not roll into delivery in the same swarm. Shared-board checks are collaboration, not independent review. Independent tasks require fresh boards and separate containers/checkouts. Use a fixed pool within its cap; never nest containers to evade caps. Swarms cannot use workflow; do not enable workflow mode for swarm participants.
 
-Once delegated, do not repeat the same investigation in the parent. Verify critical citations or surprising claims, then synthesize.
+### Handoff and evidence
+Unless an assigned Epic or Issue contains full instructions, handoffs must include requirements, approved scope, issue/PR links when available, architecture, acceptance criteria, exact branch and SHA, environment, and commands. Persist handoffs and evidence as durable, accessible artifacts; pass their references to successor swarms and confirm those swarms can access them. Independent workers establish their own conclusions from source, tests, and primary evidence before consulting delivery reasoning. Results are revision-bound: recheck affected changes after the revision changes.
 
-For multi-step coding, diagnosis, planning, or review, prefer a child with `workflow: true`; use `workflow_spec` when the exact sequence must be observable/auditable. Confirm live template ids if unsure."#
+### Repository CI: platform-q-ai/quecto only
+Ensure swarms understand that the `merge-requested` label is required to start/restart relevant CI and resets on failure."#
 }
 
 /// Child ownership boundary permits useful decomposition without coordinator chains.
@@ -709,3 +712,7 @@ mod tests;
 #[cfg(test)]
 #[path = "shared_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "shared_parent_policy_tests.rs"]
+mod parent_policy_tests;

@@ -89,7 +89,7 @@ fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
-    assert!(result.ends_with("Confirm live template ids if unsure."));
+    assert!(result.contains("## Parent orchestration playbook"));
 }
 
 #[test]
@@ -114,10 +114,9 @@ fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
         let parent = build_system_prompt(&custom, false);
         assert!(child.contains(child_role));
         assert!(!child.contains("Parent Agent"));
-        assert!(!child.contains("Delegate to a subagent when the work is broad"));
+        assert!(!child.contains("Prefer swarms for nearly all software development"));
         assert!(parent.contains(agent_role_preamble()));
-        assert!(parent.contains("Delegate to a subagent when the work is broad"));
-        assert!(parent.contains("Once delegated, do not repeat the same investigation"));
+        assert!(parent.contains("Prefer swarms for nearly all software development"));
         assert!(!parent.contains("Common loops"));
         assert!(!parent.contains("quick-start"));
         assert!(!child.contains("quick-start"));
