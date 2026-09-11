@@ -14,8 +14,14 @@ fn child_entry(parent: &str) -> SubagentEntry {
 #[test]
 fn killed_agents_json_caps_long_lists() {
     let agents: Vec<String> = (1..=22).map(|n| format!("a{n}")).collect();
-    let parsed = killed_agents_result_json(&agents);
+    let parsed = killed_agents_result_json(KilledAgents {
+        killed: &agents,
+        signalled: &agents[..1],
+        unsignalled: &agents[1..],
+    });
     assert_eq!(parsed["killed"].as_array().unwrap().len(), 20);
+    assert_eq!(parsed["signalled"], serde_json::json!(["a1"]));
+    assert_eq!(parsed["unsignalled"].as_array().unwrap().len(), 20);
     assert_eq!(parsed["omitted_agents"], 2);
 }
 
@@ -44,7 +50,11 @@ async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(
         parsed,
-        serde_json::json!({"killed":["parent","child","gchild"]})
+        serde_json::json!({
+            "killed":["parent","child","gchild"],
+            "signalled":[],
+            "unsignalled":[]
+        })
     );
 
     // Whole dead sub-tree pruned; the live sibling is untouched.
@@ -104,7 +114,7 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     assert!(!result.is_error);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
-        serde_json::json!({"killed":["solo"]})
+        serde_json::json!({"killed":["solo"],"signalled":["solo"],"unsignalled":[]})
     );
     assert!(!result.content.contains(&pid.to_string()));
 
@@ -174,6 +184,16 @@ async fn kill_parent_sigterms_owned_process_and_skips_container_descendant_pid()
 
     let result = tool.kill_agent("parent").await;
     assert!(!result.is_error);
+    // The result says which processes were signalled and which were merely
+    // dropped from tracking because no lease authorised a signal.
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
+        serde_json::json!({
+            "killed":["parent","gchild"],
+            "signalled":["parent"],
+            "unsignalled":["gchild"]
+        })
+    );
     assert!(
         registry
             .lock()

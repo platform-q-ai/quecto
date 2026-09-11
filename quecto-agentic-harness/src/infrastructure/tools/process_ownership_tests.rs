@@ -14,6 +14,7 @@ async fn reaper_cannot_release_child_during_signal_dispatch() {
             release_rx
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .unwrap();
+            true
         });
     });
     entered_rx.await.unwrap();

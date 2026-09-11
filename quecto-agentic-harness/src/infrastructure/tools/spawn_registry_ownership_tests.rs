@@ -216,3 +216,32 @@ fn entry_constructors_default_to_unowned() {
     assert!(!ProcessOwnership::reported(false).is_owned());
     assert!(ProcessOwnership::reported(true).is_owned());
 }
+
+/// Defensive runtime guard: even a lease that claims launched authority must
+/// never signal this harness or its parent (a bad child-reported pid, a pid
+/// namespace confusion). Refused at dispatch, not asserted.
+#[test]
+fn launched_lease_naming_this_process_or_its_parent_is_refused() {
+    let _serial = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let probe = SigtermProbe::install();
+    for pid in [std::process::id(), parent_pid()] {
+        let mut entry = SubagentEntry::new("/tmp/self-launched.sock".into(), pid);
+        entry.process_ownership = ProcessOwnership::launched_for_test();
+        assert!(entry.process_ownership.is_owned());
+        assert!(
+            !terminate_removed_entry(&entry),
+            "dispatch must report the refusal for pid {pid}"
+        );
+    }
+    assert_eq!(
+        probe.deliveries(),
+        0,
+        "self/parent pid must never be signalled"
+    );
+}
+
+fn parent_pid() -> u32 {
+    // SAFETY: getppid has no preconditions and cannot fail.
+    let ppid = unsafe { libc::getppid() };
+    u32::try_from(ppid).expect("parent pid is positive")
+}

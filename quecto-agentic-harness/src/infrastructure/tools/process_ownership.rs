@@ -112,20 +112,34 @@ impl ProcessOwnership {
             .may_signal()
     }
 
+    /// Retire the lease IN PLACE so every retained clone (a cascade-removed
+    /// copy, a shutdown drain) loses authority together with the registry row.
+    /// Used when the harness that owned the process reports it reaped, so the
+    /// pid may already belong to someone else. A launched lease is left to its
+    /// reaper, which retires it in the same critical section that reaps.
+    pub(crate) fn retire_reported(&self) {
+        let mut lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*lease, Lease::Reported { .. }) {
+            *lease = Lease::Unowned;
+        }
+    }
+
     /// Signal the owned process tree. Returns `true` only when a signal was
-    /// actually dispatched; unowned or already-reaped leases are skipped.
+    /// actually dispatched; unowned, already-reaped and self/parent-targeting
+    /// leases are skipped.
     pub(crate) fn signal(&self, pid: u32, owner: super::process_tree::ProcessOwner) -> bool {
         self.dispatch(|| super::process_tree::terminate_owned_process_tree(pid, owner))
     }
 
-    fn dispatch(&self, signal: impl FnOnce()) -> bool {
+    fn dispatch(&self, signal: impl FnOnce() -> bool) -> bool {
         let lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if lease.may_signal() {
             // Reaping cannot run while dispatch is in progress, including both
             // TERM and KILL of a local group. No existence check proves identity.
-            signal();
+            signal()
+        } else {
+            false
         }
-        lease.may_signal()
     }
 
     pub(crate) async fn wait(

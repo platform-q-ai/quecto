@@ -17,7 +17,19 @@ thread_local! {
     pub(super) static SIGNAL_LOG: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
 }
 
-pub(crate) fn terminate_owned_process_tree(pid: u32, owner: ProcessOwner) {
+/// Signal an owned process tree. Returns `false` (and signals nothing) when
+/// the pid names this harness or its parent: no lease can legitimately do so,
+/// and inside a swarm container the parent is the coordinator (#1925). A
+/// runtime refusal, not an assertion, so a bad child-reported pid can never
+/// take the parent down in any build.
+pub(crate) fn terminate_owned_process_tree(pid: u32, owner: ProcessOwner) -> bool {
+    if !targets_another_process(pid) {
+        tracing::error!(
+            pid,
+            "refusing to signal: lease names this harness or its parent"
+        );
+        return false;
+    }
     #[cfg(test)]
     if SIGNAL_LOG.with(|log| {
         let mut log = log.borrow_mut();
@@ -28,19 +40,24 @@ pub(crate) fn terminate_owned_process_tree(pid: u32, owner: ProcessOwner) {
             false
         }
     }) {
-        return;
+        return true;
     }
-    // Critical-path invariant (#1925): a lease can only name a child of ours
-    // or a same-namespace descendant, never this harness or its parent (the
-    // swarm coordinator when running inside a container).
-    #[cfg(unix)]
-    debug_assert!(
-        pid != std::process::id() && i64::from(pid) != i64::from(parent_pid()),
-        "signal lease named this harness or its parent (pid {pid})"
-    );
     match owner {
         ProcessOwner::DirectPid => sigterm_pid(pid),
         ProcessOwner::LocalProcessGroup => terminate_local_process_group(pid),
+    }
+    true
+}
+
+/// Affirmative check that `pid` is neither this process nor its parent.
+fn targets_another_process(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        pid != std::process::id() && i64::from(pid) != i64::from(parent_pid())
+    }
+    #[cfg(not(unix))]
+    {
+        pid != std::process::id()
     }
 }
 

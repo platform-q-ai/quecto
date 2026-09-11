@@ -576,6 +576,7 @@ fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
     let confirmed_socket = dir.path().join("confirmed.sock");
     let mismatch_socket = dir.path().join("mismatch.sock");
     let silent_socket = dir.path().join("silent.sock");
+    let zero_socket = dir.path().join("zero.sock");
     let confirmed_server = serve_session_stats_reporting_pid(
         std::os::unix::net::UnixListener::bind(&confirmed_socket).unwrap(),
         "confirmed",
@@ -590,6 +591,12 @@ fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
         std::os::unix::net::UnixListener::bind(&silent_socket).unwrap(),
         "silent",
     );
+    // Persisted pid 0 (stub/unknown) and peer also reporting nothing: equal,
+    // but zero is never a confirmation.
+    let zero_server = serve_matching_session_stats(
+        std::os::unix::net::UnixListener::bind(&zero_socket).unwrap(),
+        "zero",
+    );
 
     let mut confirmed = roster_entry("confirmed", confirmed_socket);
     confirmed.pid = 4242;
@@ -597,17 +604,23 @@ fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
     mismatch.pid = 4242;
     let mut silent = roster_entry("silent", silent_socket);
     silent.pid = 4242;
+    let mut zero = roster_entry("zero", zero_socket);
+    zero.pid = 0;
 
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![confirmed, mismatch, silent]);
+    restore_persisted_subagent_roster(
+        &Some(registry.clone()),
+        vec![confirmed, mismatch, silent, zero],
+    );
     confirmed_server.join().unwrap();
     mismatch_server.join().unwrap();
     silent_server.join().unwrap();
+    zero_server.join().unwrap();
 
     let entries = registry.lock().unwrap();
-    assert_eq!(
-        entries.len(),
-        3,
-        "all three verified live and were restored"
+    assert_eq!(entries.len(), 4, "all four verified live and were restored");
+    assert!(
+        !entries["zero"].process_ownership.is_owned(),
+        "a persisted pid of 0 can never be confirmed"
     );
     assert!(
         entries["confirmed"].process_ownership.is_owned(),
