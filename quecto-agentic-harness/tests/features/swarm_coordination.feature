@@ -67,6 +67,11 @@ Feature: Container swarm coordination
     Then the swarm result should be an error
     And the swarm result should contain "cannot create a swarm"
 
+  Scenario: A superseding message replaces its predecessor in the inbox
+    When a swarm member sends a message and then supersedes it with a newer revision
+    Then the recipient inbox holds only the newer message with its revision
+    And the superseded message remains in the audit
+
   Scenario: Rejected wake delivery preserves the durable message and reports a warning
     When a swarm message recipient rejects its wake hint
     Then the swarm result should not be an error

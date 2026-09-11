@@ -233,35 +233,88 @@ class Workbench(Tasks):
             if member == run['coordinator']:
                 self._end_by_loss(db, run, 'coordinator death confirmed')
 
-    def send(self, request: str, recipient: str, body: str):
-        """Send a durable string message (8192 UTF-8 bytes maximum), not a dict."""
+    def send(self, request: str, recipient: str, body: str, revision: str = None, supersedes: int = None):
+        """Send a durable string message (8192 UTF-8 bytes maximum), not a dict.
+
+        `revision` (optional) names the revision the message is about, visible
+        in the recipient's inbox without parsing the body. `supersedes`
+        (optional) retires your own earlier unread message to the same
+        recipient as `superseded` in the same transaction (#1837). Both are
+        vocabulary, not a required practice. Sending needs a running run;
+        `withdraw` and `ack` are bookkeeping and also work while paused."""
         bounded(body, 'message', 8192)
+        if revision is not None:
+            bounded(revision, 'message revision', 256)
+        if supersedes is not None and (type(supersedes) is not int or supersedes < 1):
+            raise SwarmError('supersedes must be a message id')
         with self.store.operation() as (db, _):
             def send():
                 target = db.execute('SELECT status FROM members WHERE id=?', (recipient,)).fetchone()
                 if not target or target['status'] == 'dead':
                     raise SwarmError('unknown or out-of-swarm recipient')
+                if supersedes is not None:
+                    self._retire(db, supersedes, recipient, 'superseded')
                 count = db.execute("SELECT count(*) FROM messages WHERE recipient=? AND status='accepted'", (recipient,)).fetchone()[0]
                 if count >= 100:
                     raise SwarmError('recipient inbox full (100 unconsumed messages)')
-                cursor = db.execute("INSERT INTO messages(sender,recipient,body,status) VALUES(?,?,?,'accepted')",
-                                    (self.member, recipient, body))
-                self.store.event(db, 'message_accepted', {'message': cursor.lastrowid, 'recipient': recipient})
+                cursor = db.execute("INSERT INTO messages(sender,recipient,body,status,revision,supersedes) VALUES(?,?,?,'accepted',?,?)",
+                                    (self.member, recipient, body, revision, supersedes))
+                if supersedes is not None:
+                    db.execute('UPDATE messages SET superseded_by=? WHERE id=?', (cursor.lastrowid, supersedes))
+                    self.store.event(db, 'message_superseded', {'message': supersedes, 'superseded_by': cursor.lastrowid})
+                self.store.event(db, 'message_accepted', {'message': cursor.lastrowid, 'recipient': recipient, 'revision': revision})
                 return {'id': cursor.lastrowid, 'status': 'accepted'}
-            return self.store.retry(db, request, ['send', recipient, body], send)
+            # Keep the pre-#1837 payload shape for plain sends so request keys
+            # recorded by an older build still replay against this store.
+            payload = ['send', recipient, body]
+            if revision is not None or supersedes is not None:
+                payload += [revision, supersedes]
+            return self.store.retry(db, request, payload, send)
+
+    def withdraw(self, message_id):
+        """Withdraw your own unread message: it leaves the recipient's inbox and
+        the wake path but stays in the audit as `withdrawn` (#1837). Repeating
+        a withdrawal is a no-op, like repeating an acknowledgment."""
+        message_id = self._message_id(message_id)
+        with self.store.operation(active=False) as (db, _):
+            if self._retire(db, message_id, None, 'withdrawn'):
+                self.store.event(db, 'message_withdrawn', {'message': message_id})
+
+    @staticmethod
+    def _message_id(value):
+        if type(value) is not int or value < 1:
+            raise SwarmError('message id must be a positive integer')
+        return value
+
+    def _retire(self, db, message_id, recipient, status):
+        """Move your own unread message to `status`; False when it already is."""
+        row = db.execute('SELECT * FROM messages WHERE id=?', (message_id,)).fetchone()
+        if not row or row['sender'] != self.member:
+            raise SwarmError(f'only your own message can be {status}')
+        if recipient is not None and row['recipient'] != recipient:
+            raise SwarmError(f'only a message to the same recipient can be {status}')
+        if row['status'] == status and status == 'withdrawn':
+            return False
+        if row['status'] != 'accepted':
+            raise SwarmError(f"message {message_id} is already {row['status']}")
+        db.execute('UPDATE messages SET status=? WHERE id=?', (status, message_id))
+        return True
 
     def inbox(self, include_consumed=False):
+        """Unread messages to you; `include_consumed=True` adds the audit of
+        consumed, superseded and withdrawn ones."""
         with self.store.operation(active=False, read_only=True) as (db, _):
             return [dict(r) for r in db.execute(
                 "SELECT * FROM messages WHERE recipient=? AND (status='accepted' OR ?) ORDER BY id LIMIT 100",
                 (self.member, include_consumed))]
 
     def ack(self, message_id):
+        message_id = self._message_id(message_id)
         with self.store.operation(active=False) as (db, _):
             row = db.execute('SELECT * FROM messages WHERE id=? AND recipient=?', (message_id, self.member)).fetchone()
             if not row:
                 raise SwarmError('unknown message in own inbox')
-            if row['status'] != 'consumed':
+            if row['status'] == 'accepted':
                 db.execute("UPDATE messages SET status='consumed' WHERE id=?", (message_id,))
                 self.store.event(db, 'message_consumed', {'message': message_id})
 
