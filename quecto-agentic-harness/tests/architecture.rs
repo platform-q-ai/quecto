@@ -2019,20 +2019,17 @@ impl<'ast> syn::visit::Visit<'ast> for FindGraphGuard<'_> {
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
         let previous = self.impl_types.clone();
-        self.impl_types = match item.self_ty.as_ref() {
-            syn::Type::Path(ty) => vec![find_graph_path(&ty.path)],
-            _ => Vec::new(),
-        };
+        self.impl_types = find_graph_type_path(&item.self_ty).into_iter().collect();
         syn::visit::visit_item_impl(self, item);
         self.impl_types = previous;
     }
 
     fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
         let path = find_graph_path(&expr.path);
-        let qualified = expr.qself.as_ref().and_then(|q| match q.ty.as_ref() {
-            syn::Type::Path(ty) => Some(find_graph_path(&ty.path)),
-            _ => None,
-        });
+        let qualified = expr
+            .qself
+            .as_ref()
+            .and_then(|q| find_graph_type_path(&q.ty));
         let path = qualified.map_or(path.clone(), |ty| format!("{ty}::{path}"));
         if path.split("::").any(|part| part == "Self") {
             for ty in &self.impl_types {
@@ -2045,12 +2042,134 @@ impl<'ast> syn::visit::Visit<'ast> for FindGraphGuard<'_> {
     }
 }
 
+// Parentheses and invisible macro groups preserve the receiver's identity.
+// Only path types and these transparent wrappers participate in resolution.
+fn find_graph_type_path(ty: &syn::Type) -> Option<String> {
+    match ty {
+        syn::Type::Paren(ty) => find_graph_type_path(&ty.elem),
+        syn::Type::Group(ty) => find_graph_type_path(&ty.elem),
+        syn::Type::Path(ty) => {
+            let path = find_graph_path(&ty.path);
+            Some(match &ty.qself {
+                Some(qself) => format!("{}::{path}", find_graph_type_path(&qself.ty)?),
+                None => path,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn find_graph_path(path: &syn::Path) -> String {
     path.segments
         .iter()
         .map(|part| part.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
+}
+
+#[test]
+fn find_graph_guards_preserve_parenthesized_receivers() {
+    for (file, vertex, constructor) in [
+        ("src/interface/tools/find.rs", "FindTool", "new"),
+        ("src/interface/tools/find.rs", "FindUseCase", "new"),
+        (
+            "src/application/agent_turn/use_cases/find.rs",
+            "FindUseCase",
+            "new",
+        ),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
+        (
+            "src/infrastructure/tools/find_fd.rs",
+            "FdFindPaths",
+            "with_fd_binary",
+        ),
+    ] {
+        for source in [
+            format!("fn build() {{ <(({vertex}))>::{constructor}(); }}"),
+            format!("fn build() {{ <(<(({vertex})) as Factory>::Output)>::{constructor}(); }}"),
+            format!(
+                "use owner::{{{vertex} as Imported}}; fn build() {{ <((Imported))>::{constructor}(); }}"
+            ),
+            format!("impl (({vertex})) {{ fn alternate() {{ <((Self))>::{constructor}(); }} }}"),
+            format!(
+                "use owner::{{{vertex} as Imported}}; impl (Imported) {{ fn alternate() {{ <(Self)>::{constructor}(); }} }}"
+            ),
+            format!(
+                "impl ({vertex}) {{ fn alternate() {{ type Alias = ((Self)); <(Alias)>::{constructor}(); }} }}"
+            ),
+            format!("type Alias = (({vertex})); fn build() {{ <(Alias)>::{constructor}(); }}"),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+    }
+    let source = "impl FindTool { fn alternate(paths: Paths) -> Self { <(Self)>::new(<(FindUseCase)>::new(paths)) } }";
+    assert!(!find_graph_dependencies_allowed(
+        "src/interface/tools/find.rs",
+        source
+    ));
+    for source in [
+        "impl ((NotFindTool)) { fn alternate() { <((Self))>::new(); } }",
+        "use owner::{NotFindUseCase as Imported}; fn build() { <(Imported)>::new(); }",
+        "type Alias = ((Other)); fn build() { <(Alias)>::new(); }",
+        "impl (FindTool) { fn new() -> Self { panic!() } }",
+        "#[cfg(test)] impl (FindTool) { fn alternate() { <(Self)>::new(); } }",
+    ] {
+        assert!(
+            find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn find_graph_guards_preserve_invisible_group_receivers() {
+    use syn::visit::Visit;
+    // Macro-expanded groups have no textual delimiter; construct their AST.
+    for vertex in ["FindTool", "NotFindTool"] {
+        let mut item: syn::ItemImpl = syn::parse_str(&format!("impl ({vertex}) {{}}")).unwrap();
+        item.self_ty = Box::new(syn::Type::Group(syn::TypeGroup {
+            group_token: Default::default(),
+            elem: item.self_ty,
+        }));
+        let mut expr: syn::ExprPath = syn::parse_str("<((Self))>::new").unwrap();
+        let qself = expr.qself.as_mut().expect("qualified receiver");
+        *qself.ty = syn::Type::Group(syn::TypeGroup {
+            group_token: Default::default(),
+            elem: qself.ty.clone(),
+        });
+        let statement: syn::Stmt = syn::parse_quote! { placeholder(); };
+        let syn::Stmt::Expr(syn::Expr::Call(mut call), semi) = statement else {
+            panic!("call fixture")
+        };
+        call.func = Box::new(syn::Expr::Path(expr));
+        let mut method: syn::ImplItemFn = syn::parse_quote! { fn alternate() {} };
+        method
+            .block
+            .stmts
+            .push(syn::Stmt::Expr(syn::Expr::Call(call), semi));
+        item.items.push(syn::ImplItem::Fn(method));
+        for file in ["src/interface/tools/find.rs", "src/composition/find.rs"] {
+            let mut guard = FindGraphGuard {
+                file,
+                aliases: Vec::new(),
+                impl_types: Vec::new(),
+                allowed: true,
+            };
+            guard.visit_item_impl(&item);
+            assert_eq!(
+                guard.allowed,
+                vertex == "NotFindTool" || file == "src/composition/find.rs",
+                "{file}: {vertex}"
+            );
+        }
+    }
 }
 
 #[test]
