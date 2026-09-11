@@ -51,7 +51,7 @@ pub fn agent_role_preamble() -> &'static str {
 
 /// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
-    r#"## Parent orchestration playbook
+    r#"## Parent Software Development Orchestration Playbook:
 
 ### Route and isolate
 Prefer swarms for nearly all software development and team based work. Work directly only when ALL conditions hold: small, localized, low-risk work; clear requirements and files; no substantial investigation, planning, or independent review; and a brief edit and focused verification. Otherwise create a scoped swarm, rather than an ordinary child for convenience, unless it is a task for a single agent alone.
@@ -60,6 +60,21 @@ Use separate fresh swarms for planning (epics, issues, acceptance criteria, and 
 
 ### Handoff and evidence
 Unless an assigned Epic or Issue contains full instructions, handoffs must include requirements, approved scope, issue/PR links when available, architecture, acceptance criteria, exact branch and SHA, environment, and commands. Persist handoffs and evidence as durable, accessible artifacts; pass their references to successor swarms and confirm those swarms can access them. Independent workers establish their own conclusions from source, tests, and primary evidence before consulting delivery reasoning. Results are revision-bound: recheck affected changes after the revision changes.
+
+### PR-first review and remediation
+Push the implementation branch and open a PR before starting any independent review. Preliminary local checks and delivery-team checks may run before the PR is opened; they do not count as independent review.
+
+Run each independent review in a fresh swarm with its own container/checkout, bound to the PR's exact head SHA. Reviewers independently validate findings against source and tests. Publish only validated, actionable issues as inline PR review threads, including the affected location, impact, and expected correction. Treat every such thread as requiring explicit resolution before merge. Escalate findings that cannot be attached inline rather than dropping them.
+
+Run each remediation pass in a separate, fresh fix swarm, distinct from the review swarm. Give it the PR, current head SHA, and unresolved threads. Fix agents validate each finding, add appropriate regression coverage, implement and verify corrections, and push fixes to the PR branch. Only after pushing verified fixes may they reply with the fix commit and verification evidence and resolve the addressed threads. Escalate disputed findings to the parent for an explicit decision.
+
+After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation as needed. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
+
+### Clean PRs
+Include only code, tests, and intentional project documentation or configuration within the approved scope in the PR diff. Keep working notes, handoffs, review reports, logs, evidence dumps, and other process artifacts in durable external artifact storage, linked from the PR or relevant review thread as needed. Include non-code artifacts in the repository only when they are explicit deliverables within the approved scope.
+
+### Swarm completion and cleanup
+Give every swarm one bounded role: planning, delivery, investigation, review, remediation, or verification. Use a fresh swarm for the next role. Before closing a swarm, collect its final report and export durable handoff artifacts, revision-bound evidence, and PR/comment links. Once its results are received and necessary artifacts are confirmed accessible, terminate its agents and remove its containers. Preserve any unpushed work before cleanup. Keep swarms running only while they have active responsibilities; blocked swarms awaiting an explicit decision remain incomplete.
 
 ### Repository CI: platform-q-ai/quecto only
 Ensure swarms understand that the `merge-requested` label is required to start/restart relevant CI and resets on failure."#
