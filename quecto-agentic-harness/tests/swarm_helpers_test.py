@@ -447,6 +447,107 @@ class WorkbenchBehavior(unittest.TestCase):
             self.worker.send(f'fill-{i}', 'coordinator', 'hello')
         with self.assertRaisesRegex(SwarmError, 'full'):
             self.worker.send('overflow', 'coordinator', 'hello')
+        # Superseding one of the hundred makes room for its replacement.
+        full = self.parent.inbox()[0]['id']
+        self.worker.send('replace', 'coordinator', 'newer', supersedes=full)
+
+    def test_messages_carry_a_revision_and_can_be_superseded_or_withdrawn(self):
+        self.worker._notifications()
+        first = self.worker.send('r1', 'coordinator', 'review head one', revision='abc1')
+        second = self.worker.send('r2', 'coordinator', 'review head two', revision='abc2', supersedes=first['id'])
+        inbox = self.parent.inbox()
+        self.assertEqual([(m['id'], m['revision'], m['supersedes']) for m in inbox], [(second['id'], 'abc2', first['id'])])
+        audit = {m['id']: m for m in self.parent.inbox(include_consumed=True)}
+        self.assertEqual((audit[first['id']]['status'], audit[first['id']]['superseded_by']), ('superseded', second['id']))
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'], 'one hint for the live message')
+        events = self.parent.events(limit=100)['events']
+        self.assertEqual([e['action'] for e in events[-3:]], ['message_accepted', 'message_superseded', 'message_accepted'])
+        self.assertEqual(json.loads(events[-1]['detail'])['revision'], 'abc2')
+        # Idempotent replay returns the original receipt; a changed field is a mismatch.
+        self.assertEqual(self.worker.send('r2', 'coordinator', 'review head two', revision='abc2', supersedes=first['id']), second)
+        with self.assertRaisesRegex(SwarmError, 'different payload'):
+            self.worker.send('r2', 'coordinator', 'review head two', revision='abc3', supersedes=first['id'])
+        # Only your own unread message to the same recipient can be superseded.
+        for supersedes, sender, reason in [(first['id'], self.worker, 'already superseded'),
+                                           (999, self.worker, 'only your own'),
+                                           (second['id'], self.parent, 'only your own')]:
+            with self.subTest(supersedes=supersedes), self.assertRaisesRegex(SwarmError, reason):
+                sender.send(f'bad-{supersedes}', 'coordinator', 'x', supersedes=supersedes)
+        # A message to another recipient cannot be superseded by this one.
+        to_self = self.worker.send('self', 'worker', 'note to self')
+        with self.assertRaisesRegex(SwarmError, 'same recipient'):
+            self.worker.send('cross', 'coordinator', 'x', supersedes=to_self['id'])
+        # The id must be an int: SQLite would happily coerce a numeric string.
+        with self.assertRaisesRegex(SwarmError, 'message id'):
+            self.worker.send('bad-type', 'coordinator', 'x', supersedes=str(second['id']))
+        self.assertEqual([m['id'] for m in self.parent.inbox()], [second['id']], 'the refused send changed nothing')
+        with self.assertRaisesRegex(SwarmError, 'message revision'):
+            self.worker.send('bad-rev', 'coordinator', 'x', revision='')
+        # Acknowledging a superseded message is a no-op; the live one is consumed.
+        self.parent.ack(first['id'])
+        after = {m['id']: m['status'] for m in self.parent.inbox(include_consumed=True)}
+        self.assertEqual(after[first['id']], 'superseded', 'ack must not consume a retired message')
+        self.assertNotEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_consumed')
+        self.parent.ack(second['id'])
+        self.assertEqual(self.parent.inbox(), [])
+
+    def test_plain_sends_replay_request_keys_recorded_before_message_revisions(self):
+        message = self.worker.send('legacy', 'coordinator', 'hello')
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE requests SET payload=? WHERE actor='worker' AND request='legacy'",
+                       (json.dumps(['send', 'coordinator', 'hello'], sort_keys=True, separators=(',', ':')),))
+            db.commit()
+        self.assertEqual(self.worker.send('legacy', 'coordinator', 'hello'), message, 'an old-shape ledger row still replays')
+        with self.assertRaisesRegex(SwarmError, 'different payload'):
+            self.worker.send('legacy', 'coordinator', 'hello', revision='abc1')
+
+    def test_message_columns_are_migrated_into_an_older_store(self):
+        path = self.root / 'older.sqlite'
+        with closing(sqlite3.connect(path)) as db:
+            db.executescript('''
+                CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,
+                 coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT);
+                CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT, pid INTEGER, started TEXT, socket TEXT);
+                CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT, status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT);
+                CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT);
+                CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT);
+                CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT, actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor));
+                CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT, PRIMARY KEY(actor, request));
+                CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT);
+            ''')
+        older = Workbench(str(path), str(self.root), 'coordinator')
+        older.create('old store', [], [{'id': 'tests', 'kind': 'command', 'description': 'pass'}], 2, time.time() + 300)
+        sent = older.send('m', 'coordinator', 'to self', revision='abc1')
+        self.assertEqual(older.inbox()[0]['revision'], 'abc1')
+        older.withdraw(sent['id'])
+        self.assertEqual(older.inbox(include_consumed=True)[0]['status'], 'withdrawn')
+
+    def test_withdraw_and_ack_take_only_message_ids(self):
+        message = self.worker.send('w', 'coordinator', 'hello')
+        for bad in ['1', True, 0, None]:
+            with self.subTest(bad=bad), self.assertRaisesRegex(SwarmError, 'message id'):
+                self.worker.withdraw(bad)
+            with self.subTest(bad=bad), self.assertRaisesRegex(SwarmError, 'message id'):
+                self.parent.ack(bad)
+        self.assertEqual([m['id'] for m in self.parent.inbox()], [message['id']], 'nothing was withdrawn or acknowledged')
+        with self.assertRaisesRegex(SwarmError, 'only your own message'):
+            self.parent.withdraw(message['id'])
+
+    def test_a_withdrawn_message_leaves_the_inbox_and_wakes_nobody(self):
+        self.worker._notifications()
+        message = self.worker.send('w1', 'coordinator', 'never mind', revision='abc1')
+        self.worker.withdraw(message['id'])
+        self.assertEqual(self.parent.inbox(), [])
+        self.assertEqual(self.parent.inbox(include_consumed=True)[-1]['status'], 'withdrawn')
+        self.assertEqual(self.worker._notifications(), [], 'a withdrawn message must not wake its recipient')
+        self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'message_withdrawn')
+        self.worker.withdraw(message['id'])  # repeating a withdrawal is a no-op, like ack
+        events = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(events.count('message_withdrawn'), 1)
+        with self.assertRaisesRegex(SwarmError, 'own message'):
+            self.parent.withdraw(message['id'])
+        self.parent.ack(message['id'])
+        self.assertEqual(self.parent.inbox(include_consumed=True)[-1]['status'], 'withdrawn', 'ack cannot revive a withdrawn message')
 
     def test_file_reservations_are_atomic_normalized_and_token_owned(self):
         first = self.task()
