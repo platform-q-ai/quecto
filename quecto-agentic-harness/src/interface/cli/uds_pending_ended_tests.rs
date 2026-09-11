@@ -21,6 +21,7 @@ impl SwarmRunControl for Ended {
                 status: RunStatus::Paused,
                 generation: 3,
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
             })
         })
     }

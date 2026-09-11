@@ -57,6 +57,17 @@ class Transaction:
         return {'status': run['status'], 'outcome': run.get('outcome'), 'reason': run.get('outcome_reason'), 'generation': row[0],
                 'budget': dict(report['budget'], observed_tokens=report['totals']['observed_tokens'], unknown_usage_requests=report['totals']['unknown_usage_requests'])}
 
+    def lost_coordinator(self):
+        """The coordinator's id when its harness was quarantined after its latest
+        activation (#1924); None while it is (re)activated or was never lost."""
+        coordinator = self.run()['coordinator']
+        latest = {'scope_unknown': 0, 'activated': 0}
+        for row in self.connection.execute(
+                "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
+            if json.loads(row['detail']).get('member') == coordinator:
+                latest[row['action']] = row['id']
+        return coordinator if latest['scope_unknown'] > latest['activated'] else None
+
     def pause_started(self):
         row = self.connection.execute("SELECT detail FROM events WHERE action='paused' ORDER BY id DESC LIMIT 1").fetchone()
         if row is None:

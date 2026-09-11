@@ -38,64 +38,15 @@ impl SwarmContext {
     }
 
     pub fn database(&self) -> PathBuf {
-        self.checkout.join(".quecto/swarm.sqlite")
+        store_database(&self.checkout)
     }
 
     pub fn bootstrap(&self) -> String {
-        let mut source = String::from("import sys, types, json\n");
-        for (name, body) in [
-            ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
-            (
-                "swarm_use_cases",
-                include_str!("../../application/swarm_use_cases.py"),
-            ),
-            (
-                "swarm_repository",
-                include_str!("swarm_helpers/swarm_repository.py"),
-            ),
-            ("swarm_store", include_str!("swarm_helpers/swarm_store.py")),
-            ("swarm_tasks", include_str!("swarm_helpers/swarm_tasks.py")),
-            ("swarm", include_str!("swarm_helpers/swarm.py")),
-        ] {
-            source.push_str(&format!(
-                "_m=types.ModuleType({name:?}); sys.modules[{name:?}]=_m; exec(compile({}, {name:?}, 'exec'), _m.__dict__)\n",
-                serde_json::to_string(body).expect("source serializes")
-            ));
-        }
-        source.push_str(&format!(
-            "import swarm\nswarm.board=swarm.Workbench({}, {}, {})\n",
-            json!(self.database().to_string_lossy()),
-            json!(self.checkout.to_string_lossy()),
-            json!(self.member),
-        ));
-        source
+        bootstrap_source(&self.checkout, &self.member)
     }
 
     fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
-        let source = format!(
-            "{}\ntry:\n print(json.dumps({{'ok':getattr(swarm.board,{}) (*json.loads({}))}}))\nexcept Exception as e:\n print(json.dumps({{'error':str(e)}}))\n",
-            self.bootstrap(),
-            json!(method),
-            json!(args.to_string())
-        );
-        let output = std::process::Command::new("python3")
-            .args(["-I", "-c", &source])
-            .env_clear()
-            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-            .output()
-            .map_err(|e| DomainError::Tool(format!("swarm coordination interpreter: {e}")))?;
-        if !output.status.success() {
-            return Err(DomainError::Tool(format!(
-                "swarm coordination failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        let value: Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| DomainError::Tool(format!("invalid swarm coordination response: {e}")))?;
-        if let Some(error) = value.get("error") {
-            return Err(DomainError::Tool(format!("swarm: {error}")));
-        }
-        Ok(value["ok"].clone())
+        store_rpc(&self.checkout, &self.member, method, args)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -172,6 +123,144 @@ impl SwarmContext {
 
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
         self.rpc("summary", json!([since]))
+    }
+}
+
+/// The coordination store every member of a container shares, by checkout.
+pub fn store_database(checkout: &Path) -> PathBuf {
+    checkout.join(".quecto/swarm.sqlite")
+}
+
+fn bootstrap_source(checkout: &Path, member: &str) -> String {
+    let mut source = String::from("import sys, types, json\n");
+    for (name, body) in [
+        ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
+        (
+            "swarm_use_cases",
+            include_str!("../../application/swarm_use_cases.py"),
+        ),
+        (
+            "swarm_repository",
+            include_str!("swarm_helpers/swarm_repository.py"),
+        ),
+        ("swarm_store", include_str!("swarm_helpers/swarm_store.py")),
+        ("swarm_tasks", include_str!("swarm_helpers/swarm_tasks.py")),
+        ("swarm", include_str!("swarm_helpers/swarm.py")),
+    ] {
+        source.push_str(&format!(
+            "_m=types.ModuleType({name:?}); sys.modules[{name:?}]=_m; exec(compile({}, {name:?}, 'exec'), _m.__dict__)\n",
+            serde_json::to_string(body).expect("source serializes")
+        ));
+    }
+    source.push_str(&format!(
+        "import swarm\nswarm.board=swarm.Workbench({}, {}, {})\n",
+        json!(store_database(checkout).to_string_lossy()),
+        json!(checkout.to_string_lossy()),
+        json!(member),
+    ));
+    source
+}
+
+/// One isolated interpreter call against the store at `checkout`, acting as
+/// `member`. Shared by in-swarm contexts and the supervising session's
+/// host-side handle (#1924).
+fn store_rpc(
+    checkout: &Path,
+    member: &str,
+    method: &str,
+    args: Value,
+) -> Result<Value, DomainError> {
+    let source = format!(
+        "{}\ntry:\n print(json.dumps({{'ok':getattr(swarm.board,{}) (*json.loads({}))}}))\nexcept Exception as e:\n print(json.dumps({{'error':str(e)}}))\n",
+        bootstrap_source(checkout, member),
+        json!(method),
+        json!(args.to_string())
+    );
+    let output = std::process::Command::new("python3")
+        .args(["-I", "-c", &source])
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .output()
+        .map_err(|e| DomainError::Tool(format!("swarm coordination interpreter: {e}")))?;
+    if !output.status.success() {
+        return Err(DomainError::Tool(format!(
+            "swarm coordination failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| DomainError::Tool(format!("invalid swarm coordination response: {e}")))?;
+    if let Some(error) = value.get("error") {
+        return Err(DomainError::Tool(format!("swarm: {error}")));
+    }
+    Ok(value["ok"].clone())
+}
+
+/// Host-side handle on a container's coordination store for the supervising
+/// session (#1924): the store lives in the identity-mounted checkout, so the
+/// session that launched the container reads it by path once the members'
+/// sockets are gone. Membership-free reads only, plus the #1729 lost-harness
+/// record made as the lost coordinator itself.
+#[derive(Clone, Debug)]
+pub struct HostedStore {
+    checkout: PathBuf,
+}
+
+impl HostedStore {
+    pub fn at(checkout: PathBuf) -> Self {
+        Self { checkout }
+    }
+
+    /// The run the store holds, or `None` when no store exists there. Live
+    /// members may hold the store's short immediate transactions, so a read
+    /// that fails is retried a few times before it is reported unreadable.
+    pub fn hosted_run(
+        &self,
+    ) -> Result<Option<crate::domain::environment_finalization::HostedSwarmRun>, DomainError> {
+        if !store_database(&self.checkout).is_file() {
+            return Ok(None);
+        }
+        const ATTEMPTS: u32 = 4;
+        let mut attempt = 1;
+        let status = loop {
+            match store_rpc(&self.checkout, "supervisor", "_status", json!([])) {
+                Ok(status) => break status,
+                Err(error) if attempt < ATTEMPTS => {
+                    tracing::debug!(%error, attempt, "hosted swarm store read failed; retrying");
+                    std::thread::sleep(std::time::Duration::from_millis(250 * u64::from(attempt)));
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let deadline = status["deadline"]
+            .as_f64()
+            .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
+        let run_status = status["status"]
+            .as_str()
+            .ok_or_else(|| DomainError::Tool("swarm status carries no status".into()))?;
+        let coordinator = status["coordinator"]
+            .as_str()
+            .ok_or_else(|| DomainError::Tool("swarm status carries no coordinator".into()))?;
+        Ok(Some(
+            crate::domain::environment_finalization::HostedSwarmRun {
+                status: coordination::decode_status(run_status)?,
+                coordinator: coordinator.to_owned(),
+                deadline,
+            },
+        ))
+    }
+
+    /// Quarantine `coordinator` exactly as an in-swarm reconcile would when
+    /// its harness vanished: the run ends as a pause holding `failed`.
+    pub fn record_lost_coordinator(&self, coordinator: &str) -> Result<(), DomainError> {
+        store_rpc(
+            &self.checkout,
+            coordinator,
+            "_quarantine",
+            json!([coordinator]),
+        )
+        .map(|_| ())
     }
 }
 

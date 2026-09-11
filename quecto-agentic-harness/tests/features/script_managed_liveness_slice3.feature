@@ -146,3 +146,21 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the script-managed runtime should have inspected an environment exactly 2 times
     And the container listing should include "C1" with status "stopped" and 0 members
     And scenario teardown should leave no fixture processes running
+
+  @done @container-liveness
+  Scenario: A coordinator connection loss retains the environment of a running swarm
+    # #1924: the coordinator's socket closing must not cascade into podman rm -f.
+    Given liveness script-managed subagent spawning is available
+    And the next created environment hosts a running swarm run coordinated by its member
+    And script-managed child "coord-lost-1924" is running in an inspectable environment with task "COORD_LOST_MARKER"
+    When the script-managed child "coord-lost-1924" is killed behind Quecto's back
+    Then the subagent snapshot should report "coord-lost-1924" as exited
+    And the script-managed runtime should have inspected an environment exactly 1 time
+    And the script-managed runtime should have killed an environment exactly 0 times
+    And the container listing should include "C1" with status "retained" and 0 members
+    And the container listing entry "C1" should explain why it was retained
+    And the hosted swarm run is paused holding "failed" with a resume blocker naming its coordinator
+    When I kill container "C1"
+    Then the script-managed runtime should have killed an environment exactly 1 time
+    And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running

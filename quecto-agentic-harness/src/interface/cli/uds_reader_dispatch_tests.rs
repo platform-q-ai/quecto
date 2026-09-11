@@ -117,6 +117,7 @@ impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
                 outcome: None,
                 reason: None,
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
                 wake_allowed: false,
                 status: crate::domain::swarm::RunStatus::Paused,
                 generation: 42,

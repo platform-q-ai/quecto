@@ -328,3 +328,108 @@ fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
         }
     }
 }
+
+// ── #1924: member harness logs and the advertised checkout ──────────────
+
+/// Run the Docker adapter's `create.sh` against a recording fake runtime
+/// CLI (the adapter accepts an absolute `QUECTO_CONTAINER_CLI`), returning
+/// the recorded `run` argv and the create result.
+#[cfg(unix)]
+fn run_docker_create_with_fake_cli(rust_log: Option<&str>) -> (Vec<String>, serde_json::Value) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let argv_log = dir.path().join("cli-argv.txt");
+    let fake_cli = dir.path().join("fake-runtime");
+    fs::write(
+        &fake_cli,
+        format!(
+            "#!/usr/bin/env bash\nif [ \"$1\" = run ]; then printf '%s\\n' \"$@\" > '{}'; fi\nexit 0\n",
+            argv_log.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake_cli, fs::Permissions::from_mode(0o700)).unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir_all(home.join(".quecto")).unwrap();
+    let socket_dir = dir.path().join("sockets");
+    fs::create_dir_all(&socket_dir).unwrap();
+    let state = dir.path().join("state");
+    let mut command = std::process::Command::new(workspace_file(DOCKER_SCRIPTS[0]));
+    command
+        .args(["--state-dir", state.to_str().unwrap(), "--", "/bin/true"])
+        .arg("--socket")
+        .arg(socket_dir.join("child.sock"))
+        .env_remove("RUST_LOG")
+        .env("HOME", &home)
+        .env("QUECTO_CONTAINER_CLI", &fake_cli)
+        .env("QUECTO_CONTAINER_ENVIRONMENT_REF", "C1");
+    if let Some(level) = rust_log {
+        command.env("RUST_LOG", level);
+    }
+    let output = command.output().expect("run docker create.sh");
+    assert!(
+        output.status.success(),
+        "create.sh failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let argv: Vec<String> = fs::read_to_string(&argv_log)
+        .expect("fake CLI recorded a run invocation")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    (argv, result)
+}
+
+#[cfg(unix)]
+fn env_assignments(argv: &[String]) -> Vec<&str> {
+    argv.windows(2)
+        .filter(|pair| pair[0] == "-e")
+        .map(|pair| pair[1].as_str())
+        .collect()
+}
+
+#[test]
+#[cfg(unix)]
+fn docker_create_passes_rust_log_so_member_harness_logs_reach_journald() {
+    // #1924: without RUST_LOG the member harness's redacting subscriber is a
+    // no-op and an environment that dies leaves no trace of why.
+    let (argv, _) = run_docker_create_with_fake_cli(None);
+    let envs = env_assignments(&argv);
+    assert!(
+        envs.contains(&"RUST_LOG=info"),
+        "run argv should default RUST_LOG to info: {envs:?}"
+    );
+    assert!(
+        envs.iter().any(|env| env.starts_with("HOME=")),
+        "HOME is still preserved: {envs:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn docker_create_lets_a_host_rust_log_override_the_default_level() {
+    let (argv, _) = run_docker_create_with_fake_cli(Some("quecto=debug"));
+    let envs = env_assignments(&argv);
+    assert!(
+        envs.contains(&"RUST_LOG=quecto=debug"),
+        "host RUST_LOG wins: {envs:?}"
+    );
+    assert!(!envs.contains(&"RUST_LOG=info"), "{envs:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn docker_create_advertises_the_members_checkout_in_metadata() {
+    // #1924: the supervising session locates the coordination store through
+    // metadata.checkout (identity-mounted) once the members' sockets are gone.
+    let (argv, result) = run_docker_create_with_fake_cli(None);
+    let checkout = result["metadata"]["checkout"]
+        .as_str()
+        .expect("metadata.checkout is reported");
+    assert_eq!(checkout, result["workspace_path"].as_str().unwrap());
+    assert!(
+        env_assignments(&argv).contains(&format!("QUECTO_SWARM_CHECKOUT={checkout}").as_str()),
+        "metadata.checkout matches the swarm checkout handed to members: {argv:?}"
+    );
+}

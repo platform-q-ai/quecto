@@ -740,6 +740,9 @@ mod tool_error_tests;
 #[path = "subagent_monitor_bounded_read_tests.rs"]
 mod bounded_read_tests;
 #[cfg(test)]
+#[path = "subagent_monitor_coordinator_loss_tests.rs"]
+mod coordinator_loss_tests;
+#[cfg(test)]
 #[path = "subagent_monitor_liveness_tests.rs"]
 mod liveness_tests;
 #[cfg(test)]

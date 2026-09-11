@@ -88,6 +88,9 @@ impl App {
                 "cleanup-failed" => 5,
                 "killing" => 4,
                 "stopped" => 3,
+                // Emptied by a lost swarm coordinator and kept alive (#1924):
+                // as degraded as `empty`, never masked by a stale `running`.
+                "retained" => 2,
                 "empty" => 2,
                 "running" => 0,
                 _ => 1,

@@ -237,6 +237,20 @@ children outlive the invocation. This does not add containment for intentional
 process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
+A coordinator whose connection to the master closes (its harness took a
+termination signal, crashed, or was killed behind the master's back) does
+not take the environment with it (#1924). The master's cascade marks the
+coordinator and its descendants exited, but the container is **not**
+`kill`ed: the environment record becomes `retained` (see `get_containers`,
+whose `metadata.retained` names the lost coordinator) and the run is paused
+holding `failed`, exactly as an in-swarm reconcile treats a lost harness. The
+control receipt's `resume_blockers` names the coordinator that must be
+relaunched before a resume can proceed; a resume attempted before that is
+refused with the same text. The board, checkout and any unpushed branches
+stay on disk for inspection and manual recovery. Only an explicit
+`kill_container` (or a supervisor `swarm_control close` once a coordinator is
+reachable again) destroys the environment.
+
 The required run budget is wall-clock time. A harness timer supervises the deadline
 even when agents are idle, and Python execution timeouts cannot exceed the remaining
 run time (one-second timeout granularity). There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
@@ -351,6 +365,15 @@ Reusable tool-runtime construction receives swarm context explicitly from the pr
 An accepted steering request takes priority over buffered follow-up work at the idle boundary. Forwarded prompt/steer/follow-up requests retain their correlation ID; the immediate response carries `data.status: "accepted"`. Acceptance is queue admission. A subsequent `queued` response confirms pending retention; a full pending queue returns a correlated failure instead of dropping work silently. Inspect the agent transcript to verify actual handling; neither acceptance nor turn completion proves that requested work succeeded. For busy agents with no final answer in the unread report, bounded report selection favors the newest progress. Explicit history pages remain available for omitted older entries.
 
 ## Operational diagnostics and budgets
+
+Member harness logs are captured by the container runtime: the Docker/Podman
+adapter passes `RUST_LOG` (default `info`; the host's value wins) into every
+environment, so the members' tracing output reaches the container's journald
+stream. Read them with `journalctl --user CONTAINER_NAME=quecto-env-<id>`,
+where `env-<id>` is the environment id from `get_containers` (add `-f` to
+follow, `--since` to scope). An environment that vanished also leaves a
+`kill.log` entry in the adapter's state root naming the operation that removed
+it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).
 
 The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
 contains supervisor command examples, receipt semantics, raw export and budget

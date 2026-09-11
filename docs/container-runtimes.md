@@ -53,8 +53,11 @@ UUIDs, status, metadata, and last error. Two session-level `agent_cmd`
 commands expose it (use `agent_id: "*"`):
 
 - `get_containers` — lists every environment this session committed with
-  status `running`, `empty` (live, no members), `killing`, `stopped`, or
-  `cleanup-failed` (with its `last_error`), plus workspace and members.
+  status `running`, `empty` (live, no members), `killing`, `stopped`,
+  `cleanup-failed` (with its `last_error`), or `retained` (kept alive after
+  its swarm coordinator was lost, with `metadata.retained` explaining why;
+  see "Coordinator loss keeps a swarm's environment"), plus workspace and
+  members.
 - `kill_container` with `ref` or `name` — terminates every member agent,
   runs the environment's retained `kill` argv exactly once, and commits
   `stopped` only after the script succeeds. Its JSON result includes the
@@ -67,6 +70,35 @@ retained `kill` operation runs exactly once (concurrent final exits cannot
 double-kill). Script sets without a configured `kill` fall back to the
 retained `cleanup` argv for final-member teardown; `kill_container` itself
 refuses such environments up front, leaving every member untouched.
+
+### Coordinator loss keeps a swarm's environment (#1924)
+
+The one exception to final-member teardown is a swarm. When the member whose
+socket closed was the coordinator of a run that is still resumable (created,
+and `running` or `paused`), destroying the box would take the board, the
+checkout and every unpushed branch with it, contradicting the #1729 rule that
+every swarm end is a resumable pause only the supervisor closes. So the
+cascade still marks the member (and its descendants) exited, but the
+environment record moves to `retained` instead of running the retained
+`kill`: the container and its state directory stay for inspection and
+recovery, `metadata.retained` names the lost coordinator, and the run itself
+is paused holding `failed` with a `resume_blockers` entry naming that
+coordinator (the same lost-harness rule an in-swarm reconcile applies). Only
+an explicit `kill_container` (or a supervisor `swarm_control close` once a
+coordinator is reachable again) runs the retained `kill`; a spawn into the
+retained environment (`{"mode":"existing","ref":"C1"}`) revives it to
+`running`. The decision is made from the session that launched the container
+by reading the coordination store at `metadata.checkout` (see the `create`
+contract); an environment without a store, or whose run is the bootstrap
+placeholder or already terminal, keeps the ordinary final-member teardown,
+while a store that exists but cannot be read (contended, corrupt) also
+retains — a destroyed box cannot be recovered, a retained one can always be
+killed. Two deliberate supervisor actions still tear down normally: an
+explicit `agent_cmd kill` of the coordinator agent, and the master's own
+process shutdown. A retained environment that the master session never
+closes outlives that session: remove it with `kill_container` from the
+session while it lives, or afterwards with the adapter's `kill.sh` (or
+`podman rm -f quecto-<environment_id>` plus its state directory).
 
 ## Configuration
 
@@ -221,7 +253,12 @@ The create result must contain exactly these fields — unknown keys are
 rejected. When the config cloned a repository, the script should report it
 as `metadata.repository`: that is how `get_containers` listings and the
 TUI learn the source truthfully (sandbox configs report none and list an
-empty repository).
+empty repository). A script set that can host a swarm should also report
+`metadata.checkout`: the members' working directory and swarm checkout root
+(`QUECTO_SWARM_CHECKOUT`), identity-mounted so the session that launched the
+container can read the coordination store at
+`<checkout>/.quecto/swarm.sqlite` after the members' sockets are gone and
+keep the environment instead of destroying a resumable run (#1924).
 
 ### `exec`
 
@@ -456,7 +493,27 @@ Design properties:
   otherwise wait the container's ten-second stop timeout, which does not fit
   the parent's signal-driven exit budget.
 - **Strict JSON contract.** All stdout results are emitted with `jq`, exactly
-  matching the `create`/`exec`/`inspect` wire contracts above.
+  matching the `create`/`exec`/`inspect` wire contracts above. `create.sh`
+  reports `metadata.checkout` (the members' working directory, which is the
+  swarm checkout root) so the supervising session can keep a swarm's
+  environment when its coordinator is lost (#1924).
+- **Member harness logs reach journald.** `create.sh` passes
+  `-e RUST_LOG=${RUST_LOG:-info}`; without it the member harness's
+  redacting subscriber is a no-op and an environment that dies leaves no
+  trace of why (termination signal, teardown, socket close). Set `RUST_LOG`
+  on the host before spawning to change the level for that environment.
+  Under rootless Podman the container's stdout/stderr land in the user
+  journal, so read a member's logs with:
+
+  ```sh
+  journalctl --user CONTAINER_NAME=quecto-env-<id>
+  ```
+
+  where `env-<id>` is the environment id from `get_containers` (the
+  container is named `quecto-<environment_id>`). Add `-f` to follow, or
+  `--since`/`--until` around the time an environment was lost. `kill.sh`
+  additionally logs every kill/cleanup it performs to `kill.log` in the
+  state root, which is the first place to look when an environment vanished.
 - **Host-side clone is transport-restricted.** The repo URL from the config's
   own `--repo` argv is cloned on the host before any container exists, so
   `create.sh` runs `git clone` under `GIT_ALLOW_PROTOCOL=file:https:ssh:git` —

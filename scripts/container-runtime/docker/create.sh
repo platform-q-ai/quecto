@@ -185,7 +185,11 @@ fi
 # QUECTO_BASE_DIR is quecto's credentials/config home ($HOME/.quecto by
 # default). Overriding it inside the container detaches the child from the
 # identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
-envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
+# Member harness logs go to the container's journald stream. Without RUST_LOG
+# the redacting subscriber is a no-op and an environment that dies leaves no
+# trace of why (termination signal, teardown, socket close). The host can
+# still override the level per spawn.
+envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000
@@ -296,9 +300,14 @@ printf '%s\n' "$environment_id" >>"$state_dir/creates.log"
 
 # metadata.repository is how listings/TUI learn the source truthfully: the
 # config owns its repository, so only the script can report it (#1410).
+# metadata.checkout is the members' working directory and swarm checkout root
+# (QUECTO_SWARM_CHECKOUT), identity-mounted so the supervising session can
+# read the coordination store there after the members' sockets are gone and
+# keep the environment instead of destroying a resumable run (#1924).
 jq -cn \
   --arg id "$environment_id" \
   --arg workspace "$workspace_path" \
+  --arg checkout "$child_cwd" \
   --arg socket "$socket_path" \
   --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg image "$image" \
@@ -307,4 +316,4 @@ jq -cn \
   --arg source "$source" \
   --arg repository "$repo" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

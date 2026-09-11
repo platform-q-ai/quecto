@@ -184,7 +184,18 @@ held outcome terminal and settles the members). A run holding
 `budget-exhausted` resumes only after `extend` or a raised `usage_budget`.
 The coordinator may `swarm {"op":"pause","reason":"..."}`; `swarm
 {"op":"resume"}` is refused for every member, and `cancel_run` is the only
-immediate terminal transition.
+immediate terminal transition. `status` also reports `resume_blockers`: what a
+resume would refuse on right now (a passed deadline, a spent budget, or a lost
+coordinator).
+
+A coordinator whose connection closed (`connection_closed` on the master's
+exit note) does not destroy its environment: `get_containers` lists it as
+`retained` with `metadata.retained` naming the lost coordinator, the run is
+paused holding `failed`, and `resume_blockers` names the coordinator to
+relaunch. The container, board and checkout stay on disk for inspection and
+recovery; only an explicit `kill_container` (or `swarm_control close` once a
+coordinator is reachable) removes them. Read the members' harness logs with
+`journalctl --user CONTAINER_NAME=quecto-env-<id>`.
 
 After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by
 command ID. `queued`, `started`, `completed`, `failed`, `cancelled`, and `rejected`
