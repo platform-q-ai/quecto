@@ -421,3 +421,314 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
         (RunStatus::Paused, Some(RunStatus::Failed))
     );
 }
+
+// ── round three: every end retains; supervisor kills retain; probing ────
+
+/// Drive the production death signal and return the retention reason (or
+/// `None` when the record was stopped).
+async fn exit_and_reason(
+    environments: &EnvironmentRegistry,
+    env_ref: &str,
+    registry: &SubagentRegistry,
+) -> Option<String> {
+    notify_child_exited(
+        registry,
+        "coordinator-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+    let record = environments.get(env_ref).unwrap();
+    (record.status == EnvironmentStatus::Retained)
+        .then(|| record.metadata["retained"].as_str().unwrap().to_string())
+}
+
+#[tokio::test]
+async fn coordinator_connection_closed_after_close_retains_the_closed_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    context.call("stop", json!(["blocked", "done"])).unwrap();
+    context.close().unwrap();
+    assert_eq!(context.summary().unwrap()["status"], "blocked");
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    let reason = exit_and_reason(&environments, &env_ref, &registry)
+        .await
+        .expect("a closed run keeps its container");
+    assert!(!log.exists(), "no kill after close");
+    assert!(reason.starts_with("run closed: blocked"), "{reason}");
+    assert_eq!(context.summary().unwrap()["status"], "blocked", "untouched");
+}
+
+#[tokio::test]
+async fn coordinator_connection_closed_after_cancel_retains_the_cancelled_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    context
+        .call("stop", json!(["cancelled", "operator"]))
+        .unwrap();
+    assert_eq!(context.summary().unwrap()["status"], "cancelled");
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    let reason = exit_and_reason(&environments, &env_ref, &registry)
+        .await
+        .expect("a cancelled run keeps its container");
+    assert!(!log.exists(), "no kill after cancel");
+    assert!(reason.starts_with("run ended: cancelled"), "{reason}");
+}
+
+#[tokio::test]
+async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
+    // The run looks `running` until a store operation notices the passed
+    // deadline; the single-operation loss record must see the expiry first
+    // and report an orderly budget-exhausted end, never a lost coordinator.
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    let status = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute('UPDATE run SET deadline=1'); db.commit()",
+        ])
+        .arg(context.database())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone());
+    assert_eq!(
+        store.hosted_run().unwrap().unwrap().status,
+        crate::domain::swarm::RunStatus::Running,
+        "the membership-free status read does not run the expiry check"
+    );
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    let reason = exit_and_reason(&environments, &env_ref, &registry)
+        .await
+        .expect("retained");
+    assert!(
+        reason.starts_with("run ended: budget-exhausted"),
+        "{reason}"
+    );
+    let summary = context.summary().unwrap();
+    assert_eq!(summary["outcome"], "budget-exhausted", "{summary}");
+    let receipt = context.control_status().unwrap();
+    let blockers = receipt["resume_blockers"].as_array().unwrap();
+    assert!(
+        blockers
+            .iter()
+            .all(|b| !b.as_str().unwrap().contains("coordinator")),
+        "no lost-coordinator blocker after an orderly expiry: {receipt}"
+    );
+}
+
+#[tokio::test]
+async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
+    // agent_cmd kill of the member: ParentKill through the shared cascade
+    // teardown, exactly as agent_cmd.rs and the master's shutdown call it.
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    context
+        .call("stop", json!(["blocked", "for review"]))
+        .unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    let super::super::subagent_cascade::CascadeOutcome { removed, .. } =
+        super::super::subagent_cascade::cascade_remove_and_state_changed(
+            &registry,
+            "coordinator-1",
+        );
+    let mut removed = removed;
+    super::super::subagent_cleanup::cleanup_removed_entries_once(
+        &mut removed,
+        super::super::subagent_cleanup::FinalizeMode::ParentKill,
+    )
+    .await;
+
+    assert!(
+        !log.exists(),
+        "a supervisor kill of the coordinator keeps the box"
+    );
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Retained);
+    let reason = record.metadata["retained"].as_str().unwrap();
+    assert!(
+        reason.starts_with("coordinator killed by supervisor; run paused holding blocked"),
+        "{reason}"
+    );
+    assert_eq!(
+        context.summary().unwrap()["outcome"],
+        "blocked",
+        "no quarantine"
+    );
+    assert!(environments.begin_kill(&env_ref).is_ok());
+}
+
+#[tokio::test]
+async fn master_shutdown_teardown_retains_a_swarm_environment() {
+    // The synchronous process-shutdown path (uds_shutdown run_teardown ->
+    // teardown_all -> cleanup_removed_entries_sync).
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let _context = create_running_swarm(&checkout);
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
+    tokio::task::spawn_blocking(move || {
+        super::super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+    })
+    .await
+    .unwrap();
+
+    assert!(!log.exists(), "master shutdown keeps a swarm's box");
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Retained);
+    assert!(
+        record.metadata["retained"]
+            .as_str()
+            .unwrap()
+            .starts_with("coordinator killed by supervisor; run running"),
+        "{record:?}"
+    );
+}
+
+#[tokio::test]
+async fn master_shutdown_teardown_still_kills_an_ordinary_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let _placeholder = bootstrap_placeholder(&checkout);
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+    let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
+    tokio::task::spawn_blocking(move || {
+        super::super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default().trim(),
+        "kill env-coordinator"
+    );
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+}
+
+/// A create result without `metadata.checkout` (older / third-party script
+/// sets): the host probes `<workspace>/repo` then `<workspace>`.
+async fn probe_case(store_under: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    let checkout = if store_under.is_empty() {
+        workspace.clone()
+    } else {
+        workspace.join(store_under)
+    };
+    let _context = create_running_swarm(&checkout);
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &workspace);
+    {
+        let mut record = environments.get(&env_ref).unwrap();
+        record.metadata = json!({});
+        environments.commit(record);
+    }
+    let registry = register_member(dir.path(), &environments, &env_ref);
+    let reason = exit_and_reason(&environments, &env_ref, &registry)
+        .await
+        .unwrap_or_else(|| panic!("store under {store_under:?} should be found by probing"));
+    assert!(!log.exists());
+    assert!(reason.contains("lost its connection"), "{reason}");
+}
+
+#[tokio::test]
+async fn missing_checkout_probes_the_repo_subdirectory() {
+    probe_case("repo").await;
+}
+
+#[tokio::test]
+async fn missing_checkout_probes_the_workspace_itself() {
+    probe_case("").await;
+}
+
+#[tokio::test]
+async fn missing_checkout_without_a_store_keeps_the_final_member_kill() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(workspace.join("repo")).unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &workspace);
+    {
+        let mut record = environments.get(&env_ref).unwrap();
+        record.metadata = json!({});
+        environments.commit(record);
+    }
+    let registry = register_member(dir.path(), &environments, &env_ref);
+    assert!(
+        exit_and_reason(&environments, &env_ref, &registry)
+            .await
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default().trim(),
+        "kill env-coordinator"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_checkout_pointing_outside_the_workspace_is_not_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    let _live = create_running_swarm(&elsewhere);
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, workspace.join("repo")).unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &workspace);
+    for metadata in [
+        json!({ "checkout": workspace.join("repo").display().to_string() }),
+        json!({}),
+    ] {
+        let mut record = environments.get(&env_ref).unwrap();
+        record.status = EnvironmentStatus::Running;
+        record.metadata = metadata.clone();
+        environments.commit(record);
+        let _ = std::fs::remove_file(&log);
+        let registry = register_member(dir.path(), &environments, &env_ref);
+        assert!(
+            exit_and_reason(&environments, &env_ref, &registry)
+                .await
+                .is_none(),
+            "{metadata}: a symlink out of the workspace is refused"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap_or_default().trim(),
+            "kill env-coordinator",
+            "{metadata}"
+        );
+    }
+}

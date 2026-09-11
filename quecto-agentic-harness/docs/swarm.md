@@ -238,10 +238,14 @@ process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 A swarm container is retained after every swarm end (#1924): the final
-member's exit never tears it down, so the full end state (board, checkout,
-unpushed branches, member logs) can be inspected, and only an explicit
-`kill_container` from the host master removes it — `swarm_control close`
-makes the held outcome terminal but never removes the container. When the
+member's exit never tears it down — nor does an `agent_cmd kill` of the
+coordinator or the master's own shutdown — so the full end state (board,
+checkout, unpushed branches, member logs) can be inspected, and only an
+explicit `kill_container` from the host master (or a later session, or
+manual removal) takes it down — `swarm_control close` makes the held outcome
+terminal but never removes the container. A closed or cancelled run keeps
+its box just the same (`metadata.retained` reads `run closed: <outcome>` or
+`run ended: cancelled`). When the
 coordinator's socket closes after an orderly end (the run already paused
 holding an outcome), the record becomes `retained` with `metadata.retained`
 reading `run ended: <outcome>; ...` and the run is untouched. When it closes
@@ -373,9 +377,10 @@ An accepted steering request takes priority over buffered follow-up work at the 
 Member harness logs are captured by the container runtime: the Docker/Podman
 adapter passes `RUST_LOG` (default `info`; the host's value wins) into every
 environment, so the members' tracing output reaches the container's journald
-stream. Read them with `journalctl --user CONTAINER_NAME=quecto-env-<id>`,
-where `env-<id>` is the environment id from `get_containers` (add `-f` to
-follow, `--since` to scope). An environment that vanished also leaves a
+stream. Under rootless Podman (journald driver) read them with
+`journalctl --user CONTAINER_NAME=quecto-env-<id>`, where `env-<id>` is the
+environment id from `get_containers` (add `-f` to follow, `--since` to
+scope); under Docker use `docker logs quecto-env-<id>`. An environment that vanished also leaves a
 `kill.log` entry in the adapter's state root naming the operation that removed
 it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).
 

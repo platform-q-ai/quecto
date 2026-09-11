@@ -123,4 +123,5 @@ jq -cn \
   --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg source "$source" \
   --arg repository "$repo" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "host-local", config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'
+  --arg checkout "$child_cwd" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "host-local", config: $config, source: $source, checkout: $checkout} +(if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'

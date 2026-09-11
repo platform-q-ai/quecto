@@ -222,40 +222,50 @@ impl HostedStore {
             return Ok(None);
         }
         let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
-        let deadline = status["deadline"]
-            .as_f64()
-            .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
-        let run_status = status["status"]
-            .as_str()
-            .ok_or_else(|| DomainError::Tool("swarm status carries no status".into()))?;
-        let coordinator = status["coordinator"]
-            .as_str()
-            .ok_or_else(|| DomainError::Tool("swarm status carries no coordinator".into()))?;
-        let outcome = status["outcome"]
-            .as_str()
-            .map(coordination::decode_status)
-            .transpose()?;
-        Ok(Some(
-            crate::domain::environment_finalization::HostedSwarmRun {
-                status: coordination::decode_status(run_status)?,
-                outcome,
-                coordinator: coordinator.to_owned(),
-                deadline,
-            },
-        ))
+        decode_hosted_run(&status).map(Some)
     }
 
-    /// Quarantine `coordinator` exactly as an in-swarm reconcile would when
-    /// its harness vanished: the run ends as a pause holding `failed`.
-    pub fn record_lost_coordinator(&self, coordinator: &str) -> Result<(), DomainError> {
-        store_rpc(
-            &self.checkout,
-            coordinator,
-            "_quarantine",
-            json!([coordinator]),
-        )
-        .map(|_| ())
+    /// Record the coordinator's loss in one store operation: a run that has
+    /// already ended (or that the store's expiry check ends first) is left
+    /// alone; otherwise the coordinator is quarantined exactly as an in-swarm
+    /// reconcile would quarantine a vanished harness (paused holding
+    /// `failed`). Returns the run as it stands afterwards.
+    pub fn record_lost_coordinator(
+        &self,
+        coordinator: &str,
+    ) -> Result<crate::domain::environment_finalization::CoordinatorLoss, DomainError> {
+        let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
+        Ok(crate::domain::environment_finalization::CoordinatorLoss {
+            run: decode_hosted_run(&value)?,
+            lost: value["lost"]
+                .as_bool()
+                .ok_or_else(|| DomainError::Tool("swarm loss receipt carries no verdict".into()))?,
+        })
     }
+}
+
+fn decode_hosted_run(
+    status: &Value,
+) -> Result<crate::domain::environment_finalization::HostedSwarmRun, DomainError> {
+    let deadline = status["deadline"]
+        .as_f64()
+        .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
+    let run_status = status["status"]
+        .as_str()
+        .ok_or_else(|| DomainError::Tool("swarm status carries no status".into()))?;
+    let coordinator = status["coordinator"]
+        .as_str()
+        .ok_or_else(|| DomainError::Tool("swarm status carries no coordinator".into()))?;
+    let outcome = status["outcome"]
+        .as_str()
+        .map(coordination::decode_status)
+        .transpose()?;
+    Ok(crate::domain::environment_finalization::HostedSwarmRun {
+        status: coordination::decode_status(run_status)?,
+        outcome,
+        coordinator: coordinator.to_owned(),
+        deadline,
+    })
 }
 
 /// Kernel process start time disambiguates recycled PIDs. Missing procfs is

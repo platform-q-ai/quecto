@@ -189,15 +189,16 @@ resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
 A swarm container is retained after every swarm end: when its final member
-exits, `get_containers` lists the environment as `retained` and the
-container, board and checkout stay on disk for inspection. `close` makes the
-held outcome terminal but does not remove the container; only an explicit
-`kill_container` does. `metadata.retained` reads `run ended: <outcome>; ...`
+exits (or you `kill` it, or the master shuts down), `get_containers` lists
+the environment as `retained` and the container, board and checkout stay on
+disk for inspection. `close` and `cancel_run` make the outcome terminal but
+do not remove the container; only an explicit `kill_container` does. `metadata.retained` reads `run ended: <outcome>; ...`
 after an orderly end (the run is untouched), or names the lost coordinator
 when the socket closed on a running (or outcome-less paused) run: that run
 is paused holding `failed` and `resume_blockers` names the coordinator to
 relaunch. Read the members' harness logs with
-`journalctl --user CONTAINER_NAME=quecto-env-<id>`.
+`journalctl --user CONTAINER_NAME=quecto-env-<id>` (rootless Podman,
+journald driver) or `docker logs quecto-env-<id>` (Docker).
 
 After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by
 command ID. `queued`, `started`, `completed`, `failed`, `cancelled`, and `rejected`
