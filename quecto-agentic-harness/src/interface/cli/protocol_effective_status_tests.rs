@@ -7,10 +7,10 @@ fn build_subagent_info_list_reports_idle_parent_with_running_direct_child_as_run
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 1);
+        let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 0);
         parent.status = SubagentStatus::Idle;
         guard.insert("parent".to_string(), parent);
-        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 2);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
         child.status = SubagentStatus::Running;
         child.parent_id = Some("parent".to_string());
         guard.insert("child".to_string(), child);
@@ -48,7 +48,7 @@ fn effective_descendant_activity_reports_false_for_missing_registry_or_no_childr
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut unrelated = SubagentEntry::new("/tmp/unrelated.sock".into(), 1);
+        let mut unrelated = SubagentEntry::new("/tmp/unrelated.sock".into(), 0);
         unrelated.status = SubagentStatus::Running;
         unrelated.parent_id = Some("other".to_string());
         guard.insert("unrelated".to_string(), unrelated);
@@ -66,7 +66,7 @@ fn build_subagent_info_list_preserves_own_starting_status() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut entry = SubagentEntry::new("/tmp/starting.sock".into(), 1);
+        let mut entry = SubagentEntry::new("/tmp/starting.sock".into(), 0);
         entry.status = SubagentStatus::Starting;
         guard.insert("starting".to_string(), entry);
     }
@@ -93,7 +93,7 @@ fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() 
             first_uuid.clone(),
             "dup".to_string(),
             "/tmp/first.sock".into(),
-            1,
+            0,
         );
         first.status = SubagentStatus::Idle;
         guard.insert(first_uuid.to_string(), first);
@@ -102,11 +102,11 @@ fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() 
             second_uuid.clone(),
             "dup".to_string(),
             "/tmp/second.sock".into(),
-            2,
+            0,
         );
         second.status = SubagentStatus::Idle;
         guard.insert(second_uuid.to_string(), second);
-        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 3);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
         child.status = SubagentStatus::Running;
         child.parent_id = Some("dup".to_string());
         guard.insert("child".to_string(), child);
@@ -132,11 +132,11 @@ fn build_subagent_info_list_rolls_up_child_using_parent_display_name_when_parent
             parent_uuid.clone(),
             "parent".to_string(),
             "/tmp/parent.sock".into(),
-            1,
+            0,
         );
         parent.status = SubagentStatus::Idle;
         guard.insert(parent_uuid.to_string(), parent);
-        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 2);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
         child.status = SubagentStatus::Running;
         child.parent_id = Some("parent".to_string());
         guard.insert("child".to_string(), child);
@@ -155,14 +155,14 @@ fn build_subagent_info_list_reports_idle_parent_with_running_grandchild_as_runni
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 1);
+        let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 0);
         parent.status = SubagentStatus::Idle;
         guard.insert("parent".to_string(), parent);
-        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 2);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 0);
         child.status = SubagentStatus::Idle;
         child.parent_id = Some("parent".to_string());
         guard.insert("child".to_string(), child);
-        let mut grandchild = SubagentEntry::new("/tmp/grandchild.sock".into(), 3);
+        let mut grandchild = SubagentEntry::new("/tmp/grandchild.sock".into(), 0);
         grandchild.status = SubagentStatus::Starting;
         grandchild.parent_id = Some("child".to_string());
         guard.insert("grandchild".to_string(), grandchild);

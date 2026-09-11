@@ -37,6 +37,7 @@ pub struct SubagentEntry {
     /// Owned OS process topology used by infrastructure cleanup paths.
     pub process_owner: ProcessOwner,
     /// Shared with the local reaper; retained clones lose authority on reap.
+    /// Unowned unless the local launch path claimed it (#1925).
     pub(crate) process_ownership: super::process_ownership::ProcessOwnership,
     /// Internal lifecycle state; projected to the existing UDS status vocabulary.
     pub lifecycle: SubagentLifecycleState,
@@ -148,7 +149,7 @@ impl SubagentEntry {
             socket_path,
             pid,
             process_owner: ProcessOwner::DirectPid,
-            process_ownership: super::process_ownership::ProcessOwnership::new(),
+            process_ownership: super::process_ownership::ProcessOwnership::unowned(),
             lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,

@@ -89,6 +89,8 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     {
         let mut g = registry.lock().unwrap();
         let mut e = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), pid);
+        e.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
         e.exit_signal_tx = Some(exit_tx.clone());
         e.monitor_handle = Some(monitor.clone());
         g.insert("solo".to_string(), e);
@@ -132,10 +134,12 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
 }
 
 #[tokio::test]
-async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
-    // #831 security review: killing a parent must SIGTERM its DESCENDANTS' OS
-    // processes too, not merely drop them from the registry — otherwise they
-    // linger as untracked orphans that shutdown_all can no longer reach.
+async fn kill_parent_sigterms_owned_process_and_skips_unowned_descendant_pid() {
+    // #831 wanted descendants terminated on a parent kill; #1925 narrows HOW:
+    // this harness only signals pids it launched itself. A descendant merged
+    // from the child's snapshot carries a pid from another process (possibly
+    // another pid namespace), so the root must not signal it directly — the
+    // child harness tears its own subtree down when it receives SIGTERM.
     let spawn_sleep = || {
         std::process::Command::new("sleep")
             .arg("30")
@@ -152,10 +156,11 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
     let registry = new_registry();
     {
         let mut g = registry.lock().unwrap();
-        g.insert(
-            "parent".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid),
-        );
+        let mut parent = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid);
+        parent.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
+        g.insert("parent".to_string(), parent);
+        // Snapshot-merged descendant: nonzero pid, never launched by us.
         let mut gc = child_entry("parent");
         gc.pid = gchild_pid;
         g.insert("gchild".to_string(), gc);
@@ -173,24 +178,18 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
             .all(|e| e.status == SubagentStatus::Exited)
     );
 
-    // Both the parent AND the descendant process received SIGTERM and exit.
-    // (Reap to confirm; without the descendant SIGTERM, gchild would still be
-    // sleeping and this wait would block past the loop.)
+    // The owned parent process received SIGTERM and exits.
     let parent_status = parent_proc.wait().expect("reap parent");
-    let mut gchild_exited = false;
-    for _ in 0..200 {
-        match gchild_proc.try_wait() {
-            Ok(Some(_)) => {
-                gchild_exited = true;
-                break;
-            }
-            _ => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(parent_status.signal(), Some(libc::SIGTERM));
     }
-    let _ = parent_status;
+    // The unowned descendant pid was NOT signalled by this harness.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(
-        gchild_exited,
-        "descendant process must be SIGTERMed when its parent is killed"
+        matches!(gchild_proc.try_wait(), Ok(None)),
+        "an unowned descendant pid must not be signalled (#1925)"
     );
     let _ = gchild_proc.kill();
     let _ = gchild_proc.wait();

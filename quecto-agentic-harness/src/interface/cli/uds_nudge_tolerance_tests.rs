@@ -433,7 +433,7 @@ async fn selected_nudge_is_cancelled_when_direct_child_becomes_active_before_inj
     let reg = new_registry();
     env.inner.subagent_registry = Some(reg.clone());
     super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
-        let mut child = SubagentEntry::new("/tmp/racing-child.sock".into(), 1);
+        let mut child = SubagentEntry::new("/tmp/racing-child.sock".into(), 0);
         child.status = SubagentStatus::Starting;
         child.parent_id = Some("test".to_string());
         reg.lock()
@@ -464,10 +464,10 @@ async fn selected_nudge_is_cancelled_when_transitive_descendant_becomes_active_b
     let reg = new_registry();
     env.inner.subagent_registry = Some(reg.clone());
     super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
-        let mut child = SubagentEntry::new("/tmp/idle-child.sock".into(), 1);
+        let mut child = SubagentEntry::new("/tmp/idle-child.sock".into(), 0);
         child.status = SubagentStatus::Idle;
         child.parent_id = Some("test".to_string());
-        let mut grandchild = SubagentEntry::new("/tmp/racing-grandchild.sock".into(), 2);
+        let mut grandchild = SubagentEntry::new("/tmp/racing-grandchild.sock".into(), 0);
         grandchild.status = SubagentStatus::Running;
         grandchild.parent_id = Some("child".to_string());
         let mut guard = reg.lock().unwrap();
@@ -498,7 +498,7 @@ async fn selected_nudge_runs_when_unrelated_child_becomes_active_before_injectio
     let reg = new_registry();
     env.inner.subagent_registry = Some(reg.clone());
     super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
-        let mut unrelated = SubagentEntry::new("/tmp/unrelated-racing-child.sock".into(), 1);
+        let mut unrelated = SubagentEntry::new("/tmp/unrelated-racing-child.sock".into(), 0);
         unrelated.status = SubagentStatus::Running;
         unrelated.parent_id = Some("other-session".to_string());
         reg.lock()
@@ -530,7 +530,7 @@ async fn selected_nudge_is_cancelled_when_child_becomes_active_after_final_reche
     let reg = new_registry();
     env.inner.subagent_registry = Some(reg.clone());
     super::set_before_guarded_turn_admission_test_hook(Box::new(move || {
-        let mut child = SubagentEntry::new("/tmp/post-recheck-child.sock".into(), 1);
+        let mut child = SubagentEntry::new("/tmp/post-recheck-child.sock".into(), 0);
         child.status = SubagentStatus::Starting;
         child.parent_id = Some("test".to_string());
         reg.lock()

@@ -625,8 +625,11 @@ that need to restrict which subagents can be spawned.
 
 - **Background reaper**: Each child has a `tokio::spawn` reaper task that calls
   `child.wait()` and removes the registry entry when the child exits
-- **Explicit shutdown**: `shutdown_all()` sends SIGTERM to all tracked children
-  and clears the registry
+- **Explicit shutdown**: `shutdown_all()` sends SIGTERM to every tracked child
+  this process launched itself and clears the registry. Signal authority is
+  claimed only by the local launch path that holds the spawned child handle;
+  entries merged from a child's snapshot, restored from a persisted session or
+  built by fixtures carry a pid the harness never signals (#1925)
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 

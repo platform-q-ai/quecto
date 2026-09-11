@@ -665,7 +665,7 @@ async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_o
             crate::domain::ids::AgentUuid::from("dead-child"),
             "dead-label".into(),
             "/tmp/dead.sock".into(),
-            9,
+            0,
         );
         entry.status = SubagentStatus::Exited;
         entry.persisted_liveness = SubagentLiveness::Dead;

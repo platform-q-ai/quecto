@@ -7,7 +7,7 @@ use super::subagent_routing::{
 use std::path::PathBuf;
 
 fn entry(sock: &str, parent: Option<&str>) -> SubagentEntry {
-    let mut e = SubagentEntry::new(PathBuf::from(sock), 1);
+    let mut e = SubagentEntry::new(PathBuf::from(sock), 0);
     e.display_name = sock.trim_start_matches('/').to_string();
     e.parent_id = parent.map(str::to_string);
     e
@@ -157,7 +157,7 @@ fn display_aliases_route_only_when_live() {
         crate::domain::ids::AgentUuid::from("live-uuid".to_string()),
         "friendly".to_string(),
         PathBuf::from("/tmp/live-display.sock"),
-        1,
+        0,
     );
     live.persisted_liveness = SubagentLiveness::Live;
     let mut detached = entry("/tmp/resume-detached.sock", None);

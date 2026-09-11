@@ -326,15 +326,15 @@ fn given_root_registry_tree(
         let mut g = r.lock().unwrap();
         g.insert(
             parent.clone(),
-            SubagentEntry::new(std::path::PathBuf::from("/s"), 1),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 0),
         );
-        let mut c = SubagentEntry::new(std::path::PathBuf::from("/s"), 2);
+        let mut c = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
         c.parent_id = Some(child_parent);
         g.insert(child, c);
-        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 3);
+        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
         gc.parent_id = Some(grandchild_parent);
         g.insert(grandchild, gc);
-        g.insert(live, SubagentEntry::new(std::path::PathBuf::from("/s"), 4));
+        g.insert(live, SubagentEntry::new(std::path::PathBuf::from("/s"), 0));
     }
     world.cascade_registry = Some(r);
 }
@@ -421,9 +421,9 @@ fn given_root_with_merged_grandchild(world: &mut QuectoWorld, child: String, gra
         let mut g = r.lock().unwrap();
         g.insert(
             child.clone(),
-            SubagentEntry::new(std::path::PathBuf::from("/s"), 1),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 0),
         );
-        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 2);
+        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
         gc.parent_id = Some(child);
         g.insert(grandchild, gc);
     }
@@ -495,10 +495,10 @@ fn given_root_registry_with_child_and_sibling(
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
-        g.insert(child, SubagentEntry::new(std::path::PathBuf::from("/s"), 1));
+        g.insert(child, SubagentEntry::new(std::path::PathBuf::from("/s"), 0));
         g.insert(
             sibling,
-            SubagentEntry::new(std::path::PathBuf::from("/s"), 2),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 0),
         );
     }
     world.cascade_registry = Some(r);
@@ -620,9 +620,9 @@ fn given_root_monitor_knows_idle_grandchild(
         let mut g = r.lock().unwrap();
         g.insert(
             child.clone(),
-            SubagentEntry::new(std::path::PathBuf::from("/s"), 1),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 0),
         );
-        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 2);
+        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
         gc.parent_id = Some(child);
         gc.status = SubagentStatus::Idle;
         g.insert(grandchild, gc);
@@ -687,7 +687,7 @@ fn then_observers_see_idle(world: &mut QuectoWorld, agent_id: String) {
 fn given_root_monitor_with_running_child(world: &mut QuectoWorld, child: String) {
     use quecto::infrastructure::tools::subagent_registry::new_registry;
     let r = new_registry();
-    let mut entry = SubagentEntry::new(std::path::PathBuf::from("/s"), 1);
+    let mut entry = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
     entry.status = SubagentStatus::Running;
     r.lock().unwrap().insert(child, entry);
     world.cascade_registry = Some(r);

@@ -80,10 +80,12 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             handle.abort();
             tracing::info!(agent = %name, "aborted monitor task");
         }
-        if entry.pid != 0 {
-            entry
+        // Only a pid this harness launched itself may be signalled (#1925).
+        if entry.pid != 0
+            && entry
                 .process_ownership
-                .signal(entry.pid, entry.process_owner);
+                .signal(entry.pid, entry.process_owner)
+        {
             tracing::info!(agent = %name, pid = entry.pid, "sent termination to subagent process tree");
         }
     }
@@ -91,3 +93,7 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
     super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
     count
 }
+
+#[cfg(test)]
+#[path = "spawn_registry_ownership_tests.rs"]
+mod ownership_tests;

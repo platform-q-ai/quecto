@@ -34,7 +34,7 @@ async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
     let script = cleanup_script(&log);
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 42);
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 0);
     entry.cleanup_environment_id = Some("env-once".to_string());
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     registry.lock().unwrap().insert("child".to_string(), entry);
@@ -122,7 +122,7 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     });
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 42);
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 0);
     entry.cleanup_environment_id = Some("env-exit".to_string());
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     entry.environment_registry = Some(environments.clone());
