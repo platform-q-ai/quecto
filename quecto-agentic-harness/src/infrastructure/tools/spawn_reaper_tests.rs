@@ -13,10 +13,9 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let child = tokio::process::Command::new("true").spawn().unwrap();
     let pid = child.id().unwrap();
-    registry.lock().unwrap().insert(
-        "owned".into(),
-        SubagentEntry::new("/tmp/owned.sock".into(), pid),
-    );
+    let mut entry = SubagentEntry::new("/tmp/owned.sock".into(), pid);
+    entry.process_ownership = super::super::process_ownership::ProcessOwnership::launched(&child);
+    registry.lock().unwrap().insert("owned".into(), entry);
     let ownership = registry.lock().unwrap()["owned"].process_ownership.clone();
     spawn_reaper_task(
         child,
@@ -75,6 +74,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let child = tokio::process::Command::new("true").spawn().unwrap();
+    let ownership = super::super::process_ownership::ProcessOwnership::launched(&child);
 
     spawn_reaper_task(
         child,
@@ -83,7 +83,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
         exit_tx,
         None,
         ReaperContext {
-            ownership: super::super::process_ownership::ProcessOwnership::new(),
+            ownership,
             swarm_context: None,
         },
     );

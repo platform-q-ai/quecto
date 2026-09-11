@@ -79,7 +79,19 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
     roster
 }
 
-pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntry) -> bool {
+/// Outcome of a successful restore-time socket round-trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VerifiedLiveSubagent {
+    /// The harness answering on the socket self-reported the persisted pid
+    /// (#1925). Only then may the restored row be signalled: the pid is
+    /// confirmed to name that harness in OUR pid namespace, not a reused or
+    /// container-local number.
+    pub pid_confirmed: bool,
+}
+
+pub(crate) fn verify_persisted_live_subagent(
+    entry: &PersistedSubagentRosterEntry,
+) -> Option<VerifiedLiveSubagent> {
     use std::io::{Read, Write};
     use std::time::Duration;
 
@@ -87,10 +99,10 @@ pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntr
         || entry.agent_uuid.is_empty()
         || entry.session_key.is_empty()
     {
-        return false;
+        return None;
     }
     let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&entry.socket_path) else {
-        return false;
+        return None;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
@@ -101,37 +113,51 @@ pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntr
     })
     .to_string();
     let Ok(len) = u32::try_from(request.len()) else {
-        return false;
+        return None;
     };
     if stream.write_all(&len.to_be_bytes()).is_err()
         || stream.write_all(request.as_bytes()).is_err()
         || stream.flush().is_err()
     {
-        return false;
+        return None;
     }
     let mut prefix = [0u8; 4];
     if stream.read_exact(&mut prefix).is_err() {
-        return false;
+        return None;
     }
     let response_len = u32::from_be_bytes(prefix) as usize;
     if response_len > quecto_line_io::PROTOCOL_FRAME_CAP_BYTES {
-        return false;
+        return None;
     }
     let mut payload = vec![0u8; response_len];
     if stream.read_exact(&mut payload).is_err() {
-        return false;
+        return None;
     }
     let Ok(response) = serde_json::from_slice::<serde_json::Value>(&payload) else {
-        return false;
+        return None;
     };
-    response.get("type").and_then(|v| v.as_str()) == Some("response")
+    let identity_matches = response.get("type").and_then(|v| v.as_str()) == Some("response")
         && response.get("id").and_then(|v| v.as_str()) == Some(request_id.as_str())
         && response.get("success").and_then(|v| v.as_bool()) == Some(true)
         && response
             .get("data")
             .and_then(|data| data.get("sessionKey"))
             .and_then(|v| v.as_str())
-            == Some(entry.session_key.as_str())
+            == Some(entry.session_key.as_str());
+    if !identity_matches {
+        return None;
+    }
+    // Affirmative pid confirmation: the peer's self-reported pid must equal
+    // the persisted one and be nonzero. A pre-#1925 peer (no `runtime.pid`)
+    // or a container-local pid fails this and stays unsignallable.
+    let reported_pid = response
+        .pointer("/data/runtime/pid")
+        .and_then(|v| v.as_u64())
+        .and_then(|pid| u32::try_from(pid).ok())
+        .unwrap_or(0);
+    Some(VerifiedLiveSubagent {
+        pid_confirmed: reported_pid != 0 && reported_pid == entry.pid,
+    })
 }
 
 fn entry_from_persisted_subagent(
@@ -145,10 +171,10 @@ fn entry_from_persisted_subagent(
         SubagentRestoreReason::LegacyUnspecified | SubagentRestoreReason::OrdinaryTuiExitStopped
     ) || persisted.liveness == SubagentLiveness::Dead
         || matches!(persisted.status.as_deref(), Some("exited" | "dead"))
-        || !verify_persisted_live_subagent(&persisted)
     {
         return None;
     }
+    let verified = verify_persisted_live_subagent(&persisted)?;
     let key = persisted.agent_uuid.clone();
     let mut entry = SubagentEntry::with_identity(
         crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
@@ -156,6 +182,12 @@ fn entry_from_persisted_subagent(
         persisted.socket_path,
         persisted.pid,
     );
+    // #1925: the previous harness launched this child; nothing else can reach
+    // it now. Grant a signallable lease only when the live socket round-trip
+    // confirmed the pid names that very harness in our namespace.
+    if verified.pid_confirmed {
+        entry.confirm_reported_pid_in_our_namespace();
+    }
     entry.status = SubagentStatus::Idle;
     entry.persisted_liveness = SubagentLiveness::Live;
     entry.parent_id = persisted.parent_id.take();

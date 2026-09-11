@@ -64,3 +64,31 @@ mod compatibility_tests {
         assert!(record.attempt_diagnostics.is_empty());
     }
 }
+
+#[cfg(test)]
+mod runtime_identity_pid_tests {
+    use super::super::RuntimeIdentity;
+
+    /// #1925: `pid` is additive on the wire; a pre-#1925 peer that omits it
+    /// deserializes to 0, which restore treats as "not confirmed".
+    #[test]
+    fn runtime_identity_pid_defaults_to_zero_and_round_trips() {
+        let legacy: RuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "process_instance_id": "peer",
+            "executable_digest_pending": false,
+            "package_version": "0.0.0",
+            "build_source_revision": null,
+            "build_dirty": null,
+            "executable_sha256": null
+        }))
+        .unwrap();
+        assert_eq!(legacy.pid, 0);
+
+        let current = crate::infrastructure::runtime_identity::current();
+        assert_eq!(current.pid, std::process::id());
+        let wire = serde_json::to_value(&current).unwrap();
+        assert_eq!(wire["pid"], serde_json::json!(std::process::id()));
+        let back: RuntimeIdentity = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, current);
+    }
+}

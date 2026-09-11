@@ -14,8 +14,14 @@ fn child_entry(parent: &str) -> SubagentEntry {
 #[test]
 fn killed_agents_json_caps_long_lists() {
     let agents: Vec<String> = (1..=22).map(|n| format!("a{n}")).collect();
-    let parsed = killed_agents_result_json(&agents);
+    let parsed = killed_agents_result_json(KilledAgents {
+        killed: &agents,
+        signalled: &agents[..1],
+        unsignalled: &agents[1..],
+    });
     assert_eq!(parsed["killed"].as_array().unwrap().len(), 20);
+    assert_eq!(parsed["signalled"], serde_json::json!(["a1"]));
+    assert_eq!(parsed["unsignalled"].as_array().unwrap().len(), 20);
     assert_eq!(parsed["omitted_agents"], 2);
 }
 
@@ -44,7 +50,11 @@ async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(
         parsed,
-        serde_json::json!({"killed":["parent","child","gchild"]})
+        serde_json::json!({
+            "killed":["parent","child","gchild"],
+            "signalled":[],
+            "unsignalled":[]
+        })
     );
 
     // Whole dead sub-tree pruned; the live sibling is untouched.
@@ -89,6 +99,8 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     {
         let mut g = registry.lock().unwrap();
         let mut e = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), pid);
+        e.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
         e.exit_signal_tx = Some(exit_tx.clone());
         e.monitor_handle = Some(monitor.clone());
         g.insert("solo".to_string(), e);
@@ -102,7 +114,7 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     assert!(!result.is_error);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
-        serde_json::json!({"killed":["solo"]})
+        serde_json::json!({"killed":["solo"],"signalled":["solo"],"unsignalled":[]})
     );
     assert!(!result.content.contains(&pid.to_string()));
 
@@ -132,10 +144,12 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
 }
 
 #[tokio::test]
-async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
-    // #831 security review: killing a parent must SIGTERM its DESCENDANTS' OS
-    // processes too, not merely drop them from the registry — otherwise they
-    // linger as untracked orphans that shutdown_all can no longer reach.
+async fn kill_parent_sigterms_owned_process_and_skips_container_descendant_pid() {
+    // #831 wanted descendants terminated on a parent kill; #1925 narrows HOW:
+    // this harness signals pids it launched or that were reported from its
+    // own pid namespace. A descendant reported from inside a container carries
+    // a pid from another namespace, so the root must not signal it directly —
+    // the container child tears its own subtree down when it receives SIGTERM.
     let spawn_sleep = || {
         std::process::Command::new("sleep")
             .arg("30")
@@ -152,12 +166,17 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
     let registry = new_registry();
     {
         let mut g = registry.lock().unwrap();
-        g.insert(
-            "parent".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid),
-        );
+        let mut parent = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid);
+        parent.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
+        g.insert("parent".to_string(), parent);
+        // Descendant merged from a CONTAINER child's snapshot: the merge
+        // records a foreign-namespace report (see
+        // subagent_monitor_merge_ownership_tests), so the pid is never ours.
         let mut gc = child_entry("parent");
         gc.pid = gchild_pid;
+        gc.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
         g.insert("gchild".to_string(), gc);
     }
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
@@ -165,6 +184,16 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
 
     let result = tool.kill_agent("parent").await;
     assert!(!result.is_error);
+    // The result says which processes were signalled and which were merely
+    // dropped from tracking because no lease authorised a signal.
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
+        serde_json::json!({
+            "killed":["parent","gchild"],
+            "signalled":["parent"],
+            "unsignalled":["gchild"]
+        })
+    );
     assert!(
         registry
             .lock()
@@ -173,24 +202,18 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
             .all(|e| e.status == SubagentStatus::Exited)
     );
 
-    // Both the parent AND the descendant process received SIGTERM and exit.
-    // (Reap to confirm; without the descendant SIGTERM, gchild would still be
-    // sleeping and this wait would block past the loop.)
+    // The owned parent process received SIGTERM and exits.
     let parent_status = parent_proc.wait().expect("reap parent");
-    let mut gchild_exited = false;
-    for _ in 0..200 {
-        match gchild_proc.try_wait() {
-            Ok(Some(_)) => {
-                gchild_exited = true;
-                break;
-            }
-            _ => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(parent_status.signal(), Some(libc::SIGTERM));
     }
-    let _ = parent_status;
+    // The unowned descendant pid was NOT signalled by this harness.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(
-        gchild_exited,
-        "descendant process must be SIGTERMed when its parent is killed"
+        matches!(gchild_proc.try_wait(), Ok(None)),
+        "a container-reported descendant pid must not be signalled (#1925)"
     );
     let _ = gchild_proc.kill();
     let _ = gchild_proc.wait();
@@ -205,4 +228,54 @@ async fn kill_unknown_agent_returns_error_and_no_broadcast() {
     assert!(result.is_error);
     assert!(result.content.contains("not found"));
     assert!(rx.try_recv().is_err(), "no broadcast for unknown agent");
+}
+
+#[tokio::test]
+async fn kill_reports_unsignalled_when_only_lease_less_pids_are_removed() {
+    // A restored/merged row with a pid but no lease: dropped, not signalled.
+    let registry = new_registry();
+    {
+        let mut g = registry.lock().unwrap();
+        let mut foreign = SubagentEntry::new(PathBuf::from("/tmp/foreign.sock"), 4242);
+        foreign.process_ownership =
+            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
+        g.insert("foreign".to_string(), foreign);
+        // A stub entry (pid 0) is neither signalled nor reported unsignalled.
+        g.insert(
+            "stub".to_string(),
+            SubagentEntry::new(PathBuf::from("/tmp/stub.sock"), 0),
+        );
+    }
+    let tool = AgentCmdTool::new(registry.clone());
+    let foreign = tool.kill_agent("foreign").await;
+    assert!(!foreign.is_error);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&foreign.content).unwrap(),
+        serde_json::json!({"killed":["foreign"],"signalled":[],"unsignalled":["foreign"]})
+    );
+    let stub = tool.kill_agent("stub").await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stub.content).unwrap(),
+        serde_json::json!({"killed":["stub"],"signalled":[],"unsignalled":[]})
+    );
+}
+
+#[tokio::test]
+async fn kill_recovers_from_a_poisoned_registry_lock() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "solo".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/solo.sock"), 0),
+    );
+    let shared = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    let tool = AgentCmdTool::new(registry.clone());
+    let result = tool.kill_agent("solo").await;
+    assert!(!result.is_error, "{}", result.content);
+    let missing = tool.kill_agent("nope").await;
+    assert!(missing.is_error);
 }

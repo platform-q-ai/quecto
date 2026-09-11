@@ -108,10 +108,14 @@ pub fn cascade_remove_locked(
 /// Best-effort terminate a cascade-removed entry's OS process and monitor task so
 /// descendants do not linger as orphaned, untracked processes after their
 /// ancestor is killed/exits (#831 security review). Aborts the monitor task (if
-/// any) and SIGTERMs the pid (if any). Does NOT touch the registry — the entry
+/// any) and SIGTERMs the pid when this harness launched it. Does NOT touch the registry — the entry
 /// has already been removed — and does NOT send await signals (the caller owns
 /// that, as the signal semantics differ between the kill and reaper paths).
-pub fn terminate_removed_entry(entry: &SubagentEntry) {
+///
+/// Returns `true` when the OS process was actually signalled; `false` when the
+/// entry had no pid or its lease did not authorise a signal (#1925), so
+/// callers can report an unsignalled drop instead of claiming a kill.
+pub fn terminate_removed_entry(entry: &SubagentEntry) -> bool {
     if let Some(ref handle) = entry.monitor_handle {
         handle.abort();
     }
@@ -119,11 +123,12 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
         entry.proxy_bridge_handle.as_ref(),
         entry.proxy_bridge_socket.as_deref(),
     );
-    if entry.pid != 0 {
-        entry
+    // Only a pid this harness launched or that was reported from its own pid
+    // namespace may be signalled (#1925).
+    entry.pid != 0
+        && entry
             .process_ownership
-            .signal(entry.pid, entry.process_owner);
-    }
+            .signal(entry.pid, entry.process_owner)
 }
 
 /// Best-effort SIGTERM a pid via a direct syscall. Avoids fork+exec of `kill(1)`

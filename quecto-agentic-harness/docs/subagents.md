@@ -625,8 +625,14 @@ that need to restrict which subagents can be spawned.
 
 - **Background reaper**: Each child has a `tokio::spawn` reaper task that calls
   `child.wait()` and removes the registry entry when the child exits
-- **Explicit shutdown**: `shutdown_all()` sends SIGTERM to all tracked children
-  and clears the registry
+- **Explicit shutdown**: `shutdown_all()` sends SIGTERM to every tracked
+  entry holding a signal lease and clears the registry. A lease is granted
+  only from provenance the harness can prove (#1925): *launched* (this
+  process spawned the child and holds its handle), or *reported
+  same-namespace* (a host-local descendant reported by a host-local child, or
+  a restored session child whose live socket round-trip confirmed the
+  persisted pid is its own). Descendants reported from inside a container,
+  unconfirmed restores and fixture-built entries are never signalled
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 

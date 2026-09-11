@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reaper_cannot_release_child_during_signal_dispatch() {
     let mut child = tokio::process::Command::new("true").spawn().unwrap();
-    let ownership = ProcessOwnership::new();
+    let ownership = ProcessOwnership::launched(&child);
     let signal_owner = ownership.clone();
     let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -14,6 +14,7 @@ async fn reaper_cannot_release_child_during_signal_dispatch() {
             release_rx
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .unwrap();
+            true
         });
     });
     entered_rx.await.unwrap();

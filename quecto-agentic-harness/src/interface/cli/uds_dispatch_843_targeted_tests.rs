@@ -289,7 +289,7 @@ async fn forward_get_messages_rejects_stale_historical_before_cursor() {
             crate::domain::ids::AgentUuid::from("dead-child"),
             "dead-label".into(),
             "/tmp/dead.sock".into(),
-            9,
+            0,
         );
         entry.status = SubagentStatus::Exited;
         entry.persisted_liveness = SubagentLiveness::Dead;
