@@ -37,9 +37,9 @@ Feature: TUI shared list rendering and grouped App state
 
   @done
   Scenario: Model selector clamps the selection when the filter narrows
-    Given a model selector over the known models
+    Given a model selector over six fixture models
     And the model selection rests on the 6th model
-    When the model filter "fireworks" is typed
+    When the model filter "fixture-match" is typed
     Then 2 models match and the selection is clamped to the last match
 
   @done
