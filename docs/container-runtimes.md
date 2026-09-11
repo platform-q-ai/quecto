@@ -54,10 +54,10 @@ commands expose it (use `agent_id: "*"`):
 
 - `get_containers` — lists every environment this session committed with
   status `running`, `empty` (live, no members), `killing`, `stopped`,
-  `cleanup-failed` (with its `last_error`), or `retained` (kept alive after
-  its swarm coordinator was lost, with `metadata.retained` explaining why;
-  see "Coordinator loss keeps a swarm's environment"), plus workspace and
-  members.
+  `cleanup-failed` (with its `last_error`), or `retained` (a swarm
+  container kept alive after its run ended or lost its coordinator, with
+  `metadata.retained` explaining which; see "Swarm environments are
+  retained"), plus workspace and members.
 - `kill_container` with `ref` or `name` — terminates every member agent,
   runs the environment's retained `kill` argv exactly once, and commits
   `stopped` only after the script succeeds. Its JSON result includes the
@@ -71,34 +71,55 @@ double-kill). Script sets without a configured `kill` fall back to the
 retained `cleanup` argv for final-member teardown; `kill_container` itself
 refuses such environments up front, leaving every member untouched.
 
-### Coordinator loss keeps a swarm's environment (#1924)
+### Swarm environments are retained (#1924)
 
-The one exception to final-member teardown is a swarm. When the member whose
-socket closed was the coordinator of a run that is still resumable (created,
-and `running` or `paused`), destroying the box would take the board, the
-checkout and every unpushed branch with it, contradicting the #1729 rule that
-every swarm end is a resumable pause only the supervisor closes. So the
-cascade still marks the member (and its descendants) exited, but the
-environment record moves to `retained` instead of running the retained
-`kill`: the container and its state directory stay for inspection and
-recovery, `metadata.retained` names the lost coordinator, and the run itself
-is paused holding `failed` with a `resume_blockers` entry naming that
-coordinator (the same lost-harness rule an in-swarm reconcile applies). Only
-an explicit `kill_container` (or a supervisor `swarm_control close` once a
-coordinator is reachable again) runs the retained `kill`; a spawn into the
-retained environment (`{"mode":"existing","ref":"C1"}`) revives it to
-`running`. The decision is made from the session that launched the container
-by reading the coordination store at `metadata.checkout` (see the `create`
-contract); an environment without a store, or whose run is the bootstrap
-placeholder or already terminal, keeps the ordinary final-member teardown,
-while a store that exists but cannot be read (contended, corrupt) also
-retains — a destroyed box cannot be recovered, a retained one can always be
-killed. Two deliberate supervisor actions still tear down normally: an
-explicit `agent_cmd kill` of the coordinator agent, and the master's own
-process shutdown. A retained environment that the master session never
-closes outlives that session: remove it with `kill_container` from the
-session while it lives, or afterwards with the adapter's `kill.sh` (or
-`podman rm -f quecto-<environment_id>` plus its state directory).
+The one exception to final-member teardown is a swarm container: it is kept
+after **every** swarm end, including a fully successful run, because the full
+end state of a swarm (board, checkout, unpushed branches, member logs) is
+worth inspecting. When the member whose socket closed was the coordinator of
+a created run that is `running` or `paused`, the cascade still marks the
+member (and its descendants) exited, but the environment record moves to
+`retained` instead of running the retained `kill`; the container and its
+state directory stay, and only an explicit `kill_container` from the host
+master tears them down (`swarm_control close` only makes the held outcome
+terminal; it never removes the container). `metadata.retained` says which
+case applies:
+
+- **Orderly end** — the run was already paused holding an outcome
+  (`succeeded`, `blocked`, `failed`, `budget-exhausted`) when the socket
+  closed: `run ended: <outcome>; environment retained for inspection,
+  kill_container to remove`. The run is untouched: no quarantine, no
+  `resume_blockers` entry, and the supervisor may still `resume` or `close`
+  it through a reachable coordinator.
+- **Loss** — the run was `running`, or paused with no outcome, when the
+  coordinator's socket closed: the coordinator is quarantined exactly as an
+  in-swarm reconcile treats a lost harness, the run is paused holding
+  `failed`, and the control receipt's `resume_blockers` names the
+  coordinator that must be relaunched before a resume can proceed;
+  `metadata.retained` reads `swarm coordinator '<id>' lost its connection
+  while the run was <status>; run paused holding failed; ...`.
+
+The decision is made from the session that launched the container by
+reading the coordination store at `metadata.checkout` (see the `create`
+contract; a checkout that is not an absolute path under the environment's
+workspace is ignored, as if no store existed). An environment without a
+store, or whose run is the bootstrap placeholder or already terminal, keeps
+the ordinary final-member teardown, while a store that exists but cannot be
+read (contended, corrupt) also retains — a destroyed box cannot be
+recovered, a retained one can always be killed. Two deliberate supervisor
+actions still tear down normally: an explicit `agent_cmd kill` of the
+coordinator agent, and the master's own process shutdown.
+
+A retained environment is for inspection: exec into the container, read the
+board and checkout, read the member logs (see the adapter section). A join
+(`{"mode":"existing","ref":"C1"}`) is admitted but does not revive the
+environment (relaunching the coordinator against the surviving store is not
+wired yet, and the paused run refuses activation); a joiner that exits or
+rolls back leaves the record `retained`. A retained environment that the
+master session never kills outlives that session: remove it with
+`kill_container` from the session while it lives, or afterwards with the
+adapter's `kill.sh` (or `podman rm -f quecto-<environment_id>` plus its
+state directory).
 
 ## Configuration
 
@@ -501,7 +522,10 @@ Design properties:
   `-e RUST_LOG=${RUST_LOG:-info}`; without it the member harness's
   redacting subscriber is a no-op and an environment that dies leaves no
   trace of why (termination signal, teardown, socket close). Set `RUST_LOG`
-  on the host before spawning to change the level for that environment.
+  on the host before spawning to change the level for that environment. The
+  variable reaches the member harness only: the harness scrubs it (with the
+  `QUECTO_SWARM_*` identity) from every tool child it starts, so a member's
+  `cargo test` or other Rust programs keep their own logging defaults.
   Under rootless Podman the container's stdout/stderr land in the user
   journal, so read a member's logs with:
 

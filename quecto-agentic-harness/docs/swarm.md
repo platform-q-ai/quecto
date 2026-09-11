@@ -237,19 +237,23 @@ children outlive the invocation. This does not add containment for intentional
 process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
-A coordinator whose connection to the master closes (its harness took a
-termination signal, crashed, or was killed behind the master's back) does
-not take the environment with it (#1924). The master's cascade marks the
-coordinator and its descendants exited, but the container is **not**
-`kill`ed: the environment record becomes `retained` (see `get_containers`,
-whose `metadata.retained` names the lost coordinator) and the run is paused
-holding `failed`, exactly as an in-swarm reconcile treats a lost harness. The
-control receipt's `resume_blockers` names the coordinator that must be
-relaunched before a resume can proceed; a resume attempted before that is
-refused with the same text. The board, checkout and any unpushed branches
-stay on disk for inspection and manual recovery. Only an explicit
-`kill_container` (or a supervisor `swarm_control close` once a coordinator is
-reachable again) destroys the environment.
+A swarm container is retained after every swarm end (#1924): the final
+member's exit never tears it down, so the full end state (board, checkout,
+unpushed branches, member logs) can be inspected, and only an explicit
+`kill_container` from the host master removes it — `swarm_control close`
+makes the held outcome terminal but never removes the container. When the
+coordinator's socket closes after an orderly end (the run already paused
+holding an outcome), the record becomes `retained` with `metadata.retained`
+reading `run ended: <outcome>; ...` and the run is untouched. When it closes
+while the run is `running` or paused without an outcome (its harness took a
+termination signal, crashed, or was killed behind the master's back), that is
+a loss: the coordinator is quarantined exactly as an in-swarm reconcile treats
+a lost harness, the run is paused holding `failed`, `metadata.retained` names
+the lost coordinator, and the control receipt's `resume_blockers` names the
+coordinator that must be relaunched before a resume can proceed (a resume
+attempted before that is refused with the same text). Relaunching it against
+the surviving store is not wired yet; a join into the retained environment is
+admitted for inspection but does not revive it.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
 even when agents are idle, and Python execution timeouts cannot exceed the remaining

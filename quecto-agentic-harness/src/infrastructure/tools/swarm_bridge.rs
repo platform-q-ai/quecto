@@ -211,28 +211,17 @@ impl HostedStore {
         Self { checkout }
     }
 
-    /// The run the store holds, or `None` when no store exists there. Live
-    /// members may hold the store's short immediate transactions, so a read
-    /// that fails is retried a few times before it is reported unreadable.
+    /// The run the store holds, or `None` when no store exists there. The
+    /// store's own bounded busy timeout absorbs contention from live members;
+    /// a read that still fails is reported, and the caller retains the
+    /// environment rather than guessing.
     pub fn hosted_run(
         &self,
     ) -> Result<Option<crate::domain::environment_finalization::HostedSwarmRun>, DomainError> {
         if !store_database(&self.checkout).is_file() {
             return Ok(None);
         }
-        const ATTEMPTS: u32 = 4;
-        let mut attempt = 1;
-        let status = loop {
-            match store_rpc(&self.checkout, "supervisor", "_status", json!([])) {
-                Ok(status) => break status,
-                Err(error) if attempt < ATTEMPTS => {
-                    tracing::debug!(%error, attempt, "hosted swarm store read failed; retrying");
-                    std::thread::sleep(std::time::Duration::from_millis(250 * u64::from(attempt)));
-                    attempt += 1;
-                }
-                Err(error) => return Err(error),
-            }
-        };
+        let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
         let deadline = status["deadline"]
             .as_f64()
             .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
@@ -242,9 +231,14 @@ impl HostedStore {
         let coordinator = status["coordinator"]
             .as_str()
             .ok_or_else(|| DomainError::Tool("swarm status carries no coordinator".into()))?;
+        let outcome = status["outcome"]
+            .as_str()
+            .map(coordination::decode_status)
+            .transpose()?;
         Ok(Some(
             crate::domain::environment_finalization::HostedSwarmRun {
                 status: coordination::decode_status(run_status)?,
+                outcome,
                 coordinator: coordinator.to_owned(),
                 deadline,
             },

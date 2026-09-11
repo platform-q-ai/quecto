@@ -176,14 +176,30 @@ struct ScriptEnvironmentFinalizationPort;
 pub(super) const CHECKOUT_METADATA_KEY: &str = "checkout";
 
 /// The checkout an environment record advertises, when its create result
-/// named one.
+/// named one that the host may open: an absolute path at or under the
+/// record's workspace (which is the only host location a script-managed
+/// environment owns) with no `..` components. Anything else is treated as no
+/// store at all rather than a place to run an interpreter.
 pub(super) fn advertised_checkout(record: &EnvironmentRecord) -> Option<std::path::PathBuf> {
-    record
+    use std::path::Component;
+    let checkout = record
         .metadata
         .get(CHECKOUT_METADATA_KEY)
         .and_then(serde_json::Value::as_str)
         .filter(|checkout| !checkout.is_empty())
-        .map(std::path::PathBuf::from)
+        .map(std::path::PathBuf::from)?;
+    let plain = |path: &std::path::Path| {
+        path.is_absolute()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    };
+    if !plain(&checkout) || !plain(&record.workspace_path) {
+        return None;
+    }
+    checkout
+        .starts_with(&record.workspace_path)
+        .then_some(checkout)
 }
 
 fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {

@@ -7,6 +7,9 @@ pub mod environment_finalization;
 #[path = "../application/environment_finalization_tests.rs"]
 mod environment_finalization_tests;
 pub mod environment_registry;
+#[cfg(test)]
+#[path = "../application/environment_retention_tests.rs"]
+mod environment_retention_tests;
 pub mod error;
 pub mod extension;
 pub mod extension_tool;

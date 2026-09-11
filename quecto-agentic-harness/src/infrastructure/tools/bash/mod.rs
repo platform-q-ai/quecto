@@ -338,6 +338,9 @@ fn build_shell_command(
 
     // Ordinary commands (including cargo-spawned test runtimes) are not
     // admitted swarm members. Only the managed spawn adapter grants identity.
+    // RUST_LOG is the harness's own log level (a container adapter sets it so
+    // member logs reach journald, #1924); a member's `cargo test` or any
+    // other Rust tool child must not inherit it.
     for key in [
         "QUECTO_SWARM_CHECKOUT",
         "QUECTO_SWARM_MEMBER",
@@ -345,6 +348,7 @@ fn build_shell_command(
         "QUECTO_SWARM_BOOTSTRAP",
         "QUECTO_SWARM_CONTAINER",
         "QUECTO_SWARM_HOST_PID_NS",
+        "RUST_LOG",
     ] {
         cmd.env_remove(key);
     }

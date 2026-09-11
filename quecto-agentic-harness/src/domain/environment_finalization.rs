@@ -23,6 +23,9 @@ pub enum MemberFinalizeMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostedSwarmRun {
     pub status: RunStatus,
+    /// The outcome a paused run holds after an orderly end (#1729); `None`
+    /// for a live run or a plain supervisor pause.
+    pub outcome: Option<RunStatus>,
     pub coordinator: String,
     /// Run deadline; the bootstrap placeholder carries 0 (no swarm created).
     pub deadline: f64,
@@ -35,6 +38,12 @@ impl HostedSwarmRun {
     pub fn resumable(&self) -> bool {
         crate::domain::swarm::participates(self.deadline)
             && matches!(self.status, RunStatus::Running | RunStatus::Paused)
+    }
+
+    /// The run ended in an orderly way (paused holding a proposable outcome):
+    /// the coordinator's socket closing afterwards is not a loss.
+    pub fn ended(&self) -> bool {
+        self.status == RunStatus::Paused && self.outcome.is_some_and(RunStatus::proposable)
     }
 }
 
@@ -57,12 +66,14 @@ pub enum SwarmRunObservation {
 /// (#1924): a member whose exit empties the environment while it hosts a
 /// resumable swarm run is its coordinator (workers are the coordinator's
 /// in-container descendants, never members of the supervising session's
-/// environment record). Destroying the box would lose the board, the checkout
-/// and unpushed work; #1729 requires every swarm end to be a resumable pause
-/// only the supervisor closes. A store that exists but cannot be read is
-/// retained too: an explicit `kill_container` can always close it later,
-/// while a destroyed box cannot be recovered. Rollbacks and parent-initiated
-/// kills keep their existing behaviour: the supervisor asked for those.
+/// environment record). Every swarm end is a resumable pause (#1729), and the
+/// box is kept after every one of them, orderly or not, because the full end
+/// state of a swarm (board, checkout, unpushed work, logs) is worth
+/// inspecting; only an explicit `kill_container` tears it down. A store that
+/// exists but cannot be read is retained too: an explicit kill can always
+/// close it later, while a destroyed box cannot be recovered. Rollbacks and
+/// parent-initiated kills keep their existing behaviour: the supervisor asked
+/// for those.
 pub fn retains_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservation) -> bool {
     mode == MemberFinalizeMode::Exit
         && match observed {
@@ -85,7 +96,8 @@ pub trait EnvironmentFinalizationPort: Send + Sync {
     }
 
     /// Record the coordinator's harness as lost on the hosted run, ending it
-    /// as a pause holding `failed` (the #1729 lost-harness rule).
+    /// as a pause holding `failed` (the #1729 lost-harness rule). Called only
+    /// for a run that had not ended (running, or paused without an outcome).
     fn record_lost_coordinator<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
@@ -187,26 +199,34 @@ impl EnvironmentFinalizationUseCase {
         }
     }
 
-    /// The retained kill is withheld and the hosted run is paused holding
-    /// `failed` (#1924). A store that refuses the loss record still leaves the
-    /// environment retained: losing the box is never the safer outcome.
+    /// The retained kill is withheld (#1924). A run that had already ended
+    /// (paused holding an outcome) is recorded as an orderly end; any other
+    /// run lost its coordinator and is paused holding `failed` through the
+    /// port. A store that refuses the loss record still leaves the environment
+    /// retained: losing the box is never the safer outcome.
     async fn retain_for_lost_coordinator(
         &self,
         claim: crate::domain::environment_registry::KillClaim,
         record: &EnvironmentRecord,
         observed: &SwarmRunObservation,
     ) {
-        const KEPT: &str = "environment kept for inspection or recovery (kill_container closes it)";
+        const KEPT: &str = "environment retained for inspection, kill_container to remove";
         let reason = match observed {
+            SwarmRunObservation::Run(hosted) if hosted.ended() => format!(
+                "run ended: {}; {KEPT}",
+                status_name(hosted.outcome.expect("ended runs hold an outcome"))
+            ),
             SwarmRunObservation::Run(hosted) => {
                 match self.port.record_lost_coordinator(record, hosted).await {
                     Ok(()) => format!(
-                        "swarm coordinator '{}' lost its connection while the run was {:?}; run paused holding failed; {KEPT}",
-                        hosted.coordinator, hosted.status
+                        "swarm coordinator '{}' lost its connection while the run was {}; run paused holding failed; {KEPT}",
+                        hosted.coordinator,
+                        status_name(hosted.status)
                     ),
                     Err(error) => format!(
-                        "swarm coordinator '{}' lost its connection while the run was {:?}; the run could not be paused ({error}); {KEPT}",
-                        hosted.coordinator, hosted.status
+                        "swarm coordinator '{}' lost its connection while the run was {}; the run could not be paused ({error}); {KEPT}",
+                        hosted.coordinator,
+                        status_name(hosted.status)
                     ),
                 }
             }
@@ -239,5 +259,19 @@ impl EnvironmentFinalizationUseCase {
             Ok(metadata) => self.registry.record_inspect_success(claim, metadata),
             Err(e) => self.registry.record_inspect_failure(claim, &e),
         }
+    }
+}
+
+/// Wire spelling of a run status for operator-facing reasons.
+fn status_name(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Setup => "setup",
+        RunStatus::Running => "running",
+        RunStatus::Paused => "paused",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::Blocked => "blocked",
+        RunStatus::Failed => "failed",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::BudgetExhausted => "budget-exhausted",
     }
 }

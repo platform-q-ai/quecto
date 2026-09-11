@@ -164,3 +164,19 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
     And scenario teardown should leave no fixture processes running
+
+  @done @container-liveness
+  Scenario: A swarm container is retained after an orderly end until the master kills it
+    Given liveness script-managed subagent spawning is available
+    And the next created environment hosts a swarm run its coordinator ended holding "blocked"
+    And script-managed child "coord-ended-1924" is running in an inspectable environment with task "COORD_ENDED_MARKER"
+    When the script-managed child "coord-ended-1924" is killed behind Quecto's back
+    Then the subagent snapshot should report "coord-ended-1924" as exited
+    And the script-managed runtime should have killed an environment exactly 0 times
+    And the container listing should include "C1" with status "retained" and 0 members
+    And the container listing entry "C1" should record an orderly end holding "blocked"
+    And the hosted swarm run is still paused holding "blocked" with no resume blockers
+    When I kill container "C1"
+    Then the script-managed runtime should have killed an environment exactly 1 time
+    And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running

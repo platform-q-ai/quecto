@@ -188,13 +188,15 @@ immediate terminal transition. `status` also reports `resume_blockers`: what a
 resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
-A coordinator whose connection closed (`connection_closed` on the master's
-exit note) does not destroy its environment: `get_containers` lists it as
-`retained` with `metadata.retained` naming the lost coordinator, the run is
-paused holding `failed`, and `resume_blockers` names the coordinator to
-relaunch. The container, board and checkout stay on disk for inspection and
-recovery; only an explicit `kill_container` (or `swarm_control close` once a
-coordinator is reachable) removes them. Read the members' harness logs with
+A swarm container is retained after every swarm end: when its final member
+exits, `get_containers` lists the environment as `retained` and the
+container, board and checkout stay on disk for inspection. `close` makes the
+held outcome terminal but does not remove the container; only an explicit
+`kill_container` does. `metadata.retained` reads `run ended: <outcome>; ...`
+after an orderly end (the run is untouched), or names the lost coordinator
+when the socket closed on a running (or outcome-less paused) run: that run
+is paused holding `failed` and `resume_blockers` names the coordinator to
+relaunch. Read the members' harness logs with
 `journalctl --user CONTAINER_NAME=quecto-env-<id>`.
 
 After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by

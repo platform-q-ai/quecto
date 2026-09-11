@@ -164,9 +164,10 @@ class Workbench(Tasks):
         """Harness-only, membership-free: has a run been created in this container?
         The bootstrap placeholder carries deadline 0; `create` requires a future one."""
         with self.store.transaction() as db:
-            row = db.execute('SELECT status, deadline, coordinator FROM run').fetchone()
+            row = db.execute('SELECT status, deadline, coordinator, outcome FROM run').fetchone()
         return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0,
-                'coordinator': row['coordinator'] if row else None}
+                'coordinator': row['coordinator'] if row else None,
+                'outcome': row['outcome'] if row else None}
 
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:

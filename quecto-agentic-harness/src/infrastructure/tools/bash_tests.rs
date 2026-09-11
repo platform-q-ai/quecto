@@ -289,11 +289,11 @@ fn shell_program(env: &HashMap<String, String>) -> String {
 fn test_build_shell_command_inherits_environment_when_no_overrides() {
     let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", None);
     assert!(
-        cmd.as_std().get_envs().all(|(key, value)| key
-            .to_string_lossy()
-            .starts_with("QUECTO_SWARM_")
-            && value.is_none()),
-        "ordinary environment is inherited; only swarm launch context is removed"
+        cmd.as_std().get_envs().all(|(key, value)| {
+            let key = key.to_string_lossy();
+            (key.starts_with("QUECTO_SWARM_") || key == "RUST_LOG") && value.is_none()
+        }),
+        "ordinary environment is inherited; only swarm launch context and the harness log level are removed"
     );
 }
 

@@ -223,3 +223,201 @@ async fn environment_without_a_store_keeps_the_final_member_kill() {
         EnvironmentStatus::Stopped
     );
 }
+
+#[tokio::test]
+async fn coordinator_connection_closed_after_an_orderly_end_retains_without_a_loss() {
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    context
+        .call("stop", json!(["blocked", "needs the master"]))
+        .unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    notify_child_exited(
+        &registry,
+        "coordinator-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+
+    assert!(!log.exists(), "every swarm end keeps its container");
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Retained);
+    let reason = record.metadata["retained"].as_str().unwrap();
+    assert!(reason.starts_with("run ended: blocked"), "{reason}");
+    let summary = context.summary().unwrap();
+    assert_eq!(
+        summary["outcome"], "blocked",
+        "the held outcome is untouched"
+    );
+    let receipt = context.control_status().unwrap();
+    assert_eq!(
+        receipt["resume_blockers"],
+        json!([]),
+        "an orderly end adds no lost-coordinator blocker: {receipt}"
+    );
+    // The supervisor can still resume the run through the port.
+    context.resume_external().unwrap();
+    assert_eq!(context.summary().unwrap()["status"], "running");
+}
+
+#[tokio::test]
+async fn unreadable_store_maps_to_unreadable_and_retains_the_environment() {
+    // The infrastructure port must turn a store that exists but cannot be
+    // opened into `Unreadable`, which retains: a destroyed box is unrecoverable.
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    std::fs::write(checkout.join(".quecto/swarm.sqlite"), b"not a database").unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &checkout);
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    notify_child_exited(
+        &registry,
+        "coordinator-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+
+    assert!(!log.exists(), "no kill for an unreadable store");
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Retained);
+    let reason = record.metadata["retained"].as_str().unwrap();
+    assert!(reason.contains("could not be read"), "{reason}");
+    assert!(environments.begin_kill(&env_ref).is_ok());
+}
+
+/// A record whose advertised checkout is not an absolute path under its
+/// workspace (or is missing) opens no store: the ordinary kill runs even
+/// though a running swarm store exists at the advertised location.
+async fn rejected_checkout_keeps_the_final_member_kill(
+    advertised: impl FnOnce(&std::path::Path) -> String,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    let _live = create_running_swarm(&elsewhere);
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &workspace);
+    {
+        let mut record = environments.get(&env_ref).unwrap();
+        record.metadata = json!({ "checkout": advertised(&elsewhere) });
+        environments.commit(record);
+    }
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    notify_child_exited(
+        &registry,
+        "coordinator-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default().trim(),
+        "kill env-coordinator",
+        "a rejected checkout is no store"
+    );
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+}
+
+#[tokio::test]
+async fn checkout_outside_the_workspace_is_not_opened() {
+    rejected_checkout_keeps_the_final_member_kill(|elsewhere| elsewhere.display().to_string())
+        .await;
+}
+
+#[tokio::test]
+async fn relative_checkout_is_not_opened() {
+    rejected_checkout_keeps_the_final_member_kill(|_| "checkout".to_string()).await;
+}
+
+#[tokio::test]
+async fn checkout_escaping_the_workspace_with_dotdot_is_not_opened() {
+    rejected_checkout_keeps_the_final_member_kill(|elsewhere| {
+        // `<workspace>/../elsewhere` resolves to the live store but is refused.
+        format!(
+            "{}/../elsewhere",
+            elsewhere.parent().unwrap().join("workspace").display()
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn checkout_under_the_workspace_is_opened() {
+    // The docker adapter's `--repo` layout: checkout = <workspace>/repo.
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    let checkout = workspace.join("repo");
+    let _context = create_running_swarm(&checkout);
+    let log = dir.path().join("kill-log.txt");
+    let kill = write_kill_script(dir.path(), &log);
+    let (environments, env_ref) = environment(kill, &workspace);
+    {
+        let mut record = environments.get(&env_ref).unwrap();
+        record.metadata = json!({ "checkout": checkout.display().to_string() });
+        environments.commit(record);
+    }
+    let registry = register_member(dir.path(), &environments, &env_ref);
+
+    notify_child_exited(
+        &registry,
+        "coordinator-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+
+    assert!(!log.exists());
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Retained
+    );
+}
+
+#[tokio::test]
+async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
+    use crate::domain::swarm::{RunControlAction, RunStatus, SwarmRunControl};
+    let dir = tempfile::tempdir().unwrap();
+    let checkout = dir.path().join("checkout");
+    let context = create_running_swarm(&checkout);
+    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone());
+    let hosted = store.hosted_run().unwrap().unwrap();
+    assert_eq!((hosted.status, hosted.outcome), (RunStatus::Running, None));
+    store.record_lost_coordinator("coordinator").unwrap();
+
+    // Through the same port the parent's `swarm_control status` uses.
+    let receipt = context.apply(RunControlAction::Status).await.unwrap();
+    assert_eq!(receipt.status, RunStatus::Paused);
+    assert_eq!(receipt.outcome, Some(RunStatus::Failed));
+    assert_eq!(receipt.resume_blockers.len(), 1, "{receipt:?}");
+    assert!(
+        receipt.resume_blockers[0].contains("relaunch the lost coordinator 'coordinator'"),
+        "{receipt:?}"
+    );
+    // The host-side observation decodes the held outcome as well.
+    let hosted = store.hosted_run().unwrap().unwrap();
+    assert_eq!(
+        (hosted.status, hosted.outcome),
+        (RunStatus::Paused, Some(RunStatus::Failed))
+    );
+}

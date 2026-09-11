@@ -22,10 +22,12 @@ pub enum EnvironmentStatus {
     Stopped,
     /// Kill failed; retryable via another kill, with `last_error` retained.
     CleanupFailed,
-    /// Emptied by the loss of a swarm coordinator whose run is still
-    /// resumable (#1924): the final-member kill was deliberately withheld so
-    /// the board, checkout and unpushed work survive. Joinable (a relaunch
-    /// revives it) and killable only by an explicit `kill_container`.
+    /// Emptied after its swarm run ended or lost its coordinator (#1924): the
+    /// final-member kill was deliberately withheld so the board, checkout and
+    /// unpushed work survive for inspection. Killable only by an explicit
+    /// `kill_container`; a join is admitted for inspection but never revives
+    /// it (no automatic teardown can follow), so a rolled-back or exited
+    /// joiner leaves it retained.
     Retained,
 }
 
@@ -291,9 +293,6 @@ impl EnvironmentRegistry {
                 if !record.members.iter().any(|m| m == agent_uuid) {
                     record.members.push(agent_uuid.to_string());
                 }
-                // A join revives a retained environment: it is in use again
-                // and its next final-member exit is judged afresh (#1924).
-                record.status = EnvironmentStatus::Running;
                 Ok(())
             }
             EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
@@ -432,7 +431,7 @@ impl EnvironmentRegistry {
 
     /// Withhold the claimed final-member kill (#1924): the environment stays
     /// alive as `Retained`, with `reason` recorded on its metadata under
-    /// `retained`, until an explicit `kill_container` or a reviving join.
+    /// `retained`, until an explicit `kill_container`.
     pub fn retain(&self, claim: KillClaim, reason: &str) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
