@@ -485,3 +485,139 @@ async fn ready_or_result(
         result = task => panic!("fixture exited before readiness: {result:?}"),
     }
 }
+
+#[cfg(target_os = "linux")]
+fn runtime_destruction_reaps(mut builder: tokio::runtime::Builder) {
+    for preparation in ["", "os.close(1)", "os.close(1); os.close(2)"] {
+        let (dir, effect) = fixture(&format!(
+            "import os,time\n{preparation}\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)"
+        ));
+        let runtime = builder.enable_all().build().unwrap();
+        let mut invocation = effect.find(request("*"));
+        let pid = runtime.block_on(async {
+            tokio::select! {
+                result = &mut invocation => panic!("fixture exited early: {result:?}"),
+                pid = ready_pid(&dir) => pid,
+            }
+        });
+        // Retain the invocation across runtime destruction, then cancel it with
+        // no caller runtime left to drive cleanup.
+        drop(runtime);
+        drop(invocation);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let process = PathBuf::from(format!("/proc/{pid}"));
+        while process.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let disappeared = matches!(process.try_exists(), Ok(false));
+        let mut status = 0;
+        // WNOHANG cannot block the test.
+        // SAFETY: valid status pointer; targets only our identified fixture child.
+        let waited = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) };
+        let error = std::io::Error::last_os_error();
+        if waited == 0 {
+            // SAFETY: cleanup targets only the still-owned fixture PID.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                libc::waitpid(pid as libc::pid_t, &mut status, 0);
+            }
+        }
+        assert!(
+            disappeared && waited == -1 && error.raw_os_error() == Some(libc::ECHILD),
+            "runtime shutdown must reap fd: pid={pid}, preparation={preparation:?}, disappeared={disappeared}, waitpid={waited}, error={error}; waitpid == pid proves test had to reap a zombie"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn current_thread_runtime_destruction_reaps_fd() {
+    runtime_destruction_reaps(tokio::runtime::Builder::new_current_thread());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn multi_thread_runtime_destruction_reaps_fd() {
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.worker_threads(2);
+    runtime_destruction_reaps(builder);
+}
+
+#[tokio::test]
+async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
+    for shared in [true, false] {
+        let script = "import os,sys,time,json\npattern=sys.argv[-2]\nopen(pattern+'.args','w').write(json.dumps(sys.argv[1:]))\nopen(pattern+'.pid','w').write(str(os.getpid()))\nwhile not os.path.exists(pattern+'.release'): time.sleep(0.01)\nprint(os.path.join(sys.argv[-1],pattern))";
+        let (first_dir, first) = fixture(script);
+        let (second_dir, second) = fixture(script);
+        let first = Arc::new(first);
+        let second = if shared {
+            first.clone()
+        } else {
+            Arc::new(second)
+        };
+        let second_root = if shared {
+            first_dir.path()
+        } else {
+            second_dir.path()
+        };
+        let first_task = tokio::spawn(async move { first.find(request("first")).await });
+        let second_task = tokio::spawn(async move {
+            let mut req = request("second");
+            req.limit = 7;
+            second.find(req).await
+        });
+        let first_pid = named_ready_pid(first_dir.path(), "first").await;
+        let second_pid = named_ready_pid(second_root, "second").await;
+        assert_ne!(first_pid, second_pid);
+        first_task.abort();
+        let _ = first_task.await;
+        timeout(Duration::from_secs(5), async {
+            while Path::new(&format!("/proc/{first_pid}")).exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled invocation must be reaped");
+        assert!(Path::new(&format!("/proc/{second_pid}")).exists());
+        let status = std::fs::read_to_string(format!("/proc/{second_pid}/status")).unwrap();
+        assert!(status.lines().any(|line| {
+            line.starts_with("State:") && (line.contains("sleeping") || line.contains("running"))
+        }));
+        let args: Vec<String> = serde_json::from_str(
+            &std::fs::read_to_string(second_root.join("second.args")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(args[5], "7");
+        assert_eq!(args[args.len() - 2], "second");
+        assert_eq!(
+            args.last().unwrap(),
+            &second_root.join(".").to_string_lossy()
+        );
+        std::fs::write(second_root.join("second.release"), "").unwrap();
+        let result = timeout(Duration::from_secs(5), second_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.entries, ["second"]);
+        assert!(matches!(
+            Path::new(&format!("/proc/{second_pid}")).try_exists(),
+            Ok(false)
+        ));
+    }
+}
+
+async fn named_ready_pid(root: &Path, name: &str) -> u32 {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(text) = tokio::fs::read_to_string(root.join(format!("{name}.pid"))).await {
+                if let Ok(pid) = text.parse() {
+                    return pid;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("both invocations must signal readiness")
+}

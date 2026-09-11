@@ -53,11 +53,30 @@ impl FindPaths for FdFindPaths {
                 .map_err(|e| FindError::Security(e.to_string()))?;
             let mut command = self.command(&request, &root);
             let (sender, receiver) = oneshot::channel();
-            // The detached owner is never aborted with the caller: receiver closure
-            // is its cancellation signal. It alone owns termination AND wait.
-            tokio::spawn(async move {
-                own_process(&mut command, root, request.limit, sender).await;
-            });
+            // The owner has its own thread and reactor: shutting down the caller's
+            // runtime cannot abort termination/wait. Receiver closure cancels the
+            // invocation; the owner runtime lives until the child has been reaped.
+            // Both thread and reactor creation happen before any child is spawned.
+            std::thread::Builder::new()
+                .name("find-fd-owner".into())
+                .spawn(move || {
+                    match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(runtime) => {
+                            runtime.block_on(own_process(&mut command, root, request.limit, sender))
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(FindError::Io(format!(
+                                "find failed to initialize process owner: {error}"
+                            ))));
+                        }
+                    }
+                })
+                .map_err(|error| {
+                    FindError::Io(format!("find failed to start process owner: {error}"))
+                })?;
             receiver
                 .await
                 .map_err(|e| FindError::Io(format!("find process owner failed: {e}")))?

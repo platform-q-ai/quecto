@@ -1869,66 +1869,298 @@ fn find_vertical_slice_has_one_owner_per_role() {
 }
 
 /// Concrete find vertices may only be named by their owner or composition.
-/// Inspect imports as well as calls so renaming a constructor cannot evade scope.
+/// Type aliases of these vertices are allowed only in composition, including
+/// unused aliases: reject at the declaration rather than approximate Rust name
+/// resolution. Alias names are conservatively tracked across scopes so a sibling
+/// rename cannot hide a concrete origin. Non-find aliases remain unrestricted.
 fn find_graph_dependencies_allowed(file: &str, source: &str) -> bool {
     use syn::visit::Visit;
-    #[derive(Default)]
-    struct Aliases(Vec<(String, String)>);
-    impl<'ast> Visit<'ast> for Aliases {
-        fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
-            self.0
-                .push((rename.rename.to_string(), rename.ident.to_string()));
-        }
-    }
-    let mut aliases = Aliases::default();
     let Ok(parsed) = syn::parse_file(source) else {
         return false;
     };
-    aliases.visit_file(&parsed);
-    dependency_paths(source).is_some_and(|paths| {
-        paths.iter().all(|path| {
-            let expanded = path
-                .split("::")
-                .map(|part| {
-                    aliases
-                        .0
-                        .iter()
-                        .find(|(alias, _)| alias == part)
-                        .map_or(part, |(_, original)| original.as_str())
-                })
-                .collect::<Vec<_>>()
-                .join("::");
-            let path = &expanded;
-            let parts: Vec<_> = path.split("::").collect();
-            if parts.windows(2).any(|pair| {
-                matches!(
-                    pair,
-                    ["FindUseCase", "new"]
-                        | ["FindTool", "new"]
-                        | ["FdFindPaths", "new" | "with_fd_binary"]
-                )
-            }) {
-                return file == "src/composition/find.rs";
+    let mut guard = FindGraphGuard {
+        file,
+        aliases: Vec::new(),
+        impl_types: Vec::new(),
+        allowed: true,
+    };
+    guard.visit_file(&parsed);
+    // Existing dependency inventory excludes test-only items and sees grouped
+    // imports, attributes and fully qualified paths as before.
+    guard.allowed
+        && dependency_paths(source)
+            .is_some_and(|paths| paths.iter().all(|path| guard.path_allowed(path, false)))
+}
+
+struct FindGraphGuard<'a> {
+    file: &'a str,
+    aliases: Vec<(String, String)>,
+    impl_types: Vec<String>,
+    allowed: bool,
+}
+
+impl FindGraphGuard<'_> {
+    fn concrete_names(&self, path: &str) -> Vec<String> {
+        let mut names: Vec<String> = path.split("::").map(str::to_owned).collect();
+        // Finite monotonic closure: aliases in any order, cycles and shadowed
+        // names cannot suppress a concrete origin or make traversal loop.
+        loop {
+            let before = names.len();
+            for (alias, original) in &self.aliases {
+                if names.contains(alias) && names.iter().all(|name| name != original) {
+                    names.push(original.clone());
+                }
             }
-            path.split("::").all(|part| match part {
-                "FdFindPaths" => matches!(
-                    file,
-                    "src/infrastructure/tools/find_fd.rs" | "src/composition/find.rs"
-                ),
-                "FindTool" => matches!(
-                    file,
-                    "src/interface/tools/find.rs" | "src/composition/find.rs"
-                ),
+            if names.len() == before {
+                return names;
+            }
+        }
+    }
+
+    fn path_allowed(&self, path: &str, alias_declaration: bool) -> bool {
+        let names = self.concrete_names(path);
+        names.iter().all(|name| {
+            let owner_allowed = match name.as_str() {
+                "FdFindPaths" => self.file == "src/infrastructure/tools/find_fd.rs",
+                "FindTool" => self.file == "src/interface/tools/find.rs",
                 "FindUseCase" => matches!(
-                    file,
-                    "src/application/agent_turn/use_cases/find.rs"
-                        | "src/interface/tools/find.rs"
-                        | "src/composition/find.rs"
+                    self.file,
+                    "src/application/agent_turn/use_cases/find.rs" | "src/interface/tools/find.rs"
                 ),
-                _ => true,
-            })
+                _ => return true,
+            };
+            let constructor = path.split("::").any(|part| {
+                matches!(
+                    (name.as_str(), part),
+                    ("FindUseCase" | "FindTool" | "FdFindPaths", "new")
+                        | ("FdFindPaths", "with_fd_binary")
+                )
+            });
+            match (alias_declaration, constructor) {
+                (false, false) => owner_allowed || self.file == "src/composition/find.rs",
+                _ => self.file == "src/composition/find.rs",
+            }
         })
-    })
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for FindGraphGuard<'_> {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        // Collect all rename origins first; lexical ordering is irrelevant to
+        // item visibility. Keeping every origin is deliberately fail-closed.
+        struct Renames(Vec<(String, String)>);
+        impl<'ast> syn::visit::Visit<'ast> for Renames {
+            fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
+                self.0
+                    .push((item.rename.to_string(), item.ident.to_string()));
+            }
+        }
+        let mut renames = Renames(Vec::new());
+        renames.visit_file(file);
+        self.aliases = renames.0;
+        syn::visit::visit_file(self, file);
+    }
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let attrs = match item {
+            syn::Item::Mod(item) => &item.attrs,
+            syn::Item::Fn(item) => &item.attrs,
+            syn::Item::Impl(item) => &item.attrs,
+            syn::Item::Type(item) => &item.attrs,
+            _ => {
+                syn::visit::visit_item(self, item);
+                return;
+            }
+        };
+        if attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        syn::visit::visit_item(self, item);
+    }
+
+    fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+        if method.attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        syn::visit::visit_impl_item_fn(self, method);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        // The existing parser walks every RHS type path (including parens and
+        // generic arguments), so no special-case type spelling escapes policy.
+        struct TypePaths(Vec<String>);
+        impl<'ast> syn::visit::Visit<'ast> for TypePaths {
+            fn visit_path(&mut self, path: &'ast syn::Path) {
+                self.0.push(find_graph_path(path));
+                syn::visit::visit_path(self, path);
+            }
+        }
+        let mut paths = TypePaths(Vec::new());
+        paths.visit_type(&item.ty);
+        self.allowed &= paths.0.iter().all(|path| {
+            self.path_allowed(path, true)
+                && match path.as_str() {
+                    "Self" => self.impl_types.iter().all(|ty| self.path_allowed(ty, true)),
+                    _ => true,
+                }
+        });
+        syn::visit::visit_item_type(self, item);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        let previous = self.impl_types.clone();
+        self.impl_types = match item.self_ty.as_ref() {
+            syn::Type::Path(ty) => vec![find_graph_path(&ty.path)],
+            _ => Vec::new(),
+        };
+        syn::visit::visit_item_impl(self, item);
+        self.impl_types = previous;
+    }
+
+    fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+        let path = find_graph_path(&expr.path);
+        let qualified = expr.qself.as_ref().and_then(|q| match q.ty.as_ref() {
+            syn::Type::Path(ty) => Some(find_graph_path(&ty.path)),
+            _ => None,
+        });
+        let path = qualified.map_or(path.clone(), |ty| format!("{ty}::{path}"));
+        if path.split("::").any(|part| part == "Self") {
+            for ty in &self.impl_types {
+                self.allowed &= self.path_allowed(&path.replace("Self", ty), false);
+            }
+        } else {
+            self.allowed &= self.path_allowed(&path, false);
+        }
+        syn::visit::visit_expr_path(self, expr);
+    }
+}
+
+fn find_graph_path(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|part| part.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+#[test]
+fn find_graph_guards_reject_type_alias_constructors() {
+    for (file, vertex, constructor) in [
+        ("src/interface/tools/find.rs", "FindUseCase", "new"),
+        ("src/interface/tools/find.rs", "FindTool", "new"),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
+        (
+            "src/infrastructure/tools/find_fd.rs",
+            "FdFindPaths",
+            "with_fd_binary",
+        ),
+    ] {
+        for source in [
+            format!("type Alias = {vertex}; fn build() {{ Alias::{constructor}(); }}"),
+            format!(
+                "type Alias = Next; type Next = {vertex}; fn build() {{ Alias::{constructor}(); }}"
+            ),
+            format!(
+                "use {vertex} as Imported; type Alias = Imported; fn build() {{ Alias::{constructor}(); }}"
+            ),
+            format!("type Alias = ({vertex}); fn build() {{ Alias::{constructor}(); }}"),
+            format!(
+                "type Alias = {vertex}; fn build() {{ let constructor = Alias::{constructor}; }}"
+            ),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn find_graph_alias_declarations_have_an_explicit_composition_allowlist() {
+    for source in [
+        "type Case = FindUseCase;",
+        "type Case = crate::application::agent_turn::use_cases::find::FindUseCase;",
+        "use crate::application::agent_turn::use_cases::find::{FindUseCase as Case}; type Alias = Case;",
+        "type First = Second; type Second = FindUseCase;",
+        "type First = FindUseCase; type Second = First;",
+        "fn build() { type Local = FindUseCase; Local::new(); }",
+        "mod nested { type Local = FindUseCase; fn build() { Local::new(); } }",
+        "mod unrelated { use Other as Case; } use FindUseCase as Case; type Alias = Case;",
+        "use FindUseCase as Imported; use Imported as Renamed; type Alias = Renamed;",
+    ] {
+        assert!(
+            !find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+        assert!(
+            find_graph_dependencies_allowed("src/composition/find.rs", source),
+            "{source}"
+        );
+    }
+    for source in [
+        "// type Alias = FindUseCase;\n type Alias = NotFindUseCase; fn build() { Alias::new(); }",
+        "type Alias = Other; mod nested { type Alias = Different; fn build() { Alias::new(); } }",
+        "use First as Second; use Second as First; type Alias = First;",
+        "#[cfg(test)] mod tests { type Alias = FindUseCase; fn build() { Alias::new(); } }",
+    ] {
+        assert!(
+            find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+    }
+    assert!(!find_graph_dependencies_allowed(
+        "src/interface/tools/find.rs",
+        "type = ;"
+    ));
+}
+
+#[test]
+fn find_graph_guards_resolve_self_in_the_enclosing_impl() {
+    for (file, vertex) in [
+        ("src/interface/tools/find.rs", "FindTool"),
+        (
+            "src/application/agent_turn/use_cases/find.rs",
+            "FindUseCase",
+        ),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths"),
+    ] {
+        for source in [
+            format!("impl {vertex} {{ fn alternate() {{ Self::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ <Self>::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ <{vertex}>::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ type Alias = Self; Alias::new(); }} }}"),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+        assert!(find_graph_dependencies_allowed(
+            file,
+            &format!(
+                "impl {vertex} {{ fn new() -> Self {{ panic!() }} }} impl Other {{ fn alternate() {{ Self::new(); }} }}"
+            )
+        ));
+    }
 }
 
 fn infrastructure_outward_dependencies_allowed(source: &str) -> bool {

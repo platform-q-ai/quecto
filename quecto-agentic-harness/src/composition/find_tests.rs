@@ -80,3 +80,88 @@ async fn registered_find_cancellation_terminates_and_reaps_child() {
     .await
     .expect("child disappears including zombie: termination AND reaping");
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn registered_find_runtime_destruction_terminates_and_reaps() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    for multi_thread in [false, true] {
+        for close_pipes in ["", "exec 1>&-", "exec 1>&- 2>&-"] {
+            let dir = tempfile::tempdir().unwrap();
+            let binary = dir.path().join("fd-fixture");
+            let pidfile = dir.path().join("ready.pid");
+            std::fs::write(
+                &binary,
+                format!(
+                    "#!/bin/sh\n{close_pipes}\nprintf '%s' \"$$\" > '{}'\nwhile :; do :; done\n",
+                    pidfile.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let sandbox = Sandbox::new(Some(dir.path().to_path_buf()));
+            let tool = build_find_tool_with_binary(
+                Arc::new(dir.path().to_path_buf()),
+                Arc::new(sandbox.clone()),
+                binary.to_string_lossy().into_owned(),
+            );
+            let registry = build_official_tool_registry(
+                tool,
+                dir.path().to_path_buf(),
+                sandbox,
+                Default::default(),
+            );
+            let mut builder = if multi_thread {
+                let mut builder = tokio::runtime::Builder::new_multi_thread();
+                builder.worker_threads(2);
+                builder
+            } else {
+                tokio::runtime::Builder::new_current_thread()
+            };
+            let runtime = builder.enable_all().build().unwrap();
+            let mut invocation = Box::pin(registry.execute("find", r#"{"pattern":"*"}"#));
+            let pid = runtime.block_on(async {
+                tokio::select! {
+                    result = &mut invocation => panic!("unexpected early result: {result:?}"),
+                    pid = async {
+                        let deadline = Instant::now() + Duration::from_secs(5);
+                        loop {
+                            if let Ok(text) = std::fs::read_to_string(&pidfile) {
+                                if let Ok(pid) = text.parse::<i32>() { break pid; }
+                            }
+                            assert!(Instant::now() < deadline, "registered fixture readiness");
+                            tokio::task::yield_now().await;
+                        }
+                    } => pid,
+                }
+            });
+            // Cancel through actual registry dispatch immediately before teardown.
+            drop(invocation);
+            drop(runtime);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let process = std::path::PathBuf::from(format!("/proc/{pid}"));
+            while process.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let disappeared = matches!(process.try_exists(), Ok(false));
+            let mut status = 0;
+            // SAFETY: targets only this readiness-identified child with a valid status pointer.
+            let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            let error = std::io::Error::last_os_error();
+            if waited == 0 {
+                // SAFETY: clean up only our still-owned child on regression failure.
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
+                }
+            }
+            assert!(
+                disappeared && waited == -1 && error.raw_os_error() == Some(libc::ECHILD),
+                "registered cleanup: multi={multi_thread}, pipes={close_pipes:?}, pid={pid}, absent={disappeared}, waitpid={waited}, error={error}"
+            );
+        }
+    }
+}
