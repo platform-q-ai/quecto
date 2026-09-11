@@ -275,7 +275,9 @@ impl AgentCmdTool {
             .iter()
             .map(|(id, entry)| entry.effective_display_name(id).to_string())
             .collect();
-        for (_id, entry) in &removed {
+        let mut signalled_agents: Vec<String> = Vec::new();
+        let mut unsignalled_agents: Vec<String> = Vec::new();
+        for (id, entry) in &removed {
             let mut lifecycle = entry.lifecycle;
             let killed_status = super::subagent_lifecycle::apply_lifecycle_event(
                 &mut lifecycle,
@@ -294,13 +296,27 @@ impl AgentCmdTool {
                     kind: Default::default(),
                 }));
             }
-            // Abort the monitor task and SIGTERM the child process. The reaper
-            // task spawned by SpawnTool will wait() each child.
-            super::subagent_cascade::terminate_removed_entry(entry);
+            // Abort the monitor task and SIGTERM the child process when its
+            // lease allows it (#1925). The reaper task spawned by SpawnTool
+            // will wait() each launched child. An entry with a pid but no
+            // lease (container-reported, unconfirmed restore) is dropped from
+            // the registry WITHOUT a signal and reported as such.
+            let signalled = super::subagent_cascade::terminate_removed_entry(entry);
+            let name = entry.effective_display_name(id).to_string();
+            if signalled {
+                signalled_agents.push(name);
+            } else if entry.pid != 0 {
+                unsignalled_agents.push(name);
+            }
         }
 
         ToolResult {
-            content: killed_agents_result_json(&killed_agents).to_string(),
+            content: killed_agents_result_json(KilledAgents {
+                killed: &killed_agents,
+                signalled: &signalled_agents,
+                unsignalled: &unsignalled_agents,
+            })
+            .to_string(),
             is_error: false,
             image_blocks: vec![],
             delivery_metadata: None,
@@ -313,16 +329,27 @@ impl AgentCmdTool {
     }
 }
 
-fn killed_agents_result_json(agent_ids: &[String]) -> serde_json::Value {
+struct KilledAgents<'a> {
+    /// Every agent removed from the registry (display names).
+    killed: &'a [String],
+    /// Subset whose OS process this harness actually signalled.
+    signalled: &'a [String],
+    /// Subset with a pid that the harness had no lease to signal (#1925):
+    /// dropped from tracking, process left to its own harness.
+    unsignalled: &'a [String],
+}
+
+fn killed_agents_result_json(agents: KilledAgents<'_>) -> serde_json::Value {
     const MAX_REPORTED_AGENTS: usize = 20;
-    let shown: Vec<_> = agent_ids
-        .iter()
-        .take(MAX_REPORTED_AGENTS)
-        .cloned()
-        .collect();
-    let mut result = serde_json::json!({"killed": shown});
-    if agent_ids.len() > MAX_REPORTED_AGENTS {
-        result["omitted_agents"] = serde_json::json!(agent_ids.len() - MAX_REPORTED_AGENTS);
+    let capped =
+        |ids: &[String]| -> Vec<String> { ids.iter().take(MAX_REPORTED_AGENTS).cloned().collect() };
+    let mut result = serde_json::json!({
+        "killed": capped(agents.killed),
+        "signalled": capped(agents.signalled),
+        "unsignalled": capped(agents.unsignalled),
+    });
+    if agents.killed.len() > MAX_REPORTED_AGENTS {
+        result["omitted_agents"] = serde_json::json!(agents.killed.len() - MAX_REPORTED_AGENTS);
     }
     result
 }

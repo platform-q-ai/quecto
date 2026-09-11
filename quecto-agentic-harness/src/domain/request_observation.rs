@@ -124,6 +124,11 @@ impl RequestDiagnostics {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeIdentity {
     pub process_instance_id: String,
+    /// The reporting process's own pid in its pid namespace (0 when unknown,
+    /// for example a pre-#1925 peer). Lets a restoring parent confirm that a
+    /// persisted pid still names the harness answering on the socket.
+    #[serde(default)]
+    pub pid: u32,
     pub executable_digest_pending: bool,
     pub package_version: String,
     pub build_source_revision: Option<String>,

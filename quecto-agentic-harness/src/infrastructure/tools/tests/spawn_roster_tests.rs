@@ -11,7 +11,7 @@ fn register_and_broadcast_assigns_roster_global_sequence() {
         &registry,
         None,
         "first",
-        SubagentEntry::new(PathBuf::from("/tmp/first.sock"), 1),
+        SubagentEntry::new(PathBuf::from("/tmp/first.sock"), 0),
     )
     .unwrap();
     let first_sequence = registry
@@ -27,7 +27,7 @@ fn register_and_broadcast_assigns_roster_global_sequence() {
         &registry,
         None,
         "second",
-        SubagentEntry::new(PathBuf::from("/tmp/second.sock"), 2),
+        SubagentEntry::new(PathBuf::from("/tmp/second.sock"), 0),
     )
     .unwrap();
     let rows = crate::interface::cli::protocol::build_compact_subagent_roster(

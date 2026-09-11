@@ -12,10 +12,10 @@ fn child_entry(parent: &str) -> SubagentEntry {
 fn seed_tree() -> SubagentRegistry {
     let r = new_registry();
     let mut g = r.lock().unwrap();
-    g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+    g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 0));
     g.insert("c".into(), child_entry("p"));
     g.insert("gc".into(), child_entry("c"));
-    g.insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 4));
+    g.insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 0));
     drop(g);
     r
 }
@@ -25,11 +25,11 @@ fn cascade_remove_drops_agent_and_transitive_descendants() {
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
-        g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+        g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 0));
         g.insert("c".into(), child_entry("p"));
         g.insert("gc".into(), child_entry("c"));
         // An unrelated sibling tree that must survive.
-        g.insert("other".into(), SubagentEntry::new(PathBuf::from("/s"), 2));
+        g.insert("other".into(), SubagentEntry::new(PathBuf::from("/s"), 0));
         g.insert("other-c".into(), child_entry("other"));
     }
     let mut removed_ids: Vec<String> = cascade_remove(&r, "p")
@@ -55,7 +55,7 @@ fn cascade_remove_missing_agent_returns_empty() {
     let r = new_registry();
     r.lock()
         .unwrap()
-        .insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+        .insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 0));
     let removed = cascade_remove(&r, "ghost");
     assert!(removed.is_empty());
     assert!(r.lock().unwrap().contains_key("live"));
@@ -101,12 +101,12 @@ fn state_changed_event_serializes_read_only_observer_flag() {
     let r = new_registry();
     {
         let mut guard = r.lock().unwrap();
-        let mut observer = SubagentEntry::new(PathBuf::from("/observer.sock"), 11);
+        let mut observer = SubagentEntry::new(PathBuf::from("/observer.sock"), 0);
         observer.read_only = true;
         guard.insert("observer".into(), observer);
         guard.insert(
             "worker".into(),
-            SubagentEntry::new(PathBuf::from("/worker.sock"), 12),
+            SubagentEntry::new(PathBuf::from("/worker.sock"), 0),
         );
     }
 
@@ -140,7 +140,7 @@ fn state_changed_event_is_newline_terminated() {
     let r = new_registry();
     r.lock().unwrap().insert(
         "child".into(),
-        SubagentEntry::new(PathBuf::from("/c.sock"), 1),
+        SubagentEntry::new(PathBuf::from("/c.sock"), 0),
     );
     let event = build_state_changed_event(&r);
     assert!(
@@ -161,7 +161,7 @@ fn consecutive_state_changed_events_stay_line_framed() {
     let r = new_registry();
     r.lock().unwrap().insert(
         "child".into(),
-        SubagentEntry::new(PathBuf::from("/c.sock"), 1),
+        SubagentEntry::new(PathBuf::from("/c.sock"), 0),
     );
     let wire = format!(
         "{}{}",

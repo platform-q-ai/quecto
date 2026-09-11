@@ -13,6 +13,7 @@ pub fn current() -> RuntimeIdentity {
         });
     }
     RuntimeIdentity {
+        pid: std::process::id(),
         process_instance_id: INSTANCE
             .get_or_init(|| uuid::Uuid::new_v4().to_string())
             .clone(),

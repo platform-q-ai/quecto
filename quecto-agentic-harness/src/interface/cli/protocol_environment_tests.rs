@@ -32,13 +32,13 @@ fn build_subagent_info_list_carries_execution_backend_and_environment() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
-        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/impl.sock"), 7);
+        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/impl.sock"), 0);
         entry.environment_registry = Some(env_registry);
         entry.environment_ref = Some("C1".to_string());
         guard.insert("impl".to_string(), entry);
         guard.insert(
             "solo".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/solo.sock"), 8),
+            SubagentEntry::new(PathBuf::from("/tmp/solo.sock"), 0),
         );
     }
 
