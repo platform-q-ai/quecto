@@ -1,6 +1,6 @@
 //! Slice 2 (#1369): application-level environment control use case.
 //!
-//! `get_containers`, `kill_container`, and ref/name resolution are use cases;
+//! `kill_container` and ref/name resolution are use cases;
 //! UDS/tool handlers may only decode, delegate here, and encode.
 
 use std::sync::Arc;
@@ -66,23 +66,6 @@ fn block_on<F: std::future::Future>(f: F) -> F::Output {
         .build()
         .unwrap()
         .block_on(f)
-}
-
-#[test]
-fn get_containers_lists_from_the_authoritative_registry() {
-    let reg = EnvironmentRegistry::new();
-    let running = committed_env(&reg);
-    let stopped = committed_env(&reg);
-    let claim = reg.begin_kill(&stopped).unwrap();
-    reg.complete_kill(claim);
-    let uc = EnvironmentControlUseCase::new(reg.clone(), Arc::new(SpyKillPort::default()));
-    let listing = uc.get_containers();
-    let statuses: Vec<(String, EnvironmentStatus)> = listing
-        .iter()
-        .map(|r| (r.environment_ref.clone(), r.status.clone()))
-        .collect();
-    assert!(statuses.contains(&(running.clone(), EnvironmentStatus::Running)));
-    assert!(statuses.contains(&(stopped.clone(), EnvironmentStatus::Stopped)));
 }
 
 #[test]

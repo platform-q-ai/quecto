@@ -588,10 +588,17 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
 fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
+    // Cross the aggregate history-summary byte boundary with two multi-page,
+    // UTF-8 arguments. Repeating the oversized content length for each Unicode
+    // argument inflated this fixture to ~20 MiB (five times the 4 MiB budget),
+    // needlessly dominating the response deadline under coverage/shard load.
+    let chars_per_argument = HISTORY_RESPONSE_JSON_BUDGET / (2 * "λ".len()) + 1;
     let arguments = [
-        "λ".repeat(OVERSIZED_HISTORY_BODY_LEN),
-        "β".repeat(OVERSIZED_HISTORY_BODY_LEN),
+        "λ".repeat(chars_per_argument),
+        "β".repeat(chars_per_argument),
     ];
+    assert!(arguments.iter().map(String::len).sum::<usize>() > HISTORY_RESPONSE_JSON_BUDGET);
+    assert!(arguments.iter().all(|argument| argument.len() > 64 * 1024));
     let message = Message::assistant(
         "small content",
         vec![

@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::application::environment_control::EnvironmentControlUseCase;
+use crate::application::environments::ListEnvironmentsQuery;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::environment_control_app::EnvironmentControlUseCase;
 
 fn use_case(registry: EnvironmentRegistry) -> Arc<EnvironmentControlUseCase> {
     let kill_port = Arc::new(super::super::environment_kill::ScriptEnvironmentKill::new(
@@ -62,12 +63,16 @@ fn container_commands_are_recognized() {
 fn container_commands_require_wiring_and_star_agent_id() {
     let missing = block_on(execute_container_command(
         None,
+        None,
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
     assert!(missing.is_error && missing.content.contains("not available"));
 
-    let uc = use_case(EnvironmentRegistry::new());
+    let registry = EnvironmentRegistry::new();
+    let uc = use_case(registry.clone());
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
     let wrong_target = block_on(execute_container_command(
+        Some(&query),
         Some(&uc),
         &serde_json::json!({"agent_id":"child","command":"get_containers"}),
     ));
@@ -82,15 +87,18 @@ fn kill_container_decodes_exactly_one_string_target() {
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C1","name":"x"}),
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":1}),
     ] {
-        let result = block_on(execute_container_command(Some(&uc), &args));
+        let result = block_on(execute_container_command(None, Some(&uc), &args));
         assert!(result.is_error, "{}", result.content);
     }
 }
 
 #[test]
 fn listing_and_kill_round_trip_through_the_use_case() {
-    let uc = use_case(committed_registry());
+    let registry = committed_registry();
+    let uc = use_case(registry.clone());
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
     let listing = block_on(execute_container_command(
+        Some(&query),
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
@@ -100,6 +108,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     assert_eq!(parsed["containers"][0]["status"], "running");
 
     let killed = block_on(execute_container_command(
+        None,
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","name":"tool-env"}),
     ));
@@ -111,6 +120,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     );
 
     let unknown = block_on(execute_container_command(
+        None,
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C9"}),
     ));
@@ -131,4 +141,120 @@ fn kill_container_json_caps_long_member_lists() {
 fn use_case_debug_is_redacted_but_present() {
     let uc = use_case(EnvironmentRegistry::new());
     assert!(format!("{uc:?}").contains("EnvironmentControlUseCase"));
+}
+
+fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd::AgentCmdTool {
+    super::super::agent_cmd::AgentCmdTool::new(super::super::subagent_registry::new_registry())
+        .with_list_environments(query)
+}
+
+#[test]
+fn public_listing_query_only_empty_inventory_is_exact() {
+    use crate::domain::tool::Tool;
+    let query = Arc::new(ListEnvironmentsQuery::new(EnvironmentRegistry::new()));
+    let result = block_on(
+        query_only_tool(query.clone()).execute(r#"{"agent_id":"*","command":"get_containers"}"#),
+    )
+    .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, r#"{"containers":[]}"#);
+    assert_eq!(query.execution_count(), 1);
+}
+
+#[test]
+fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() {
+    use crate::domain::tool::Tool;
+    let registry = EnvironmentRegistry::new();
+    let mut expected = Vec::new();
+    for (index, (status, label)) in [
+        (EnvironmentStatus::Running, "running"),
+        (EnvironmentStatus::Running, "empty"),
+        (EnvironmentStatus::Killing, "killing"),
+        (EnvironmentStatus::Stopped, "stopped"),
+        (EnvironmentStatus::CleanupFailed, "cleanup-failed"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut record = committed_registry().get("C1").unwrap();
+        record.environment_ref = registry.mint_ref();
+        record.status = status;
+        record.name = (index % 2 == 0).then(|| format!("name-{index}"));
+        record.repository = format!("https://example.test/repo-{index}.git");
+        record.workspace_path = format!("/workspace/with space/{index}").into();
+        record.metadata = serde_json::json!({"index": index, "nested": {"ready": true}});
+        record.last_error = (index == 4).then(|| "cleanup detail".to_string());
+        if index == 1 {
+            record.members.clear();
+        }
+        expected.push(serde_json::json!({
+            "ref": format!("C{}", index + 1),
+            "name": record.name,
+            "status": label,
+            "workspace": format!("/workspace/with space/{index}"),
+            "repository": format!("https://example.test/repo-{index}.git"),
+            "environment_uuid": record.environment_uuid,
+            "members": if index == 1 { Vec::<String>::new() } else { vec!["impl-1517".into(), "rev-a".into()] },
+            "metadata": {"index": index, "nested": {"ready": true}},
+            "last_error": record.last_error,
+        }));
+        registry.commit(record);
+    }
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
+    let result = block_on(
+        query_only_tool(query.clone()).execute(r#"{"agent_id":"*","command":"get_containers"}"#),
+    )
+    .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
+        serde_json::json!({"containers": expected})
+    );
+    assert_eq!(query.execution_count(), 1);
+}
+
+#[test]
+fn public_listing_rejection_matrix_never_calls_query() {
+    use crate::domain::tool::Tool;
+    let query = Arc::new(ListEnvironmentsQuery::new(committed_registry()));
+    let tool = query_only_tool(query.clone());
+    for args in [
+        "not json",
+        "null",
+        "[]",
+        "{}",
+        r#"{"command":"get_containers"}"#,
+        r#"{"agent_id":null,"command":"get_containers"}"#,
+        r#"{"agent_id":1,"command":"get_containers"}"#,
+        r#"{"agent_id":{},"command":"get_containers"}"#,
+        r#"{"agent_id":[],"command":"get_containers"}"#,
+        r#"{"agent_id":true,"command":"get_containers"}"#,
+        r#"{"agent_id":"child","command":"get_containers"}"#,
+        r#"{"agent_id":"","command":"get_containers"}"#,
+        r#"{"agent_id":" *","command":"get_containers"}"#,
+        r#"{"agent_id":"*"}"#,
+        r#"{"agent_id":"*","command":null}"#,
+        r#"{"agent_id":"*","command":1}"#,
+        r#"{"agent_id":"*","command":true}"#,
+        r#"{"agent_id":"*","command":[]}"#,
+        r#"{"agent_id":"*","command":{}}"#,
+        r#"{"agent_id":"*","command":"GET_CONTAINERS"}"#,
+        r#"{"agent_id":"*","command":"get_containers "}"#,
+        r#"{"agent_id":"*","command":"unsupported"}"#,
+        r#"{"agent_id":"*","command":"kill_container","ref":"C1"}"#,
+    ] {
+        let result = block_on(tool.execute(args)).unwrap();
+        assert!(result.is_error, "{args}: {}", result.content);
+        assert_eq!(query.execution_count(), 0, "{args}");
+    }
+    let unwired =
+        super::super::agent_cmd::AgentCmdTool::new(super::super::subagent_registry::new_registry());
+    let result =
+        block_on(unwired.execute(r#"{"agent_id":"*","command":"get_containers"}"#)).unwrap();
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "agent_cmd error: environment listing is not available in this session"
+    );
+    assert_eq!(query.execution_count(), 0);
 }
