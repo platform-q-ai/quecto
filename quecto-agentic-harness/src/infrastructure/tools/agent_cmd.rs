@@ -30,7 +30,7 @@ pub struct AgentCmdTool {
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// Side-effect-free environment inventory query and kill owner.
     list_environments:
-        Option<std::sync::Arc<crate::application::environments::ListEnvironmentsQuery>>,
+        Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
     environment_control:
         Option<std::sync::Arc<crate::application::environment_control::EnvironmentControlUseCase>>,
 }
@@ -49,7 +49,7 @@ impl AgentCmdTool {
     /// Attach the session's side-effect-free inventory query.
     pub fn with_list_environments(
         mut self,
-        query: std::sync::Arc<crate::application::environments::ListEnvironmentsQuery>,
+        query: std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>,
     ) -> Self {
         self.list_environments = Some(query);
         self

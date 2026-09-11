@@ -1,8 +1,3 @@
-//! Session environment application queries.
+//! Session environment application capability.
 
-mod list_environments;
-
-pub use list_environments::ListEnvironmentsQuery;
-
-#[cfg(test)]
-mod list_environments_tests;
+pub mod use_cases;

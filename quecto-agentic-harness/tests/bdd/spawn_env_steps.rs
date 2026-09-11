@@ -210,7 +210,9 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         ),
     );
     let list_environments = std::sync::Arc::new(
-        quecto::application::environments::ListEnvironmentsQuery::new(environment_registry.clone()),
+        quecto::application::environments::use_cases::ListEnvironmentsQuery::new(
+            environment_registry.clone(),
+        ),
     );
     let environment_control = std::sync::Arc::new(
         quecto::application::environment_control::EnvironmentControlUseCase::new(

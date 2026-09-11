@@ -282,7 +282,7 @@ fn environment_control_orchestration_stays_out_of_interface_handlers() {
 
 #[test]
 fn list_environments_query_has_only_the_domain_registry_dependency() {
-    let path = "src/application/environments/list_environments.rs";
+    let path = "src/application/environments/use_cases/list_environments.rs";
     let content = fs::read_to_string(path).unwrap();
     assert!(
         query_dependencies_allowed(&content),
@@ -330,6 +330,7 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "crate",
                     "application",
                     "environments",
+                    "use_cases",
                     "ListEnvironmentsQuery",
                     ..,
                 ] => true,
@@ -1821,7 +1822,7 @@ fn dependency_allowlists_use_paths_not_substrings() {
     }
     for source in [
         "use crate::application::ports::EnvironmentRuntime;",
-        "use crate::application::{ports::EnvironmentRuntime, environments::ListEnvironmentsQuery};",
+        "use crate::application::{ports::EnvironmentRuntime, environments::use_cases::ListEnvironmentsQuery};",
     ] {
         assert!(application_dependencies_allowed(source), "{source}");
     }
@@ -1829,7 +1830,7 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::application::secret::Bad; // crate::application::ports",
         "use crate::application::{ports::Good, secret::Bad};",
         "fn effect() { crate::application::secret::run(); }",
-        "use crate::application::environments::ListEnvironmentsQueryExtra;",
+        "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }
