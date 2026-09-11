@@ -14,9 +14,10 @@ use std::sync::Arc;
 
 use super::subagent_registry::SubagentRegistry;
 use crate::domain::environment_finalization::{
-    EnvironmentFinalizationPort, EnvironmentFinalizationUseCase, MemberFinalizeMode,
+    CoordinatorLoss, EnvironmentFinalizationPort, EnvironmentFinalizationUseCase, HostedSwarmRun,
+    MemberFinalizeMode, SwarmRunObservation,
 };
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 use crate::domain::subagent_launch::LaunchFuture;
 
 /// Why a member is being finalized. Normal exits stop the emptied environment
@@ -167,7 +168,105 @@ impl From<FinalizeMode> for MemberFinalizeMode {
 
 struct ScriptEnvironmentFinalizationPort;
 
+/// Create-result metadata key naming the members' checkout: the directory the
+/// container adapter hands members as their working directory and swarm
+/// checkout root, identity-mounted so the supervising session reads the
+/// coordination store there (#1924). Absent for script sets that host no
+/// swarm; the ordinary final-member teardown then applies.
+pub(super) const CHECKOUT_METADATA_KEY: &str = "checkout";
+
+/// Sub-directory a repository-cloning script set checks the source out
+/// into, probed when a create result predates `metadata.checkout`.
+const REPO_CHECKOUT_SUBDIR: &str = "repo";
+
+/// The checkout the host may open a coordination store at (#1924): the
+/// create result's `metadata.checkout` when present, else the first of
+/// `<workspace>/repo` and `<workspace>` holding a store (older or third-party
+/// script sets). Either way the path must be absolute, `..`-free and — after
+/// resolving symlinks on both sides — at or under the record's workspace,
+/// the only host location a script-managed environment owns. Anything else
+/// is treated as no store at all rather than a place to run an interpreter.
+pub(super) fn hosted_checkout(record: &EnvironmentRecord) -> Option<std::path::PathBuf> {
+    match record
+        .metadata
+        .get(CHECKOUT_METADATA_KEY)
+        .and_then(serde_json::Value::as_str)
+        .filter(|checkout| !checkout.is_empty())
+    {
+        Some(advertised) => contained_checkout(record, std::path::Path::new(advertised)),
+        None => [
+            record.workspace_path.join(REPO_CHECKOUT_SUBDIR),
+            record.workspace_path.clone(),
+        ]
+        .iter()
+        .filter(|candidate| super::swarm_bridge::store_database(candidate).is_file())
+        .find_map(|candidate| contained_checkout(record, candidate)),
+    }
+}
+
+fn contained_checkout(
+    record: &EnvironmentRecord,
+    checkout: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let plain = |path: &std::path::Path| {
+        path.is_absolute()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    };
+    if !plain(checkout) || !plain(&record.workspace_path) {
+        return None;
+    }
+    // Resolve symlinks on both sides so a link under the workspace pointing
+    // elsewhere cannot lead the host outside it.
+    let resolved = std::fs::canonicalize(checkout).ok()?;
+    let workspace = std::fs::canonicalize(&record.workspace_path).ok()?;
+    resolved.starts_with(&workspace).then_some(resolved)
+}
+
+fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {
+    hosted_checkout(record).map(super::swarm_bridge::HostedStore::at)
+}
+
 impl EnvironmentFinalizationPort for ScriptEnvironmentFinalizationPort {
+    fn observe_hosted_swarm_run<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> LaunchFuture<'a, SwarmRunObservation> {
+        Box::pin(async move {
+            let Some(store) = hosted_store(record) else {
+                return SwarmRunObservation::NoStore;
+            };
+            match store.hosted_run() {
+                Ok(Some(run)) => SwarmRunObservation::Run(run),
+                Ok(None) => SwarmRunObservation::NoStore,
+                Err(error) => {
+                    tracing::warn!(
+                        environment_id = %record.environment_id,
+                        %error,
+                        "hosted swarm run could not be observed; environment retained"
+                    );
+                    SwarmRunObservation::Unreadable(error.to_string())
+                }
+            }
+        })
+    }
+
+    fn record_lost_coordinator<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+        hosted: &'a HostedSwarmRun,
+    ) -> LaunchFuture<'a, Result<CoordinatorLoss, String>> {
+        Box::pin(async move {
+            let store = hosted_store(record)
+                .ok_or_else(|| "environment advertises no checkout".to_string())?;
+            store
+                .record_lost_coordinator(&hosted.coordinator)
+                .map_err(|error| error.to_string())
+        })
+    }
+
     fn run_retained_inspect<'a>(
         &'a self,
         environment_id: &'a str,

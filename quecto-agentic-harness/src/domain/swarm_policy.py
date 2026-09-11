@@ -39,9 +39,13 @@ def require_budget(run, now):
         raise SwarmError('run is paused (budget-exhausted: deadline); no new work permitted')
 
 
-def resume_blockers(run, resumed_deadline, now, budget_decision):
-    """Why a resume would pause again at once; empty when it may proceed."""
+def resume_blockers(run, resumed_deadline, now, budget_decision, lost_coordinator=None):
+    """Why a resume would pause again at once; empty when it may proceed.
+    A coordinator whose harness was lost (#1924) leaves nobody to drive the
+    resumed run, so the run stays paused until that member is relaunched."""
     blockers = []
+    if lost_coordinator:
+        blockers.append(f"relaunch the lost coordinator '{lost_coordinator}' into the retained environment before resuming")
     if resumed_deadline <= now:
         blockers.append('extend the deadline (swarm_control extend) before resuming')
     if budget_decision == 'pause':

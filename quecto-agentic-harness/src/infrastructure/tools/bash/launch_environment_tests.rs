@@ -9,6 +9,7 @@ async fn trial_ordinary_commands_do_not_inherit_swarm_launch_identity() {
         ("QUECTO_SWARM_BOOTSTRAP".into(), "1".into()),
         ("QUECTO_SWARM_CONTAINER".into(), "isolated-pid-v1".into()),
         ("QUECTO_SWARM_HOST_PID_NS".into(), "pid:[1]".into()),
+        ("RUST_LOG".into(), "info".into()),
         ("TRIAL_SENTINEL".into(), "preserved".into()),
     ]);
     let output = super::build_shell_command(&PathBuf::from("/tmp"), "env", Some(&env))
@@ -20,5 +21,9 @@ async fn trial_ordinary_commands_do_not_inherit_swarm_launch_identity() {
     assert!(
         !stdout.contains("QUECTO_SWARM_"),
         "test runtimes inherit live enrollment: {stdout}"
+    );
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("RUST_LOG=")),
+        "tool children must not inherit the harness log level (#1924): {stdout}"
     );
 }

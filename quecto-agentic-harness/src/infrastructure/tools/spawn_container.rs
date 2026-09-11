@@ -450,6 +450,21 @@ async fn spawn_script_managed_child(
             return Err(e);
         }
     };
+    if result
+        .metadata
+        .get(super::subagent_cleanup::CHECKOUT_METADATA_KEY)
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        // Without it the host probes <workspace>/repo and <workspace> for a
+        // coordination store before deciding whether a swarm's box must be
+        // kept (#1924); say so once per create so a script author notices.
+        tracing::warn!(
+            environment_id = %result.environment_id,
+            script = %config_name,
+            "create result omits metadata.checkout; swarm retention will probe the workspace for the coordination store"
+        );
+    }
     environments.commit(EnvironmentRecord {
         environment_ref: environment_ref.clone(),
         environment_id: result.environment_id.clone(),

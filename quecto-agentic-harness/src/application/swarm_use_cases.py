@@ -25,6 +25,7 @@ class CoordinationTransaction(Protocol):
     def members(self): ...
     def pause_started(self): ...
     def control_receipt(self): ...
+    def lost_coordinator(self): ...
     def claim_wake_events(self, actor, generation): ...
     def set_deadline(self, deadline): ...
     def notification_events(self, actor): ...
@@ -66,6 +67,21 @@ class Coordination:
                 tx.event('reserved', {'member': identity})
             return tx.member(identity)
 
+    def _receipt(self, tx):
+        """The repository receipt plus the blockers a resume would hit now
+        (#1924), so a supervisor sees why a paused run cannot simply resume."""
+        return dict(tx.control_receipt(), resume_blockers=self._resume_blockers(tx))
+
+    def _resume_blockers(self, tx):
+        run = tx.run()
+        if run['status'] != 'paused':
+            return []
+        now = self.clock()
+        deadline = run['deadline'] + max(0, now - tx.pause_started())
+        report = tx.usage_report()
+        return resume_blockers(run, deadline, now, usage_budget_decision(report['budget'], report['totals']),
+                               tx.lost_coordinator())
+
     def _end(self, tx, outcome, reason):
         """End the run as a resumable pause holding `outcome` (#1729)."""
         tx.propose_outcome(outcome, reason)
@@ -87,7 +103,7 @@ class Coordination:
             run = tx.run()
             if status == 'cancelled':
                 if run['status'] == 'cancelled':
-                    return tx.control_receipt()
+                    return self._receipt(tx)
                 if run['status'] == 'setup':
                     raise SwarmError('run not created yet; nothing to cancel')
                 if run['status'] not in ('running', 'paused'):
@@ -95,13 +111,13 @@ class Coordination:
                 tx.clear_outcome()
                 tx.set_outcome('cancelled')
                 tx.event('stop', {'status': status, 'reason': reason})
-                return tx.control_receipt()
+                return self._receipt(tx)
             if run['status'] == 'paused' and run.get('outcome') == status:
-                return tx.control_receipt()
+                return self._receipt(tx)
             if run['status'] != 'running':
                 raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it")
             self._end(tx, status, reason)
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def revalidate_task(self, identity, revision, evidence):
         with self.operation(coordinator=True) as tx:
@@ -114,11 +130,11 @@ class Coordination:
     def pause(self, reason):
         with self.operation(active=False, coordinator=True) as tx:
             if tx.run()['status'] == 'paused':
-                return tx.control_receipt()
+                return self._receipt(tx)
             authorize(tx.run(), self.actor, tx.member(self.actor), active=True)
             tx.set_outcome('paused')
             tx.event('paused', {'reason': reason, 'started': self.clock()})
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def resume(self, external=False):
         """Only the supervisor outside the swarm resumes a paused run (#1729)."""
@@ -128,21 +144,20 @@ class Coordination:
         with self.operation(active=False, coordinator=True) as tx:
             run = tx.run()
             if run['status'] == 'running':
-                return tx.control_receipt()
+                return self._receipt(tx)
             if run['status'] != 'paused':
                 raise SwarmError('only a paused run may resume')
             now = self.clock()
             elapsed = max(0, now - tx.pause_started())
             deadline = run['deadline'] + elapsed
-            report = tx.usage_report()
-            blockers = resume_blockers(run, deadline, now, usage_budget_decision(report['budget'], report['totals']))
+            blockers = self._resume_blockers(tx)
             if blockers:
                 raise SwarmError('resume would pause again at once: ' + '; '.join(blockers))
             tx.set_deadline(deadline)
             tx.clear_outcome()
             tx.set_outcome('running')
             tx.event('resumed', {'paused_seconds': elapsed, 'outcome': run.get('outcome')})
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def close(self, external=False):
         """Make the outcome a paused run holds terminal; supervisor only (#1729)."""
@@ -154,7 +169,7 @@ class Coordination:
                 raise SwarmError(f"run is {run['status']} without a proposed outcome; resume it or cancel the run")
             tx.set_outcome(run['outcome'])
             tx.event('closed', {'status': run['outcome'], 'reason': run.get('outcome_reason')})
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def extend_deadline(self, seconds, external=False):
         """Grant wall-clock budget to a paused run; supervisor only (#1729)."""
@@ -175,7 +190,7 @@ class Coordination:
                 raise SwarmError('deadline may be at most seven days ahead, as at creation')
             tx.set_deadline(base + seconds)
             tx.event('extended', {'seconds': seconds, 'deadline': base + seconds})
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def accept_wake(self, generation):
         from swarm_policy import SwarmError
@@ -212,7 +227,7 @@ class Coordination:
         with self.operation(active=False, read_only=True) as tx:
             tx.record_request(self.actor, record, measurement)
             self._apply_usage_budget(tx)
-            return tx.control_receipt()
+            return self._receipt(tx)
 
     def request_admission(self):
         with self.operation(active=False, read_only=True) as tx:
@@ -235,4 +250,4 @@ class Coordination:
 
     def control_status(self):
         with self.operation(active=False, read_only=True) as tx:
-            return tx.control_receipt()
+            return self._receipt(tx)

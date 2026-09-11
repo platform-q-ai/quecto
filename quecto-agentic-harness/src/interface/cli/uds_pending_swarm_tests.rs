@@ -16,6 +16,7 @@ impl SwarmRunControl for Control {
                 outcome: None,
                 reason: None,
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
                 wake_allowed: false,
                 status: self.0,
                 generation: 1,
@@ -160,6 +161,7 @@ impl SwarmRunControl for RunningAt {
                 outcome: None,
                 reason: None,
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
                 wake_allowed: false,
                 status: RunStatus::Running,
                 generation: self.0,
@@ -249,6 +251,7 @@ impl SwarmRunControl for Answer {
                     outcome: None,
                     reason: None,
                     wake_warnings: Vec::new(),
+                    resume_blockers: Vec::new(),
                     wake_allowed: false,
                     status,
                     generation,
@@ -725,6 +728,7 @@ impl SwarmRunControl for Rising {
                 status: RunStatus::Running,
                 generation: self.0.fetch_add(10, std::sync::atomic::Ordering::SeqCst),
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
             })
         })
     }

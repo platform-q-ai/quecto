@@ -117,6 +117,7 @@ impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
                 outcome: None,
                 reason: None,
                 wake_warnings: Vec::new(),
+                resume_blockers: Vec::new(),
                 wake_allowed: false,
                 status: crate::domain::swarm::RunStatus::Paused,
                 generation: 42,
@@ -275,4 +276,96 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
             assert_eq!(response["data"]["generation"], 42, "{response}");
         }
     }
+}
+
+/// A control port whose receipt carries resume blockers (#1924).
+struct BlockedSwarmControl;
+impl crate::domain::swarm::SwarmRunControl for BlockedSwarmControl {
+    fn apply(
+        &self,
+        _: crate::domain::swarm::RunControlAction,
+    ) -> crate::domain::subagent_launch::LaunchFuture<
+        '_,
+        Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
+    > {
+        Box::pin(async {
+            Ok(crate::domain::swarm::RunControlReceipt {
+                budget: None,
+                outcome: Some(crate::domain::swarm::RunStatus::Failed),
+                reason: Some("harness exited".into()),
+                wake_warnings: Vec::new(),
+                resume_blockers: vec![
+                    "relaunch the lost coordinator 'member-7' into the retained environment before resuming"
+                        .into(),
+                ],
+                wake_allowed: false,
+                status: crate::domain::swarm::RunStatus::Paused,
+                generation: 7,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn swarm_control_status_reply_surfaces_resume_blockers() {
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+    super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+    let (commands, _receiver) = tokio::sync::mpsc::channel(1);
+    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let (broadcast, _) = tokio::sync::broadcast::channel(4);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
+        std::sync::Arc::new(BlockedSwarmControl),
+    ));
+    assert!(
+        dispatch(ReaderDispatchCtx {
+            line: r#"{"type":"swarm_control","action":"status","id":"s1"}"#.into(),
+            cancel_handle: &cancel,
+            turn_control: &control,
+            snapshot: &snapshot,
+            registry: &registry,
+            subagent_registry: &None,
+            broadcast_tx: &broadcast,
+            client_id: 1,
+            cmd_tx: &commands,
+        })
+        .await
+    );
+    let response: serde_json::Value = serde_json::from_str(&replies.recv().await.unwrap()).unwrap();
+    assert_eq!(response["success"], true, "{response}");
+    assert_eq!(response["data"]["status"], "paused");
+    assert_eq!(response["data"]["outcome"], "failed");
+    assert_eq!(
+        response["data"]["resume_blockers"],
+        serde_json::json!([
+            "relaunch the lost coordinator 'member-7' into the retained environment before resuming"
+        ]),
+        "{response}"
+    );
+    // The plain receipt (no blockers) carries no key at all.
+    let control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
+        std::sync::Arc::new(TestSwarmControl),
+    ));
+    assert!(
+        dispatch(ReaderDispatchCtx {
+            line: r#"{"type":"swarm_control","action":"status","id":"s2"}"#.into(),
+            cancel_handle: &cancel,
+            turn_control: &control,
+            snapshot: &snapshot,
+            registry: &registry,
+            subagent_registry: &None,
+            broadcast_tx: &broadcast,
+            client_id: 1,
+            cmd_tx: &commands,
+        })
+        .await
+    );
+    let response: serde_json::Value = serde_json::from_str(&replies.recv().await.unwrap()).unwrap();
+    assert!(
+        response["data"].get("resume_blockers").is_none(),
+        "{response}"
+    );
 }

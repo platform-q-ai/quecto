@@ -194,6 +194,9 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             if !receipt.wake_warnings.is_empty() {
                 data["wake_warnings"] = serde_json::Value::from(receipt.wake_warnings);
             }
+            if !receipt.resume_blockers.is_empty() {
+                data["resume_blockers"] = serde_json::Value::from(receipt.resume_blockers);
+            }
             super::protocol::AgentEvent::ok(id.as_deref(), "swarm_control", Some(data))
         }
         Err(error) => {

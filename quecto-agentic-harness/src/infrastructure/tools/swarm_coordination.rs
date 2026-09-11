@@ -28,7 +28,7 @@ struct WireSnapshot {
 fn invalid(message: impl std::fmt::Display) -> DomainError {
     DomainError::Tool(format!("invalid swarm coordination response: {message}"))
 }
-fn decode_status(status: &str) -> Result<RunStatus, DomainError> {
+pub(super) fn decode_status(status: &str) -> Result<RunStatus, DomainError> {
     Ok(match status {
         "setup" => RunStatus::Setup,
         "running" => RunStatus::Running,
@@ -137,6 +137,16 @@ impl SwarmContext {
             outcome: value["outcome"].as_str().map(decode_status).transpose()?,
             reason: value["reason"].as_str().map(str::to_owned),
             wake_warnings: Vec::new(),
+            resume_blockers: value["resume_blockers"]
+                .as_array()
+                .map(|blockers| {
+                    blockers
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
             generation: value["generation"]
                 .as_u64()
                 .ok_or_else(|| invalid("missing control generation"))?,

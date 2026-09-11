@@ -300,9 +300,14 @@ printf '%s\n' "$environment_id" >>"$state_dir/creates.log"
 
 # metadata.repository is how listings/TUI learn the source truthfully: the
 # config owns its repository, so only the script can report it (#1410).
+# metadata.checkout is the members' working directory and swarm checkout root
+# (QUECTO_SWARM_CHECKOUT), identity-mounted so the supervising session can
+# read the coordination store there after the members' sockets are gone and
+# keep the environment instead of destroying a resumable run (#1924).
 jq -cn \
   --arg id "$environment_id" \
   --arg workspace "$workspace_path" \
+  --arg checkout "$child_cwd" \
   --arg socket "$socket_path" \
   --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg image "$image" \
@@ -311,4 +316,4 @@ jq -cn \
   --arg source "$source" \
   --arg repository "$repo" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

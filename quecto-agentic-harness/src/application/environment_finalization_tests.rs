@@ -16,9 +16,9 @@ enum ScriptEvent {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ScriptCall {
-    environment_id: String,
-    argv: Vec<String>,
+pub(super) struct ScriptCall {
+    pub(super) environment_id: String,
+    pub(super) argv: Vec<String>,
 }
 
 struct SpyFinalizationPort {
@@ -146,11 +146,11 @@ fn committed_env_with_scripts(
     env_ref
 }
 
-fn committed_env(registry: &EnvironmentRegistry, members: Vec<&str>) -> String {
+pub(super) fn committed_env(registry: &EnvironmentRegistry, members: Vec<&str>) -> String {
     committed_env_with_kill(registry, members, vec!["kill.sh".to_string()])
 }
 
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
+pub(super) fn block_on<F: std::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)
 }
 

@@ -164,8 +164,10 @@ class Workbench(Tasks):
         """Harness-only, membership-free: has a run been created in this container?
         The bootstrap placeholder carries deadline 0; `create` requires a future one."""
         with self.store.transaction() as db:
-            row = db.execute('SELECT status, deadline FROM run').fetchone()
-        return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0}
+            row = db.execute('SELECT status, deadline, coordinator, outcome FROM run').fetchone()
+        return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0,
+                'coordinator': row['coordinator'] if row else None,
+                'outcome': row['outcome'] if row else None}
 
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:
@@ -349,6 +351,26 @@ class Workbench(Tasks):
             self.store.event(db, 'scope_unknown', {'member': member,
                 'reason': 'harness exited; execution scope unconfirmed; discard environment'})
             self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+
+    def _lose_coordinator(self):
+        """Harness-only (#1924): the supervising session outside the container
+        lost this coordinator's socket. In ONE store operation (so the expiry
+        block and any concurrent end are observed first): a run that already
+        ended, closed or was cancelled is left alone; a running run, or a pause
+        holding no outcome, is quarantined as a lost harness. Returns the
+        resulting run state and whether a loss was recorded."""
+        with self.store.operation(active=False) as (db, run):
+            ended = run['status'] not in ('setup', 'running') and not (
+                run['status'] == 'paused' and not run.get('outcome'))
+            lost = False
+            if not ended:
+                self.store.event(db, 'scope_unknown', {'member': self.member,
+                    'reason': 'harness exited; execution scope unconfirmed; discard environment'})
+                self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+                lost = True
+            row = db.execute('SELECT status, outcome, deadline, coordinator FROM run').fetchone()
+            return {'status': row['status'], 'outcome': row['outcome'], 'deadline': row['deadline'],
+                    'coordinator': row['coordinator'], 'lost': lost}
 
     def _end_by_loss(self, db, run, reason):
         """A lost harness ends a running run as a pause holding `failed` (#1729);

@@ -22,6 +22,13 @@ pub enum EnvironmentStatus {
     Stopped,
     /// Kill failed; retryable via another kill, with `last_error` retained.
     CleanupFailed,
+    /// Emptied after its swarm run ended or lost its coordinator (#1924): the
+    /// final-member kill was deliberately withheld so the board, checkout and
+    /// unpushed work survive for inspection. Killable only by an explicit
+    /// `kill_container`; a join is admitted for inspection but never revives
+    /// it (no automatic teardown can follow), so a rolled-back or exited
+    /// joiner leaves it retained.
+    Retained,
 }
 
 /// How a caller addresses an existing environment.
@@ -111,6 +118,7 @@ impl EnvironmentRecord {
             EnvironmentStatus::Killing => "killing",
             EnvironmentStatus::Stopped => "stopped",
             EnvironmentStatus::CleanupFailed => "cleanup-failed",
+            EnvironmentStatus::Retained => "retained",
         }
     }
 }
@@ -221,7 +229,7 @@ impl EnvironmentRegistry {
     ) -> Result<EnvironmentRecord, EnvironmentLookupError> {
         let record = self.resolve(target)?;
         match record.status {
-            EnvironmentStatus::Running => Ok(record),
+            EnvironmentStatus::Running | EnvironmentStatus::Retained => Ok(record),
             EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
                 record.environment_ref.clone(),
             )),
@@ -281,7 +289,7 @@ impl EnvironmentRegistry {
             .get_mut(environment_ref)
             .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
         match record.status {
-            EnvironmentStatus::Running => {
+            EnvironmentStatus::Running | EnvironmentStatus::Retained => {
                 if !record.members.iter().any(|m| m == agent_uuid) {
                     record.members.push(agent_uuid.to_string());
                 }
@@ -330,7 +338,9 @@ impl EnvironmentRegistry {
             .get_mut(environment_ref)
             .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
         match record.status {
-            EnvironmentStatus::Running | EnvironmentStatus::CleanupFailed => {
+            EnvironmentStatus::Running
+            | EnvironmentStatus::CleanupFailed
+            | EnvironmentStatus::Retained => {
                 record.status = EnvironmentStatus::Killing;
                 Ok(KillClaim {
                     environment_ref: record.environment_ref.clone(),
@@ -415,6 +425,23 @@ impl EnvironmentRegistry {
             state.inspect_failures.insert(claim.environment_ref.clone());
             if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
                 record.last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    /// Withhold the claimed final-member kill (#1924): the environment stays
+    /// alive as `Retained`, with `reason` recorded on its metadata under
+    /// `retained`, until an explicit `kill_container`.
+    pub fn retain(&self, claim: KillClaim, reason: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            debug_assert_eq!(record.status, EnvironmentStatus::Killing);
+            record.status = EnvironmentStatus::Retained;
+            record.members.clear();
+            if let Some(object) = record.metadata.as_object_mut() {
+                object.insert("retained".to_string(), serde_json::json!(reason));
+            } else {
+                record.metadata = serde_json::json!({ "retained": reason });
             }
         }
     }
