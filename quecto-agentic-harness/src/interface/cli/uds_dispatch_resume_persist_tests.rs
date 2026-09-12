@@ -718,8 +718,6 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
                 agent_uuid: "stale-child".into(),
                 display_name: "stale child".into(),
                 session_key: "stale-child".into(),
-                socket_path: "/tmp/stale.sock".into(),
-                pid: 0,
                 liveness: SubagentLiveness::Dead,
                 restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,

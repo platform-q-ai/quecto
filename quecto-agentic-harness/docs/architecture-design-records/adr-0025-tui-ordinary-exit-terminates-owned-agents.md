@@ -103,3 +103,27 @@ Cleanup is an independent process-ownership concern. A saved empty roster does
 not prove process termination, and a visible historical tool result does not prove
 that a child is still alive. Persistence failures and cleanup timeouts remain
 reported rather than silently treated as successful exit durability/termination.
+
+## Lifetime correction — #1937 (epic #1929)
+
+This correction supersedes the **live reattach** classification above and the
+"Recovery after a crash / session resume in a new harness" row of the #1608
+table. Under #1935 a launcher-created child is lifetime-scoped to the harness
+that launched it: it is started without `--persist`, ignores ordinary client
+churn because it is launch-bound, and runs the common shutdown when its bound
+parent connection is lost. A restored session therefore cannot describe a
+live child of the restoring harness, and restore no longer tries to find one:
+
+| Lifecycle | Operational roster policy |
+| --- | --- |
+| Session resume (`resume_session`) or a new harness loading a saved session | Restore the transcript, workflow run and past child messages. Reset the operational roster to empty. Persisted rows of every liveness/reason — live, detached, dead, killed, unknown, malformed — are history only: no socket probe, no pid compare, no monitor, no readoption. The master re-spawns needed workers with a fresh identity and launch generation. |
+| Reconnect to a still-running harness | Unchanged: the harness's in-memory registry. |
+| Top-level `quecto agent --persist` | Unchanged and still supported. |
+
+The session roster schema keeps identity, display, status, parent/read-only
+metadata and undelivered report bookkeeping as history; the child's
+`socketPath` and `pid` are no longer written and are ignored when read from a
+legacy record (migrated on the next save). The identity-verification path
+(`verify_persisted_live_subagent`), the restore-time pid confirmation and its
+signal lease are retired. Historical rows are never synthesised into the
+operational roster and nothing restarts automatically.

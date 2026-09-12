@@ -6,10 +6,7 @@ use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
     remove_injected_system_prompt,
 };
-use crate::domain::session::{
-    PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
-};
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
+use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentRestoreReason};
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -64,8 +61,6 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
             agent_uuid: entry.agent_uuid.as_str().to_string(),
             display_name: entry.effective_display_name(key).to_string(),
             session_key: entry.agent_uuid.as_str().to_string(),
-            socket_path: entry.socket_path.clone(),
-            pid: entry.pid,
             liveness: entry.persisted_liveness,
             restore_reason,
             parent_id: entry.parent_id.clone(),
@@ -79,142 +74,100 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
     roster
 }
 
-/// Outcome of a successful restore-time socket round-trip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VerifiedLiveSubagent {
-    /// The harness answering on the socket self-reported the persisted pid
-    /// (#1925). Only then may the restored row be signalled: the pid is
-    /// confirmed to name that harness in OUR pid namespace, not a reused or
-    /// container-local number.
-    pub pid_confirmed: bool,
-}
-
-pub(crate) fn verify_persisted_live_subagent(
-    entry: &PersistedSubagentRosterEntry,
-) -> Option<VerifiedLiveSubagent> {
-    use std::io::{Read, Write};
-    use std::time::Duration;
-
-    if entry.socket_path.as_os_str().is_empty()
-        || entry.agent_uuid.is_empty()
-        || entry.session_key.is_empty()
-    {
-        return None;
-    }
-    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&entry.socket_path) else {
-        return None;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-    let request_id = format!("restore-verify-{}", entry.agent_uuid);
-    let request = serde_json::json!({
-        "type": "get_session_stats",
-        "id": request_id,
-    })
-    .to_string();
-    let Ok(len) = u32::try_from(request.len()) else {
-        return None;
-    };
-    if stream.write_all(&len.to_be_bytes()).is_err()
-        || stream.write_all(request.as_bytes()).is_err()
-        || stream.flush().is_err()
-    {
-        return None;
-    }
-    let mut prefix = [0u8; 4];
-    if stream.read_exact(&mut prefix).is_err() {
-        return None;
-    }
-    let response_len = u32::from_be_bytes(prefix) as usize;
-    if response_len > quecto_line_io::PROTOCOL_FRAME_CAP_BYTES {
-        return None;
-    }
-    let mut payload = vec![0u8; response_len];
-    if stream.read_exact(&mut payload).is_err() {
-        return None;
-    }
-    let Ok(response) = serde_json::from_slice::<serde_json::Value>(&payload) else {
-        return None;
-    };
-    let identity_matches = response.get("type").and_then(|v| v.as_str()) == Some("response")
-        && response.get("id").and_then(|v| v.as_str()) == Some(request_id.as_str())
-        && response.get("success").and_then(|v| v.as_bool()) == Some(true)
-        && response
-            .get("data")
-            .and_then(|data| data.get("sessionKey"))
-            .and_then(|v| v.as_str())
-            == Some(entry.session_key.as_str());
-    if !identity_matches {
-        return None;
-    }
-    // Affirmative pid confirmation: the peer's self-reported pid must equal
-    // the persisted one and be nonzero. A pre-#1925 peer (no `runtime.pid`)
-    // or a container-local pid fails this and stays unsignallable.
-    let reported_pid = response
-        .pointer("/data/runtime/pid")
-        .and_then(|v| v.as_u64())
-        .and_then(|pid| u32::try_from(pid).ok())
-        .unwrap_or(0);
-    Some(VerifiedLiveSubagent {
-        pid_confirmed: reported_pid != 0 && reported_pid == entry.pid,
-    })
-}
-
-fn entry_from_persisted_subagent(
-    mut persisted: PersistedSubagentRosterEntry,
-) -> Option<(String, SubagentEntry)> {
-    // Legacy ordinary-exit markers are compatible with old no-kill/external-detach
-    // saves only after live socket identity verification. Never recreate stopped
-    // rows synthetically as Detached/Idle agents.
-    if !matches!(
-        persisted.restore_reason,
-        SubagentRestoreReason::LegacyUnspecified | SubagentRestoreReason::OrdinaryTuiExitStopped
-    ) || persisted.liveness == SubagentLiveness::Dead
-        || matches!(persisted.status.as_deref(), Some("exited" | "dead"))
-    {
-        return None;
-    }
-    let verified = verify_persisted_live_subagent(&persisted)?;
-    let key = persisted.agent_uuid.clone();
-    let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
-        persisted.display_name,
-        persisted.socket_path,
-        persisted.pid,
-    );
-    // #1925: the previous harness launched this child; nothing else can reach
-    // it now. Grant a signallable lease only when the live socket round-trip
-    // confirmed the pid names that very harness in our namespace.
-    if verified.pid_confirmed {
-        entry.confirm_reported_pid_in_our_namespace();
-    }
-    entry.status = SubagentStatus::Idle;
-    entry.persisted_liveness = SubagentLiveness::Live;
-    entry.parent_id = persisted.parent_id.take();
-    entry.read_only = persisted.read_only;
-    entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
-    entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
-    entry.pending_message_reports = persisted.pending_message_reports;
-    Some((key, entry))
-}
-
-pub(crate) fn restore_persisted_subagent_roster(
+/// Reset the operational child roster for a restored session (#1937).
+///
+/// A launcher-created child is lifetime-scoped to the harness that launched
+/// it, so no persisted record can describe a live child of *this* harness.
+/// Restore therefore creates **no** operational row from the persisted
+/// roster: no socket probe, no pid compare, no monitor, no readoption. Legacy
+/// rows — live, detached, dead or malformed alike — are read only to be
+/// ignored; the transcript, workflow and past child messages are restored by
+/// the caller, and the master explicitly re-spawns the workers it needs with
+/// a fresh identity and launch generation.
+pub(crate) fn reset_subagent_roster_on_restore(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    roster: Vec<PersistedSubagentRosterEntry>,
+    persisted: &[PersistedSubagentRosterEntry],
 ) {
     let Some(registry) = registry else { return };
-    // Probe sockets BEFORE taking the registry mutex (N1): verify does blocking
-    // UDS IO with up to 500ms timeouts, and holding the lock across that stalls
-    // concurrent get_subagents / spawn registration during resume.
-    let restored_entries: Vec<_> = roster
-        .into_iter()
-        .filter_map(entry_from_persisted_subagent)
-        .collect();
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries.clear();
-    for (agent_uuid, entry) in restored_entries {
-        entries.insert(agent_uuid, entry);
+    if !persisted.is_empty() {
+        tracing::info!(
+            ignored_rows = persisted.len(),
+            "session restore: persisted subagent rows are history only; no child readopted"
+        );
     }
+    registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Bound on waiting for the current session's owned children to exit after
+/// the session-transition teardown: the protocol ACK (5 s) plus the
+/// acknowledged-exit wait (10 s) plus the TERM and KILL graces (2 s each).
+const SESSION_TRANSITION_EXIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Tear down the current session's children before the harness switches
+/// away from it (`resume_session` into another session, `new_session`).
+///
+/// Interim for #1937 until #1938 migrates the session-transition exit into
+/// the application-owned teardown: a launcher-created child cannot be
+/// readopted by any later session (restore creates no operational row), so
+/// a child left running past this point would be unreachable from every
+/// teardown path until the master exits. The existing registry-driven
+/// teardown runs — supervisor termination protocol-first for owned children,
+/// the environment kill plans for container members — on a blocking thread,
+/// then the owned children's exit is awaited within a bounded budget.
+pub(crate) async fn tear_down_children_before_session_switch(
+    ctx: &mut DispatchCtx<'_>,
+    transition: &str,
+) {
+    let Some(registry) = ctx.subagent_registry.clone() else {
+        return;
+    };
+    let owned: Vec<_> = {
+        let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.is_empty() {
+            return;
+        }
+        tracing::warn!(
+            transition,
+            live_rows = entries.len(),
+            "session switch: tearing down the current session's children; they cannot be readopted"
+        );
+        entries
+            .values()
+            .filter_map(|entry| Some((entry.owned_child?, entry.owned_child_supervisor.clone()?)))
+            .collect()
+    };
+    let broadcast_tx = ctx.broadcast_tx.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        super::super::uds_delete_all_subagents::delete_all_subagents_from_registry(
+            &registry,
+            broadcast_tx.as_ref(),
+        )
+    })
+    .await
+    .unwrap_or_else(|join_error| {
+        tracing::error!(%join_error, "session switch: teardown thread failed");
+        0
+    });
+    let deadline = tokio::time::Instant::now() + SESSION_TRANSITION_EXIT_BUDGET;
+    let mut exited = 0usize;
+    for (handle, supervisor) in &owned {
+        match tokio::time::timeout_at(deadline, supervisor.wait_exit(*handle)).await {
+            Ok(_) => exited += 1,
+            Err(_elapsed) => {
+                tracing::warn!(
+                    ?handle,
+                    "session switch: owned child did not exit within budget"
+                );
+            }
+        }
+    }
+    tracing::warn!(
+        transition,
+        removed,
+        owned = owned.len(),
+        exited,
+        "session switch: current session's children torn down"
+    );
 }
 
 pub(super) async fn persist_current_session(
@@ -328,6 +281,7 @@ pub(super) async fn handle_new_session(
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
+    tear_down_children_before_session_switch(ctx, "new_session").await;
     if let Some(registry) = &ctx.subagent_registry {
         registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -444,6 +398,9 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    // The session we are leaving cannot readopt its children later, and no
+    // other session can: end them now, before the roster is reset.
+    tear_down_children_before_session_switch(ctx, "resume_session").await;
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);
@@ -460,7 +417,7 @@ pub(super) async fn handle_resume_session(
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     let workflow_run = loaded.workflow_run;
-    restore_persisted_subagent_roster(&ctx.subagent_registry, loaded.subagent_roster);
+    reset_subagent_roster_on_restore(&ctx.subagent_registry, &loaded.subagent_roster);
     *ctx.messages = loaded.messages;
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);

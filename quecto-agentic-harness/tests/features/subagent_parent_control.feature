@@ -89,7 +89,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
   Scenario: Only the bound parent's EOF ends a launched harness
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And a persistent UDS harness launched with a parent control credential
+    And a launch-bound UDS harness launched with a parent control credential
     When an ordinary inspector connects and disconnects
     Then the launched harness is still running
     When the parent connects and presents its credential
@@ -105,7 +105,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
   Scenario: A malformed presentation closes that connection and the harness keeps running
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And a persistent UDS harness launched with a parent control credential
+    And a launch-bound UDS harness launched with a parent control credential
     When an impostor presents a malformed bind_parent_control frame
     Then the impostor's connection is closed by the harness
     And the launched harness is still running
@@ -117,7 +117,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM will delay its response by 20 seconds
-    And a persistent UDS harness launched with a parent control credential
+    And a launch-bound UDS harness launched with a parent control credential
     When the parent connects and presents its credential
     And an ordinary client sends a prompt that the harness starts working on
     And the parent connection closes
@@ -126,7 +126,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
   Scenario: A launched harness whose parent never binds ends at the bind deadline
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And a persistent UDS harness launched with a parent control credential and a triggered bind deadline
+    And a launch-bound UDS harness launched with a parent control credential and a triggered bind deadline
     When an ordinary inspector connects and disconnects
     Then the launched harness is still running
     When the bind deadline passes
@@ -136,7 +136,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
   Scenario: A shutdown command from the bound parent is acknowledged before the harness exits
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And a persistent UDS harness launched with a parent control credential
+    And a launch-bound UDS harness launched with a parent control credential
     When the parent connects and presents its credential
     And the parent sends shutdown "parent_shutdown" with id "p-1"
     Then the parent receives a shutdown acknowledgement for "p-1" with reason "parent_shutdown"

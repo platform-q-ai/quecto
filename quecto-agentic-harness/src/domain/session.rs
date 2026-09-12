@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -49,14 +48,16 @@ pub enum SubagentLiveness {
     Dead,
 }
 
-/// Why a persisted sub-agent roster row may be restored on session resume.
+/// Why a persisted sub-agent roster row was written. Restore never turns a
+/// row into an operational child (#1937); the reason is retained as history
+/// and for reading legacy records.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentRestoreReason {
-    /// Legacy rows omitted the field. Only verified live rows may restore.
+    /// Legacy rows omitted the field.
     #[default]
     LegacyUnspecified,
-    /// Legacy exit record (old clients also used this for detach). Requires live verification.
+    /// Ordinary TUI exit record (old clients also used this for detach).
     OrdinaryTuiExitStopped,
     /// The user explicitly killed this row before ordinary TUI exit.
     ExplicitlyKilled,
@@ -80,8 +81,16 @@ pub struct PendingMessageReport {
     pub ordinal: u64,
 }
 
-/// Durable recovery metadata for a sub-agent spawned by this session.
-/// This is not transcript history: only verified surviving agents may restore.
+/// Durable history metadata for a sub-agent spawned by this session.
+///
+/// This is not an operational row and never becomes one (#1937): a
+/// launcher-created child is lifetime-scoped to the harness that launched it,
+/// so nothing it describes can be alive when the session is restored. Restore
+/// keeps the transcript, workflow and past child messages and creates no
+/// child row from these records; the master re-spawns the workers it needs.
+/// Legacy records carried the child's `socketPath` and `pid` as recovery
+/// authority; the reader ignores those fields (serde skips unknown fields)
+/// and the next save migrates the record without them.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedSubagentRosterEntry {
@@ -91,10 +100,6 @@ pub struct PersistedSubagentRosterEntry {
     pub display_name: String,
     #[serde(default)]
     pub session_key: String,
-    #[serde(default)]
-    pub socket_path: PathBuf,
-    #[serde(default)]
-    pub pid: u32,
     #[serde(default)]
     pub liveness: SubagentLiveness,
     #[serde(default)]

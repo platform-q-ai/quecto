@@ -123,7 +123,13 @@ async fn multi_client_parse_error_text(line: &str) -> String {
             line: line.to_string(),
             client_id: 0,
         });
-        let exit = handle_client_msg(&mut ctx, msg, /* persist */ true, &live).await;
+        let exit = handle_client_msg(
+            &mut ctx,
+            msg,
+            crate::domain::harness_lifetime::HarnessLifetime::Persistent,
+            &live,
+        )
+        .await;
         assert!(!exit, "a parse error must not terminate the dispatch loop");
     }
     let line = rx

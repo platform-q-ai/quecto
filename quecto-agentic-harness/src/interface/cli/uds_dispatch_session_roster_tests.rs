@@ -1,27 +1,70 @@
+//! Session roster persistence and restore (#1937, epic #1929).
+//!
+//! Restore keeps history and creates no operational child row: a
+//! launcher-created child cannot outlive its launcher, so persisted rows are
+//! read only to be ignored. No socket probe, no pid compare, no readoption.
 use crate::domain::ids::AgentUuid;
-use crate::domain::session::{PersistedSubagentRosterEntry, SubagentLiveness};
+use crate::domain::session::{
+    PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
+};
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 use crate::interface::cli::uds::uds_dispatch_session::{
-    restore_persisted_subagent_roster, snapshot_subagent_roster,
-    snapshot_subagent_roster_with_restore_reason, verify_persisted_live_subagent,
+    reset_subagent_roster_on_restore, snapshot_subagent_roster,
+    snapshot_subagent_roster_with_restore_reason,
 };
 
-fn roster_entry(id: &str, socket_path: std::path::PathBuf) -> PersistedSubagentRosterEntry {
+fn roster_entry(id: &str) -> PersistedSubagentRosterEntry {
     PersistedSubagentRosterEntry {
         agent_uuid: id.to_string(),
         display_name: format!("worker-{id}"),
         session_key: id.to_string(),
-        socket_path,
-        pid: 1,
         liveness: SubagentLiveness::Live,
-        restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+        restore_reason: SubagentRestoreReason::LegacyUnspecified,
         parent_id: Some("parent".to_string()),
         read_only: true,
         delivered_message_ordinal: None,
         pending_message_reports: std::collections::VecDeque::new(),
         status: Some("idle".to_string()),
+    }
+}
+
+/// A row exactly as a pre-#1937 harness wrote it: with the child's socket
+/// path and pid as recovery authority.
+fn legacy_row(
+    id: &str,
+    socket_path: &std::path::Path,
+    liveness: &str,
+    status: &str,
+) -> PersistedSubagentRosterEntry {
+    serde_json::from_value(serde_json::json!({
+        "agentUuid": id,
+        "displayName": format!("worker-{id}"),
+        "sessionKey": id,
+        "socketPath": socket_path,
+        "pid": 4242,
+        "liveness": liveness,
+        "status": status,
+        "parentId": "parent",
+        "readOnly": true
+    }))
+    .unwrap()
+}
+
+/// A listener that must never be connected to: `accept` is non-blocking so
+/// a probe would be observed as an accepted connection, and its absence as
+/// `WouldBlock`.
+fn listener_that_must_stay_silent(path: &std::path::Path) -> std::os::unix::net::UnixListener {
+    let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    listener
+}
+
+fn assert_never_connected(listener: &std::os::unix::net::UnixListener, what: &str) {
+    match listener.accept() {
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+        other => panic!("{what}: restore must never probe a persisted socket, got {other:?}"),
     }
 }
 
@@ -62,8 +105,31 @@ fn snapshot_subagent_roster_serializes_sorted_liveness_metadata() {
     assert!(roster[1].read_only);
 }
 
+/// #1937: the child's pid and socket are no longer written as recovery
+/// authority. A row carries history only.
 #[test]
-fn ordinary_exit_snapshot_marks_dead_tombstones_non_restorable() {
+fn snapshot_never_writes_child_pid_or_socket() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "w".into(),
+        SubagentEntry::with_identity(
+            AgentUuid::from("w".to_string()),
+            "worker".to_string(),
+            "/tmp/w.sock".into(),
+            4242,
+        ),
+    );
+    let roster = snapshot_subagent_roster(&Some(registry));
+    let json = serde_json::to_value(&roster).unwrap();
+    let row = &json[0];
+    assert!(row.get("pid").is_none(), "pid written: {row}");
+    assert!(row.get("socketPath").is_none(), "socket written: {row}");
+    assert!(!json.to_string().contains("/tmp/w.sock"));
+    assert!(!json.to_string().contains("4242"));
+}
+
+#[test]
+fn ordinary_exit_snapshot_persists_no_operational_children() {
     let registry = new_registry();
     {
         let mut entries = registry.lock().unwrap();
@@ -76,421 +142,35 @@ fn ordinary_exit_snapshot_marks_dead_tombstones_non_restorable() {
         live.status = SubagentStatus::Idle;
         live.persisted_liveness = SubagentLiveness::Live;
         entries.insert("live".into(), live);
-        let mut killed = SubagentEntry::with_identity(
-            AgentUuid::from("killed"),
-            "Killed worker".into(),
-            "/tmp/killed.sock".into(),
-            2,
-        );
-        killed.status = SubagentStatus::Exited;
-        killed.persisted_liveness = SubagentLiveness::Dead;
-        entries.insert("killed".into(), killed);
     }
 
     let roster = snapshot_subagent_roster_with_restore_reason(
         &Some(registry),
-        crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped,
+        SubagentRestoreReason::OrdinaryTuiExitStopped,
     );
-
     assert!(
         roster.is_empty(),
         "killing exit persists no operational children"
     );
-
-    let restored = new_registry();
-    restore_persisted_subagent_roster(&Some(restored.clone()), roster);
-    assert!(!restored.lock().unwrap().contains_key("killed"));
 }
 
+/// The legacy reader ignores `socketPath` and `pid` (they are not part of
+/// the record any more) and tolerates unknown reasons and missing identity.
 #[test]
-fn restore_rejects_dead_rows_even_if_marked_ordinary_exit_stopped() {
-    let mut bad = roster_entry("bad", "/tmp/bad.sock".into());
-    bad.restore_reason = crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped;
-    bad.liveness = SubagentLiveness::Dead;
-    bad.status = Some("exited".into());
+fn legacy_reader_ignores_pid_and_socket_and_tolerates_malformed_rows() {
+    let legacy = legacy_row("old", std::path::Path::new("/tmp/old.sock"), "live", "idle");
+    assert_eq!(legacy.agent_uuid, "old");
+    assert_eq!(legacy.liveness, SubagentLiveness::Live);
+    let rewritten = serde_json::to_value(&legacy).unwrap();
+    assert!(rewritten.get("socketPath").is_none(), "{rewritten}");
+    assert!(rewritten.get("pid").is_none(), "{rewritten}");
 
-    let registry = new_registry();
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![bad]);
-
-    assert!(
-        registry.lock().unwrap().is_empty(),
-        "defensive restore must not re-show killed/dead rows from stale persisted data"
-    );
-}
-
-#[test]
-fn verify_persisted_live_subagent_rejects_empty_uuid_or_socket() {
-    assert!(verify_persisted_live_subagent(&roster_entry("", "/tmp/live.sock".into())).is_none());
-    assert!(verify_persisted_live_subagent(&roster_entry("child", "".into())).is_none());
-}
-
-#[tokio::test]
-async fn verify_persisted_live_subagent_requires_matching_session_stats_identity() {
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("child.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let (reader, mut writer) = tokio::io::split(stream);
-        let mut reader = tokio::io::BufReader::new(reader);
-        let request =
-            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
-                .await
-                .unwrap()
-                .unwrap();
-        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let response = serde_json::json!({
-            "type": "response",
-            "id": request_id,
-            "command": "get_session_stats",
-            "success": true,
-            "data": { "sessionKey": "cli:other", "userMessages": 0, "assistantMessages": 0, "toolCalls": 0, "toolResults": 0, "totalMessages": 0, "tokens": {}, "contextTokens": 0, "maxContextTokens": 0 }
-        });
-        quecto_line_io::write_frame(
-            &mut writer,
-            response.to_string().as_bytes(),
-            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
-        )
-        .await
-        .unwrap();
-    });
-
-    let mut entry = roster_entry("child", socket);
-    entry.session_key = "cli:child".into();
-    assert!(
-        tokio::task::spawn_blocking(move || verify_persisted_live_subagent(&entry))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    server.await.unwrap();
-}
-
-/// #1474: resume must not rehydrate dead / unverifiable roster rows as grey
-/// "ghost" panel agents. Only currently verifiable live agents re-enter the
-/// registry; dead and failed-verify live/detached entries are pruned.
-fn serve_matching_session_stats(
-    listener: std::os::unix::net::UnixListener,
-    session_key: &'static str,
-) -> std::thread::JoinHandle<()> {
-    serve_session_stats_reporting_pid(listener, session_key, 0)
-}
-
-/// Serve one `get_session_stats` reply for `session_key`, self-reporting
-/// `reported_pid` under `runtime.pid` (0 = a pre-#1925 peer that omits it).
-fn serve_session_stats_reporting_pid(
-    listener: std::os::unix::net::UnixListener,
-    session_key: &'static str,
-    reported_pid: u32,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        use std::io::{Read, Write};
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut prefix = [0u8; 4];
-        stream.read_exact(&mut prefix).unwrap();
-        let len = u32::from_be_bytes(prefix) as usize;
-        let mut request = vec![0u8; len];
-        stream.read_exact(&mut request).unwrap();
-        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let response = serde_json::json!({
-            "type": "response",
-            "id": request_id,
-            "command": "get_session_stats",
-            "success": true,
-            "data": {
-                "sessionKey": session_key,
-                "runtime": if reported_pid == 0 {
-                    serde_json::Value::Null
-                } else {
-                    serde_json::json!({
-                        "pid": reported_pid,
-                        "process_instance_id": "peer",
-                        "executable_digest_pending": false,
-                        "package_version": "0.0.0",
-                        "build_source_revision": null,
-                        "build_dirty": null,
-                        "executable_sha256": null
-                    })
-                },
-                "userMessages": 0,
-                "assistantMessages": 0,
-                "toolCalls": 0,
-                "toolResults": 0,
-                "totalMessages": 0,
-                "tokens": {},
-                "contextTokens": 0,
-                "maxContextTokens": 0
-            }
-        })
-        .to_string();
-        stream
-            .write_all(&(response.len() as u32).to_be_bytes())
-            .unwrap();
-        stream.write_all(response.as_bytes()).unwrap();
-        stream.flush().unwrap();
-    })
-}
-
-#[test]
-fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let live_socket = dir.path().join("live.sock");
-    let detached_live_socket = dir.path().join("detached-live.sock");
-    let live_listener = std::os::unix::net::UnixListener::bind(&live_socket).unwrap();
-    let detached_listener = std::os::unix::net::UnixListener::bind(&detached_live_socket).unwrap();
-    let live_server = serve_matching_session_stats(live_listener, "live");
-    let detached_server = serve_matching_session_stats(detached_listener, "still-up");
-
-    let mut live = roster_entry("live", live_socket);
-    live.display_name = "Live worker".into();
-    live.read_only = false;
-    let mut unreachable = roster_entry("gone", dir.path().join("gone.sock"));
-    unreachable.display_name = "Gone worker".into();
-    let mut dead = roster_entry("dead", dir.path().join("dead.sock"));
-    dead.liveness = SubagentLiveness::Dead;
-    let mut detached_unreachable = roster_entry("old-container", dir.path().join("old.sock"));
-    detached_unreachable.liveness = SubagentLiveness::Detached;
-    detached_unreachable.display_name = "Old container ghost".into();
-    let mut detached_live = roster_entry("still-up", detached_live_socket);
-    detached_live.liveness = SubagentLiveness::Detached;
-    detached_live.display_name = "Detached but reachable".into();
-
-    restore_persisted_subagent_roster(
-        &Some(registry.clone()),
-        vec![live, unreachable, dead, detached_unreachable, detached_live],
-    );
-
-    let entries = registry.lock().unwrap();
-    assert_eq!(
-        entries.len(),
-        2,
-        "dead and unverifiable live/detached entries must not reappear as ghosts: {:?}",
-        entries.keys().collect::<Vec<_>>()
-    );
-    assert!(
-        !entries.contains_key("gone"),
-        "unreachable live entry must be pruned on restore"
-    );
-    assert!(
-        !entries.contains_key("dead"),
-        "dead entry must be pruned on restore"
-    );
-    assert!(
-        !entries.contains_key("old-container"),
-        "detached unreachable entry must be pruned on restore"
-    );
-
-    let live_entry = entries.get("live").expect("verified live agent restored");
-    assert_eq!(live_entry.persisted_liveness, SubagentLiveness::Live);
-    assert_eq!(live_entry.status.to_wire_str(), "idle");
-    assert_eq!(live_entry.display_name, "Live worker");
-
-    let detached_entry = entries
-        .get("still-up")
-        .expect("verified detached-but-reachable agent restored as live");
-    assert_eq!(detached_entry.persisted_liveness, SubagentLiveness::Live);
-    assert_eq!(detached_entry.status.to_wire_str(), "idle");
-    assert_eq!(detached_entry.display_name, "Detached but reachable");
-
-    live_server.join().unwrap();
-    detached_server.join().unwrap();
-}
-
-/// #1474 N1: verify probes must not hold the shared registry mutex. Resume can
-/// stall concurrent get_subagents/spawn registration if lock spans socket IO.
-#[test]
-fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
-    use std::io::{Read, Write};
-    use std::time::Duration;
-
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("slow.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-
-    let (connected_tx, connected_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        // Restore has entered verify and is blocked on the response.
-        connected_tx.send(()).unwrap();
-        release_rx.recv().unwrap();
-        let mut prefix = [0u8; 4];
-        stream.read_exact(&mut prefix).unwrap();
-        let len = u32::from_be_bytes(prefix) as usize;
-        let mut request = vec![0u8; len];
-        stream.read_exact(&mut request).unwrap();
-        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let response = serde_json::json!({
-            "type": "response",
-            "id": request_id,
-            "command": "get_session_stats",
-            "success": true,
-            "data": {
-                "sessionKey": "slow",
-                "userMessages": 0,
-                "assistantMessages": 0,
-                "toolCalls": 0,
-                "toolResults": 0,
-                "totalMessages": 0,
-                "tokens": {},
-                "contextTokens": 0,
-                "maxContextTokens": 0
-            }
-        })
-        .to_string();
-        stream
-            .write_all(&(response.len() as u32).to_be_bytes())
-            .unwrap();
-        stream.write_all(response.as_bytes()).unwrap();
-        stream.flush().unwrap();
-    });
-
-    let restore_registry = registry.clone();
-    let restore = std::thread::spawn(move || {
-        restore_persisted_subagent_roster(
-            &Some(restore_registry),
-            vec![roster_entry("slow", socket)],
-        );
-    });
-
-    connected_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("verify should connect to the slow socket");
-    // While verify is blocked mid-probe, concurrent registry users must not stall.
-    let lock_acquired_during_verify = registry.try_lock().is_ok();
-    release_tx.send(()).unwrap();
-    restore.join().unwrap();
-    server.join().unwrap();
-
-    assert!(
-        lock_acquired_during_verify,
-        "restore must not hold the registry mutex across verify socket IO"
-    );
-    assert!(
-        registry.lock().unwrap().contains_key("slow"),
-        "verified agent must still be restored after lock is released during probe"
-    );
-}
-
-#[test]
-fn restore_persisted_roster_no_registry_is_noop() {
-    restore_persisted_subagent_roster(&None, vec![roster_entry("ignored", "".into())]);
-}
-
-#[test]
-fn restore_classifier_respects_explicit_restore_reasons() {
-    use crate::domain::session::SubagentRestoreReason;
-
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let mut restored = roster_entry("restored", dir.path().join("stale-restored.sock"));
-    restored.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
-    restored.pid = 42;
-    restored.display_name = "Restored worker".into();
-    let mut killed = roster_entry("killed", dir.path().join("killed.sock"));
-    killed.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
-    let mut legacy_dead = roster_entry("legacy-dead", dir.path().join("legacy-dead.sock"));
-    legacy_dead.liveness = SubagentLiveness::Dead;
-
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![restored, killed, legacy_dead]);
-
-    let entries = registry.lock().unwrap();
-    assert!(
-        entries.is_empty(),
-        "stopped, killed and dead rows do not return"
-    );
-}
-
-#[test]
-fn restored_ordinary_exit_rows_are_not_socket_or_kill_targetable() {
-    use crate::domain::session::SubagentRestoreReason;
-    use crate::domain::tool::Tool;
-    use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let stale_socket = dir.path().join("stale.sock");
-    let _listener = std::os::unix::net::UnixListener::bind(&stale_socket).unwrap();
-    let mut restored = roster_entry("restored", stale_socket);
-    restored.display_name = "Restored worker".into();
-    restored.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![restored]);
-
-    let lookup = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
-        &registry, "restored",
-    );
-    assert!(lookup.is_err(), "restored row must not expose stale socket");
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    for agent_ref in ["Restored worker", "restored"] {
-        let result = rt
-            .block_on(
-                AgentCmdTool::new(registry.clone())
-                    .execute(&format!(r#"{{"agent_id":"{agent_ref}","command":"kill"}}"#)),
-            )
-            .unwrap();
-        assert!(
-            result.is_error,
-            "restored row must not be kill-targetable by {agent_ref}"
-        );
-        assert!(registry.lock().unwrap().is_empty());
-    }
-}
-
-#[test]
-fn restore_is_scoped_to_the_resumed_session_without_bleed() {
-    use crate::domain::session::SubagentRestoreReason;
-
-    let dir = tempfile::tempdir().unwrap();
-    let registry_a = new_registry();
-    let registry_b = new_registry();
-    let mut a = roster_entry("agent-a", dir.path().join("a.sock"));
-    a.display_name = "same-label".into();
-    a.session_key = "session-a".into();
-    a.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
-    let mut b = roster_entry("agent-b", dir.path().join("b.sock"));
-    b.display_name = "same-label".into();
-    b.session_key = "session-b".into();
-    b.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
-
-    restore_persisted_subagent_roster(&Some(registry_a.clone()), vec![a.clone()]);
-    restore_persisted_subagent_roster(&Some(registry_b.clone()), vec![b.clone()]);
-
-    assert!(registry_a.lock().unwrap().is_empty());
-    assert!(!registry_a.lock().unwrap().contains_key("agent-b"));
-    assert!(
-        registry_b.lock().unwrap().is_empty(),
-        "killed row in another session does not bleed or return"
-    );
-}
-
-#[test]
-fn persisted_roster_entry_tolerates_unknown_reason_and_missing_required_legacy_fields() {
     let unknown: PersistedSubagentRosterEntry = serde_json::from_value(serde_json::json!({
         "agentUuid": "future",
-        "displayName": "Future worker",
-        "sessionKey": "future",
-        "socketPath": "/tmp/future.sock",
-        "pid": 9,
-        "liveness": "live",
         "restoreReason": "future_reason"
     }))
     .unwrap();
-    assert_eq!(
-        unknown.restore_reason,
-        crate::domain::session::SubagentRestoreReason::Unknown
-    );
+    assert_eq!(unknown.restore_reason, SubagentRestoreReason::Unknown);
 
     let malformed: PersistedSubagentRosterEntry = serde_json::from_value(serde_json::json!({
         "displayName": "missing identity"
@@ -500,21 +180,149 @@ fn persisted_roster_entry_tolerates_unknown_reason_and_missing_required_legacy_f
     assert_eq!(malformed.liveness, SubagentLiveness::Dead);
     assert_eq!(
         malformed.restore_reason,
-        crate::domain::session::SubagentRestoreReason::LegacyUnspecified
+        SubagentRestoreReason::LegacyUnspecified
     );
+}
+
+/// #1937: no persisted row of any kind — live, detached, dead, explicitly
+/// killed, unknown-reason or malformed — becomes an operational child, and
+/// the sockets they name are never probed.
+#[test]
+fn restore_creates_no_operational_row_and_probes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let live_socket = dir.path().join("live.sock");
+    let detached_socket = dir.path().join("detached.sock");
+    let live_listener = listener_that_must_stay_silent(&live_socket);
+    let detached_listener = listener_that_must_stay_silent(&detached_socket);
+
+    let mut killed = roster_entry("killed");
+    killed.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
+    let mut stopped = roster_entry("stopped");
+    stopped.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
+    let mut unknown = roster_entry("unknown");
+    unknown.restore_reason = SubagentRestoreReason::Unknown;
+    let malformed: PersistedSubagentRosterEntry =
+        serde_json::from_value(serde_json::json!({"displayName": "no identity"})).unwrap();
+    let rows = vec![
+        legacy_row("live", &live_socket, "live", "idle"),
+        legacy_row("detached", &detached_socket, "detached", "idle"),
+        legacy_row("dead", &dir.path().join("dead.sock"), "dead", "exited"),
+        legacy_row("gone", &dir.path().join("gone.sock"), "live", "running"),
+        killed,
+        stopped,
+        unknown,
+        malformed,
+    ];
 
     let registry = new_registry();
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![unknown, malformed]);
+    reset_subagent_roster_on_restore(&Some(registry.clone()), &rows);
+
+    assert_never_connected(&live_listener, "live row");
+    assert_never_connected(&detached_listener, "detached row");
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "restore creates no operational child row: {:?}",
+        registry.lock().unwrap().keys().collect::<Vec<_>>()
+    );
+    assert!(
+        crate::interface::cli::protocol::build_compact_subagent_roster(
+            &Some(registry.clone()),
+            None
+        )
+        .unwrap()
+        .subagents
+        .is_empty()
+    );
+    assert!(
+        crate::interface::cli::protocol::build_live_subagent_info_list(&Some(registry)).is_empty()
+    );
+}
+
+/// A legacy row can neither be sent to nor killed after restore: it is not
+/// there. The stale socket it named stays untouched.
+#[test]
+fn legacy_rows_are_not_sendable_or_running_after_restore() {
+    use crate::domain::tool::Tool;
+    use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
+
+    let dir = tempfile::tempdir().unwrap();
+    let stale_socket = dir.path().join("stale.sock");
+    let listener = listener_that_must_stay_silent(&stale_socket);
+    let registry = new_registry();
+    reset_subagent_roster_on_restore(
+        &Some(registry.clone()),
+        &[legacy_row("restored", &stale_socket, "live", "running")],
+    );
+
+    let lookup = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
+        &registry, "restored",
+    );
+    assert!(lookup.is_err(), "a legacy row must not expose a socket");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for agent_ref in ["worker-restored", "restored"] {
+        for command in ["kill", "get_state"] {
+            let result = rt
+                .block_on(AgentCmdTool::new(registry.clone()).execute(&format!(
+                    r#"{{"agent_id":"{agent_ref}","command":"{command}"}}"#
+                )))
+                .unwrap();
+            assert!(
+                result.is_error,
+                "legacy row must not be targetable by {agent_ref} {command}"
+            );
+        }
+        let send = rt
+            .block_on(AgentCmdTool::new(registry.clone()).execute(&format!(
+                r#"{{"agent_id":"{agent_ref}","command":"send","message":"hello"}}"#
+            )))
+            .unwrap();
+        assert!(send.is_error, "legacy row must not be sendable");
+    }
     assert!(registry.lock().unwrap().is_empty());
+    assert_never_connected(&listener, "stale socket");
+}
+
+/// Restore replaces whatever operational rows the registry held, and the
+/// worker the master then re-spawns has a fresh identity, not the legacy one.
+#[test]
+fn restore_clears_the_registry_and_a_respawn_gets_a_fresh_identity() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "stale".into(),
+        SubagentEntry::new("/tmp/stale.sock".into(), 0),
+    );
+    let legacy = roster_entry("legacy-uuid");
+    reset_subagent_roster_on_restore(&Some(registry.clone()), &[legacy]);
+    assert!(registry.lock().unwrap().is_empty());
+
+    // The explicit re-spawn registers through the normal path with a
+    // minted uuid and its own launch generation; nothing about the legacy
+    // row seeds it.
+    let respawned = SubagentEntry::new("/tmp/respawned.sock".into(), 0);
+    assert_ne!(respawned.agent_uuid.as_str(), "legacy-uuid");
+    let earlier = crate::infrastructure::processes::parent_control::mint_credential();
+    let later = crate::infrastructure::processes::parent_control::mint_credential();
+    assert!(later.generation > earlier.generation);
+    registry
+        .lock()
+        .unwrap()
+        .insert(respawned.agent_uuid.as_str().to_string(), respawned.clone());
+    let entries = registry.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(!entries.contains_key("legacy-uuid"));
+    assert!(entries.contains_key(respawned.agent_uuid.as_str()));
 }
 
 #[test]
-fn ordinary_exit_resume_full_refresh_never_reintroduces_stopped_or_preexisting_dead_children() {
-    use crate::domain::session::SubagentRestoreReason;
+fn restore_with_no_registry_is_a_noop() {
+    reset_subagent_roster_on_restore(&None, &[roster_entry("ignored")]);
+}
+
+#[test]
+fn ordinary_exit_resume_cycles_stay_empty_of_old_children() {
     use crate::interface::cli::protocol::build_compact_subagent_roster;
 
-    // The exit barrier snapshots before stopping live children. A child already
-    // dead at that barrier is deliberately non-restorable (#1608 control case).
     for already_dead in [false, true] {
         let registry = new_registry();
         let mut child = SubagentEntry::with_identity(
@@ -541,100 +349,18 @@ fn ordinary_exit_resume_full_refresh_never_reintroduces_stopped_or_preexisting_d
         );
         assert!(snapshot.is_empty());
         let restored = new_registry();
-        restore_persisted_subagent_roster(&Some(restored.clone()), snapshot);
+        reset_subagent_roster_on_restore(&Some(restored.clone()), &snapshot);
         for _ in 0..3 {
             let roster = build_compact_subagent_roster(&Some(restored.clone()), None).unwrap();
-            assert!(
-                roster.subagents.is_empty(),
-                "killing exit must not restore operational rows"
-            );
-            assert!(
-                crate::interface::cli::protocol::build_live_subagent_info_list(&Some(
-                    restored.clone()
-                ))
-                .is_empty()
-            );
+            assert!(roster.subagents.is_empty());
             let next = snapshot_subagent_roster_with_restore_reason(
                 &Some(restored.clone()),
                 SubagentRestoreReason::OrdinaryTuiExitStopped,
             );
-            restore_persisted_subagent_roster(&Some(restored.clone()), next);
+            reset_subagent_roster_on_restore(&Some(restored.clone()), &next);
         }
         assert!(restored.lock().unwrap().is_empty());
     }
-}
-
-/// #1925: a restored row is signallable only when the live socket round-trip
-/// confirmed the persisted pid is the answering harness's own pid. A peer that
-/// omits `runtime.pid` (older build) or reports a different pid (container
-/// namespace, pid reuse) stays unowned; the socket identity match alone is not
-/// enough.
-#[test]
-fn restore_grants_signal_lease_only_when_socket_confirms_persisted_pid() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let confirmed_socket = dir.path().join("confirmed.sock");
-    let mismatch_socket = dir.path().join("mismatch.sock");
-    let silent_socket = dir.path().join("silent.sock");
-    let zero_socket = dir.path().join("zero.sock");
-    let confirmed_server = serve_session_stats_reporting_pid(
-        std::os::unix::net::UnixListener::bind(&confirmed_socket).unwrap(),
-        "confirmed",
-        4242,
-    );
-    let mismatch_server = serve_session_stats_reporting_pid(
-        std::os::unix::net::UnixListener::bind(&mismatch_socket).unwrap(),
-        "mismatch",
-        9999,
-    );
-    let silent_server = serve_matching_session_stats(
-        std::os::unix::net::UnixListener::bind(&silent_socket).unwrap(),
-        "silent",
-    );
-    // Persisted pid 0 (stub/unknown) and peer also reporting nothing: equal,
-    // but zero is never a confirmation.
-    let zero_server = serve_matching_session_stats(
-        std::os::unix::net::UnixListener::bind(&zero_socket).unwrap(),
-        "zero",
-    );
-
-    let mut confirmed = roster_entry("confirmed", confirmed_socket);
-    confirmed.pid = 4242;
-    let mut mismatch = roster_entry("mismatch", mismatch_socket);
-    mismatch.pid = 4242;
-    let mut silent = roster_entry("silent", silent_socket);
-    silent.pid = 4242;
-    let mut zero = roster_entry("zero", zero_socket);
-    zero.pid = 0;
-
-    restore_persisted_subagent_roster(
-        &Some(registry.clone()),
-        vec![confirmed, mismatch, silent, zero],
-    );
-    confirmed_server.join().unwrap();
-    mismatch_server.join().unwrap();
-    silent_server.join().unwrap();
-    zero_server.join().unwrap();
-
-    let entries = registry.lock().unwrap();
-    assert_eq!(entries.len(), 4, "all four verified live and were restored");
-    assert!(
-        !entries["zero"].process_ownership.is_owned(),
-        "a persisted pid of 0 can never be confirmed"
-    );
-    assert!(
-        entries["confirmed"].process_ownership.is_owned(),
-        "pid confirmed over the socket must be signallable"
-    );
-    assert_eq!(entries["confirmed"].pid, 4242);
-    assert!(
-        !entries["mismatch"].process_ownership.is_owned(),
-        "a peer reporting another pid must stay unowned"
-    );
-    assert!(
-        !entries["silent"].process_ownership.is_owned(),
-        "a peer that does not report its pid must stay unowned"
-    );
 }
 
 #[test]
@@ -642,10 +368,7 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
     let registry = new_registry();
     registry.lock().unwrap().insert(
         "worker".into(),
-        crate::infrastructure::tools::subagent_registry::SubagentEntry::new(
-            "/tmp/worker.sock".into(),
-            0,
-        ),
+        SubagentEntry::new("/tmp/worker.sock".into(), 0),
     );
     let shared = registry.clone();
     let _ = std::thread::spawn(move || {
@@ -656,11 +379,10 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
     assert!(registry.lock().is_err());
     let roster = snapshot_subagent_roster_with_restore_reason(
         &Some(registry.clone()),
-        crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+        SubagentRestoreReason::LegacyUnspecified,
     );
     assert_eq!(roster.len(), 1);
-    // Restoring an unverifiable roster into the poisoned registry clears it.
-    restore_persisted_subagent_roster(&Some(registry.clone()), roster);
+    reset_subagent_roster_on_restore(&Some(registry.clone()), &roster);
     assert!(
         registry
             .lock()

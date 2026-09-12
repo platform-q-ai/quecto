@@ -416,7 +416,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             socket_override: Some(server_tokio),
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            persist: false,
+            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
             subagent_registry: None,
             workflow_state,
@@ -1844,8 +1844,6 @@ fn given_session_has_stale_persisted_subagent_roster_row(
                 agent_uuid: "stale-child".into(),
                 display_name: "stale child".into(),
                 session_key: "stale-child".into(),
-                socket_path: "/tmp/stale-child.sock".into(),
-                pid: 0,
                 liveness: SubagentLiveness::Dead,
                 restore_reason: SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,
@@ -2089,7 +2087,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            persist: false,
+            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
             subagent_registry: None,
             workflow_state,
@@ -2505,7 +2503,11 @@ fn mc_spawn_agent(
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            persist,
+            lifetime: if persist {
+                quecto::domain::harness_lifetime::HarnessLifetime::Persistent
+            } else {
+                quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
+            },
             notification_rx: None,
             subagent_registry: None,
             workflow_state,

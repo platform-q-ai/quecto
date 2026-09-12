@@ -35,7 +35,8 @@ pub struct UdsLoopArgs<'a> {
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
     pub ext_registry: Option<ExtRegistry>,
-    pub persist: bool,
+    /// How long this harness lives (#1937): decided once at startup.
+    pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -77,7 +78,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         socket_override,
         session_store_override,
         ext_registry,
-        persist,
+        lifetime,
         notification_rx,
         subagent_registry,
         workflow_state,
@@ -165,7 +166,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ephemeral,
                 system_prompt,
                 ext_registry,
-                persist,
+                lifetime,
                 notification_rx,
                 subagent_registry,
                 workflow_state,

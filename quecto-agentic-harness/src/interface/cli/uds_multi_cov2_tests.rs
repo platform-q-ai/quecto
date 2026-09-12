@@ -102,7 +102,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         ephemeral: true,
         system_prompt: "system from test".into(),
         ext_registry: None,
-        persist: false,
+        lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
         workflow_state: None,
@@ -324,7 +324,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         DispatchLoopArgs {
             cmd_rx,
             disconnect_rx: tokio::sync::mpsc::unbounded_channel().1,
-            persist: false,
+            lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             shutdown: super::super::uds_shutdown::ShutdownRequest::for_tests().0,
         },
         &live,

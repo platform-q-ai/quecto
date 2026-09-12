@@ -164,6 +164,23 @@ fn always_emits_spawned_flag() {
     );
 }
 
+/// #1937: a launcher-created child never receives `--persist`. Its lifetime
+/// is the parent control binding (#1935), so it cannot outlive its launcher;
+/// top-level `quecto agent --persist` is a different, user-started lifetime.
+#[test]
+fn launcher_children_never_receive_persist() {
+    let cfg = base_config();
+    let mut s = spec(&cfg);
+    s.parent_control_path = Some(Path::new("/run/quecto-parent-control-1"));
+    let strs = as_strings(&build_child_cli_args(&s));
+    assert!(
+        !strs.iter().any(|a| a == "--persist"),
+        "launcher-created children must not persist; got {strs:?}"
+    );
+    assert!(strs.iter().any(|a| a == "--parent-control"));
+    assert!(strs.iter().any(|a| a == "--spawned"));
+}
+
 /// #1319: --spawned is independent of --parent-id (present or absent).
 #[test]
 fn emits_spawned_without_parent_id() {

@@ -5,6 +5,7 @@
 //! claim — and pick the auto-generated socket path.
 use std::path::Path;
 
+use crate::domain::harness_lifetime::HarnessLifetime;
 use crate::domain::parent_control::ParentControlBinding;
 use crate::infrastructure::processes::parent_control::take_sidecar;
 use crate::interface::cli::uds_teardown_graph::{
@@ -42,6 +43,33 @@ pub(super) fn consume(
             None
         }
     }
+}
+
+/// Consume the sidecar, then decide the harness lifetime once (#1937): a
+/// launcher-created child is launch-bound and can never persist. The sidecar
+/// is consumed before the lifetime check, so a refused child leaves no
+/// credential behind. `None` when startup must stop with the error on
+/// `stderr`.
+pub(super) fn consume_and_resolve_lifetime(
+    sidecar: Option<&Path>,
+    persist_requested: bool,
+    composed: bool,
+    stderr: &mut String,
+) -> Option<(Option<ParentControlLaunch>, HarnessLifetime)> {
+    let parent_control = consume(sidecar, composed, stderr)?;
+    let lifetime = match HarnessLifetime::resolve(persist_requested, parent_control.is_some()) {
+        Ok(lifetime) => lifetime,
+        Err(error) => {
+            stderr.push_str(&format!("agent: {error}\n"));
+            return None;
+        }
+    };
+    if lifetime == HarnessLifetime::Persistent {
+        stderr.push_str(
+            "WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n",
+        );
+    }
+    Some((parent_control, lifetime))
 }
 
 /// The bind deadline: the default unless a positive millisecond override is

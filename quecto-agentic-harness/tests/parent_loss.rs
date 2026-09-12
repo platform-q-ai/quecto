@@ -253,29 +253,30 @@ fn run_case(transport: &str) {
     }
 }
 
-/// A launcher that writes the sidecar and starts the child but never
-/// presents (it died, or hung, between spawning and binding): the child
-/// must not stay an unbound `--persist` orphan. The bind deadline ends it,
-/// gracefully, with reason `parent_never_bound`.
-#[test]
-fn a_child_whose_parent_never_binds_exits_at_the_bind_deadline() {
+/// Start a launched child (`--spawned --parent-control`) of the real binary
+/// the way the launcher does — without `--persist` (#1937) unless the test
+/// deliberately adds it — with a short bind deadline.
+fn spawn_launched_child(
+    base: &Path,
+    name: &str,
+    extra_args: &[&str],
+) -> (std::process::Child, PathBuf, PathBuf) {
     use quecto::infrastructure::processes::parent_control::{mint_credential, write_sidecar};
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path().to_path_buf();
-    let config = write_config(&base, "direct");
+    let config = write_config(base, "direct");
     let sockets = base.join("s");
     std::fs::create_dir_all(&sockets).unwrap();
-    let sidecar = sockets.join("quecto-parent-control-never");
+    let sidecar = sockets.join(format!("quecto-parent-control-{name}"));
     write_sidecar(&sidecar, &mint_credential()).unwrap();
-    let socket_path = sockets.join("never-bound.sock");
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_quecto"))
-        .args(["agent", "--mode", "uds", "-s", "never-bound", "--socket"])
+    let socket_path = sockets.join(format!("{name}.sock"));
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_quecto"))
+        .args(["agent", "--mode", "uds", "-s", name, "--socket"])
         .arg(&socket_path)
-        .args(["--persist", "--spawned", "--config"])
+        .args(["--spawned", "--config"])
         .arg(&config)
         .arg("--parent-control")
         .arg(&sidecar)
-        .env("QUECTO_BASE_DIR", &base)
+        .args(extra_args)
+        .env("QUECTO_BASE_DIR", base)
         .env(
             quecto::interface::cli::uds_teardown_graph::BIND_DEADLINE_ENV,
             "1000",
@@ -285,6 +286,42 @@ fn a_child_whose_parent_never_binds_exits_at_the_bind_deadline() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn the child");
+    (child, socket_path, sidecar)
+}
+
+/// #1937: a launcher-created child is launch-bound and cannot persist. The
+/// real binary refuses `--persist` together with `--parent-control` at
+/// startup, after consuming the sidecar (no credential is left behind), and
+/// never binds a socket.
+#[test]
+fn a_launched_child_refuses_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let (child, socket_path, sidecar) = spawn_launched_child(&base, "refused", &["--persist"]);
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("--persist is refused with --parent-control"),
+        "stderr: {stderr}"
+    );
+    assert!(!socket_path.exists(), "a refused child binds no socket");
+    assert!(
+        !sidecar.exists(),
+        "the sidecar is consumed even when refused"
+    );
+}
+
+/// A launcher that writes the sidecar and starts the child but never
+/// presents (it died, or hung, between spawning and binding): the child
+/// must not stay an unbound orphan. Client churn alone would not end a
+/// launch-bound child, so the bind deadline ends it, gracefully, with
+/// reason `parent_never_bound`.
+#[test]
+fn a_child_whose_parent_never_binds_exits_at_the_bind_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let (mut child, socket_path, sidecar) = spawn_launched_child(&base, "never-bound", &[]);
     let started = Instant::now();
     while !socket_path.exists() {
         if let Some(status) = child.try_wait().unwrap() {

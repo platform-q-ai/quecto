@@ -18,8 +18,6 @@ fn roster_entry(
         agent_uuid: id.to_string(),
         display_name: format!("worker-{id}"),
         session_key: format!("cli:{id}"),
-        socket_path: format!("/tmp/{id}.sock").into(),
-        pid: 100,
         liveness,
         restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
         parent_id: Some("root".to_string()),
@@ -105,7 +103,7 @@ async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
                 "restoreReason":"explicitly_killed"
             },
             {"agentUuid":"bad", "liveness":"future_liveness"},
-            {"agentUuid":"bad-pid", "pid":"not-a-number"}
+            {"agentUuid":"legacy-pid", "pid":"not-a-number", "socketPath": 7}
         ]
     });
     tokio::fs::write(path, format!("{}\n{}\n", snapshot, append))
@@ -119,8 +117,58 @@ async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
         2,
         "malformed roster rows do not drop append messages"
     );
-    assert_eq!(loaded.subagent_roster.len(), 1);
+    // #1937: `pid` and `socketPath` are legacy recovery authority the reader
+    // ignores entirely, so even malformed values in them cannot reject a row.
+    assert_eq!(loaded.subagent_roster.len(), 2);
     assert_eq!(loaded.subagent_roster[0].agent_uuid, "good");
+    assert_eq!(loaded.subagent_roster[1].agent_uuid, "legacy-pid");
+}
+
+/// #1937: a legacy record carrying the child's pid and socket is migrated by
+/// the next save — the rewritten file carries neither, and nothing on the
+/// loaded entry can name them.
+#[tokio::test]
+async fn legacy_pid_and_socket_are_dropped_on_the_next_save() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    store.ensure_dir().await.unwrap();
+    let path = store.session_path("cli:legacy-authority");
+    let snapshot = serde_json::json!({
+        "type": "snapshot",
+        "key": "cli:legacy-authority",
+        "messages": [{"role":"user","content":"old"}],
+        "subagent_roster": [{
+            "agentUuid":"old-child",
+            "displayName":"old worker",
+            "sessionKey":"old-child",
+            "socketPath":"/tmp/old-child.sock",
+            "pid":4242,
+            "liveness":"live",
+            "status":"running"
+        }]
+    });
+    tokio::fs::write(&path, format!("{}\n", snapshot))
+        .await
+        .unwrap();
+
+    let mut loaded = store.load("cli:legacy-authority").await.unwrap().unwrap();
+    assert_eq!(loaded.subagent_roster.len(), 1);
+    loaded.messages.push(Message::assistant("new", vec![]));
+    store.save(&loaded).await.unwrap();
+
+    let rewritten = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(
+        rewritten.contains("old-child"),
+        "history row survives: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("socketPath") && !rewritten.contains("/tmp/old-child.sock"),
+        "socket path must not be rewritten: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("\"pid\"") && !rewritten.contains("4242"),
+        "pid must not be rewritten: {rewritten}"
+    );
 }
 
 #[tokio::test]

@@ -619,6 +619,9 @@ fn help_text(out: &mut String) {
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
     );
     out.push_str(
+        "                       --persist     Keep a top-level UDS agent alive after its last client disconnects (harness-spawned subagents are lifetime-bound to their launcher instead)\n",
+    );
+    out.push_str(
         "                       --effort <level>  Effort level for 4.6 models (low/medium/high/max)\n",
     );
     out.push_str(

@@ -580,12 +580,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
             return 1;
         }
     }
-    if flags.persist {
-        stderr.push_str("WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n");
-    }
-
-    let Some(parent_control) = parent_control_startup::consume(
+    let Some((parent_control, lifetime)) = parent_control_startup::consume_and_resolve_lifetime(
         flags.parent_control.as_deref(),
+        flags.persist,
         ctx.teardown_graph.is_some(),
         stderr,
     ) else {
@@ -688,7 +685,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         socket_override: None,
         session_store_override: None,
         ext_registry: Some(build.ext_registry),
-        persist: flags.persist,
+        lifetime,
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
         workflow_state: build.workflow_state,
