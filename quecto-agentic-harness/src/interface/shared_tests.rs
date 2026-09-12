@@ -90,7 +90,12 @@ fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
     assert!(result.contains("## Parent Software Development Orchestration Playbook:"));
+    assert!(result.contains("Always configure `member_limit` to 25"));
+    assert!(result.contains("task-appropriate fixed pool up front"));
+    assert!(result.contains("rather than filling capacity"));
+    assert!(result.contains("### Swarm completion and cleanup"));
 }
+
 
 #[test]
 fn test_build_system_prompt_with_user_only() {

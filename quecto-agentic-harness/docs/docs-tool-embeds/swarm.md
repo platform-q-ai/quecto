@@ -1,6 +1,6 @@
 # Swarm workbench
 
-`swarm` coordinates one fixed pool of 1–10 agents, including its coordinator,
+`swarm` coordinates one fixed pool of 1–25 agents, including its coordinator,
 in a shared container and checkout. The host master uses `spawn` to launch the
 container/coordinator, then supervises it through `agent_cmd`. The coordinator
 creates the run before spawning local workers. Never reset a run or spawn nested
@@ -30,7 +30,7 @@ Call `swarm` with `op=create` and these fields:
 | `goal` | Nonempty string |
 | `constraints` | `list[str]` |
 | `criteria` | Nonempty list of objects: `id`, `description`, `kind` (`command` or `review`) |
-| `member_limit` | Integer 1–10; coordinator and idle/reserved workers count |
+| `member_limit` | Integer 1–25; coordinator and idle/reserved workers count |
 | `deadline` | Unix timestamp in seconds, in the future and within seven days |
 
 Example criteria: `[{"id":"tests","kind":"command","description":"Acceptance tests pass"},{"id":"review","kind":"review","description":"Independent reviewer accepts the final revision"}]`.

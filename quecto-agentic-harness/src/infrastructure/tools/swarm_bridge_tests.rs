@@ -224,7 +224,7 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
     .with_context(Some(context.clone()));
     let invalid = tool
         .execute(
-            r#"{"op":"create","goal":"ship","constraints":[],"criteria":[],"member_limit":11}"#,
+            r#"{"op":"create","goal":"ship","constraints":[],"criteria":[],"member_limit":26}"#,
         )
         .await
         .unwrap();
@@ -234,12 +234,18 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
         .unwrap()
         .as_secs()
         + 300;
-    let created = tool.execute(&json!({"op":"create","goal":"ship","constraints":[],"criteria":[{"id":"test","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}).to_string()).await.unwrap();
+    let created = tool.execute(&json!({"op":"create","goal":"ship","constraints":[],"criteria":[{"id":"test","kind":"command","description":"pass"}],"member_limit":25,"deadline":deadline}).to_string()).await.unwrap();
     assert!(!created.is_error, "{}", created.content);
     assert_eq!(context.summary().unwrap()["usage"], 1);
+    for index in 1..25 {
+        context
+            .call("_admit", json!([format!("worker-{index}"), format!("r-{index}")]))
+            .unwrap();
+    }
+    assert_eq!(context.summary().unwrap()["usage"], 25);
     assert!(
         context
-            .call("_admit", json!(["worker", "r"]))
+            .call("_admit", json!(["worker-25", "r-25"]))
             .unwrap_err()
             .to_string()
             .contains("reuse")
