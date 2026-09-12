@@ -76,6 +76,8 @@ fn every_non_public_ipv4_class_is_denied() {
         "224.0.0.1",       // multicast
         "240.0.0.1",       // reserved
         "255.255.255.255", // broadcast
+        "192.0.0.8",       // unclassified IETF protocol-assignment space
+        "192.0.0.11",      // non-global IETF protocol-assignment space
     ] {
         assert_eq!(
             authorization("https", host),
@@ -99,6 +101,10 @@ fn every_non_public_ipv6_class_is_denied() {
         "fd12:3456::1",       // unique-local
         "fe80::1",            // link-local
         "ff02::1",            // multicast
+        "2002:7f00:1::1",     // 6to4 encoding IPv4 loopback
+        "2002:0a00:1::1",     // 6to4 encoding RFC-1918
+        "2002:a9fe:a9fe::1",  // 6to4 encoding link-local metadata
+        "2002:0808:0808::1",  // 6to4 fails closed even with public embedded IPv4
     ] {
         assert_eq!(
             authorization("https", host),
@@ -202,7 +208,11 @@ fn supplied_candidate_requires_its_own_affirmative_authorization() {
 
 #[test]
 fn exact_test_destination_allows_only_that_host_and_port() {
-    let policy = WebDestinationPolicy::with_test_destination("allowed.test", 8443);
+    let policy = WebDestinationPolicy::with_test_destination(
+        "allowed.test",
+        8443,
+        "127.0.0.1".parse().unwrap(),
+    );
     let exact = WebDestinationTarget::new(
         "http",
         "ALLOWED.TEST",
@@ -220,6 +230,12 @@ fn exact_test_destination_allows_only_that_host_and_port() {
         "allowed.test",
         8444,
         Some("127.0.0.1".parse().unwrap()),
+    );
+    let wrong_candidate = WebDestinationTarget::new(
+        "http",
+        "allowed.test",
+        8443,
+        Some("127.0.0.2".parse().unwrap()),
     );
     let wrong_scheme = WebDestinationTarget::new(
         "ftp",
@@ -241,6 +257,10 @@ fn exact_test_destination_allows_only_that_host_and_port() {
         WebDestinationAuthorization::Denied
     );
     assert_eq!(
+        policy.authorize(&wrong_candidate),
+        WebDestinationAuthorization::Denied
+    );
+    assert_eq!(
         policy.authorize(&wrong_scheme),
         WebDestinationAuthorization::Denied
     );
@@ -248,8 +268,10 @@ fn exact_test_destination_allows_only_that_host_and_port() {
 
 #[test]
 fn malformed_test_permission_cannot_bypass_fail_closed_validation() {
-    let empty_host = WebDestinationPolicy::with_test_destination("", 8443);
-    let zero_port = WebDestinationPolicy::with_test_destination("localhost", 0);
+    let empty_host =
+        WebDestinationPolicy::with_test_destination("", 8443, "127.0.0.1".parse().unwrap());
+    let zero_port =
+        WebDestinationPolicy::with_test_destination("localhost", 0, "127.0.0.1".parse().unwrap());
 
     assert_eq!(
         empty_host.authorize(&WebDestinationTarget::new("http", "", 8443, None)),
@@ -263,7 +285,11 @@ fn malformed_test_permission_cannot_bypass_fail_closed_validation() {
 
 #[test]
 fn exact_literal_test_destination_may_reach_its_matching_loopback_server() {
-    let policy = WebDestinationPolicy::with_test_destination("127.0.0.1", 32123);
+    let policy = WebDestinationPolicy::with_test_destination(
+        "127.0.0.1",
+        32123,
+        "127.0.0.1".parse().unwrap(),
+    );
     let target = WebDestinationTarget::new(
         "http",
         "127.0.0.1",

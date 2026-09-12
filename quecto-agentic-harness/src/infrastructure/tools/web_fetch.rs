@@ -11,6 +11,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use crate::application::agent_turn::use_cases::web_fetch::{
     WebDestinationAuthorization, WebDestinationPolicy, WebDestinationTarget,
 };
@@ -52,6 +54,7 @@ impl DestinationResolver for SystemDestinationResolver {
 /// Fetch a URL and return its content as readable text.
 pub struct WebFetchTool {
     max_response_kb: u32,
+    request_timeout: Duration,
     destination_policy: WebDestinationPolicy,
     resolver: Arc<dyn DestinationResolver>,
 }
@@ -61,6 +64,7 @@ impl std::fmt::Debug for WebFetchTool {
         formatter
             .debug_struct("WebFetchTool")
             .field("max_response_kb", &self.max_response_kb)
+            .field("request_timeout", &self.request_timeout)
             .field("destination_policy", &self.destination_policy)
             .finish_non_exhaustive()
     }
@@ -73,6 +77,7 @@ impl WebFetchTool {
     pub fn new(max_response_kb: u32) -> Self {
         Self {
             max_response_kb,
+            request_timeout: REQUEST_TIMEOUT,
             destination_policy: WebDestinationPolicy::new(),
             resolver: Arc::new(SystemDestinationResolver),
         }
@@ -89,9 +94,13 @@ impl WebFetchTool {
     pub fn with_allowed_host(max_response_kb: u32, host_port: &str) -> Self {
         let (host, port) = parse_test_destination(host_port)
             .expect("test destination must be one exact host:port pair");
+        let candidate = host
+            .parse()
+            .expect("test destination must use one exact IP literal");
         Self {
             max_response_kb,
-            destination_policy: WebDestinationPolicy::with_test_destination(host, port),
+            request_timeout: REQUEST_TIMEOUT,
+            destination_policy: WebDestinationPolicy::with_test_destination(host, port, candidate),
             resolver: Arc::new(SystemDestinationResolver),
         }
     }
@@ -102,14 +111,38 @@ impl WebFetchTool {
         destination_policy: WebDestinationPolicy,
         resolver: Arc<dyn DestinationResolver>,
     ) -> Self {
+        Self::with_test_dependencies_and_timeout(
+            max_response_kb,
+            REQUEST_TIMEOUT,
+            destination_policy,
+            resolver,
+        )
+    }
+
+    #[cfg(test)]
+    fn with_test_dependencies_and_timeout(
+        max_response_kb: u32,
+        request_timeout: Duration,
+        destination_policy: WebDestinationPolicy,
+        resolver: Arc<dyn DestinationResolver>,
+    ) -> Self {
+        assert!(
+            !request_timeout.is_zero(),
+            "request timeout must be positive"
+        );
         Self {
             max_response_kb,
+            request_timeout,
             destination_policy,
             resolver,
         }
     }
 
-    async fn fetch_hop(&self, url: &reqwest::Url) -> Result<reqwest::Response, FetchHopError> {
+    async fn fetch_hop(
+        &self,
+        url: &reqwest::Url,
+        deadline: Instant,
+    ) -> Result<reqwest::Response, FetchHopError> {
         let host = url.host_str().ok_or(FetchHopError::Denied)?;
         let port = url.port_or_known_default().ok_or(FetchHopError::Denied)?;
         let literal_candidate = normalized_ip_literal(host);
@@ -150,21 +183,21 @@ impl WebFetchTool {
             .map_err(|error| {
                 FetchHopError::Mechanical(DomainError::Tool(format!("Fetch failed: {error}")))
             })?;
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(FetchHopError::TimedOut);
+        };
         client
             .get(url.clone())
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(remaining)
             .header("User-Agent", concat!("quecto/", env!("CARGO_PKG_VERSION")))
             .send()
             .await
             .map_err(|error| {
-                let domain_error = if error.is_timeout() {
-                    DomainError::Tool(format!(
-                        "Request timed out after {REQUEST_TIMEOUT:?}: {url}"
-                    ))
+                if error.is_timeout() {
+                    FetchHopError::TimedOut
                 } else {
-                    DomainError::Tool(format!("Fetch failed: {error}"))
-                };
-                FetchHopError::Mechanical(domain_error)
+                    FetchHopError::Mechanical(DomainError::Tool(format!("Fetch failed: {error}")))
+                }
             })
     }
 }
@@ -172,6 +205,7 @@ impl WebFetchTool {
 #[derive(Debug)]
 enum FetchHopError {
     Denied,
+    TimedOut,
     Mechanical(DomainError),
 }
 
@@ -249,43 +283,81 @@ impl Tool for WebFetchTool {
             let mut current_url = reqwest::Url::parse(requested_url)
                 .map_err(|error| DomainError::Tool(format!("Invalid URL: {error}")))?;
 
-            let mut redirects = 0_usize;
-            let response = loop {
-                let response = match self.fetch_hop(&current_url).await {
-                    Ok(response) => response,
-                    Err(FetchHopError::Denied) => {
+            let deadline = Instant::now() + self.request_timeout;
+            let operation = async {
+                let mut redirects = 0_usize;
+                let response = loop {
+                    let response = match self.fetch_hop(&current_url, deadline).await {
+                        Ok(response) => response,
+                        Err(FetchHopError::Denied) => {
+                            return Ok(denied_destination_result(&current_url, requested_url));
+                        }
+                        Err(FetchHopError::TimedOut) => {
+                            return Err(timeout_error(requested_url, self.request_timeout));
+                        }
+                        Err(FetchHopError::Mechanical(error)) => return Err(error),
+                    };
+                    if !is_followed_redirect_status(response.status()) {
+                        break response;
+                    }
+                    let mut locations =
+                        response.headers().get_all(reqwest::header::LOCATION).iter();
+                    let Some(location) = locations.next() else {
+                        return Ok(denied_destination_result(&current_url, requested_url));
+                    };
+                    if locations.next().is_some() {
                         return Ok(denied_destination_result(&current_url, requested_url));
                     }
-                    Err(FetchHopError::Mechanical(error)) => return Err(error),
+                    let location = match location.to_str() {
+                        Ok(location) if !location.is_empty() => location,
+                        _ => return Ok(denied_destination_result(&current_url, requested_url)),
+                    };
+                    let next_url = match current_url.join(location) {
+                        Ok(next_url) => next_url,
+                        Err(_) => {
+                            return Ok(denied_destination_result(&current_url, requested_url));
+                        }
+                    };
+                    redirects += 1;
+                    if redirects > MAX_REDIRECTS {
+                        return Err(DomainError::Tool(format!(
+                            "Fetch failed: redirect limit exceeded fetching {requested_url}"
+                        )));
+                    }
+                    // The next iteration authorizes the redirect target before its
+                    // DNS lookup or request, then repeats candidate authorization.
+                    current_url = next_url;
                 };
-                if !response.status().is_redirection() {
-                    break response;
-                }
-                let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
-                    break response;
-                };
-                let location = match location.to_str() {
-                    Ok(location) => location,
-                    Err(_) => return Ok(denied_destination_result(&current_url, requested_url)),
-                };
-                let next_url = match current_url.join(location) {
-                    Ok(next_url) => next_url,
-                    Err(_) => return Ok(denied_destination_result(&current_url, requested_url)),
-                };
-                redirects += 1;
-                if redirects > MAX_REDIRECTS {
-                    return Err(DomainError::Tool(format!(
-                        "Fetch failed: redirect limit exceeded fetching {requested_url}"
-                    )));
-                }
-                // The next iteration authorizes the redirect target before its
-                // DNS lookup or request, then repeats candidate authorization.
-                current_url = next_url;
+
+                present_response(response, requested_url, raw, self.max_response_kb).await
             };
 
-            present_response(response, requested_url, raw, self.max_response_kb).await
+            match tokio::time::timeout_at(deadline, operation).await {
+                Ok(Err(_)) if Instant::now() >= deadline => {
+                    Err(timeout_error(requested_url, self.request_timeout))
+                }
+                Ok(result) => result,
+                Err(_) => Err(timeout_error(requested_url, self.request_timeout)),
+            }
         })
     }
+}
+
+fn is_followed_redirect_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::MOVED_PERMANENTLY
+            | reqwest::StatusCode::FOUND
+            | reqwest::StatusCode::SEE_OTHER
+            | reqwest::StatusCode::TEMPORARY_REDIRECT
+            | reqwest::StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn timeout_error(requested_url: &str, request_timeout: Duration) -> DomainError {
+    DomainError::Tool(format!(
+        "Request timed out after {request_timeout:?}: {requested_url}"
+    ))
 }
 
 fn denied_destination_result(url: &reqwest::Url, requested_url: &str) -> ToolResult {

@@ -84,6 +84,7 @@ pub struct WebDestinationPolicy {
 struct TestDestination {
     host: String,
     port: u16,
+    candidate: IpAddr,
 }
 
 impl WebDestinationPolicy {
@@ -97,11 +98,12 @@ impl WebDestinationPolicy {
     /// tests can use a local server while all other restricted destinations
     /// remain denied. Scheme authorization is never bypassed.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn with_test_destination(host: impl Into<String>, port: u16) -> Self {
+    pub fn with_test_destination(host: impl Into<String>, port: u16, candidate: IpAddr) -> Self {
         Self {
             test_destination: Some(TestDestination {
                 host: normalize_host(host.into()),
                 port,
+                candidate,
             }),
         }
     }
@@ -112,13 +114,14 @@ impl WebDestinationPolicy {
     /// be classified, and a supplied address candidate must itself be public
     /// (or belong to the exact test-only destination).
     pub fn authorize(&self, target: &WebDestinationTarget) -> WebDestinationAuthorization {
-        let test_destination_allowed = self.test_destination_allowed(target);
+        let test_identity_allowed = self.test_identity_allowed(target);
+        let test_candidate_allowed = self.test_candidate_allowed(target);
         let identity_allowed = target.has_complete_normalized_identity()
             && is_allowed_scheme(&target.scheme)
-            && (is_public_host(&target.host) || test_destination_allowed);
+            && (is_public_host(&target.host) || test_identity_allowed);
         let candidate_allowed = target
             .candidate
-            .is_none_or(|candidate| is_public_ip(candidate) || test_destination_allowed);
+            .is_none_or(|candidate| is_public_ip(candidate) || test_candidate_allowed);
 
         if identity_allowed && candidate_allowed {
             WebDestinationAuthorization::Allowed
@@ -128,7 +131,7 @@ impl WebDestinationPolicy {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn test_destination_allowed(&self, target: &WebDestinationTarget) -> bool {
+    fn test_identity_allowed(&self, target: &WebDestinationTarget) -> bool {
         self.test_destination.as_ref().is_some_and(|allowed| {
             allowed.port > 0
                 && target.host == allowed.host
@@ -137,8 +140,20 @@ impl WebDestinationPolicy {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn test_candidate_allowed(&self, target: &WebDestinationTarget) -> bool {
+        self.test_destination.as_ref().is_some_and(|allowed| {
+            self.test_identity_allowed(target) && target.candidate == Some(allowed.candidate)
+        })
+    }
+
     #[cfg(not(any(test, feature = "test-support")))]
-    fn test_destination_allowed(&self, _target: &WebDestinationTarget) -> bool {
+    fn test_identity_allowed(&self, _target: &WebDestinationTarget) -> bool {
+        false
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn test_candidate_allowed(&self, _target: &WebDestinationTarget) -> bool {
         false
     }
 }
@@ -210,44 +225,64 @@ fn is_public_ip(ip: IpAddr) -> bool {
 }
 
 fn is_public_ipv4(ip: Ipv4Addr) -> bool {
-    // Public unicast is the complement of the IANA special-purpose blocks.
-    // Keep this classification here, alongside the scheme rule, so adapters
-    // cannot quietly acquire a second destination authority.
-    !(ip.is_unspecified()
-        || ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || ip.is_documentation()
-        || ipv4_in_cidr(ip, Ipv4Addr::new(0, 0, 0, 0), 8)
-        || ipv4_in_cidr(ip, Ipv4Addr::new(100, 64, 0, 0), 10)
-        || ipv4_in_cidr(ip, Ipv4Addr::new(192, 0, 0, 0), 24)
-        || ipv4_in_cidr(ip, Ipv4Addr::new(192, 88, 99, 0), 24)
-        || ipv4_in_cidr(ip, Ipv4Addr::new(198, 18, 0, 0), 15)
-        || ipv4_in_cidr(ip, Ipv4Addr::new(240, 0, 0, 0), 4))
-}
+    // Affirmative IANA globally-reachable IPv4 intervals. Values outside
+    // these deliberately bounded intervals are denied by default, so a new
+    // or unclassified special-purpose allocation cannot fail open merely
+    // because it was absent from a denylist.
+    const GLOBALLY_REACHABLE: &[(u32, u32)] = &[
+        (0x0100_0000, 0x09ff_ffff), // 1/8 through 9/8
+        (0x0b00_0000, 0x643f_ffff), // 11/8 through before 100.64/10
+        (0x6480_0000, 0x7eff_ffff), // after 100.64/10 through 126/8
+        (0x8000_0000, 0xa9fd_ffff), // 128/8 through before 169.254/16
+        (0xa9ff_0000, 0xac0f_ffff), // after 169.254/16 through before 172.16/12
+        (0xac20_0000, 0xbfff_ffff), // after 172.16/12 through 191/8
+        (0xc000_0009, 0xc000_000a), // explicitly global PCP/TURN anycast
+        (0xc000_0100, 0xc000_01ff), // 192.0.1/24
+        (0xc000_0300, 0xc058_62ff), // after TEST-NET-1 through before 6to4 relay
+        (0xc058_6400, 0xc0a7_ffff), // after 192.88.99/24 through before RFC1918
+        (0xc0a9_0000, 0xc611_ffff), // after 192.168/16 through before benchmark
+        (0xc614_0000, 0xc633_63ff), // after benchmark through before TEST-NET-2
+        (0xc633_6500, 0xcb00_70ff), // after TEST-NET-2 through before TEST-NET-3
+        (0xcb00_7200, 0xdfff_ffff), // after TEST-NET-3 through unicast /4
+    ];
 
-fn ipv4_in_cidr(ip: Ipv4Addr, network: Ipv4Addr, prefix: u32) -> bool {
-    assert!(prefix <= 32, "IPv4 prefix invariant");
-    let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
-    u32::from(ip) & mask == u32::from(network) & mask
+    let value = u32::from(ip);
+    GLOBALLY_REACHABLE
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&value))
 }
 
 fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    // Globally routable unicast currently occupies 2000::/3. Explicitly
-    // remove documentation and special assignment blocks from that positive
-    // classification; all other IPv6 classes fail closed.
-    ipv6_in_cidr(ip, Ipv6Addr::new(0x2000, 0, 0, 0, 0, 0, 0, 0), 3)
-        && !ipv6_in_cidr(ip, Ipv6Addr::new(0x2001, 0, 0, 0, 0, 0, 0, 0), 23)
-        && !ipv6_in_cidr(ip, Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
-        && !ipv6_in_cidr(ip, Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20)
-}
+    // Affirmative globally-routable unicast intervals. In particular, the
+    // 6to4 block 2002::/16 is absent: its embedded IPv4 destination cannot be
+    // proved public from IPv6 routing facts alone, so it fails closed.
+    const GLOBALLY_REACHABLE: &[(u128, u128)] = &[
+        (
+            0x2000_0000_0000_0000_0000_0000_0000_0000,
+            0x2000_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+        ),
+        (
+            0x2001_0200_0000_0000_0000_0000_0000_0000,
+            0x2001_0db7_ffff_ffff_ffff_ffff_ffff_ffff,
+        ),
+        (
+            0x2001_0db9_0000_0000_0000_0000_0000_0000,
+            0x2001_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+        ),
+        (
+            0x2003_0000_0000_0000_0000_0000_0000_0000,
+            0x3ffe_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+        ),
+        (
+            0x3fff_1000_0000_0000_0000_0000_0000_0000,
+            0x3fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+        ),
+    ];
 
-fn ipv6_in_cidr(ip: Ipv6Addr, network: Ipv6Addr, prefix: u32) -> bool {
-    assert!(prefix <= 128, "IPv6 prefix invariant");
-    let mask = u128::MAX.checked_shl(128 - prefix).unwrap_or(0);
-    u128::from(ip) & mask == u128::from(network) & mask
+    let value = u128::from(ip);
+    GLOBALLY_REACHABLE
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&value))
 }
 
 #[cfg(test)]

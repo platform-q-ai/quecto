@@ -230,32 +230,386 @@ fn web_fetch_destination_policy_remains_pure_and_capability_local() {
 fn web_fetch_adapter_consults_the_inward_policy_at_each_destination_boundary() {
     let path = "src/infrastructure/tools/web_fetch.rs";
     let source = fs::read_to_string(path).expect("read web-fetch infrastructure adapter");
-    let policy_calls = source.matches(".authorize(").count();
     assert!(
-        policy_calls >= 2,
-        "{path} must authorize URL targets and resolved/connected candidates"
+        web_fetch_adapter_architecture_allowed(&source),
+        "{path} must import exactly the application-owned destination capability, require an \
+         explicit Allowed decision for the URL and each candidate, and give the connector only \
+         the resulting authorized address set"
     );
-    for forbidden in [
-        "is_restricted_ip",
-        "is_restricted_host_or_ip",
-        "169.254.169.254",
-        "metadata.google.internal",
-        "allowed_hosts",
-        "skip_ssrf",
-    ] {
+}
+
+/// Syntax-aware ratchet for the web-fetch adapter's dependency direction and
+/// authorization-to-connector data flow. Parsing failures and unknown additions
+/// to the security-sensitive inventory fail closed.
+fn web_fetch_adapter_architecture_allowed(source: &str) -> bool {
+    use syn::visit::Visit;
+
+    const APPLICATION_CAPABILITY: [&str; 3] = [
+        "crate::application::agent_turn::use_cases::web_fetch::WebDestinationAuthorization",
+        "crate::application::agent_turn::use_cases::web_fetch::WebDestinationPolicy",
+        "crate::application::agent_turn::use_cases::web_fetch::WebDestinationTarget",
+    ];
+    const MODULE_CONSTANTS: [&str; 4] = [
+        "MAX_RAW_BYTES",
+        "MAX_REDIRECTS",
+        "REQUEST_TIMEOUT",
+        "STRIPPED_BLOCK_TAGS",
+    ];
+    const LOCAL_PRESENTATION_CONSTANTS: [&str; 1] = ["tags_to_text:BLOCK_TAGS"];
+
+    let Some(paths) = dependency_paths(source) else {
+        return false;
+    };
+    let application_paths: BTreeSet<_> = paths
+        .iter()
+        .filter(|path| path.starts_with("crate::application::"))
+        .map(String::as_str)
+        .collect();
+    if application_paths != APPLICATION_CAPABILITY.into_iter().collect() {
+        return false;
+    }
+
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    let mut guard = WebFetchAdapterGuard::default();
+    guard.visit_file(&file);
+
+    let expected_authorizations = [
+        "authorized_candidates:target".to_owned(),
+        "fetch_hop:target".to_owned(),
+    ];
+    guard.authorizations.sort();
+    guard.allowed_decisions.sort();
+    guard.allowed
+        && guard.module_constants == MODULE_CONSTANTS.into_iter().map(str::to_owned).collect()
+        && guard.local_constants
+            == LOCAL_PRESENTATION_CONSTANTS
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        && guard.authorizations == expected_authorizations.as_slice()
+        && guard.allowed_decisions == expected_authorizations.as_slice()
+        && guard.connector_inputs == vec!["authorized_addresses".to_owned()]
+        && guard.redirect_policy_none_owners == vec!["fetch_hop".to_owned()]
+        && guard.no_proxy_owners == vec!["fetch_hop".to_owned()]
+}
+
+#[derive(Default)]
+struct WebFetchAdapterGuard {
+    current_owner: Option<String>,
+    module_constants: BTreeSet<String>,
+    local_constants: BTreeSet<String>,
+    authorizations: Vec<String>,
+    allowed_decisions: Vec<String>,
+    connector_inputs: Vec<String>,
+    redirect_policy_none_owners: Vec<String>,
+    no_proxy_owners: Vec<String>,
+    allowed: bool,
+}
+
+impl WebFetchAdapterGuard {
+    fn owner(&self) -> String {
+        self.current_owner
+            .clone()
+            .unwrap_or_else(|| "<module>".to_owned())
+    }
+
+    fn visit_owned(&mut self, name: String, body: impl FnOnce(&mut Self)) {
+        let previous = self.current_owner.replace(name);
+        body(self);
+        self.current_owner = previous;
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for WebFetchAdapterGuard {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        self.allowed = true;
+        syn::visit::visit_file(self, file);
+    }
+
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        if self.current_owner.is_none() {
+            self.allowed &= self.module_constants.insert(item.ident.to_string());
+        } else {
+            self.allowed &= self
+                .local_constants
+                .insert(format!("{}:{}", self.owner(), item.ident));
+        }
+        syn::visit::visit_item_const(self, item);
+    }
+
+    fn visit_item_static(&mut self, _item: &'ast syn::ItemStatic) {
+        // The adapter currently needs no global mutable or immutable table.
+        // In particular, destination classifications belong to the application policy.
+        self.allowed = false;
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        let name = item.sig.ident.to_string();
+        self.allowed &= !network_predicate_signature(&item.sig);
+        self.visit_owned(name, |guard| syn::visit::visit_item_fn(guard, item));
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        let name = item.sig.ident.to_string();
+        self.allowed &= !network_predicate_signature(&item.sig);
+        self.visit_owned(name, |guard| syn::visit::visit_impl_item_fn(guard, item));
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        match method.as_str() {
+            "authorize" => {
+                match (
+                    call.args.len(),
+                    call.args.first().and_then(referenced_identifier),
+                ) {
+                    (1, Some(target)) => self
+                        .authorizations
+                        .push(format!("{}:{target}", self.owner())),
+                    _ => self.allowed = false,
+                }
+            }
+            "resolve_to_addrs" => {
+                let connector_input = call.args.iter().nth(1).and_then(referenced_identifier);
+                if let Some(connector_input) = connector_input {
+                    self.connector_inputs.push(connector_input);
+                } else {
+                    self.allowed = false;
+                }
+            }
+            "redirect" => {
+                let policy_is_none = call.args.len() == 1
+                    && call.args.first().is_some_and(|argument| {
+                        call_path(argument)
+                            .is_some_and(|path| path == ["reqwest", "redirect", "Policy", "none"])
+                    });
+                if policy_is_none {
+                    self.redirect_policy_none_owners.push(self.owner());
+                } else {
+                    self.allowed = false;
+                }
+            }
+            "no_proxy" => self.no_proxy_owners.push(self.owner()),
+            _ => {}
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+        if matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_)) {
+            let left_authorizes = authorize_call(&binary.left);
+            let right_authorizes = authorize_call(&binary.right);
+            let left_allowed = allowed_decision(&binary.left);
+            let right_allowed = allowed_decision(&binary.right);
+            let authorized_target = if left_authorizes && right_allowed {
+                authorize_argument(&binary.left)
+            } else if right_authorizes && left_allowed {
+                authorize_argument(&binary.right)
+            } else {
+                None
+            };
+            if let Some(target) = authorized_target {
+                self.allowed_decisions
+                    .push(format!("{}:{target}", self.owner()));
+            }
+        }
+        syn::visit::visit_expr_binary(self, binary);
+    }
+}
+
+fn authorize_call(expression: &syn::Expr) -> bool {
+    matches!(expression, syn::Expr::MethodCall(call) if call.method == "authorize" && call.args.len() == 1)
+}
+
+fn authorize_argument(expression: &syn::Expr) -> Option<String> {
+    let syn::Expr::MethodCall(call) = expression else {
+        return None;
+    };
+    (call.method == "authorize" && call.args.len() == 1)
+        .then(|| call.args.first())
+        .flatten()
+        .and_then(referenced_identifier)
+}
+
+fn allowed_decision(expression: &syn::Expr) -> bool {
+    expression_path(expression).is_some_and(|path| {
+        path == ["WebDestinationAuthorization", "Allowed"]
+            || path
+                == [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "web_fetch",
+                    "WebDestinationAuthorization",
+                    "Allowed",
+                ]
+    })
+}
+
+fn referenced_identifier(expression: &syn::Expr) -> Option<String> {
+    let expression = match expression {
+        syn::Expr::Reference(reference) => &*reference.expr,
+        other => other,
+    };
+    let syn::Expr::Path(path) = expression else {
+        return None;
+    };
+    (path.path.segments.len() == 1).then(|| path.path.segments[0].ident.to_string())
+}
+
+fn call_path(expression: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = expression else {
+        return None;
+    };
+    expression_path(&call.func)
+}
+
+fn expression_path(expression: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = expression else {
+        return None;
+    };
+    Some(
+        path.path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect(),
+    )
+}
+
+#[test]
+fn web_fetch_architecture_guard_accepts_intended_structure_and_harmless_syntax() {
+    let source = fs::read_to_string("src/infrastructure/tools/web_fetch.rs")
+        .expect("read web-fetch infrastructure adapter");
+    assert!(
+        web_fetch_adapter_architecture_allowed(&source),
+        "the production adapter is the canonical allowed structure"
+    );
+
+    // Comments cannot create or hide a dependency, and the explicitly owned
+    // function-local presentation table is not a second destination authority.
+    let allowed = source.replace(
+        "const BLOCK_TAGS: &[&str]",
+        "// crate::application::secret::CommentOnly\n    const BLOCK_TAGS: &[&str]",
+    );
+    assert!(web_fetch_adapter_architecture_allowed(&allowed));
+}
+
+#[test]
+fn web_fetch_architecture_guard_rejects_dependency_and_flow_mutations() {
+    let source = fs::read_to_string("src/infrastructure/tools/web_fetch.rs")
+        .expect("read web-fetch infrastructure adapter");
+    let mutations = [
+        (
+            "broader application dependency",
+            source.replace(
+                "use crate::domain::error::DomainError;",
+                "use crate::application::secret::DestinationBypass;\nuse crate::domain::error::DomainError;",
+            ),
+        ),
+        (
+            "renamed second destination table",
+            format!(
+                "{source}\nfn destination_table(candidate: IpAddr) -> bool {{ let _ = candidate; true }}\n"
+            ),
+        ),
+        (
+            "module-level destination data",
+            format!(
+                "{source}\nconst PUBLIC_DESTINATIONS: &[&str] = &[\"0.0.0.0/0\"];\n"
+            ),
+        ),
+        (
+            "renamed local destination table",
+            source.replace(
+                "const BLOCK_TAGS: &[&str]",
+                "const DESTINATION_RANGES: &[&str]",
+            ),
+        ),
+        (
+            "irrelevant authorization call",
+            format!(
+                "{source}\nfn irrelevant(policy: &WebDestinationPolicy, target: &WebDestinationTarget) {{ let _ = policy.authorize(target); }}\n"
+            ),
+        ),
+        (
+            "non-Allowed URL decision",
+            source.replacen(
+                "!= WebDestinationAuthorization::Allowed",
+                "== WebDestinationAuthorization::Denied",
+                1,
+            ),
+        ),
+        (
+            "connector receives unresolved candidates",
+            source.replace(
+                ".resolve_to_addrs(host, &authorized_addresses)",
+                ".resolve_to_addrs(host, &resolved)",
+            ),
+        ),
+        (
+            "automatic redirects enabled",
+            source.replace(
+                ".redirect(reqwest::redirect::Policy::none())",
+                ".redirect(reqwest::redirect::Policy::limited(10))",
+            ),
+        ),
+    ];
+
+    for (description, mutation) in mutations {
+        assert_ne!(
+            mutation, source,
+            "mutation fixture must change source: {description}"
+        );
         assert!(
-            !source.contains(forbidden),
-            "{path} must not define a second destination authority; found {forbidden}"
+            !web_fetch_adapter_architecture_allowed(&mutation),
+            "guard accepted prohibited mutation: {description}"
         );
     }
-    assert!(
-        source.contains("Policy::none()"),
-        "redirects must be disabled in reqwest and inspected hop by hop"
+}
+
+fn network_predicate_signature(signature: &syn::Signature) -> bool {
+    use syn::visit::Visit;
+
+    #[derive(Default)]
+    struct NetworkTypes {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for NetworkTypes {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.found |= path.segments.iter().any(|segment| {
+                matches!(
+                    segment.ident.to_string().as_str(),
+                    "IpAddr"
+                        | "Ipv4Addr"
+                        | "Ipv6Addr"
+                        | "SocketAddr"
+                        | "Url"
+                        | "WebDestinationTarget"
+                )
+            });
+            syn::visit::visit_path(self, path);
+        }
+    }
+
+    let returns_bool = matches!(
+        &signature.output,
+        syn::ReturnType::Type(_, ty)
+            if matches!(&**ty, syn::Type::Path(path) if path.path.is_ident("bool"))
     );
-    assert!(
-        source.contains("resolve_to_addrs"),
-        "the connector must be pinned to authorized DNS candidates"
-    );
+    if !returns_bool {
+        return false;
+    }
+    let mut network_types = NetworkTypes::default();
+    for argument in &signature.inputs {
+        if let syn::FnArg::Typed(argument) = argument {
+            network_types.visit_type(&argument.ty);
+        }
+    }
+    network_types.found
 }
 
 #[test]
