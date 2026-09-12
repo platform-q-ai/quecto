@@ -62,10 +62,10 @@ async fn accepted_baseline_hosts_call_port_once() {
 }
 #[tokio::test]
 async fn non_success_is_preserved_without_body_shape() {
-    let (_, u) = use_case(FetchOutcome::NonSuccessStatus(HttpStatus(404)));
+    let (_, u) = use_case(FetchOutcome::NonSuccessStatus(HttpStatus::new(404, Some("Not Found".into()))));
     assert_eq!(
         u.execute("https://example.com", false).await.unwrap(),
-        WebFetchResult::NonSuccessStatus(HttpStatus(404))
+        WebFetchResult::NonSuccessStatus(HttpStatus::new(404, Some("Not Found".into())))
     );
 }
 #[test]

@@ -37,6 +37,7 @@ fn workflow_flags() -> AgentFlags {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context: None,
     }
 }
@@ -75,6 +76,7 @@ fn build(
         config_path: tmp.path(),
         config,
         http_client: &reqwest::Client::new(),
+        web_fetch_tool: None,
         flags,
         stderr,
         broadcast_tx: None,

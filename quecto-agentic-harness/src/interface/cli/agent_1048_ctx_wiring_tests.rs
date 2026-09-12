@@ -31,6 +31,7 @@ fn flags_for_wiring_test() -> AgentFlags {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context: None,
     }
 }

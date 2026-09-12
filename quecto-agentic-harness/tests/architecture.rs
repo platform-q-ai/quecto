@@ -2824,11 +2824,17 @@ fn web_fetch_is_constructed_only_by_outer_composition() {
     assert!(composition.contains("ReqwestFetchWebContent"));
     assert!(composition.contains("WebFetchTool"));
 
-    let interface = fs::read_to_string("src/interface/shared.rs").expect("interface");
-    assert!(
-        !interface.contains("composition::web_fetch::build"),
-        "interface must receive the completed graph rather than call composition"
-    );
+    let mut interface_files = Vec::new();
+    collect_rs_files(Path::new("src/interface"), &mut interface_files);
+    for file in interface_files {
+        let (path, source) = file.split_once(":\n").expect("collected source");
+        assert!(
+            !source.contains("composition::web_fetch")
+                && !source.contains("composition::{web_fetch")
+                && !source.contains("composition::web_fetch as"),
+            "production interface must not reference composition: {path}"
+        );
+    }
 }
 
 #[test]

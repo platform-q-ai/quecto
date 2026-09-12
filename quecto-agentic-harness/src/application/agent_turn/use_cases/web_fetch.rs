@@ -16,8 +16,16 @@ impl ParsedHttpUrl {
 pub struct FetchRequest {
     pub url: ParsedHttpUrl,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HttpStatus(pub u16);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpStatus {
+    pub code: u16,
+    pub reason: Option<String>,
+}
+impl HttpStatus {
+    pub fn new(code: u16, reason: Option<String>) -> Self {
+        Self { code, reason }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FetchOutcome {
     SuccessBody(Vec<u8>),

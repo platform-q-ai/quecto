@@ -26,6 +26,7 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) config_path: &'a std::path::Path,
     pub(super) config: &'a Config,
     pub(super) http_client: &'a reqwest::Client,
+    pub(super) web_fetch_tool: Option<Arc<dyn crate::domain::tool::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
     /// Broadcast channel sender for workflow_state events (#598).
@@ -59,6 +60,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         config_path,
         config,
         http_client,
+        web_fetch_tool,
         flags,
         stderr,
         broadcast_tx,
@@ -115,12 +117,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             base_dir,
             config,
             http_client,
-            web_fetch_tool: config.tools.web.fetch.enabled.then(|| {
-                crate::composition::web_fetch::build(
-                    http_client.clone(),
-                    config.tools.web.fetch.max_response_kb,
-                )
-            }),
+            web_fetch_tool,
             workspace: workspace.clone(),
             sandbox,
             exec_options,

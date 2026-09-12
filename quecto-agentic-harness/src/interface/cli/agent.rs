@@ -200,6 +200,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context,
     };
     flags = flag_parse::validate_agent_flags(flags, stderr)?;
@@ -226,6 +227,7 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
     flags.cwd_override = ctx.cwd.clone();
+    flags.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
     if !swarm_runtime::admit(&mut flags, stderr) {
         return 1;
     }
@@ -337,6 +339,12 @@ pub(crate) fn build_agent_from_config(
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
+    let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
+        let factory = flags
+            .web_fetch_tool_factory
+            .expect("production bootstrap must inject web-fetch construction");
+        factory(http_client.clone(), config.tools.web.fetch.max_response_kb)
+    });
     let ToolRegistryBuild {
         registry,
         spill_store,
@@ -353,6 +361,7 @@ pub(crate) fn build_agent_from_config(
         config_path,
         config: &config,
         http_client: &http_client,
+        web_fetch_tool,
         flags,
         stderr,
         broadcast_tx,

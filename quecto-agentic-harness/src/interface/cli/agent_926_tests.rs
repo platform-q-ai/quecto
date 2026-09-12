@@ -42,6 +42,7 @@ fn spawn_capable_flags() -> AgentFlags {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context: None,
     }
 }
@@ -61,6 +62,7 @@ fn test_926_spawn_capable_build_has_live_notification_rx_with_real_base_dir() {
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
+        web_fetch_tool: None,
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
@@ -93,6 +95,7 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
         config_path: std::path::Path::new(""),
         config: &config,
         http_client: &reqwest::Client::new(),
+        web_fetch_tool: None,
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
@@ -125,6 +128,7 @@ async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
+        web_fetch_tool: None,
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,

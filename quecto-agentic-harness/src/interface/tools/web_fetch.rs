@@ -53,8 +53,12 @@ impl Tool for WebFetchTool {
                     format!("Blocked: URL points to a restricted address ({h})"),
                     true,
                 )),
-                Ok(WebFetchResult::NonSuccessStatus(s)) => {
-                    Ok(result(format!("HTTP {} fetching {url}", s.0), true))
+                Ok(WebFetchResult::NonSuccessStatus(status)) => {
+                    let displayed = status.reason.as_ref().map_or_else(
+                        || status.code.to_string(),
+                        |reason| format!("{} {reason}", status.code),
+                    );
+                    Ok(result(format!("HTTP {displayed} fetching {url}"), true))
                 }
                 Err(WebFetchError::InvalidUrl(e)) => {
                     Err(DomainError::Tool(format!("Invalid URL: {e}")))
@@ -64,6 +68,10 @@ impl Tool for WebFetchTool {
         })
     }
 }
+#[cfg(test)]
+#[path = "web_fetch_tests.rs"]
+mod tests;
+
 fn map_failure(f: FetchFailure, url: &str) -> DomainError {
     DomainError::Tool(match f {
         FetchFailure::TimedOut => format!("Request timed out after 10s: {url}"),

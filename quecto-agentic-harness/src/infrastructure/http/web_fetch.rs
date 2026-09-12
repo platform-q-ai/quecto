@@ -34,8 +34,10 @@ impl FetchWebContent for ReqwestFetchWebContent {
                     }
                 })?;
             if !response.status().is_success() {
-                return Ok(FetchOutcome::NonSuccessStatus(HttpStatus(
-                    response.status().as_u16(),
+                let status = response.status();
+                return Ok(FetchOutcome::NonSuccessStatus(HttpStatus::new(
+                    status.as_u16(),
+                    status.canonical_reason().map(str::to_owned),
                 )));
             }
             read_body(response, MAX_RAW_BYTES)
