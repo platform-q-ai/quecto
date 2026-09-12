@@ -222,10 +222,13 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
         SwarmConfig::default(),
     )
     .with_context(Some(context.clone()));
+    let invalid_deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
     let invalid = tool
-        .execute(
-            r#"{"op":"create","goal":"ship","constraints":[],"criteria":[],"member_limit":26}"#,
-        )
+        .execute(&json!({"op":"create","goal":"ship","constraints":[],"criteria":[{"id":"test","kind":"command","description":"pass"}],"member_limit":26,"deadline":invalid_deadline}).to_string())
         .await
         .unwrap();
     assert!(invalid.is_error);
