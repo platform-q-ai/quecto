@@ -2,9 +2,13 @@
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParsedHttpUrl(reqwest::Url);
+pub struct ParsedHttpUrl(url::Url);
 impl ParsedHttpUrl {
-    pub fn as_url(&self) -> &reqwest::Url {
+    pub fn parse(value: &str) -> Result<Self, url::ParseError> {
+        url::Url::parse(value).map(Self)
+    }
+
+    pub fn as_url(&self) -> &url::Url {
         &self.0
     }
 }
@@ -66,8 +70,7 @@ impl WebFetchUseCase {
         }
     }
     pub async fn execute(&self, url: &str, raw: bool) -> Result<WebFetchResult, WebFetchError> {
-        let parsed =
-            reqwest::Url::parse(url).map_err(|e| WebFetchError::InvalidUrl(e.to_string()))?;
+        let parsed = url::Url::parse(url).map_err(|e| WebFetchError::InvalidUrl(e.to_string()))?;
         let request = match classify(parsed) {
             ExecutionGate::Allowed(url) => FetchRequest { url },
             ExecutionGate::UnsupportedScheme => return Ok(WebFetchResult::UnsupportedScheme),
@@ -97,7 +100,7 @@ impl WebFetchUseCase {
         }
     }
 }
-fn classify(url: reqwest::Url) -> ExecutionGate {
+fn classify(url: url::Url) -> ExecutionGate {
     if matches!(url.scheme(), "http" | "https") {
         let host = url.host_str().unwrap_or_default();
         if restricted_host(host) {

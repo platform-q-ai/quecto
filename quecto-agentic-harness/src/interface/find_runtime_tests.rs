@@ -47,6 +47,7 @@ fn runtime(
         base_dir: root,
         config: &config,
         http_client: &client,
+        web_fetch_tool: None,
         workspace: root.to_path_buf(),
         sandbox: Sandbox::new(Some(root.to_path_buf())),
         exec_options: Default::default(),

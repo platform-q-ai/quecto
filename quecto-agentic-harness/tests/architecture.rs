@@ -2467,7 +2467,14 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     file,
                     "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
                 ),
-                ["crate", "composition", "web_fetch", "build"] => file == "src/interface/shared.rs",
+                ["crate", "composition", "web_fetch", "build"] => matches!(
+                    file,
+                    "src/interface/cli/agent/agent_tool_registry.rs"
+                        | "src/interface/find_runtime_tests.rs"
+                        | "src/interface/shared_cov_tests.rs"
+                        | "src/interface/tool_runtime_catalogue_tests.rs"
+                        | "src/interface/tool_runtime_profile_tests.rs"
+                ),
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
             }
@@ -2816,6 +2823,37 @@ fn web_fetch_is_constructed_only_by_outer_composition() {
     let composition = fs::read_to_string("src/composition/web_fetch.rs").expect("composition");
     assert!(composition.contains("ReqwestFetchWebContent"));
     assert!(composition.contains("WebFetchTool"));
+
+    let interface = fs::read_to_string("src/interface/shared.rs").expect("interface");
+    assert!(
+        !interface.contains("composition::web_fetch::build"),
+        "interface must receive the completed graph rather than call composition"
+    );
+}
+
+#[test]
+fn web_fetch_application_external_dependencies_are_allowlisted() {
+    let source = fs::read_to_string("src/application/agent_turn/use_cases/web_fetch.rs")
+        .expect("application web_fetch");
+    let syntax = syn::parse_file(&source).expect("valid Rust");
+    let allowed_roots = ["std", "url"];
+    for item in syntax.items {
+        if let syn::Item::Use(item_use) = item {
+            let root = match item_use.tree {
+                syn::UseTree::Path(path) => path.ident.to_string(),
+                syn::UseTree::Name(name) => name.ident.to_string(),
+                _ => continue,
+            };
+            assert!(
+                allowed_roots.contains(&root.as_str()),
+                "application web_fetch imports non-allowlisted dependency {root}"
+            );
+        }
+    }
+    assert!(
+        source.contains("url::Url"),
+        "pure URL dependency must be explicit"
+    );
 }
 
 #[test]

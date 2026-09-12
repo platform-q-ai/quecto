@@ -41,6 +41,7 @@ fn build_runtime_with_entrypoint(
         base_dir: tmp.path(),
         config: &config,
         http_client: &client,
+        web_fetch_tool: None,
         workspace,
         sandbox,
         exec_options,

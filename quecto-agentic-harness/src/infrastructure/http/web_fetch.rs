@@ -69,3 +69,7 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "web_fetch_tests.rs"]
+mod tests;

@@ -115,6 +115,12 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             base_dir,
             config,
             http_client,
+            web_fetch_tool: config.tools.web.fetch.enabled.then(|| {
+                crate::composition::web_fetch::build(
+                    http_client.clone(),
+                    config.tools.web.fetch.max_response_kb,
+                )
+            }),
             workspace: workspace.clone(),
             sandbox,
             exec_options,
