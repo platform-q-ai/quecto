@@ -108,7 +108,10 @@ async fn adapter_follows_redirects_and_reports_final_status() {
         .fetch(&request(&format!("http://localtest.me:{port}/start")))
         .await
         .unwrap();
-    assert_eq!(result, FetchOutcome::NonSuccessStatus(HttpStatus::new(418, Some("I'm a teapot".into()))));
+    assert_eq!(
+        result,
+        FetchOutcome::NonSuccessStatus(HttpStatus::new(418, Some("I'm a teapot".into())))
+    );
     peer.abort();
 }
 
