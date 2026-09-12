@@ -1,97 +1,19 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::rig::*;
 use super::*;
-use crate::application::subagents::dto::TerminationRouted;
 use crate::application::subagents::ports::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
-use crate::application::subagents::use_cases::{
-    ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
-};
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
-    HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,
-};
+use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;
 use crate::interface::uds::subagent_teardown::wire::TEARDOWN_COMMAND_CAP_BYTES;
-
-struct Rig {
-    lifecycle: Arc<FakeLifecycle>,
-    routing: Arc<FakeRouting>,
-    cancellation: Arc<FakeCancellation>,
-    persistence: Arc<FakePersistence>,
-    exit: Arc<FakeExit>,
-    controller: SubagentTeardownController,
-}
-
-fn rig_for(lineage: LineageSnapshot) -> Rig {
-    let lifecycle = FakeLifecycle::new(lineage);
-    let routing = FakeRouting::new();
-    let cancellation = FakeCancellation::new(true);
-    let persistence = FakePersistence::new();
-    let exit = FakeExit::new();
-    let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), FakeClock::at(42));
-    let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
-    let execute = Arc::new(ExecuteHarnessShutdown::new(
-        transaction,
-        ExecuteHarnessShutdownPorts {
-            routing: routing.clone(),
-            cancellation: cancellation.clone(),
-            persistence: persistence.clone(),
-            exit: exit.clone(),
-        },
-    ));
-    let terminate = Arc::new(TerminateDelegatedAgent::new(
-        lifecycle.clone(),
-        routing.clone(),
-    ));
-    Rig {
-        lifecycle,
-        routing,
-        cancellation,
-        persistence,
-        exit,
-        controller: SubagentTeardownController::new(prepare, execute, terminate),
-    }
-}
-
-fn rig() -> Rig {
-    rig_for(root_tree())
-}
-
-impl Rig {
-    fn nothing_ran(&self) {
-        assert!(self.routing.calls().is_empty());
-        assert_eq!(self.cancellation.calls.load(Ordering::SeqCst), 0);
-        assert!(self.persistence.calls.lock().unwrap().is_empty());
-        assert!(self.exit.signalled.lock().unwrap().is_empty());
-        assert_eq!(self.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
-    }
-
-    async fn handle(
-        &self,
-        line: &str,
-        authority: ConnectionAuthority,
-        delivery: DeliveryState,
-        writer: &RecordingWriter,
-    ) -> ControllerOutcome {
-        self.controller
-            .handle(line, authority, delivery, writer)
-            .await
-    }
-}
-
-const SHUTDOWN_LINE: &str = r#"{"type":"shutdown","id":"c-1","reason":"parent_shutdown"}"#;
-
-fn frame_json(frame: &str) -> serde_json::Value {
-    serde_json::from_str(frame.trim_end()).unwrap()
-}
 
 #[tokio::test]
 async fn shutdown_flushes_the_correlated_ack_before_the_token_reaches_execute() {
     for delivery in [DeliveryState::Idle, DeliveryState::Busy] {
         let rig = rig();
-        let writer = RecordingWriter::default();
+        let writer = traced_writer(&rig);
         let outcome = rig
             .handle(
                 SHUTDOWN_LINE,
@@ -119,9 +41,12 @@ async fn shutdown_flushes_the_correlated_ack_before_the_token_reaches_execute() 
         assert_eq!(ack["success"], true);
         assert_eq!(ack["data"]["status"], "shutting_down");
         assert_eq!(ack["data"]["reason"], "parent_shutdown");
-        // The ACK was flushed strictly before any teardown effect: the writer
-        // trace has the flush and the cancellation counter only moved after.
-        assert_eq!(*writer.trace.lock().unwrap(), ["ack-flushed"]);
+        // The ACK was flushed strictly before the first teardown effect: both
+        // sides write the same trace, so a reversed order would show up.
+        assert_eq!(
+            *writer.trace.lock().unwrap(),
+            ["ack-flushed", "execute-started"]
+        );
         assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
         assert_eq!(rig.routing.calls().len(), 2);
         assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
@@ -165,6 +90,124 @@ async fn ack_flush_failure_releases_the_admission_and_never_executes() {
         outcome,
         ControllerOutcome::ShutdownExecuted { outcome: Ok(_), .. }
     ));
+}
+
+#[tokio::test]
+async fn dropping_the_task_before_the_ack_flushes_releases_the_holder() {
+    let rig = rig();
+    let writer = Arc::new(RecordingWriter::stalled());
+    let task = tokio::spawn({
+        let controller = rig.controller.clone();
+        let writer = writer.clone();
+        async move {
+            controller
+                .handle(
+                    SHUTDOWN_LINE,
+                    ConnectionAuthority::BoundParent,
+                    DeliveryState::Idle,
+                    writer.as_ref(),
+                )
+                .await
+        }
+    });
+    while writer.attempts.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    // No ACK reached the peer, so nothing may run and nothing stays frozen.
+    assert!(writer.frames().is_empty());
+    rig.nothing_ran();
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
+}
+
+#[tokio::test]
+async fn dropping_the_task_after_the_ack_still_completes_the_shutdown() {
+    let rig = rig_with(root_tree(), FakeCancellation::holding());
+    let writer = Arc::new(RecordingWriter::default());
+    let task = tokio::spawn({
+        let controller = rig.controller.clone();
+        let writer = writer.clone();
+        async move {
+            controller
+                .handle(
+                    SHUTDOWN_LINE,
+                    ConnectionAuthority::BoundParent,
+                    DeliveryState::Busy,
+                    writer.as_ref(),
+                )
+                .await
+        }
+    });
+    // Wait until the ACK is on the wire and the run is parked in cancellation.
+    while rig.cancellation.calls.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(writer.frames().len(), 1);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    // The peer saw an ACK: the shutdown must finish without the caller.
+    rig.cancellation.gate.notify_one();
+    rig.spawner.latest_finished().await;
+    assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.routing.calls().len(), 2);
+    assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
+}
+
+#[tokio::test]
+async fn an_interrupted_run_is_re_driven_until_the_shutdown_completes() {
+    let rig = rig();
+    // The first two spawns are dropped by their runtime; the re-drive must
+    // keep going until one runs.
+    rig.spawner.drop_next.store(2, Ordering::SeqCst);
+    let writer = RecordingWriter::default();
+    let outcome = rig
+        .handle(
+            SHUTDOWN_LINE,
+            ConnectionAuthority::BoundParent,
+            DeliveryState::Idle,
+            &writer,
+        )
+        .await;
+    assert_eq!(writer.frames().len(), 1);
+    assert!(matches!(
+        outcome,
+        ControllerOutcome::ShutdownExecuted { outcome: Ok(_), .. }
+    ));
+    assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 3);
+    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
+}
+
+#[tokio::test]
+async fn re_driving_is_bounded_when_the_spawner_never_runs_anything() {
+    let rig = rig();
+    rig.spawner.drop_next.store(u64::MAX, Ordering::SeqCst);
+    let writer = RecordingWriter::default();
+    let outcome = rig
+        .handle(
+            SHUTDOWN_LINE,
+            ConnectionAuthority::BoundParent,
+            DeliveryState::Idle,
+            &writer,
+        )
+        .await;
+    assert_eq!(
+        outcome,
+        ControllerOutcome::ShutdownExecuted {
+            delivery: DeliveryState::Idle,
+            outcome: Err(HarnessShutdownError::ExecutionInterrupted),
+        }
+    );
+    assert_eq!(
+        rig.spawner.spawned.load(Ordering::SeqCst),
+        u64::from(MAX_REDRIVES)
+    );
+    // The admission is intact for a later trigger to finish.
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
 }
 
 #[tokio::test]
@@ -220,7 +263,7 @@ async fn framing_and_shape_violations_are_rejected_before_authorization_matters(
         "x".repeat(TEARDOWN_COMMAND_CAP_BYTES)
     );
     let malformed = r#"{"type":"shutdown","reason":"parent_shutdown","ack":"accept"}"#;
-    for line in [oversized.as_str(), malformed, "garbage"] {
+    for line in [oversized.as_str(), malformed] {
         let outcome = rig
             .handle(
                 line,
@@ -238,7 +281,7 @@ async fn framing_and_shape_violations_are_rejected_before_authorization_matters(
         assert_eq!(command, UNPARSED_COMMAND);
         assert_eq!(written, Ok(()));
     }
-    assert_eq!(writer.frames().len(), 3);
+    assert_eq!(writer.frames().len(), 2);
     rig.nothing_ran();
     // A shape-invalid command that carried an id gets a correlated rejection.
     let correlated = RecordingWriter::default();
@@ -256,58 +299,51 @@ async fn framing_and_shape_violations_are_rejected_before_authorization_matters(
 }
 
 #[tokio::test]
-async fn non_teardown_lines_are_ignored_without_a_frame() {
+async fn unclaimed_lines_are_ignored_without_a_frame() {
+    // Only the two teardown `type`s are claimed; everything else is left to
+    // the ordinary dispatcher so it is never answered twice.
     let rig = rig();
     let writer = RecordingWriter::default();
-    let outcome = rig
-        .handle(
-            r#"{"type":"prompt","message":"hi"}"#,
-            ConnectionAuthority::BoundParent,
-            DeliveryState::Idle,
-            &writer,
-        )
-        .await;
-    assert_eq!(outcome, ControllerOutcome::Ignored);
+    for line in [
+        r#"{"type":"prompt","message":"hi"}"#,
+        "garbage",
+        "",
+        "[]",
+        r#"{"reason":"parent_shutdown"}"#,
+    ] {
+        let outcome = rig
+            .handle(
+                line,
+                ConnectionAuthority::Unauthenticated,
+                DeliveryState::Idle,
+                &writer,
+            )
+            .await;
+        assert_eq!(outcome, ControllerOutcome::Ignored, "{line}");
+    }
     assert!(writer.frames().is_empty());
     rig.nothing_ran();
 }
 
 #[tokio::test]
-async fn unknown_reason_zero_depth_and_excess_depth_are_rejected_with_no_effect() {
+async fn a_non_string_id_is_rejected_with_the_id_rendered_as_text() {
     let rig = rig();
     let writer = RecordingWriter::default();
-    let cases = [
-        (
-            r#"{"type":"shutdown","id":"r","reason":"kill"}"#,
-            "unknown shutdown reason \"kill\"",
-        ),
-        (
-            r#"{"type":"terminate_delegated_agent","id":"z","target_uuid":"A","target_generation":1,"remaining_depth":0}"#,
-            "remaining_depth must be at least 1",
-        ),
-        (
-            r#"{"type":"terminate_delegated_agent","id":"x","target_uuid":"A","target_generation":1,"remaining_depth":17}"#,
-            "remaining_depth 17 exceeds maximum 16",
-        ),
-        (
-            r#"{"type":"terminate_delegated_agent","id":"e","target_uuid":"","target_generation":1,"remaining_depth":1}"#,
-            "target_uuid must not be empty",
-        ),
-    ];
-    for (line, detail) in cases {
-        let outcome = rig
-            .handle(
-                line,
-                ConnectionAuthority::BoundParent,
-                DeliveryState::Idle,
-                &writer,
-            )
-            .await;
-        assert!(
-            matches!(&outcome, ControllerOutcome::Rejected { detail: d, written: Ok(()), .. } if d == detail),
-            "{line}: {outcome:?}"
-        );
-    }
+    let outcome = rig
+        .handle(
+            r#"{"type":"shutdown","id":42,"reason":"parent_shutdown"}"#,
+            ConnectionAuthority::BoundParent,
+            DeliveryState::Idle,
+            &writer,
+        )
+        .await;
+    assert!(matches!(outcome, ControllerOutcome::Rejected { .. }));
+    let frame = frame_json(&writer.frames()[0]);
+    assert_eq!(frame["id"], "42");
+    assert_eq!(
+        frame["error"],
+        "malformed teardown command: id must be a string"
+    );
     rig.nothing_ran();
 }
 
@@ -348,139 +384,6 @@ async fn duplicate_shutdown_commands_join_one_outcome_and_each_gets_its_own_ack(
     );
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
     assert_eq!(rig.routing.calls().len(), 2);
-}
-
-#[tokio::test]
-async fn selected_routing_root_a_b_preserves_a_and_its_unrelated_children() {
-    let rig = rig();
-    let writer = RecordingWriter::default();
-    let outcome = rig
-        .handle(
-            r#"{"type":"terminate_delegated_agent","id":"t-b","target_uuid":"B","target_generation":1,"remaining_depth":2}"#,
-            ConnectionAuthority::BoundParent,
-            DeliveryState::Busy,
-            &writer,
-        )
-        .await;
-    let ControllerOutcome::TerminationRouted {
-        delivery: DeliveryState::Busy,
-        outcome:
-            Ok(TerminationRouted::Forwarded {
-                via,
-                remaining_depth,
-            }),
-        written: Ok(()),
-    } = outcome
-    else {
-        panic!("expected forward, got {outcome:?}");
-    };
-    assert_eq!(via.uuid, AgentUuid::new("A"));
-    assert_eq!(remaining_depth, RoutingDepth::new(1).unwrap());
-    assert_eq!(
-        rig.routing.calls(),
-        [RoutingCall::Forward {
-            via: identity("A", 1),
-            target: identity("B", 1),
-            remaining_depth: RoutingDepth::new(1).unwrap(),
-        }]
-    );
-    let frame = frame_json(&writer.frames()[0]);
-    assert_eq!(frame["id"], "t-b");
-    assert_eq!(frame["data"]["status"], "forwarded");
-    assert_eq!(frame["data"]["via_uuid"], "A");
-    assert_eq!(frame["data"]["remaining_depth"], 1);
-    // This harness stays alive and accepting; nothing else was touched.
-    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
-    assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 0);
-    assert!(rig.exit.signalled.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn selected_routing_targeting_a_direct_child_uses_self_shutdown_on_it() {
-    let rig = rig();
-    let writer = RecordingWriter::default();
-    let outcome = rig
-        .handle(
-            r#"{"type":"terminate_delegated_agent","id":"t-a","target_uuid":"A","target_generation":1,"remaining_depth":1}"#,
-            ConnectionAuthority::LocalOperator,
-            DeliveryState::Idle,
-            &writer,
-        )
-        .await;
-    assert!(matches!(
-        outcome,
-        ControllerOutcome::TerminationRouted {
-            outcome: Ok(TerminationRouted::ShutdownRequested { .. }),
-            written: Ok(()),
-            ..
-        }
-    ));
-    assert_eq!(
-        rig.routing.calls(),
-        [RoutingCall::Shutdown(
-            identity("A", 1),
-            ShutdownReason::SelectedTermination
-        )]
-    );
-    let frame = frame_json(&writer.frames()[0]);
-    assert_eq!(frame["data"]["status"], "shutdown_requested");
-    assert_eq!(frame["data"]["child_uuid"], "A");
-    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
-}
-
-#[tokio::test]
-async fn stale_generation_cycle_and_over_depth_routes_are_rejected_with_no_effect() {
-    let cyclic = LineageSnapshot {
-        owner: AgentUuid::new("root"),
-        records: vec![record("X", 1, "Y"), record("Y", 1, "X")],
-    };
-    let cases = [
-        (
-            root_tree(),
-            r#"{"type":"terminate_delegated_agent","id":"s","target_uuid":"A","target_generation":9,"remaining_depth":1}"#,
-            "termination rejected: stale generation 9 for A (current 1)",
-        ),
-        (
-            root_tree(),
-            r#"{"type":"terminate_delegated_agent","id":"d","target_uuid":"B","target_generation":1,"remaining_depth":1}"#,
-            "termination rejected: target B not reachable within 1 remaining hop(s)",
-        ),
-        (
-            cyclic,
-            r#"{"type":"terminate_delegated_agent","id":"c","target_uuid":"X","target_generation":1,"remaining_depth":4}"#,
-            "termination rejected: lineage cycle at X",
-        ),
-        (
-            root_tree(),
-            r#"{"type":"terminate_delegated_agent","id":"u","target_uuid":"root","target_generation":1,"remaining_depth":4}"#,
-            "termination rejected: target is the receiving harness; use shutdown",
-        ),
-    ];
-    for (lineage, line, expected) in cases {
-        let rig = rig_for(lineage);
-        let writer = RecordingWriter::default();
-        let outcome = rig
-            .handle(
-                line,
-                ConnectionAuthority::BoundParent,
-                DeliveryState::Idle,
-                &writer,
-            )
-            .await;
-        let ControllerOutcome::TerminationRouted {
-            outcome: Err(error),
-            written: Ok(()),
-            ..
-        } = outcome
-        else {
-            panic!("expected rejection for {line}: {outcome:?}");
-        };
-        assert_eq!(error.to_string(), expected);
-        let frame = frame_json(&writer.frames()[0]);
-        assert_eq!(frame["success"], false);
-        assert_eq!(frame["error"], expected);
-        rig.nothing_ran();
-    }
 }
 
 #[tokio::test]

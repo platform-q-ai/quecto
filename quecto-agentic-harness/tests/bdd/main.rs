@@ -281,6 +281,8 @@ impl std::fmt::Debug for DebugSwarm {
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
+    /// #1934 subagent teardown contract state (transaction, routing, edge).
+    pub teardown: subagent_teardown_steps::TeardownState,
     pub authority: inference_admission_authority_steps::AuthorityState,
     pub authority_ops: inference_admission_authority_steps::OperationsState,
     pub authority_observation: inference_admission_observation_steps::ObservationState,
@@ -1424,6 +1426,8 @@ mod subagent_monitor_steps;
 mod subagent_notify_steps;
 mod subagent_protocol_steps;
 mod subagent_steps;
+mod subagent_teardown_steps;
+mod subagent_teardown_then_steps;
 mod subagent_widget_steps;
 mod swarm_steps;
 mod tool_empty_args_steps;

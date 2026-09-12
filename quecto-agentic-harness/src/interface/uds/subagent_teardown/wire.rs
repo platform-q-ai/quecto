@@ -1,8 +1,16 @@
 //! Wire DTOs for the two teardown operations (#1934). Parsed, never interpreted.
+//!
+//! Compatibility rule: both commands are `deny_unknown_fields`. A field added
+//! later is a new command `type`, never an optional field on these two, so an
+//! older harness affirmatively rejects a shape it does not understand instead
+//! of silently ignoring part of it.
 use serde::{Deserialize, Serialize};
 
-/// Byte cap for a teardown command line. Both commands carry a handful of
-/// short fields; anything larger is not one of them.
+/// Byte cap for a teardown command line. This bounds *parsing* of a claimed
+/// teardown line: both commands carry a handful of short fields, so anything
+/// larger is not one of them. Memory is bounded earlier, by the connection
+/// reader's frame cap (`MAX_FRAME_PAYLOAD_BYTES`), before a line reaches
+/// this parser.
 pub const TEARDOWN_COMMAND_CAP_BYTES: usize = 1024;
 
 pub const SHUTDOWN_COMMAND: &str = "shutdown";
@@ -46,24 +54,27 @@ impl SubagentTeardownCommand {
 /// Why a line is not a well-formed teardown command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireError {
+    /// A claimed teardown line longer than the parse cap. `id` is the
+    /// correlation id when one could be read, so the rejection is matched.
     Oversized {
+        id: Option<String>,
         bytes: usize,
         cap: usize,
     },
-    /// Well-formed JSON whose `type` is some other protocol command.
+    /// Not claimed: not JSON, no object, no `type`, or a `type` that is some
+    /// other protocol command. The caller must dispatch it as usual and must
+    /// not answer it here.
     NotATeardownCommand,
-    /// Recognised `type` but not the declared shape. `id` is the correlation
-    /// id when the line carried one, so the rejection can still be matched.
-    Malformed {
-        id: Option<String>,
-        detail: String,
-    },
+    /// Claimed `type` but not the declared shape. `id` is the correlation id
+    /// when the line carried one (rendered as text if it was not a string),
+    /// so the rejection can still be matched.
+    Malformed { id: Option<String>, detail: String },
 }
 
 impl std::fmt::Display for WireError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Oversized { bytes, cap } => {
+            Self::Oversized { bytes, cap, .. } => {
                 write!(f, "teardown command of {bytes} bytes exceeds cap {cap}")
             }
             Self::NotATeardownCommand => f.write_str("not a teardown command"),
@@ -72,34 +83,54 @@ impl std::fmt::Display for WireError {
     }
 }
 
-/// Parse one socket line. The cap is checked before any allocation; the
-/// `type` allowlist is checked before the full shape so an unrelated command
-/// is reported as such rather than as malformed.
+/// The only two `type` values this edge claims. Everything else belongs to
+/// the ordinary dispatcher and gets no frame from here.
+fn claimed(kind: &str) -> bool {
+    kind == SHUTDOWN_COMMAND || kind == TERMINATE_DELEGATED_AGENT_COMMAND
+}
+
+/// Parse one socket line.
+///
+/// Claiming comes first: a line is only ours when it is a JSON object whose
+/// `type` is one of the two commands; anything else is
+/// [`WireError::NotATeardownCommand`] and gets no response from this edge.
+/// The id is then read leniently (a string is kept; a non-string is a
+/// rejection that still echoes the id as text), the parse cap is applied,
+/// and finally the strict shape.
 pub fn parse_teardown_command(line: &str) -> Result<SubagentTeardownCommand, WireError> {
     let line = line.trim_end_matches(['\r', '\n']);
+    // Lenient claim read: a generic object so a duplicated key keeps its
+    // last value instead of failing the claim.
+    let Ok(serde_json::Value::Object(object)) = serde_json::from_str::<serde_json::Value>(line)
+    else {
+        return Err(WireError::NotATeardownCommand);
+    };
+    if !object
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(claimed)
+    {
+        return Err(WireError::NotATeardownCommand);
+    }
+    let id = match object.get("id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(id)) => Some(id.clone()),
+        Some(other) => {
+            return Err(WireError::Malformed {
+                id: Some(other.to_string()),
+                detail: "id must be a string".into(),
+            });
+        }
+    };
     if line.len() > TEARDOWN_COMMAND_CAP_BYTES {
         return Err(WireError::Oversized {
+            id,
             bytes: line.len(),
             cap: TEARDOWN_COMMAND_CAP_BYTES,
         });
     }
-    #[derive(Deserialize)]
-    struct Tag<'a> {
-        #[serde(borrow, rename = "type")]
-        kind: &'a str,
-        #[serde(default)]
-        id: Option<String>,
-    }
-    let tag: Tag<'_> = serde_json::from_str(line).map_err(|error| WireError::Malformed {
-        id: None,
-        detail: error.to_string(),
-    })?;
-    let recognised = tag.kind == SHUTDOWN_COMMAND || tag.kind == TERMINATE_DELEGATED_AGENT_COMMAND;
-    if !recognised {
-        return Err(WireError::NotATeardownCommand);
-    }
     serde_json::from_str(line).map_err(|error| WireError::Malformed {
-        id: tag.id,
+        id,
         detail: error.to_string(),
     })
 }
@@ -156,7 +187,9 @@ impl TeardownResponse {
         }
     }
 
-    /// One newline-terminated frame, ready to write and flush.
+    /// The response as one newline-delimited JSON line. Adapters that frame
+    /// per the connection's wire mode serialize the value themselves; this
+    /// is the legacy line shape.
     pub fn to_line(&self) -> String {
         let mut line = serde_json::to_string(self).expect("teardown response is serializable");
         line.push('\n');

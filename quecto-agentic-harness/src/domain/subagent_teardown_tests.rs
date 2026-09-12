@@ -34,12 +34,12 @@ fn routing_depth_rejects_zero_and_excess_and_accepts_bounds() {
     assert_eq!(
         RoutingDepth::new(RoutingDepth::MAX_HOPS + 1),
         Err(RoutingDepthError::ExceedsMaximum {
-            requested: 17,
-            maximum: 16
+            requested: 33,
+            maximum: 32
         })
     );
     assert_eq!(depth(1).hops(), 1);
-    assert_eq!(depth(RoutingDepth::MAX_HOPS).hops(), 16);
+    assert_eq!(depth(RoutingDepth::MAX_HOPS).hops(), 32);
     assert_eq!(depth(1).after_forward(), None);
     assert_eq!(depth(2).after_forward(), Some(depth(1)));
     assert_eq!(
@@ -48,7 +48,7 @@ fn routing_depth_rejects_zero_and_excess_and_accepts_bounds() {
     );
     assert_eq!(
         RoutingDepth::new(99).unwrap_err().to_string(),
-        "remaining_depth 99 exceeds maximum 16"
+        "remaining_depth 99 exceeds maximum 32"
     );
 }
 
@@ -120,7 +120,7 @@ fn targeting_a_direct_child_resolves_to_self_shutdown_of_that_child() {
     );
     // Depth beyond what is needed is harmless for a direct child.
     assert_eq!(
-        resolve_termination_route(&tree(), &id("A", 1), depth(16)),
+        resolve_termination_route(&tree(), &id("A", 1), depth(32)),
         Ok(TerminationRoute::ShutdownDirectChild(id("A", 1)))
     );
 }
@@ -208,11 +208,70 @@ fn a_uuid_recorded_twice_is_ambiguous_and_yields_no_edge() {
     };
     assert_eq!(
         resolve_termination_route(&doubled, &id("B", 1), depth(4)),
-        Err(TerminationRouteError::AmbiguousTarget(AgentUuid::new("B")))
+        Err(TerminationRouteError::AmbiguousLineage(AgentUuid::new("B")))
     );
     assert_eq!(
-        TerminationRouteError::AmbiguousTarget(AgentUuid::new("B")).to_string(),
-        "ambiguous delegated agent B"
+        TerminationRouteError::AmbiguousLineage(AgentUuid::new("B")).to_string(),
+        "ambiguous lineage at B"
+    );
+}
+
+#[test]
+fn a_duplicated_intermediate_is_ambiguous_even_when_the_target_is_unique() {
+    // A←root, D←root, B(1)←D, B(2)←A, C←B: targeting C must not pick D's B
+    // just because it is listed first.
+    let doubled = LineageSnapshot {
+        owner: AgentUuid::new("root"),
+        records: vec![
+            record("A", 1, "root"),
+            record("D", 1, "root"),
+            record("B", 1, "D"),
+            record("B", 2, "A"),
+            record("C", 1, "B"),
+        ],
+    };
+    assert_eq!(
+        resolve_termination_route(&doubled, &id("C", 1), depth(8)),
+        Err(TerminationRouteError::AmbiguousLineage(AgentUuid::new("B")))
+    );
+}
+
+#[test]
+fn a_three_edge_route_names_the_direct_child_at_every_hop() {
+    // root → A → B → C, targeting C from each harness in turn.
+    let root_view = LineageSnapshot {
+        owner: AgentUuid::new("root"),
+        records: vec![
+            record("A", 1, "root"),
+            record("B", 1, "A"),
+            record("C", 1, "B"),
+        ],
+    };
+    assert_eq!(
+        resolve_termination_route(&root_view, &id("C", 1), depth(3)),
+        Ok(TerminationRoute::ForwardToDirectChild {
+            via: id("A", 1),
+            remaining_depth: depth(2),
+        })
+    );
+    let a_view = LineageSnapshot {
+        owner: AgentUuid::new("A"),
+        records: vec![record("B", 1, "A"), record("C", 1, "B")],
+    };
+    assert_eq!(
+        resolve_termination_route(&a_view, &id("C", 1), depth(2)),
+        Ok(TerminationRoute::ForwardToDirectChild {
+            via: id("B", 1),
+            remaining_depth: depth(1),
+        })
+    );
+    let b_view = LineageSnapshot {
+        owner: AgentUuid::new("B"),
+        records: vec![record("C", 1, "B")],
+    };
+    assert_eq!(
+        resolve_termination_route(&b_view, &id("C", 1), depth(1)),
+        Ok(TerminationRoute::ShutdownDirectChild(id("C", 1)))
     );
 }
 
@@ -241,6 +300,7 @@ fn route_errors_render_a_stable_vocabulary() {
     let messages = [
         TerminationRouteError::TargetIsSelf.to_string(),
         TerminationRouteError::UnknownTarget(AgentUuid::new("u")).to_string(),
+        TerminationRouteError::AmbiguousLineage(AgentUuid::new("u")).to_string(),
         TerminationRouteError::StaleGeneration {
             target: AgentUuid::new("u"),
             requested: LaunchGeneration::new(1),
@@ -259,6 +319,7 @@ fn route_errors_render_a_stable_vocabulary() {
         [
             "target is the receiving harness; use shutdown",
             "unknown delegated agent u",
+            "ambiguous lineage at u",
             "stale generation 1 for u (current 2)",
             "lineage cycle at u",
             "target u not reachable within 1 remaining hop(s)",

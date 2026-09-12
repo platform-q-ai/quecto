@@ -1,22 +1,31 @@
 //! Two-phase, idempotent harness shutdown (#1934).
 //!
 //! `Prepare` admits a shutdown and freezes new prompt/spawn work, handing back
-//! an opaque token. The interface then writes and flushes the correlated ACK;
-//! only after that does it hand the token to `Execute`. If the ACK cannot be
-//! written the interface releases the admission instead, so a parent that
-//! never received an ACK never sees the child vanish silently: it can tell a
-//! graceful exit (ACK then EOF) from a loss (EOF with no ACK).
+//! an opaque per-holder token. The interface then writes and flushes the
+//! correlated ACK; only after that does it hand the token to `Execute`. If the
+//! ACK cannot be written the interface releases its holder instead, so a
+//! parent that never received an ACK never sees the child vanish silently: it
+//! can tell a graceful exit (ACK then EOF) from a loss (EOF with no ACK).
 //!
 //! Every trigger — protocol command, bound-parent connection closure, OS
 //! signal — goes through the same transaction. The first one admits; later
-//! ones join and observe the single outcome. No ACK is written here and no
-//! wire type is named here.
+//! ones join as further holders and observe the single outcome. The freeze
+//! lifts only when every holder has released and nothing ran.
+//!
+//! Once admitted for execution the run belongs to the transaction, not to the
+//! caller: `Execute` hands it to a [`ShutdownRunSpawner`] and merely joins it,
+//! so dropping the caller's future cannot abandon a shutdown whose ACK is on
+//! the wire. Progress is recorded step by step; if the spawned run is ever
+//! dropped, the next `Execute` resumes at the first incomplete step and no
+//! effect runs twice. No ACK is written here and no wire type is named here.
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
+use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::super::dto::{
@@ -24,33 +33,100 @@ use super::super::dto::{
     ReleaseOutcome, ShutdownOutcome, ShutdownToken, ShutdownTrigger,
 };
 use super::super::ports::{
-    CompositionExitReadiness, DirectChildRouting, ShutdownClock, ShutdownSessionPersistence,
-    SubagentLifecycleRepository, TurnCancellation,
+    CompositionExitReadiness, DirectChildRouting, ShutdownClock, ShutdownRunSpawner,
+    ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
 };
 
 type Outcome = Result<ShutdownOutcome, HarnessShutdownError>;
 
+/// Direct children addressed by the children step: shut down, and failed
+/// with the routing error rendered.
+type ChildrenOutcome = (Vec<AgentUuid>, Vec<(AgentUuid, String)>);
+
+/// Steps of the common teardown that have already produced their effect.
+/// A re-driven run skips every recorded step.
+#[derive(Debug, Clone, Default)]
+struct Progress {
+    turn_cancelled: Option<bool>,
+    children: Option<ChildrenOutcome>,
+    persistence: Option<PersistenceOutcome>,
+    exit_signalled: bool,
+}
+
+/// One admitted shutdown and everyone holding it.
+#[derive(Debug, Clone)]
+struct Admission {
+    id: u64,
+    reason: ShutdownReason,
+    triggers: Vec<ShutdownTrigger>,
+    next_holder: u64,
+    /// Holders that have not released.
+    holders: BTreeSet<u64>,
+    /// Holders that released; their tokens are spent.
+    released: BTreeSet<u64>,
+    progress: Progress,
+}
+
+impl Admission {
+    fn join(&mut self, trigger: ShutdownTrigger) -> ShutdownToken {
+        let holder = self.next_holder;
+        self.next_holder += 1;
+        self.holders.insert(holder);
+        self.triggers.push(trigger);
+        ShutdownToken::mint(self.id, holder)
+    }
+
+    /// The token must name this admission and a holder that has not spent it.
+    fn validate(&self, token: &ShutdownToken) -> Result<(), HarnessShutdownError> {
+        if token.admission() != self.id {
+            return Err(HarnessShutdownError::UnknownToken);
+        }
+        if self.holders.contains(&token.holder()) {
+            return Ok(());
+        }
+        if self.released.contains(&token.holder()) {
+            return Err(HarnessShutdownError::TokenReleased);
+        }
+        Err(HarnessShutdownError::UnknownToken)
+    }
+}
+
 enum Phase {
     Idle,
-    Prepared {
-        token: ShutdownToken,
-        reason: ShutdownReason,
-        triggers: Vec<ShutdownTrigger>,
-        /// Callers that hold the admission and have not released it.
-        participants: usize,
-    },
+    Prepared(Admission),
     Executing {
-        token: ShutdownToken,
+        admission: Admission,
         wakers: Vec<Waker>,
     },
     Completed {
-        token: ShutdownToken,
+        admission: Admission,
         outcome: Outcome,
     },
 }
 
-/// Process-wide mint serial so two transactions never hand out equal tokens.
-static MINTED: AtomicU64 = AtomicU64::new(0);
+impl Phase {
+    fn admission(&self) -> Option<&Admission> {
+        match self {
+            Self::Idle => None,
+            Self::Prepared(admission)
+            | Self::Executing { admission, .. }
+            | Self::Completed { admission, .. } => Some(admission),
+        }
+    }
+
+    fn admission_mut(&mut self) -> Option<&mut Admission> {
+        match self {
+            Self::Idle => None,
+            Self::Prepared(admission)
+            | Self::Executing { admission, .. }
+            | Self::Completed { admission, .. } => Some(admission),
+        }
+    }
+}
+
+/// Process-wide admission serial so two transactions never hand out equal
+/// tokens.
+static ADMISSIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Shared admission state behind both phases. One instance per harness.
 pub struct HarnessShutdownTransaction {
@@ -71,23 +147,31 @@ impl HarnessShutdownTransaction {
         })
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Phase> {
+    fn lock(&self) -> MutexGuard<'_, Phase> {
         self.phase
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn mint_token(&self) -> ShutdownToken {
+    fn mint_admission_id(&self) -> u64 {
         // Opaque: a process-wide serial mixed with the clock so unrelated
         // admissions never mint equal tokens, even on a frozen clock.
-        let serial = MINTED.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
-        let now = self.clock.now().0;
-        ShutdownToken::mint(serial.rotate_left(32) ^ now)
+        let serial = ADMISSIONS.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        serial.rotate_left(32) ^ self.clock.now().0
     }
 
     /// Whether new prompt/spawn work may still be admitted.
     pub fn accepts_new_work(&self) -> bool {
         self.lifecycle.lifecycle().accepts_new_work()
+    }
+
+    fn with_progress<T>(&self, admission_id: u64, update: impl FnOnce(&mut Progress) -> T) -> T {
+        let mut phase = self.lock();
+        let admission = phase
+            .admission_mut()
+            .filter(|admission| admission.id == admission_id)
+            .expect("the running admission stays present until it completes");
+        update(&mut admission.progress)
     }
 }
 
@@ -101,89 +185,65 @@ impl PrepareHarnessShutdown {
         Self { transaction }
     }
 
-    /// Admit the shutdown or join the one already admitted. Never mints a
-    /// second token while an admission is live.
+    /// Admit the shutdown or join the one already admitted as a new holder.
+    /// Never opens a second admission while one is live.
     pub fn execute(
         &self,
         request: PrepareShutdownRequest,
     ) -> Result<PreparedShutdown, HarnessShutdownError> {
         let transaction = &self.transaction;
         let mut phase = transaction.lock();
-        match &mut *phase {
-            Phase::Idle => {
-                let frozen = transaction
-                    .lifecycle
-                    .lifecycle()
-                    .freeze()
-                    .map_err(|_| HarnessShutdownError::AlreadyTerminated)?;
-                debug_assert_eq!(frozen, HarnessLifecycleState::Frozen);
-                transaction.lifecycle.set_lifecycle(frozen);
-                let token = transaction.mint_token();
-                *phase = Phase::Prepared {
-                    token: token.clone(),
-                    reason: request.reason,
-                    triggers: vec![request.trigger],
-                    participants: 1,
-                };
-                Ok(PreparedShutdown {
-                    token,
-                    joined: false,
-                    reason: request.reason,
-                })
-            }
-            Phase::Prepared {
+        if let Some(admission) = phase.admission_mut() {
+            let token = admission.join(request.trigger);
+            return Ok(PreparedShutdown {
                 token,
-                reason,
-                triggers,
-                participants,
-            } => {
-                *participants += 1;
-                triggers.push(request.trigger);
-                Ok(PreparedShutdown {
-                    token: token.clone(),
-                    joined: true,
-                    reason: *reason,
-                })
-            }
-            // A trigger arriving mid-execution or after completion still
-            // converges on the same outcome; its reason is already decided.
-            Phase::Executing { token, .. } => Ok(PreparedShutdown {
-                token: token.clone(),
                 joined: true,
-                reason: request.reason,
-            }),
-            Phase::Completed { token, outcome } => Ok(PreparedShutdown {
-                token: token.clone(),
-                joined: true,
-                reason: outcome
-                    .as_ref()
-                    .map(|outcome| outcome.reason)
-                    .unwrap_or(request.reason),
-            }),
+                reason: admission.reason,
+            });
         }
+        let frozen = transaction
+            .lifecycle
+            .lifecycle()
+            .freeze()
+            .map_err(|_| HarnessShutdownError::AlreadyTerminated)?;
+        debug_assert_eq!(frozen, HarnessLifecycleState::Frozen);
+        transaction.lifecycle.set_lifecycle(frozen);
+        let mut admission = Admission {
+            id: transaction.mint_admission_id(),
+            reason: request.reason,
+            triggers: Vec::new(),
+            next_holder: 1,
+            holders: BTreeSet::new(),
+            released: BTreeSet::new(),
+            progress: Progress::default(),
+        };
+        let token = admission.join(request.trigger);
+        *phase = Phase::Prepared(admission);
+        Ok(PreparedShutdown {
+            token,
+            joined: false,
+            reason: request.reason,
+        })
     }
 
-    /// Give back an admission whose ACK could not be delivered. The freeze
-    /// lifts only when the last participant leaves; once execution has begun
-    /// there is nothing to give back.
+    /// Give back one holder's admission (its ACK could not be delivered).
+    /// Idempotent per holder. The freeze lifts only when the last holder
+    /// leaves; once execution has begun there is nothing to give back.
     pub fn release(&self, token: &ShutdownToken) -> Result<ReleaseOutcome, HarnessShutdownError> {
         let transaction = &self.transaction;
         let mut phase = transaction.lock();
-        match &mut *phase {
-            Phase::Idle => Err(HarnessShutdownError::NotPrepared),
-            Phase::Prepared {
-                token: admitted,
-                participants,
-                ..
-            } => {
-                if admitted != token {
-                    return Err(HarnessShutdownError::UnknownToken);
-                }
-                assert!(*participants >= 1, "a prepared admission has a holder");
-                *participants -= 1;
-                if *participants > 0 {
-                    return Ok(ReleaseOutcome::StillHeld);
-                }
+        let Some(admission) = phase.admission_mut() else {
+            return Err(HarnessShutdownError::NotPrepared);
+        };
+        match admission.validate(token) {
+            Ok(()) => {}
+            Err(HarnessShutdownError::TokenReleased) => return Ok(ReleaseOutcome::AlreadyReleased),
+            Err(error) => return Err(error),
+        }
+        admission.holders.remove(&token.holder());
+        admission.released.insert(token.holder());
+        match &*phase {
+            Phase::Prepared(admission) if admission.holders.is_empty() => {
                 let thawed = transaction
                     .lifecycle
                     .lifecycle()
@@ -193,28 +253,13 @@ impl PrepareHarnessShutdown {
                 *phase = Phase::Idle;
                 Ok(ReleaseOutcome::Released)
             }
-            Phase::Executing {
-                token: admitted, ..
-            }
-            | Phase::Completed {
-                token: admitted, ..
-            } => {
-                if admitted != token {
-                    return Err(HarnessShutdownError::UnknownToken);
-                }
+            Phase::Prepared(_) => Ok(ReleaseOutcome::StillHeld),
+            Phase::Executing { .. } | Phase::Completed { .. } => {
                 Ok(ReleaseOutcome::ExecutionUnderway)
             }
+            Phase::Idle => unreachable!("an admission was present under the lock"),
         }
     }
-}
-
-/// Phase two: run the common teardown exactly once for the admitted token.
-pub struct ExecuteHarnessShutdown {
-    transaction: Arc<HarnessShutdownTransaction>,
-    routing: Arc<dyn DirectChildRouting>,
-    cancellation: Arc<dyn TurnCancellation>,
-    persistence: Arc<dyn ShutdownSessionPersistence>,
-    exit: Arc<dyn CompositionExitReadiness>,
 }
 
 /// Concrete collaborators of [`ExecuteHarnessShutdown`], named once.
@@ -223,60 +268,19 @@ pub struct ExecuteHarnessShutdownPorts {
     pub cancellation: Arc<dyn TurnCancellation>,
     pub persistence: Arc<dyn ShutdownSessionPersistence>,
     pub exit: Arc<dyn CompositionExitReadiness>,
+    pub spawner: Arc<dyn ShutdownRunSpawner>,
 }
 
-/// What the admitted run looked like when it started, so an interrupted
-/// runner can hand the admission back intact.
-struct Admitted {
-    reason: ShutdownReason,
-    triggers: Vec<ShutdownTrigger>,
-    participants: usize,
+/// Phase two: run the common teardown exactly once for the admitted token.
+pub struct ExecuteHarnessShutdown {
+    transaction: Arc<HarnessShutdownTransaction>,
+    ports: Arc<ExecuteHarnessShutdownPorts>,
 }
 
-enum Admission {
-    Run(Admitted),
+enum Admit {
+    Run(u64),
     Join,
     Done(Outcome),
-}
-
-/// Restores the `Prepared` phase if the running future is dropped before it
-/// completes (a cancelled task), so joiners are released with
-/// [`HarnessShutdownError::ExecutionInterrupted`] instead of hanging and the
-/// next `Execute` for the same token runs the teardown again.
-struct RunGuard<'a> {
-    transaction: &'a HarnessShutdownTransaction,
-    token: ShutdownToken,
-    restore: Option<Admitted>,
-}
-
-impl RunGuard<'_> {
-    fn disarm(mut self) {
-        self.restore = None;
-    }
-}
-
-impl Drop for RunGuard<'_> {
-    fn drop(&mut self) {
-        let Some(admitted) = self.restore.take() else {
-            return;
-        };
-        let mut phase = self.transaction.lock();
-        let Phase::Executing { wakers, .. } = std::mem::replace(
-            &mut *phase,
-            Phase::Prepared {
-                token: self.token.clone(),
-                reason: admitted.reason,
-                triggers: admitted.triggers,
-                participants: admitted.participants,
-            },
-        ) else {
-            unreachable!("only the executing runner holds the guard");
-        };
-        drop(phase);
-        for waker in wakers {
-            waker.wake();
-        }
-    }
 }
 
 impl ExecuteHarnessShutdown {
@@ -286,120 +290,169 @@ impl ExecuteHarnessShutdown {
     ) -> Self {
         Self {
             transaction,
-            routing: ports.routing,
-            cancellation: ports.cancellation,
-            persistence: ports.persistence,
-            exit: ports.exit,
+            ports: Arc::new(ports),
         }
     }
 
+    /// Start (or join) the teardown for `token` and wait for its outcome.
+    /// The run itself is detached: dropping this future never stops it.
     pub async fn execute(&self, token: &ShutdownToken) -> Outcome {
         match self.admit(token)? {
-            Admission::Run(admitted) => {
+            Admit::Run(admission_id) => {
+                // The guard travels inside the run: a spawner that drops the
+                // future unpolled still hands the admission back.
                 let guard = RunGuard {
-                    transaction: &self.transaction,
-                    token: token.clone(),
-                    restore: Some(Admitted {
-                        reason: admitted.reason,
-                        triggers: admitted.triggers.clone(),
-                        participants: admitted.participants,
-                    }),
+                    transaction: self.transaction.clone(),
+                    armed: true,
                 };
-                let outcome = self.run(admitted.reason, admitted.triggers).await;
-                guard.disarm();
-                self.complete(token, outcome.clone());
-                outcome
+                let run = drive(guard, self.ports.clone(), admission_id);
+                self.ports.spawner.spawn_shutdown_run(Box::pin(run));
+                JoinOutcome::new(&self.transaction).await
             }
-            Admission::Join => JoinOutcome::new(&self.transaction).await,
-            Admission::Done(outcome) => outcome,
+            Admit::Join => JoinOutcome::new(&self.transaction).await,
+            Admit::Done(outcome) => outcome,
         }
     }
 
-    fn admit(&self, token: &ShutdownToken) -> Result<Admission, HarnessShutdownError> {
+    fn admit(&self, token: &ShutdownToken) -> Result<Admit, HarnessShutdownError> {
         let mut phase = self.transaction.lock();
-        match &*phase {
-            Phase::Idle => Err(HarnessShutdownError::NotPrepared),
-            Phase::Prepared {
-                token: admitted, ..
-            }
-            | Phase::Executing {
-                token: admitted, ..
-            }
-            | Phase::Completed {
-                token: admitted, ..
-            } if admitted != token => Err(HarnessShutdownError::UnknownToken),
-            Phase::Prepared {
-                reason,
-                triggers,
-                participants,
-                ..
-            } => {
-                let admitted = Admitted {
-                    reason: *reason,
-                    triggers: triggers.clone(),
-                    participants: *participants,
-                };
+        let admission = phase.admission().ok_or(HarnessShutdownError::NotPrepared)?;
+        admission.validate(token)?;
+        match std::mem::replace(&mut *phase, Phase::Idle) {
+            Phase::Prepared(admission) => {
+                let id = admission.id;
                 *phase = Phase::Executing {
-                    token: token.clone(),
+                    admission,
                     wakers: Vec::new(),
                 };
-                Ok(Admission::Run(admitted))
+                Ok(Admit::Run(id))
             }
-            Phase::Executing { .. } => Ok(Admission::Join),
-            Phase::Completed { outcome, .. } => Ok(Admission::Done(outcome.clone())),
+            executing @ Phase::Executing { .. } => {
+                *phase = executing;
+                Ok(Admit::Join)
+            }
+            Phase::Completed { admission, outcome } => {
+                let result = outcome.clone();
+                *phase = Phase::Completed { admission, outcome };
+                Ok(Admit::Done(result))
+            }
+            Phase::Idle => unreachable!("an admission was present under the lock"),
         }
     }
+}
 
-    async fn run(&self, reason: ShutdownReason, triggers: Vec<ShutdownTrigger>) -> Outcome {
-        let turn_cancelled = self.cancellation.cancel_in_flight_turn().await;
-        let lineage = self.transaction.lifecycle.lineage();
-        let mut children_shut_down = Vec::new();
-        let mut children_failed = Vec::new();
+/// The detached teardown. Each step records its effect before the next one
+/// starts, and a run that is dropped midway leaves the phase `Prepared` with
+/// that progress intact for the next `Execute`.
+async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admission_id: u64) {
+    let transaction = guard.transaction.clone();
+    let (reason, done) = {
+        let phase = transaction.lock();
+        let admission = phase
+            .admission()
+            .expect("the running admission stays present until it completes");
+        (admission.reason, admission.progress.clone())
+    };
+    if done.turn_cancelled.is_none() {
+        let cancelled = ports.cancellation.cancel_in_flight_turn().await;
+        transaction.with_progress(admission_id, |p| p.turn_cancelled = Some(cancelled));
+    }
+    if done.children.is_none() {
+        let lineage = transaction.lifecycle.lineage();
+        let mut shut_down = Vec::new();
+        let mut failed = Vec::new();
         for child in lineage.direct_children() {
-            match self
+            match ports
                 .routing
                 .shutdown_child(child, ShutdownReason::ParentShutdown)
                 .await
             {
-                Ok(()) => children_shut_down.push(child.uuid.clone()),
-                Err(error) => children_failed.push((child.uuid.clone(), error.to_string())),
+                Ok(()) => shut_down.push(child.uuid.clone()),
+                Err(error) => failed.push((child.uuid.clone(), error.to_string())),
             }
         }
-        let persistence = match self.persistence.persist_for_shutdown(reason).await {
+        transaction.with_progress(admission_id, |p| p.children = Some((shut_down, failed)));
+    }
+    if done.persistence.is_none() {
+        let persistence = match ports.persistence.persist_for_shutdown(reason).await {
             Ok(()) => PersistenceOutcome::Persisted,
             Err(detail) => PersistenceOutcome::Failed(detail),
         };
-        let terminated = self
-            .transaction
-            .lifecycle
-            .lifecycle()
-            .terminate()
-            .map_err(|e| HarnessShutdownError::LifecycleViolation(e.to_string()))?;
-        self.transaction.lifecycle.set_lifecycle(terminated);
-        self.exit.signal_exit_ready(reason).await;
-        Ok(ShutdownOutcome {
+        transaction.with_progress(admission_id, |p| p.persistence = Some(persistence));
+    }
+    if !done.exit_signalled {
+        ports.exit.signal_exit_ready(reason).await;
+        transaction.with_progress(admission_id, |p| p.exit_signalled = true);
+    }
+    // Terminate last: everything the exit depends on has already happened,
+    // and a run dropped before this point can still be resumed.
+    let terminated = transaction
+        .lifecycle
+        .lifecycle()
+        .terminate()
+        .map_err(|e| HarnessShutdownError::LifecycleViolation(e.to_string()));
+    let outcome = terminated.map(|state| {
+        transaction.lifecycle.set_lifecycle(state);
+        let phase = transaction.lock();
+        let admission = phase
+            .admission()
+            .expect("the running admission stays present until it completes");
+        let progress = admission.progress.clone();
+        let (children_shut_down, children_failed) = progress.children.unwrap_or_default();
+        ShutdownOutcome {
             reason,
-            triggers,
-            turn_cancelled,
+            triggers: admission.triggers.clone(),
+            turn_cancelled: progress.turn_cancelled.unwrap_or(false),
             children_shut_down,
             children_failed,
-            persistence,
-            exit_signalled: true,
-        })
-    }
+            persistence: progress
+                .persistence
+                .unwrap_or(PersistenceOutcome::Failed("not attempted".into())),
+            exit_signalled: progress.exit_signalled,
+        }
+    });
+    complete(&transaction, outcome);
+    guard.disarm();
+}
 
-    fn complete(&self, token: &ShutdownToken, outcome: Outcome) {
+fn complete(transaction: &HarnessShutdownTransaction, outcome: Outcome) {
+    let mut phase = transaction.lock();
+    let Phase::Executing { admission, wakers } = std::mem::replace(&mut *phase, Phase::Idle) else {
+        unreachable!("only the executing run completes the transaction");
+    };
+    *phase = Phase::Completed { admission, outcome };
+    drop(phase);
+    for waker in wakers {
+        waker.wake();
+    }
+}
+
+/// Restores the `Prepared` phase (progress included) if the detached run is
+/// dropped before it completes, so joiners are released with
+/// [`HarnessShutdownError::ExecutionInterrupted`] instead of hanging and the
+/// next `Execute` resumes where this one stopped.
+struct RunGuard {
+    transaction: Arc<HarnessShutdownTransaction>,
+    armed: bool,
+}
+
+impl RunGuard {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
         let mut phase = self.transaction.lock();
-        let wakers = match std::mem::replace(
-            &mut *phase,
-            Phase::Completed {
-                token: token.clone(),
-                outcome,
-            },
-        ) {
-            Phase::Executing { wakers, .. } => wakers,
-            _ => unreachable!("only the executing caller completes the transaction"),
+        let Phase::Executing { admission, wakers } = std::mem::replace(&mut *phase, Phase::Idle)
+        else {
+            unreachable!("only the executing run holds the guard");
         };
+        *phase = Phase::Prepared(admission);
         drop(phase);
         for waker in wakers {
             waker.wake();
@@ -407,7 +460,7 @@ impl ExecuteHarnessShutdown {
     }
 }
 
-/// Resolves with the shared outcome once the executing caller completes.
+/// Resolves with the shared outcome once the detached run completes.
 struct JoinOutcome<'a> {
     transaction: &'a HarnessShutdownTransaction,
 }
@@ -431,11 +484,11 @@ impl Future for JoinOutcome<'_> {
                 }
                 Poll::Pending
             }
-            // The runner was dropped mid-teardown and gave the admission
-            // back; the joiner must decide to run it itself.
-            Phase::Prepared { .. } => Poll::Ready(Err(HarnessShutdownError::ExecutionInterrupted)),
-            // Released by its last participant after an interruption and
-            // before this joiner was polled: there is nothing to join.
+            // The detached run was dropped and gave the admission back; the
+            // joiner must call `Execute` again to resume it.
+            Phase::Prepared(_) => Poll::Ready(Err(HarnessShutdownError::ExecutionInterrupted)),
+            // Released by its last holder after an interruption and before
+            // this joiner was polled: there is nothing to join.
             Phase::Idle => Poll::Ready(Err(HarnessShutdownError::NotPrepared)),
         }
     }

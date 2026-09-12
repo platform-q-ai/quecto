@@ -11,7 +11,8 @@ use quecto::application::subagents::dto::{
 };
 use quecto::application::subagents::ports::{
     ChildRoutingError, CompositionExitReadiness, DirectChildRouting, PortFuture, ShutdownClock,
-    ShutdownInstant, ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
+    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
+    SubagentLifecycleRepository, TurnCancellation,
 };
 use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
@@ -60,6 +61,12 @@ impl Lifecycle {
             lineage,
             transitions: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Put the repository in a state without going through the domain, to
+    /// stage scenarios such as "already terminated".
+    pub fn force(&self, state: HarnessLifecycleState) {
+        *self.state.lock().unwrap() = state;
     }
 }
 
@@ -142,10 +149,13 @@ impl DirectChildRouting for Routing {
     }
 }
 
-#[derive(Default)]
+/// Cancellation that can be held open (`hold`) so a second caller must
+/// join, or a runner can be cancelled while parked inside it.
 pub struct Cancellation {
     pub calls: AtomicUsize,
     pub in_flight: AtomicBool,
+    pub hold: AtomicBool,
+    pub gate: tokio::sync::Notify,
 }
 
 impl Cancellation {
@@ -153,6 +163,8 @@ impl Cancellation {
         Arc::new(Self {
             calls: AtomicUsize::new(0),
             in_flight: AtomicBool::new(true),
+            hold: AtomicBool::new(false),
+            gate: tokio::sync::Notify::new(),
         })
     }
 }
@@ -160,7 +172,12 @@ impl Cancellation {
 impl TurnCancellation for Cancellation {
     fn cancel_in_flight_turn(&self) -> PortFuture<'_, bool> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async move { self.in_flight.swap(false, Ordering::SeqCst) })
+        Box::pin(async move {
+            if self.hold.load(Ordering::SeqCst) {
+                self.gate.notified().await;
+            }
+            self.in_flight.swap(false, Ordering::SeqCst)
+        })
     }
 }
 
@@ -186,15 +203,67 @@ impl ShutdownClock for Clock {
     }
 }
 
+/// Exit readiness that can be held open so a run can be dropped between
+/// persistence and the exit signal.
 #[derive(Default)]
 pub struct Exit {
     pub signalled: Mutex<Vec<ShutdownReason>>,
+    pub attempts: AtomicUsize,
+    pub hold: AtomicBool,
+    pub gate: tokio::sync::Notify,
 }
 
 impl CompositionExitReadiness for Exit {
     fn signal_exit_ready(&self, reason: ShutdownReason) -> PortFuture<'_, ()> {
-        self.signalled.lock().unwrap().push(reason);
-        Box::pin(async {})
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            if self.hold.load(Ordering::SeqCst) {
+                self.gate.notified().await;
+            }
+            self.signalled.lock().unwrap().push(reason);
+        })
+    }
+}
+
+/// Spawner over the ambient tokio runtime that keeps run handles so a test
+/// can abort a detached run, and can drop the next N runs unpolled.
+#[derive(Default)]
+pub struct Spawner {
+    pub handles: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    pub drop_next: AtomicUsize,
+    pub spawned: AtomicUsize,
+}
+
+impl Spawner {
+    /// The spawned task may start running before its handle is recorded,
+    /// so wait for the record rather than racing it.
+    async fn take_latest(&self) -> tokio::task::JoinHandle<()> {
+        loop {
+            if let Some(handle) = self.handles.lock().unwrap().pop() {
+                return handle;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
+    pub async fn abort_latest(&self) {
+        self.take_latest().await.abort();
+    }
+
+    pub async fn latest_finished(&self) {
+        let _ = self.take_latest().await.await;
+    }
+}
+
+impl ShutdownRunSpawner for Spawner {
+    fn spawn_shutdown_run(&self, run: ShutdownRun) {
+        self.spawned.fetch_add(1, Ordering::SeqCst);
+        if self.drop_next.load(Ordering::SeqCst) > 0 {
+            self.drop_next.fetch_sub(1, Ordering::SeqCst);
+            drop(run);
+            return;
+        }
+        self.handles.lock().unwrap().push(tokio::spawn(run));
     }
 }
 
@@ -206,8 +275,9 @@ pub struct Harness {
     pub persistence: Arc<Persistence>,
     pub clock: Arc<Clock>,
     pub exit: Arc<Exit>,
+    pub spawner: Arc<Spawner>,
     pub prepare: PrepareHarnessShutdown,
-    pub execute: ExecuteHarnessShutdown,
+    pub execute: Arc<ExecuteHarnessShutdown>,
 }
 
 impl Harness {
@@ -218,17 +288,19 @@ impl Harness {
         let persistence = Arc::new(Persistence::default());
         let clock = Arc::new(Clock(AtomicU64::new(1_000)));
         let exit = Arc::new(Exit::default());
+        let spawner = Arc::new(Spawner::default());
         let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), clock.clone());
         let prepare = PrepareHarnessShutdown::new(transaction.clone());
-        let execute = ExecuteHarnessShutdown::new(
+        let execute = Arc::new(ExecuteHarnessShutdown::new(
             transaction,
             ExecuteHarnessShutdownPorts {
                 routing: routing.clone(),
                 cancellation: cancellation.clone(),
                 persistence: persistence.clone(),
                 exit: exit.clone(),
+                spawner: spawner.clone(),
             },
-        );
+        ));
         Self {
             lifecycle,
             routing,
@@ -236,6 +308,7 @@ impl Harness {
             persistence,
             clock,
             exit,
+            spawner,
             prepare,
             execute,
         }

@@ -112,6 +112,8 @@ mod composition_exit_readiness;
 mod direct_child_routing;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
+#[path = "contracts/shutdown_run_spawner.rs"]
+mod shutdown_run_spawner;
 #[path = "contracts/shutdown_session_persistence.rs"]
 mod shutdown_session_persistence;
 #[path = "contracts/subagent_lifecycle_repository.rs"]

@@ -11,6 +11,7 @@
 //!
 //! Everything here is deterministic value/policy code: no sockets, processes,
 //! clocks or persistence. Effects belong to application ports.
+use std::collections::HashSet;
 use std::fmt;
 
 use super::ids::AgentUuid;
@@ -74,8 +75,12 @@ impl fmt::Display for RoutingDepthError {
 }
 
 impl RoutingDepth {
-    /// Deepest delegation tree a single command may traverse.
-    pub const MAX_HOPS: u32 = 16;
+    /// Deepest delegation tree a single command may traverse. Kept equal to
+    /// the inspection walker's `MAX_INSPECTION_ROUTE_DEPTH`
+    /// (`infrastructure/tools/subagent_routing.rs`) so both bounds agree;
+    /// that walker should consume [`LineageSnapshot`] in a later slice
+    /// instead of re-walking registry `parent_id` chains.
+    pub const MAX_HOPS: u32 = 32;
 
     pub const fn new(hops: u32) -> Result<Self, RoutingDepthError> {
         if hops == 0 {
@@ -248,10 +253,21 @@ impl LineageSnapshot {
             .map(|record| &record.identity)
     }
 
-    fn record(&self, uuid: &AgentUuid) -> Option<&LineageRecord> {
-        self.records
+    /// Exactly one record for `uuid`, or `None` when unknown. Two records
+    /// claiming one uuid make every edge through it unaffirmable.
+    fn unique_record(
+        &self,
+        uuid: &AgentUuid,
+    ) -> Result<Option<&LineageRecord>, TerminationRouteError> {
+        let mut matches = self
+            .records
             .iter()
-            .find(|record| &record.identity.uuid == uuid)
+            .filter(|record| &record.identity.uuid == uuid);
+        let first = matches.next();
+        if first.is_some() && matches.next().is_some() {
+            return Err(TerminationRouteError::AmbiguousLineage(uuid.clone()));
+        }
+        Ok(first)
     }
 }
 
@@ -274,9 +290,10 @@ pub enum TerminationRouteError {
     /// what `shutdown` is for.
     TargetIsSelf,
     UnknownTarget(AgentUuid),
-    /// More than one record claims the target uuid: the snapshot cannot say
-    /// which edge is meant, so none is taken.
-    AmbiguousTarget(AgentUuid),
+    /// More than one record claims a uuid on the walk (target or
+    /// intermediate): the snapshot cannot say which edge is meant, so none
+    /// is taken.
+    AmbiguousLineage(AgentUuid),
     StaleGeneration {
         target: AgentUuid,
         requested: LaunchGeneration,
@@ -296,7 +313,7 @@ impl fmt::Display for TerminationRouteError {
         match self {
             Self::TargetIsSelf => f.write_str("target is the receiving harness; use shutdown"),
             Self::UnknownTarget(uuid) => write!(f, "unknown delegated agent {uuid}"),
-            Self::AmbiguousTarget(uuid) => write!(f, "ambiguous delegated agent {uuid}"),
+            Self::AmbiguousLineage(uuid) => write!(f, "ambiguous lineage at {uuid}"),
             Self::StaleGeneration {
                 target,
                 requested,
@@ -330,16 +347,9 @@ pub fn resolve_termination_route(
     if target.uuid == snapshot.owner {
         return Err(TerminationRouteError::TargetIsSelf);
     }
-    let mut matches = snapshot
-        .records
-        .iter()
-        .filter(|record| record.identity.uuid == target.uuid);
-    let record = matches
-        .next()
+    let record = snapshot
+        .unique_record(&target.uuid)?
         .ok_or_else(|| TerminationRouteError::UnknownTarget(target.uuid.clone()))?;
-    if matches.next().is_some() {
-        return Err(TerminationRouteError::AmbiguousTarget(target.uuid.clone()));
-    }
     if record.identity.generation != target.generation {
         return Err(TerminationRouteError::StaleGeneration {
             target: target.uuid.clone(),
@@ -348,14 +358,18 @@ pub fn resolve_termination_route(
         });
     }
     let (via, edges) = direct_child_toward(snapshot, record)?;
-    debug_assert_eq!(
-        snapshot.record(&via.uuid).map(|r| &r.parent),
-        Some(&snapshot.owner),
-        "resolved edge must be a direct child"
-    );
-    debug_assert!(edges >= 1, "a known target is at least one edge away");
+    // The walk only returns a record parented by the owner; anything else is
+    // a broken snapshot and is refused rather than routed.
+    let via_is_direct = snapshot
+        .unique_record(&via.uuid)?
+        .is_some_and(|record| record.parent == snapshot.owner);
+    if !via_is_direct || edges == 0 {
+        return Err(TerminationRouteError::LineageCycle(via.uuid.clone()));
+    }
     if edges == 1 {
-        debug_assert_eq!(via.uuid, target.uuid);
+        if via.uuid != target.uuid {
+            return Err(TerminationRouteError::LineageCycle(via.uuid));
+        }
         return Ok(TerminationRoute::ShutdownDirectChild(via));
     }
     // The whole remaining path must fit the budget *now*: an over-depth route
@@ -381,20 +395,22 @@ fn direct_child_toward(
     snapshot: &LineageSnapshot,
     record: &LineageRecord,
 ) -> Result<(DelegatedAgentIdentity, u32), TerminationRouteError> {
-    let mut visited: Vec<&AgentUuid> = Vec::with_capacity(snapshot.records.len());
+    let mut visited: HashSet<&AgentUuid> = HashSet::with_capacity(snapshot.records.len());
     let mut current = record;
     loop {
-        if visited.contains(&&current.identity.uuid) {
+        if !visited.insert(&current.identity.uuid) {
             return Err(TerminationRouteError::LineageCycle(
                 current.identity.uuid.clone(),
             ));
         }
-        visited.push(&current.identity.uuid);
         if current.parent == snapshot.owner {
             let edges = u32::try_from(visited.len()).unwrap_or(u32::MAX);
             return Ok((current.identity.clone(), edges));
         }
-        current = snapshot.record(&current.parent).ok_or_else(|| {
+        // Every node on the walk must be unique; a duplicated intermediate
+        // would otherwise route down whichever copy happened to be listed
+        // first.
+        current = snapshot.unique_record(&current.parent)?.ok_or_else(|| {
             // A parent this harness has never seen is not a route it can
             // affirm; treat it like a broken lineage rather than guessing.
             TerminationRouteError::LineageCycle(current.parent.clone())

@@ -23,20 +23,36 @@ pub struct PrepareShutdownRequest {
     pub trigger: ShutdownTrigger,
 }
 
-/// Opaque proof that a shutdown was admitted. Only the transaction that
-/// minted it can read it; callers hand it back to execute or release.
+/// Opaque proof that one caller holds the admitted shutdown. Every
+/// participant gets its own token (one admission, one holder each), so a
+/// holder's release can never be mistaken for another's. Only the
+/// transaction that minted it can read it.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct ShutdownToken(u64);
+pub struct ShutdownToken {
+    admission: u64,
+    holder: u64,
+}
 
 impl ShutdownToken {
-    pub(super) const fn mint(nonce: u64) -> Self {
-        Self(nonce)
+    pub(super) const fn mint(admission: u64, holder: u64) -> Self {
+        Self { admission, holder }
+    }
+
+    pub(super) const fn admission(&self) -> u64 {
+        self.admission
+    }
+
+    pub(super) const fn holder(&self) -> u64 {
+        self.holder
     }
 
     /// Presenter tests need a token to shape an ACK; it never reaches a wire.
     #[cfg(test)]
     pub(crate) const fn for_presenter_tests() -> Self {
-        Self(0)
+        Self {
+            admission: 0,
+            holder: 0,
+        }
     }
 }
 
@@ -56,13 +72,15 @@ pub struct PreparedShutdown {
     pub reason: ShutdownReason,
 }
 
-/// What releasing an admission did.
+/// What releasing one holder's admission did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseOutcome {
-    /// The last participant left: the freeze was lifted and nothing ran.
+    /// The last holder left: the freeze was lifted and nothing ran.
     Released,
-    /// Other triggers still hold the admission; it stays frozen.
+    /// Other holders still hold the admission; it stays frozen.
     StillHeld,
+    /// This holder had already released; nothing changed.
+    AlreadyReleased,
     /// Execution already began or finished; a release changes nothing.
     ExecutionUnderway,
 }
@@ -91,15 +109,20 @@ pub struct ShutdownOutcome {
 pub enum HarnessShutdownError {
     /// Execute or release without any admitted shutdown.
     NotPrepared,
-    /// The token does not belong to the current admission.
+    /// The token does not belong to the current admission or names no
+    /// holder of it.
     UnknownToken,
+    /// The token's holder already released it; a released holder can neither
+    /// execute nor release again.
+    TokenReleased,
     /// The harness already terminated: nothing further can be admitted.
     AlreadyTerminated,
     /// The lifecycle repository refused a transition it must never refuse
     /// for an admitted shutdown.
     LifecycleViolation(String),
-    /// The caller running the teardown was cancelled before it completed;
-    /// the admission is intact and `Execute` may be called again.
+    /// The spawned teardown run was dropped before it completed (its runtime
+    /// went away); the admission and its progress are intact and `Execute`
+    /// resumes at the first incomplete step.
     ExecutionInterrupted,
 }
 
@@ -108,6 +131,7 @@ impl fmt::Display for HarnessShutdownError {
         match self {
             Self::NotPrepared => f.write_str("no shutdown has been prepared"),
             Self::UnknownToken => f.write_str("shutdown token is not the admitted one"),
+            Self::TokenReleased => f.write_str("shutdown token was already released"),
             Self::AlreadyTerminated => f.write_str("harness already terminated"),
             Self::LifecycleViolation(detail) => write!(f, "lifecycle violation: {detail}"),
             Self::ExecutionInterrupted => f.write_str("shutdown execution was interrupted"),

@@ -2566,6 +2566,7 @@ const TEARDOWN_PORTS: &[&str] = &[
     "ShutdownSessionPersistence",
     "ShutdownClock",
     "CompositionExitReadiness",
+    "ShutdownRunSpawner",
 ];
 
 /// Application teardown code may name the domain, its own capability and

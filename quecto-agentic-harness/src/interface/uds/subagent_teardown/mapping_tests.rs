@@ -66,7 +66,7 @@ fn zero_and_excess_depth_and_empty_uuid_are_rejected() {
     assert_eq!(
         map_command(&terminate("B", 1, RoutingDepth::MAX_HOPS + 1)),
         Err(MappingError::InvalidDepth(
-            "remaining_depth 17 exceeds maximum 16".into()
+            "remaining_depth 33 exceeds maximum 32".into()
         ))
     );
     assert_eq!(

@@ -2,18 +2,31 @@
 //!
 //! Sequence for `shutdown`, and the only place it is decided:
 //!
-//! 1. parse (framing cap, shape) and authorize the connection;
+//! 1. claim the line (only the two teardown `type`s; everything else is
+//!    ignored without a frame so the ordinary dispatcher answers it), then
+//!    parse (cap, shape) and authorize the connection;
 //! 2. map to the application request;
-//! 3. `Prepare` — admit and freeze, receive an opaque token;
+//! 3. `Prepare` — admit and freeze, receive an opaque holder token;
 //! 4. write **and flush** the correlated ACK through the presenter;
-//! 5. only on success hand the token to `Execute`; on failure release the
-//!    admission and never execute for this command.
+//! 5. only on success hand the token to `Execute`; on failure release this
+//!    holder and never execute for this command.
+//!
+//! Two guarantees hold across task cancellation. Before the ACK is flushed
+//! the held token is guarded: dropping this future releases the holder, so
+//! an aborted connection task cannot leave the harness frozen. After the ACK
+//! is flushed the shutdown must complete: `Execute` detaches the run onto the
+//! transaction's spawner, and this future only joins it, re-driving on an
+//! interrupted run until a terminal outcome arrives.
 //!
 //! The controller runs on the connection's reader task, so a busy dispatch
 //! loop never delays it: idle and busy harnesses take the identical path and
-//! `Execute` cancels whatever turn is in flight. No teardown policy lives
-//! here — the controller neither decides what shutdown does nor whether a
-//! target may be reached; it sequences the use cases and presents results.
+//! `Execute` cancels whatever turn is in flight. Authorization is a closed
+//! allowlist over what the connection layer established: `BoundParent`
+//! arrives with the launch-bound parent connection (#1935); `LocalOperator`
+//! is today satisfiable by any client of the harness's own socket because no
+//! peer authentication exists on it yet. No teardown policy lives here — the
+//! controller neither decides what shutdown does nor whether a target may be
+//! reached; it sequences the use cases and presents results.
 use std::sync::Arc;
 
 use crate::application::subagents::dto::{
@@ -121,8 +134,8 @@ impl SubagentTeardownController {
             Err(WireError::NotATeardownCommand) => return ControllerOutcome::Ignored,
             Err(error) => {
                 let id = match &error {
-                    WireError::Malformed { id, .. } => id.clone(),
-                    WireError::Oversized { .. } | WireError::NotATeardownCommand => None,
+                    WireError::Malformed { id, .. } | WireError::Oversized { id, .. } => id.clone(),
+                    WireError::NotATeardownCommand => None,
                 };
                 return reject(writer, id.as_deref(), UNPARSED_COMMAND, error.to_string()).await;
             }
@@ -181,14 +194,72 @@ impl SubagentTeardownController {
                 };
             }
         };
+        // Until the ACK is flushed this holder is guarded: if the connection
+        // task is dropped mid-write, the guard releases it and the harness is
+        // not left frozen.
+        let mut held = HeldAdmission {
+            prepare: &self.prepare,
+            token: Some(prepared.token.clone()),
+        };
         // The ACK must be on the wire before the token can move: a parent
         // that later sees EOF then knows it was a graceful exit.
         if let Err(ack_error) = deliver(writer, &shutdown_ack(id, &prepared)).await {
-            let release = self.prepare.release(&prepared.token);
+            let release = held.release();
             return ControllerOutcome::ShutdownAbandoned { ack_error, release };
         }
-        let outcome = self.execute.execute(&prepared.token).await;
+        // From here the shutdown must complete: the run is detached inside
+        // `Execute` (spawner port) and this future only joins it.
+        held.disarm();
+        let outcome = self.execute_to_completion(&prepared.token).await;
         ControllerOutcome::ShutdownExecuted { delivery, outcome }
+    }
+
+    /// Join the detached run, re-driving it if its runtime dropped it. The
+    /// bound keeps a spawner that drops every run from spinning forever.
+    async fn execute_to_completion(
+        &self,
+        token: &crate::application::subagents::dto::ShutdownToken,
+    ) -> Result<ShutdownOutcome, HarnessShutdownError> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self.execute.execute(token).await {
+                Err(HarnessShutdownError::ExecutionInterrupted) if attempt < MAX_REDRIVES => {
+                    continue;
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+}
+
+/// Upper bound on re-driving an interrupted run for one command.
+pub const MAX_REDRIVES: u32 = 4;
+
+/// One holder's token between `Prepare` and the flushed ACK. Dropped before
+/// `disarm`, it releases the holder; the freeze lifts if it was the last.
+struct HeldAdmission<'a> {
+    prepare: &'a PrepareHarnessShutdown,
+    token: Option<crate::application::subagents::dto::ShutdownToken>,
+}
+
+impl HeldAdmission<'_> {
+    fn release(&mut self) -> Result<ReleaseOutcome, HarnessShutdownError> {
+        let token = self.token.take().expect("released at most once");
+        self.prepare.release(&token)
+    }
+
+    fn disarm(&mut self) {
+        self.token = None;
+    }
+}
+
+impl Drop for HeldAdmission<'_> {
+    fn drop(&mut self) {
+        if self.token.is_some() {
+            // Best effort: the outcome has no one left to report to.
+            let _ = self.release();
+        }
     }
 }
 
@@ -213,6 +284,12 @@ async fn reject(
     }
 }
 
+#[cfg(test)]
+#[path = "controller_rig_tests.rs"]
+mod rig;
+#[cfg(test)]
+#[path = "controller_routing_tests.rs"]
+mod routing_tests;
 #[cfg(test)]
 #[path = "controller_tests.rs"]
 mod tests;

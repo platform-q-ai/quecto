@@ -12,13 +12,14 @@ use super::wire::{
     SHUTDOWN_COMMAND, TERMINATE_DELEGATED_AGENT_COMMAND, TeardownResponse, TeardownResponseData,
 };
 
-/// A connection that can take one complete frame. Implementations resolve
-/// only after the bytes are written *and* flushed to the peer; an error
-/// means the peer may not have the frame.
+/// A connection that can take one complete response. The adapter frames it
+/// for its own wire mode (legacy newline JSON or length-prefixed frames) and
+/// resolves only after the bytes are written *and* flushed to the peer; an
+/// error means the peer may not have the frame.
 pub trait AckWriter: Send + Sync {
     fn write_and_flush<'a>(
         &'a self,
-        line: &'a str,
+        response: &'a TeardownResponse,
     ) -> Pin<Box<dyn Future<Output = Result<(), AckWriteError>> + Send + 'a>>;
 }
 
@@ -84,9 +85,7 @@ pub async fn deliver(
     writer: &dyn AckWriter,
     response: &TeardownResponse,
 ) -> Result<(), AckWriteError> {
-    let line = response.to_line();
-    debug_assert!(line.ends_with('\n'), "frames are newline-terminated");
-    writer.write_and_flush(&line).await
+    writer.write_and_flush(response).await
 }
 
 #[cfg(test)]

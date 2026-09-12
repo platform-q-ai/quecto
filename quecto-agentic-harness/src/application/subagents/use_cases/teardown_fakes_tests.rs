@@ -10,7 +10,8 @@ use crate::domain::subagent_teardown::{
 
 use crate::application::subagents::ports::{
     ChildRoutingError, CompositionExitReadiness, DirectChildRouting, PortFuture, ShutdownClock,
-    ShutdownInstant, ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
+    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
+    SubagentLifecycleRepository, TurnCancellation,
 };
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
@@ -142,6 +143,9 @@ pub struct FakeCancellation {
     pub in_flight: AtomicBool,
     pub gate: tokio::sync::Notify,
     pub hold: AtomicBool,
+    /// Shared ordering trace: the first teardown effect records itself here
+    /// so a test can prove it happened after (never before) the ACK flush.
+    pub trace: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
 }
 
 impl FakeCancellation {
@@ -151,6 +155,7 @@ impl FakeCancellation {
             in_flight: AtomicBool::new(in_flight),
             gate: tokio::sync::Notify::new(),
             hold: AtomicBool::new(false),
+            trace: Mutex::new(None),
         })
     }
 
@@ -164,6 +169,9 @@ impl FakeCancellation {
 impl TurnCancellation for FakeCancellation {
     fn cancel_in_flight_turn(&self) -> PortFuture<'_, bool> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(trace) = self.trace.lock().unwrap().as_ref() {
+            trace.lock().unwrap().push("execute-started".into());
+        }
         Box::pin(async move {
             if self.hold.load(Ordering::SeqCst) {
                 self.gate.notified().await;
@@ -210,9 +218,14 @@ impl ShutdownClock for FakeClock {
     }
 }
 
+/// Exit readiness that can be held open so a run can be dropped between
+/// persistence and the exit signal.
 #[derive(Default)]
 pub struct FakeExit {
     pub signalled: Mutex<Vec<ShutdownReason>>,
+    pub attempts: AtomicU64,
+    pub hold: AtomicBool,
+    pub gate: tokio::sync::Notify,
 }
 
 impl FakeExit {
@@ -223,7 +236,60 @@ impl FakeExit {
 
 impl CompositionExitReadiness for FakeExit {
     fn signal_exit_ready(&self, reason: ShutdownReason) -> PortFuture<'_, ()> {
-        self.signalled.lock().unwrap().push(reason);
-        Box::pin(async {})
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            if self.hold.load(Ordering::SeqCst) {
+                self.gate.notified().await;
+            }
+            self.signalled.lock().unwrap().push(reason);
+        })
+    }
+}
+
+/// Spawner over the test runtime that keeps every run's handle so a test
+/// can abort a detached run (simulating its runtime dropping it), or drop
+/// runs outright to simulate a spawner with no runtime left.
+#[derive(Default)]
+pub struct FakeSpawner {
+    pub handles: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Drop (never run) this many of the next spawned runs.
+    pub drop_next: AtomicU64,
+    pub spawned: AtomicU64,
+}
+
+impl FakeSpawner {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The spawned task may start running before its handle is recorded,
+    /// so wait for the record rather than racing it.
+    async fn take_latest(&self) -> tokio::task::JoinHandle<()> {
+        loop {
+            if let Some(handle) = self.handles.lock().unwrap().pop() {
+                return handle;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
+    pub async fn abort_latest(&self) {
+        self.take_latest().await.abort();
+    }
+
+    pub async fn latest_finished(&self) {
+        let _ = self.take_latest().await.await;
+    }
+}
+
+impl ShutdownRunSpawner for FakeSpawner {
+    fn spawn_shutdown_run(&self, run: ShutdownRun) {
+        self.spawned.fetch_add(1, Ordering::SeqCst);
+        if self.drop_next.load(Ordering::SeqCst) > 0 {
+            self.drop_next.fetch_sub(1, Ordering::SeqCst);
+            drop(run);
+            return;
+        }
+        self.handles.lock().unwrap().push(tokio::spawn(run));
     }
 }

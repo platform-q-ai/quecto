@@ -84,3 +84,13 @@ pub trait ShutdownClock: Send + Sync {
 pub trait CompositionExitReadiness: Send + Sync {
     fn signal_exit_ready(&self, reason: ShutdownReason) -> PortFuture<'_, ()>;
 }
+
+/// The executed teardown, detached from whichever caller admitted it.
+pub type ShutdownRun = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// Runs the teardown independently of the caller's future, so a dropped
+/// connection task can never abandon a shutdown whose ACK is already on the
+/// wire. Composition supplies the runtime; the transaction owns the run.
+pub trait ShutdownRunSpawner: Send + Sync {
+    fn spawn_shutdown_run(&self, run: ShutdownRun);
+}
