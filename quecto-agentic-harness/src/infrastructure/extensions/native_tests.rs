@@ -325,6 +325,9 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         swarm_context: None,
         parent_config_path: None,
+        owned_child_supervisor: std::sync::Arc::new(
+            crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(),
+        ),
         base_dir: tmp.path().to_path_buf(),
         socket_dir: tmp.path().to_path_buf(),
         broadcast_tx: None,

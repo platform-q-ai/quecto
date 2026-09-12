@@ -111,6 +111,8 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        parent_control: None,
+        teardown_graph: None,
     }
 }
 

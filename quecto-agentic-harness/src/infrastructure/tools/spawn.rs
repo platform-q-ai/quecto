@@ -156,6 +156,11 @@ pub struct SpawnTool {
     /// Staleness is accepted: the config file is still consulted at spawn
     /// time, and selection errors enumerate the live names.
     pub(super) container_config_roster: String,
+    /// The one owner of every process this tool spawns (#1935): the
+    /// process-wide supervisor unless composition injects another, so no
+    /// tool ever owns a throwaway supervisor whose drop abandons reaps.
+    pub(super) supervisor:
+        Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
 }
 
 impl SpawnTool {
@@ -197,6 +202,8 @@ impl SpawnTool {
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
             container_config_roster: EMPTY_ROSTER.to_string(),
+            supervisor:
+                crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         }
     }
 
@@ -216,6 +223,8 @@ impl SpawnTool {
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
             container_config_roster: EMPTY_ROSTER.to_string(),
+            supervisor:
+                crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         }
     }
 
@@ -228,6 +237,24 @@ impl SpawnTool {
             container_config_roster(parent_config_path.as_deref(), &self.base_dir);
         self.parent_config_path = parent_config_path;
         self
+    }
+
+    /// Inject the process-wide owned-child supervisor (#1935).
+    pub fn with_owned_child_supervisor(
+        mut self,
+        supervisor: Arc<
+            crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor,
+        >,
+    ) -> Self {
+        self.supervisor = supervisor;
+        self
+    }
+
+    /// The supervisor holding every child this tool launched.
+    pub fn owned_child_supervisor(
+        &self,
+    ) -> &Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor> {
+        &self.supervisor
     }
 
     /// Inject the session-scoped environment registry built at composition.
@@ -464,17 +491,20 @@ impl SpawnTool {
         }
     }
 
+    /// Wait for the child's socket, or for the supervisor to report the
+    /// owned process exited first (#1935): the launch then fails instead of
+    /// waiting on a socket that will never appear.
     pub(super) async fn wait_for_socket_or_child_exit(
         &self,
         path: &std::path::Path,
-        child: &mut tokio::process::Child,
+        prepared: &super::spawn_container::PreparedChild,
     ) -> Result<(), DomainError> {
         tokio::select! {
             socket_result = self.wait_for_socket(path) => socket_result,
-            child_status = child.wait() => {
-                let detail = match child_status {
-                    Ok(status) => format!(" with status {status}"),
-                    Err(error) => format!(": failed to observe exit status: {error}"),
+            exit = prepared.wait_owned_child_exit() => {
+                let detail = match exit {
+                    Some(exit) => format!(" with {exit:?}"),
+                    None => ": no owned process to observe".to_string(),
                 };
                 Err(DomainError::Tool(format!(
                     "subagent exited before socket ready{}",

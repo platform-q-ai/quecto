@@ -4,6 +4,10 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn test_supervisor() -> Arc<OwnedChildSupervisor> {
+    Arc::new(OwnedChildSupervisor::new())
+}
+
 fn temp_socket_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("temp socket dir")
 }
@@ -12,7 +16,13 @@ fn temp_socket_dir() -> tempfile::TempDir {
 async fn bridge_pumps_both_directions_through_the_proxy_process() {
     let dir = temp_socket_dir();
     // `cat` is a real stdio process: bytes written into the bridge come back.
-    let bridge = materialize(vec!["cat".to_string()], dir.path(), "echo-agent").unwrap();
+    let bridge = materialize(
+        vec!["cat".to_string()],
+        dir.path(),
+        "echo-agent",
+        test_supervisor(),
+    )
+    .unwrap();
     let mut conn = tokio::net::UnixStream::connect(&bridge.socket_path)
         .await
         .unwrap();
@@ -28,7 +38,13 @@ async fn proxy_death_is_pushed_to_the_parent_as_eof() {
     let dir = temp_socket_dir();
     // A proxy that exits immediately models a dead child/environment: the
     // parent-side connection must observe EOF, not hang.
-    let bridge = materialize(vec!["true".to_string()], dir.path(), "dead-agent").unwrap();
+    let bridge = materialize(
+        vec!["true".to_string()],
+        dir.path(),
+        "dead-agent",
+        test_supervisor(),
+    )
+    .unwrap();
     let mut conn = tokio::net::UnixStream::connect(&bridge.socket_path)
         .await
         .unwrap();
@@ -45,7 +61,13 @@ async fn proxy_death_is_pushed_to_the_parent_as_eof() {
 async fn bridge_socket_path_is_distinct_from_the_requested_direct_path() {
     let dir = temp_socket_dir();
     let requested = dir.path().join("quecto-agent-abc.sock");
-    let bridge = materialize(vec!["cat".to_string()], dir.path(), "abc").unwrap();
+    let bridge = materialize(
+        vec!["cat".to_string()],
+        dir.path(),
+        "abc",
+        test_supervisor(),
+    )
+    .unwrap();
     assert_ne!(bridge.socket_path, requested);
     bridge.teardown();
 }
@@ -56,6 +78,7 @@ async fn materialize_fails_cleanly_on_unbindable_socket_dir() {
         vec!["cat".to_string()],
         std::path::Path::new("/nonexistent-quecto-bridge-dir"),
         "x",
+        test_supervisor(),
     )
     .unwrap_err();
     assert!(!err.to_string().is_empty());
@@ -70,6 +93,7 @@ async fn wait_for_proxy_ready_accepts_a_held_open_connection() {
         vec!["sleep".to_string(), "30".to_string()],
         dir.path(),
         "ready-agent",
+        test_supervisor(),
     )
     .unwrap();
     wait_for_proxy_ready_until(
@@ -101,6 +125,7 @@ async fn bridge_one_survives_an_unspawnable_proxy_argv() {
         vec!["/nonexistent-proxy-binary".to_string()],
         dir.path(),
         "bad-argv",
+        test_supervisor(),
     )
     .unwrap();
     let mut conn = tokio::net::UnixStream::connect(&bridge.socket_path)
@@ -141,6 +166,7 @@ async fn dropped_connection_tears_down_the_proxy_process() {
         vec![proxy.to_string_lossy().to_string()],
         dir.path(),
         "leak-test",
+        test_supervisor(),
     )
     .unwrap();
     let conn = tokio::net::UnixStream::connect(&bridge.socket_path)
@@ -180,7 +206,13 @@ async fn dropped_connection_tears_down_the_proxy_process() {
 #[tokio::test]
 async fn into_parts_hands_over_socket_and_handle() {
     let dir = tempfile::tempdir().unwrap();
-    let bridge = materialize(vec!["true".to_string()], dir.path(), "parts-test").unwrap();
+    let bridge = materialize(
+        vec!["true".to_string()],
+        dir.path(),
+        "parts-test",
+        test_supervisor(),
+    )
+    .unwrap();
     let expected = bridge.socket_path.clone();
     let (socket, handle) = bridge.into_parts();
     assert_eq!(socket, expected);

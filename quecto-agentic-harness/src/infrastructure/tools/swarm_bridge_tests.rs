@@ -266,10 +266,10 @@ async fn ready_failure_retains_launched_scope_after_child_rollback() {
     let mut reservation =
         super::swarm_admission::LaunchReservation::reserve(context.clone()).unwrap();
     let mut command = tokio::process::Command::new("sleep");
-    command.arg("30").kill_on_drop(true);
-    let child = command.spawn().unwrap();
-    reservation.launched(child.id().unwrap()).unwrap();
-    let mut prepared = super::spawn_container::PreparedChild::new_for_test(Some(child), None, None);
+    command.arg("30");
+    let mut prepared =
+        super::spawn_container::PreparedChild::new_for_test(Some(command), None, None).await;
+    reservation.launched(prepared.display_pid).unwrap();
     prepared.swarm_reservation = Some(reservation);
     assert_eq!(context.summary().unwrap()["usage"], 2);
     prepared.rollback_once().await;

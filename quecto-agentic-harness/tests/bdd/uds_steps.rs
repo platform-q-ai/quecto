@@ -70,25 +70,28 @@ fn bdd_workflow_config_with_feature(
 // ─── Execution helper ────────────────────────────────────────────────────────
 
 /// Prepared agent + session context for `execute_uds`.
-struct UdsAgentContext {
-    agent: AgentLoopImpl,
-    model: String,
-    session_key: String,
-    ephemeral: bool,
-    ext_registry: std::sync::Arc<
+pub(crate) struct UdsAgentContext {
+    pub(crate) agent: AgentLoopImpl,
+    pub(crate) model: String,
+    pub(crate) session_key: String,
+    pub(crate) ephemeral: bool,
+    pub(crate) ext_registry: std::sync::Arc<
         std::sync::Mutex<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
     >,
-    persist: bool,
-    workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
-    workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    provider_reload: quecto::interface::cli::provider_reload::ProviderReload,
-    provider_reload_inputs: ProviderReloadInputs,
+    pub(crate) persist: bool,
+    pub(crate) workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
+    pub(crate) workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
+    pub(crate) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub(crate) provider_reload: quecto::interface::cli::provider_reload::ProviderReload,
+    pub(crate) provider_reload_inputs: ProviderReloadInputs,
 }
 
 /// Build the agent and session key from world state + config.
 /// Returns `Err(message)` on any configuration failure.
-fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAgentContext, String> {
+pub(crate) fn build_uds_agent(
+    world: &QuectoWorld,
+    base: &std::path::Path,
+) -> Result<UdsAgentContext, String> {
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();
@@ -421,6 +424,8 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            parent_control: None,
+            teardown_graph: None,
         })
     });
 
@@ -2092,6 +2097,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            parent_control: None,
+            teardown_graph: None,
         })
     });
 
@@ -2506,6 +2513,8 @@ fn mc_spawn_agent(
             broadcast_tx,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            parent_control: None,
+            teardown_graph: None,
         })
     });
 

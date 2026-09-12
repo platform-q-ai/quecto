@@ -544,7 +544,7 @@ async fn monitor_loop_forwards_child_workflow_state_to_broadcast() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
-    let handle = spawn_monitor_task(
+    let handle = spawn_monitor_task_unbound(
         "child".to_string(),
         sock.clone(),
         registry.clone(),
@@ -691,7 +691,7 @@ async fn monitor_loop_broadcasts_state_changed_on_agent_start() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
-    let handle = spawn_monitor_task(
+    let handle = spawn_monitor_task_unbound(
         "child".to_string(),
         sock.clone(),
         registry.clone(),

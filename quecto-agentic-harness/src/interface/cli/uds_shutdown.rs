@@ -56,6 +56,12 @@ impl ShutdownRequest {
         self.notify.notified().await;
     }
 
+    /// The loop-exit notification, shared with the parent-loss teardown
+    /// (#1935) so every trigger converges on the same dispatch-loop exit.
+    pub(super) fn exit_notify(&self) -> Arc<Notify> {
+        self.notify.clone()
+    }
+
     #[cfg(test)]
     pub(super) fn for_tests() -> (Self, Arc<Notify>) {
         let notify = Arc::new(Notify::new());

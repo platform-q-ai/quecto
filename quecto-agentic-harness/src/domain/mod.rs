@@ -15,6 +15,7 @@ pub mod extension;
 pub mod extension_tool;
 pub mod ids;
 pub mod message;
+pub mod parent_control;
 pub mod provider;
 pub mod provider_error;
 pub mod provider_retry;

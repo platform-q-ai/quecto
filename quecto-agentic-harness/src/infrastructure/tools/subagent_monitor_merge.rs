@@ -93,9 +93,12 @@ fn merge_descendants(
     // along its `parentId` chain, because a snapshot is the WHOLE subtree and
     // each entry's `executionBackend` is relative to its own parent.
     let forwarding_child_same_namespace = !forwarding_child_crosses_environment
-        && guard
-            .get(forwarding_child_id)
-            .is_some_and(|entry| entry.process_ownership.is_same_namespace());
+        && guard.get(forwarding_child_id).is_some_and(|entry| {
+            // A child whose process this harness holds is, by that very
+            // fact, in our pid namespace (#1935); reported leases keep
+            // their #1925 scaffolding until #1940.
+            entry.owned_child.is_some() || entry.process_ownership.is_same_namespace()
+        });
     let same_namespace_keys = if forwarding_child_same_namespace {
         same_namespace_descendant_keys(forwarding_child_id, descendants)
     } else {
@@ -158,7 +161,7 @@ fn merge_descendants(
         });
         // The snapshot is authoritative for provenance too. A launched lease
         // is shared with a reaper and is never replaced.
-        if !entry.process_ownership.is_launched() {
+        if entry.owned_child.is_none() && !entry.process_ownership.is_launched() {
             entry.process_ownership =
                 super::process_ownership::ProcessOwnership::reported(descendant_same_namespace);
         }

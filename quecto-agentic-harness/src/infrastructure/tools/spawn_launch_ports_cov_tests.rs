@@ -72,7 +72,8 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
         Some(crate::subagent_launch_app::ParentEndpoint::Direct {
             socket_path: socket.clone(),
         }),
-    );
+    )
+    .await;
 
     let ready = ports.ready(&mut prepared).await;
     assert!(ready.is_err());
@@ -121,7 +122,7 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
     let mut ports = SpawnLaunchPorts::new(&tool);
     let cfg = config();
     let identity = ports.allocate_identity(&cfg).unwrap();
-    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None);
+    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None).await;
     let runtime = PreparedRuntime {
         socket_path: std::path::PathBuf::from("/tmp/raced.sock"),
         pid: 0,
@@ -221,23 +222,33 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
     assert!(!args3.iter().any(|a| a == "--config"));
 }
 
-/// #1925: the local launch path is the ONLY place a spawned child becomes
-/// signallable. Registering a real child must yield a launched lease, and a
-/// later `shutdown_all` must actually terminate that child.
+/// #1935: the local launch path is the ONLY place a spawned child becomes
+/// owned. Registering a real child must record the supervisor handle and a
+/// launch generation (never a signal lease), and a later `shutdown_all`
+/// must terminate that child through the supervisor: the protocol attempt
+/// against its (never bound) socket is negative, so TERM follows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_child() {
     let tool = tool();
     let mut ports = SpawnLaunchPorts::new(&tool);
     let cfg = config();
     let identity = ports.allocate_identity(&cfg).unwrap();
-    let child = tokio::process::Command::new("sleep")
+    // Building the argv mints the parent control credential and its sidecar.
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    let sidecar = args
+        .iter()
+        .position(|a| a == "--parent-control")
+        .map(|i| std::path::PathBuf::from(&args[i + 1]))
+        .expect("the sidecar path is on argv");
+    assert!(sidecar.exists());
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
         .arg("30")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn sleep");
-    let pid = child.id().expect("live child pid");
-    let mut prepared = PreparedChild::new_for_test(Some(child), None, None);
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let pid = prepared.display_pid;
+    assert!(pid > 0, "live child pid");
     let runtime = PreparedRuntime {
         socket_path: ports.socket_path.clone().unwrap(),
         pid,
@@ -252,9 +263,14 @@ async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_chil
         let entry = &entries[&identity.registry_key];
         assert_eq!(entry.pid, pid);
         assert!(
-            entry.process_ownership.is_owned(),
-            "a locally launched child must carry a launched lease"
+            !entry.process_ownership.is_owned(),
+            "a locally launched child carries no signal lease"
         );
+        assert!(
+            entry.holds_owned_child(),
+            "the supervisor retains the handle"
+        );
+        assert!(entry.launch_generation.is_some());
     }
 
     super::super::spawn_registry::shutdown_all(&tool.registry);
@@ -306,14 +322,14 @@ async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child(
     let identity = ports.allocate_identity(&cfg).unwrap();
     let args = ports.build_cli_args(&identity, &cfg).unwrap();
     assert!(!args.is_empty());
-    let child = tokio::process::Command::new("sleep")
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
         .arg("30")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn sleep");
-    let pid = child.id().expect("live child pid");
-    let mut prepared = PreparedChild::new_for_test(Some(child), None, None);
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let pid = prepared.display_pid;
+    assert!(pid > 0, "live child pid");
     let runtime = PreparedRuntime {
         socket_path: ports.socket_path.clone().unwrap(),
         pid,

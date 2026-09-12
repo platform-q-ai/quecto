@@ -176,6 +176,58 @@ impl SubagentTeardownController {
         }
     }
 
+    /// The authenticated launch-bound parent connection closed (#1935): the
+    /// one trigger with no one to ACK to. Prepare admits (or joins) the
+    /// shutdown for `parent_connection_lost` and Execute runs the same
+    /// common teardown; there is no ACK step to fail, so the holder moves
+    /// straight to execution. The connection layer calls this exactly once,
+    /// only for the connection the binding accepted; ordinary client
+    /// disconnects never reach it.
+    pub async fn parent_connection_lost(&self, delivery: DeliveryState) -> ControllerOutcome {
+        self.parent_gone(
+            delivery,
+            PrepareShutdownRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::ParentConnectionLost,
+                trigger:
+                    crate::application::subagents::dto::ShutdownTrigger::ParentConnectionClosed,
+            },
+        )
+        .await
+    }
+
+    /// No parent bound its control connection within the bind deadline
+    /// (#1935): the launcher is presumed gone. Same path as a lost
+    /// connection, with its own reason and trigger recorded.
+    pub async fn parent_never_bound(&self, delivery: DeliveryState) -> ControllerOutcome {
+        self.parent_gone(
+            delivery,
+            PrepareShutdownRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::ParentNeverBound,
+                trigger: crate::application::subagents::dto::ShutdownTrigger::ParentNeverBound,
+            },
+        )
+        .await
+    }
+
+    async fn parent_gone(
+        &self,
+        delivery: DeliveryState,
+        request: PrepareShutdownRequest,
+    ) -> ControllerOutcome {
+        let prepared = match self.prepare.execute(request) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return ControllerOutcome::Rejected {
+                    command: SHUTDOWN_COMMAND,
+                    detail: error.to_string(),
+                    written: Ok(()),
+                };
+            }
+        };
+        let outcome = self.execute_to_completion(&prepared.token).await;
+        ControllerOutcome::ShutdownExecuted { delivery, outcome }
+    }
+
     async fn shutdown(
         &self,
         id: Option<&str>,

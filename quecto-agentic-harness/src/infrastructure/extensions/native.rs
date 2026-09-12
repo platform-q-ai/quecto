@@ -191,6 +191,9 @@ pub struct AgentControlToolDeps {
     /// The parent agent's own config path (#1369 follow-up): container spawns
     /// without an explicit `config` argument fall back to it.
     pub parent_config_path: Option<PathBuf>,
+    /// The one owner of every process this composition spawns (#1935).
+    pub owned_child_supervisor:
+        Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
 }
 
 pub struct AgentControlToolBuild {
@@ -211,7 +214,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_swarm_participation(deps.swarm_participation)
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
-            .with_parent_config_path(deps.parent_config_path);
+            .with_parent_config_path(deps.parent_config_path)
+            .with_owned_child_supervisor(deps.owned_child_supervisor);
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }

@@ -13,9 +13,8 @@ use crate::domain::session::{Session, SessionStore};
 use super::protocol::AgentEvent;
 use super::uds::uds_dispatch_session;
 use super::uds::{
-    DispatchCtx, LineResult, MAX_FRAME_PAYLOAD_BYTES, dispatch_command,
-    emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
-    remove_injected_system_prompt,
+    DispatchCtx, LineResult, dispatch_command, emit_event_to_broadcast_or_writer,
+    inject_system_prompt, parse_line, remove_injected_system_prompt,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
@@ -102,30 +101,36 @@ pub(super) struct MultiClientArgs<'a> {
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     pub last_persisted_message_index: usize,
+    /// The launch-bound parent control binding this harness was started
+    /// with (#1935); `None` for a top-level harness that can never be bound.
+    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
+    /// Composition's teardown graph builder; without it the loop runs with
+    /// no teardown edge (unit rigs only).
+    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
 }
 
 /// A command line from a client.
-pub(super) struct ClientCommand {
+pub(crate) struct ClientCommand {
     pub(super) line: String,
     /// Unique client identifier for per-client tool routing (#352).
     pub(super) client_id: u64,
 }
 
 /// Sentinel: a client disconnected.
-pub(super) struct ClientDisconnected {
+pub(crate) struct ClientDisconnected {
     /// Which client disconnected (#352).
     pub(super) client_id: u64,
 }
 
 /// Messages from client reader tasks to the dispatch loop.
-pub(super) enum ClientMessage {
+pub(crate) enum ClientMessage {
     SwarmWake { generation: u64 },
     Command(ClientCommand),
     Disconnected(ClientDisconnected),
 }
 
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
-pub(super) struct ClientGuard {
+pub(crate) struct ClientGuard {
     pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
     /// #1720: sentinels ride their own unbounded channel so a busy
     /// dispatcher's short-lived poll connections never fill the bounded
@@ -155,7 +160,7 @@ impl Drop for ClientGuard {
 // ─── Accept loop + dispatch ───────────────────────────────────────────────────
 
 pub(super) async fn multi_client_loop(
-    args: MultiClientArgs<'_>,
+    mut args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
     session_store: &dyn SessionStore,
 ) -> i32 {
@@ -169,6 +174,8 @@ pub(super) async fn multi_client_loop(
     let provider_reload = args.provider_reload;
     let provider_reload_inputs = args.provider_reload_inputs;
     let last_persisted_message_index = args.last_persisted_message_index;
+    let parent_control = args.parent_control.take();
+    let teardown_graph = args.teardown_graph.take();
     let MultiClientArgs {
         mut agent,
         base_dir,
@@ -267,6 +274,36 @@ pub(super) async fn multi_client_loop(
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
 
+    // Subagent teardown graph (#1935): composition's builder wires the slice
+    // A use cases to this loop's cancel slot, exit notification and registry,
+    // plus the parent control binding every connection is checked against.
+    // A launched child also arms its bind deadline: a launcher that never
+    // presents is presumed gone.
+    let bind_deadline = parent_control
+        .as_ref()
+        .map(|launch| launch.bind_deadline.clone());
+    let teardown = teardown_graph.map(|build| {
+        build(super::uds_teardown_graph::TeardownGraphInputs {
+            owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+                "harness".to_string()
+            } else {
+                session_key.clone()
+            }),
+            registry: subagent_registry.clone(),
+            cancel_handle: cancel_handle.clone(),
+            turn_control: turn_control.clone(),
+            busy: busy.clone(),
+            exit_notify: shutdown.exit_notify(),
+            binding: parent_control
+                .map(|launch| launch.binding)
+                .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
+        })
+    });
+    let connections = teardown.as_ref().map(|graph| graph.connections.clone());
+    if let (Some(connections), Some(deadline)) = (connections.clone(), bind_deadline) {
+        super::uds_parent_control::arm_bind_deadline(connections, deadline);
+    }
+
     let accept_task = spawn_accept_loop(AcceptLoopArgs {
         listener,
         broadcast_tx: broadcast_tx.clone(),
@@ -285,6 +322,7 @@ pub(super) async fn multi_client_loop(
         subagent_registry: subagent_registry.clone(),
         workflow_state: wf_state.clone(),
         workspace_path: workspace.to_path_buf(),
+        teardown: connections,
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -538,165 +576,9 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
 
 // ─── Per-client handler ───────────────────────────────────────────────────────
 
-/// Arguments for [`handle_client`].
-pub(super) struct ClientHandlerArgs {
-    pub(super) stream: tokio::net::UnixStream,
-    pub(super) broadcast_rx: tokio::sync::broadcast::Receiver<String>,
-    /// Per-client targeted event stream — receives events addressed
-    /// to this client only (currently just `execute_tool` from
-    /// forwarder tasks). Writer_task selects over this AND
-    /// broadcast_rx so targeted events aren't visible to other
-    /// clients.
-    pub(super) targeted_rx: tokio::sync::mpsc::Receiver<String>,
-    pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
-    pub(super) cancel_handle: CancelHandle,
-    /// Shared abort/steer control flags (#895/#896).
-    pub(super) turn_control: super::uds_cancel::TurnControlHandle,
-    /// Unique client identifier (#352).
-    pub(super) client_id: u64,
-    /// For in-reader handling of `tool_result` — see handle_client.
-    pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
-    /// Live conversation ledger. Updated as messages are appended during a turn,
-    /// allowing read-only get_message lookups to bypass the blocked dispatcher.
-    pub(super) conversation_snapshot: ConversationSnapshot,
-    /// Sub-agent registry, read mid-turn to serve `get_subagents` and forward
-    /// child-targeted `sync` off the blocked dispatcher (spike).
-    pub(super) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    /// Broadcast sender for busy-path `delete_all_subagents`, which must
-    /// publish the empty survivor set without waiting for the dispatcher (#1626).
-    pub(super) broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
-    pub(super) _guard: ClientGuard,
-}
-
-pub(super) async fn handle_client(args: ClientHandlerArgs) {
-    let ClientHandlerArgs {
-        stream,
-        mut broadcast_rx,
-        mut targeted_rx,
-        cmd_tx,
-        cancel_handle,
-        turn_control,
-        client_id,
-        client_tool_registry,
-        conversation_snapshot,
-        subagent_registry,
-        broadcast_tx,
-        _guard,
-    } = args;
-    use tokio::io::BufReader;
-
-    let (reader, mut writer) = tokio::io::split(stream);
-    let mut reader = BufReader::new(reader);
-
-    // Negotiated per-connection framing (#1059): the reader loop below
-    // records the client's detected framing; the writer task replies in it.
-    // Until the client has spoken, writes fall back to legacy NDJSON — safe
-    // because framed clients sniff each incoming message during the
-    // deprecation window (see `uds_wire` module docs).
-    let wire_mode = super::uds_wire::ConnectionWireMode::default();
-    let wire_mode_for_writer = wire_mode.clone();
-
-    // Writer task: multiplex shared broadcast events AND per-client
-    // targeted events (currently just `execute_tool` from forwarder
-    // tasks) onto the client's socket. Targeted events never fan out
-    // to other clients.
-    let writer_task = tokio::spawn(async move {
-        let mode = wire_mode_for_writer;
-        loop {
-            tokio::select! {
-                b = broadcast_rx.recv() => match b {
-                    Ok(line) => {
-                        if super::uds_wire::write_event_line(&mut writer, &line, &mode).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("client lagged by {n} events");
-                        let msg = format!(
-                            "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
-                            n
-                        );
-                        if super::uds_wire::write_event_line(&mut writer, &msg, &mode).await.is_err() {
-                            break;
-                        }
-                    }
-                },
-                t = targeted_rx.recv() => match t {
-                    Some(line) if super::uds_wire::write_event_line(&mut writer, &line, &mode).await.is_err() => {
-                        break;
-                    }
-                    Some(_) => {}
-                    None => {
-                        // Sender side closed (client registry
-                        // entry dropped). Fall through — broadcast
-                        // may still be delivering.
-                    }
-                },
-            }
-        }
-    });
-
-    // Reader loop: commands → dispatch mpsc.
-    // Each message is sniffed as a length-prefixed frame or a legacy NDJSON
-    // line (#1059, deprecation window). Over-cap messages are rejected while
-    // reading (bounded memory, #1003) with the connection kept usable; a peer
-    // speaking neither framing is an explicit version mismatch and the
-    // connection closes — never a silent misparse or a hang.
-    loop {
-        let incoming = match quecto_line_io::read_frame_or_legacy_line(
-            &mut reader,
-            MAX_FRAME_PAYLOAD_BYTES,
-        )
-        .await
-        {
-            Ok(Some(incoming)) => incoming,
-            Ok(None) => break,
-            Err(e @ quecto_line_io::FrameError::Oversized { .. }) => {
-                tracing::warn!(client_id, "dropping over-cap message from client: {e}");
-                continue;
-            }
-            Err(e @ quecto_line_io::FrameError::VersionMismatch { .. }) => {
-                tracing::warn!(client_id, "closing client connection: {e}");
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(client_id, error = %e, "client reader loop exiting on I/O error");
-                break;
-            }
-        };
-        let (mode, bytes) = match incoming {
-            quecto_line_io::Incoming::Frame(b) => (quecto_line_io::WireMode::Framed, b),
-            quecto_line_io::Incoming::LegacyLine(b) => (quecto_line_io::WireMode::LegacyLine, b),
-        };
-        wire_mode.record(mode);
-        // Reuse the payload `Vec`'s allocation on the common valid-UTF-8 path;
-        // only pay a copy for the lossy fallback on malformed input.
-        let line = String::from_utf8(bytes)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-        if !super::uds_reader_dispatch::dispatch(super::uds_reader_dispatch::ReaderDispatchCtx {
-            line,
-            snapshot: &conversation_snapshot,
-            registry: &client_tool_registry,
-            subagent_registry: &subagent_registry,
-            broadcast_tx: &broadcast_tx,
-            client_id,
-            cmd_tx: &cmd_tx,
-            cancel_handle: &cancel_handle,
-            turn_control: &turn_control,
-        })
-        .await
-        {
-            break;
-        }
-    }
-
-    writer_task.abort();
-    // `_guard` is dropped here (or on panic), which decrements live_clients
-    // and sends the Disconnected sentinel.
-}
+#[path = "uds_multi_client.rs"]
+mod client;
+pub(crate) use client::{ClientHandlerArgs, handle_client};
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 

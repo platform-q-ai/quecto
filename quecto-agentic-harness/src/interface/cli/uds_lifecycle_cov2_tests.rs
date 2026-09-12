@@ -77,6 +77,8 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         broadcast_tx: None,
         provider_reload: None,
         provider_reload_inputs: None,
+        parent_control: None,
+        teardown_graph: None,
     }
 }
 

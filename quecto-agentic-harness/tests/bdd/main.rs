@@ -283,6 +283,12 @@ pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
+    /// #1935 launch-bound parent control and owned-child supervisor state.
+    pub parent_control: parent_control_steps::ParentControlState,
+    /// Runtimes that spawned real children through the SpawnTool: their
+    /// monitor tasks are the children's bound parent connections, so they
+    /// live for the scenario and drop with the world.
+    pub spawn_runtimes: Vec<tokio::runtime::Runtime>,
     pub authority: inference_admission_authority_steps::AuthorityState,
     pub authority_ops: inference_admission_authority_steps::OperationsState,
     pub authority_observation: inference_admission_observation_steps::ObservationState,
@@ -1402,6 +1408,8 @@ mod ls_steps;
 mod model_discovery_steps;
 mod observability_steps;
 mod openai_routing_1066_steps;
+mod parent_control_steps;
+mod parent_control_supervisor_steps;
 mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
@@ -1453,6 +1461,23 @@ mod workflow_tool_steps;
 // ===========================================================================
 
 fn main() {
+    // cucumber's debug-build scenario futures are stack-hungry (the runner
+    // moves the World through several hundred-KB frames per nesting level),
+    // and the default 8 MiB main-thread stack is within a few percent of
+    // that budget. Run the suite on a thread with an explicit, generous
+    // stack so adding a step module or a World field can never turn into a
+    // main-thread stack overflow.
+    let runner = std::thread::Builder::new()
+        .name("bdd-cucumber".into())
+        .stack_size(256 << 20)
+        .spawn(run_cucumber)
+        .expect("spawn the cucumber runner thread");
+    if runner.join().is_err() {
+        std::process::exit(1);
+    }
+}
+
+fn run_cucumber() {
     let real_llm_enabled = std::env::var("QUECTO_REAL_LLM").unwrap_or_default() == "1";
     let provider_smoke_enabled = std::env::var("QUECTO_PROVIDER_SMOKE").unwrap_or_default() == "1";
     // Optional tag filter: QUECTO_TAG=manual-real-llm runs only the retired live suite.

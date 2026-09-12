@@ -717,7 +717,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(socket.clone(), 0),
         );
         let (tx, mut rx) = tokio::sync::broadcast::channel(8);
-        let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
+        let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound(
             "worker".into(),
             socket,
             registry,
@@ -1602,6 +1602,8 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            parent_control: None,
+            teardown_graph: None,
         })
     });
     let deadline = Instant::now() + Duration::from_secs(5);

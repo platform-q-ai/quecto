@@ -239,6 +239,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         conversation_snapshot: snapshot,
         subagent_registry: None,
         broadcast_tx: broadcast_tx.clone(),
+        teardown: None,
         _guard: ClientGuard {
             live_clients: live.clone(),
             disconnect_tx: guard_tx,
@@ -323,6 +324,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         conversation_snapshot: snapshot,
         subagent_registry: None,
         broadcast_tx: tokio::sync::broadcast::channel::<String>(1).0,
+        teardown: None,
         _guard: ClientGuard {
             live_clients: live.clone(),
             disconnect_tx,
