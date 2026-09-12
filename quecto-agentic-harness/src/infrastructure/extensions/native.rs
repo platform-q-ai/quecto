@@ -194,7 +194,25 @@ pub struct AgentControlToolDeps {
     /// The one owner of every process this composition spawns (#1935).
     pub owned_child_supervisor:
         Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
+    /// This harness's own identity, the owner of its delegation lineage
+    /// (#1936); the session key, or `harness` before one exists.
+    pub owner: crate::domain::ids::AgentUuid,
+    /// Composition's builder of the `agent_cmd kill` owner (#1936). `None`
+    /// leaves `kill` unavailable: this layer never composes a lifecycle.
+    pub kill_tool: Option<KillToolBuilder>,
 }
+
+/// What the `agent_cmd kill` owner is built over: the registry the spawn
+/// tool populates, the event stream its compensation broadcasts on, the
+/// notification channel it posts passive notes to, and the lineage owner.
+pub struct KillToolWiring {
+    pub owner: crate::domain::ids::AgentUuid,
+    pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
+}
+
+pub type KillToolBuilder = fn(KillToolWiring) -> Arc<dyn Tool>;
 
 pub struct AgentControlToolBuild {
     pub extensions: Vec<Arc<dyn Extension>>,
@@ -234,14 +252,22 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             ),
         ),
     );
-    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
-        .with_broadcast(deps.broadcast_tx)
-        .with_list_environments(std::sync::Arc::new(
-            crate::application::environments::use_cases::ListEnvironmentsQuery::new(
-                environment_registry,
-            ),
-        ))
-        .with_environment_control(environment_control);
+    let mut agent_cmd =
+        crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
+            .with_list_environments(std::sync::Arc::new(
+                crate::application::environments::use_cases::ListEnvironmentsQuery::new(
+                    environment_registry,
+                ),
+            ))
+            .with_environment_control(environment_control);
+    if let Some(build_kill_tool) = deps.kill_tool {
+        agent_cmd = agent_cmd.with_kill_tool(build_kill_tool(KillToolWiring {
+            owner: deps.owner,
+            registry: registry.clone(),
+            broadcast_tx: deps.broadcast_tx,
+            notify_tx: Some(notification_tx.clone()),
+        }));
+    }
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(

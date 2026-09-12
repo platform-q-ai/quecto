@@ -47,6 +47,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };

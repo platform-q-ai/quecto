@@ -22,6 +22,45 @@ async fn turn_cancellation_marks_abort_fires_the_slot_and_reports_busy() {
     assert!(!adapter.cancel_in_flight_turn().await);
 }
 
+/// Once a shutdown executes, no turn may start (#1936): the cancellation
+/// closes admission before firing, and arming a turn afterwards is refused
+/// like a pre-fired cancel — so an idle boundary that follows the cancelled
+/// turn (a drained follow-up, a subagent-note nudge) cannot start a provider
+/// call the loop would have to wait out before it sees the exit signal.
+#[tokio::test]
+async fn shutdown_closes_turn_admission_for_every_later_turn() {
+    let cancel_handle: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
+    let turn_control: TurnControlHandle = Arc::new(TurnControl::default());
+    assert!(
+        crate::interface::cli::uds_cancel::arm_swarm_cancel(&cancel_handle, &turn_control)
+            .await
+            .is_some(),
+        "before the shutdown a turn is admitted"
+    );
+    crate::interface::cli::uds_cancel::disarm_cancel(&cancel_handle);
+    let adapter = LoopTurnCancellation {
+        cancel_handle: cancel_handle.clone(),
+        turn_control: turn_control.clone(),
+        busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    adapter.cancel_in_flight_turn().await;
+    assert!(turn_control.is_shutting_down());
+    // The consumed abort flag does not reopen admission: it is sticky.
+    assert!(turn_control.take_abort());
+    for _ in 0..2 {
+        assert!(
+            crate::interface::cli::uds_cancel::arm_swarm_cancel(&cancel_handle, &turn_control)
+                .await
+                .is_none(),
+            "no turn starts once the shutdown executes"
+        );
+    }
+    assert!(
+        matches!(*cancel_handle.lock().unwrap(), CancelSlot::Fired),
+        "the refusal never touches the slot"
+    );
+}
+
 #[tokio::test]
 async fn deferred_persistence_records_the_reason_and_succeeds() {
     let adapter = DeferredLoopPersistence::default();

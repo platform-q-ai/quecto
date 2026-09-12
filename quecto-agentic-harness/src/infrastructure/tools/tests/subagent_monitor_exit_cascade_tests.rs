@@ -35,12 +35,17 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         entries.insert("sibling".into(), sibling);
     }
 
+    let observer = super::super::subagent_teardown_wiring::build_lifecycle_use_cases(
+        registry.clone(),
+        Some(broadcast_tx),
+        Some(notify_tx),
+    )
+    .observe_exit;
     notify_child_exited(
         &registry,
         "parent",
-        Some(&notify_tx),
-        Some(&broadcast_tx),
-        super::super::subagent_registry::ExitSignalKind::ConnectionClosed,
+        &observer,
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -63,18 +68,21 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         note.to_message(),
         "Agent 'parent' exited unexpectedly (connection_closed)"
     );
-    for rx in [
-        &mut child_exit_rx,
-        &mut grandchild_exit_rx,
-        &mut parent_exit_rx,
-    ] {
+    // The child that ended carries the observation; descendants fell with
+    // its subtree and carry no observation (or signal number) of their own.
+    assert_eq!(
+        parent_exit_rx.borrow_and_update().clone().unwrap().kind,
+        super::super::subagent_registry::ExitSignalKind::ConnectionClosed
+    );
+    for rx in [&mut child_exit_rx, &mut grandchild_exit_rx] {
         let descendant_exit = rx
             .borrow_and_update()
             .clone()
             .expect("descendant exit signal published");
         assert_eq!(
             descendant_exit.kind,
-            super::super::subagent_registry::ExitSignalKind::ConnectionClosed
+            super::super::subagent_registry::ExitSignalKind::Terminated
         );
+        assert_eq!(descendant_exit.signal, None);
     }
 }

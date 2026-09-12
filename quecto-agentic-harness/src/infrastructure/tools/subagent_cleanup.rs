@@ -49,7 +49,11 @@ struct CleanupJob {
     mode: FinalizeMode,
 }
 
-pub(super) async fn cleanup_registered_once(registry: &SubagentRegistry, agent_id: &str) {
+pub(super) async fn cleanup_registered_once(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+    mode: FinalizeMode,
+) {
     let (plan, membership) = {
         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
         match entries.get_mut(agent_id) {
@@ -66,7 +70,7 @@ pub(super) async fn cleanup_registered_once(registry: &SubagentRegistry, agent_i
     run_cleanup_jobs(vec![CleanupJob {
         membership: membership.map(|(envs, env_ref)| (envs, env_ref, agent_id.to_string())),
         plan,
-        mode: FinalizeMode::Exit,
+        mode,
     }])
     .await;
 }

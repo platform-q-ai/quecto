@@ -7,7 +7,6 @@ use super::*;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -92,17 +91,15 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
     notify_child_exited(
         &registry,
         "agent-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, None),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
     notify_child_exited(
         &registry,
         "agent-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, None),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -143,17 +140,15 @@ async fn duplicate_signals_after_inspect_failure_still_inspect_once() {
     notify_child_exited(
         &registry,
         "agent-2",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, None),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
     notify_child_exited(
         &registry,
         "agent-2",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, None),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -194,4 +189,16 @@ async fn connection_reset_classifies_as_pushed_death_signal() {
     let mut buf = Vec::new();
     let read = read_monitor_message(&mut reader, &mut buf, "agent-reset").await;
     assert!(matches!(read, MonitorRead::Closed));
+}
+
+fn test_observer(
+    registry: &super::super::subagent_registry::SubagentRegistry,
+    notify_tx: Option<super::super::subagent_registry::NotificationTx>,
+) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
+    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(
+        registry.clone(),
+        None,
+        notify_tx,
+    )
+    .observe_exit
 }

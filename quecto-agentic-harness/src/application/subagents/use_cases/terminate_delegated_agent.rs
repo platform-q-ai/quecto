@@ -13,11 +13,20 @@ use crate::domain::subagent_teardown::{
 use super::super::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use super::super::ports::{DirectChildRouting, SubagentLifecycleRepository};
+use super::super::ports::{
+    DelegatedAgentRegistry, DirectChildRouting, StoppingClaimError, SubagentLifecycleRepository,
+    TerminationCause,
+};
 
 pub struct TerminateDelegatedAgent {
     lifecycle: Arc<dyn SubagentLifecycleRepository>,
     routing: Arc<dyn DirectChildRouting>,
+    /// When present, the target's row is claimed stopping with the
+    /// selected-termination intent before its edge is routed (#1936), so
+    /// the receiver's own reaper or monitor honours that intent when it
+    /// observes the exit: no post-mortem inspect, no "exited unexpectedly"
+    /// note for a child an ancestor selected.
+    registry: Option<Arc<dyn DelegatedAgentRegistry>>,
 }
 
 impl TerminateDelegatedAgent {
@@ -25,7 +34,48 @@ impl TerminateDelegatedAgent {
         lifecycle: Arc<dyn SubagentLifecycleRepository>,
         routing: Arc<dyn DirectChildRouting>,
     ) -> Self {
-        Self { lifecycle, routing }
+        Self {
+            lifecycle,
+            routing,
+            registry: None,
+        }
+    }
+
+    pub fn with_registry(mut self, registry: Arc<dyn DelegatedAgentRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// Claim the target stopping for this edge. `true` when this call took
+    /// the claim (and must lift it if the edge fails); a claim another
+    /// path already holds is left to that path.
+    fn claim_target(
+        &self,
+        target: &crate::domain::subagent_teardown::DelegatedAgentIdentity,
+    ) -> bool {
+        let Some(registry) = &self.registry else {
+            return false;
+        };
+        match registry.claim_stopping(target, TerminationCause::SelectedTermination) {
+            Ok(()) => true,
+            Err(
+                StoppingClaimError::AlreadyStopping
+                | StoppingClaimError::Exited
+                | StoppingClaimError::Unknown,
+            ) => false,
+        }
+    }
+
+    fn release_target(
+        &self,
+        target: &crate::domain::subagent_teardown::DelegatedAgentIdentity,
+        claimed: bool,
+    ) {
+        if claimed {
+            if let Some(registry) = &self.registry {
+                registry.release_stopping(target);
+            }
+        }
     }
 
     pub async fn execute(
@@ -40,7 +90,10 @@ impl TerminateDelegatedAgent {
         let lineage = self.lifecycle.lineage();
         let route = resolve_termination_route(&lineage, &request.target, request.remaining_depth)
             .map_err(TerminateDelegatedAgentError::Rejected)?;
-        match route {
+        // The route is affirmed: claim the target before the edge, and lift
+        // the claim again if the edge cannot be delivered.
+        let claimed = self.claim_target(&request.target);
+        let routed = match route {
             TerminationRoute::ShutdownDirectChild(child) => {
                 debug_assert_eq!(child.uuid, request.target.uuid);
                 self.routing
@@ -49,8 +102,8 @@ impl TerminateDelegatedAgent {
                     .map_err(|error| TerminateDelegatedAgentError::ChildUnreachable {
                         child: child.uuid.clone(),
                         detail: error.to_string(),
-                    })?;
-                Ok(TerminationRouted::ShutdownRequested { child })
+                    })
+                    .map(|()| TerminationRouted::ShutdownRequested { child })
             }
             TerminationRoute::ForwardToDirectChild {
                 via,
@@ -64,13 +117,17 @@ impl TerminateDelegatedAgent {
                     .map_err(|error| TerminateDelegatedAgentError::ChildUnreachable {
                         child: via.uuid.clone(),
                         detail: error.to_string(),
-                    })?;
-                Ok(TerminationRouted::Forwarded {
-                    via,
-                    remaining_depth,
-                })
+                    })
+                    .map(|()| TerminationRouted::Forwarded {
+                        via,
+                        remaining_depth,
+                    })
             }
+        };
+        if routed.is_err() {
+            self.release_target(&request.target, claimed);
         }
+        routed
     }
 }
 

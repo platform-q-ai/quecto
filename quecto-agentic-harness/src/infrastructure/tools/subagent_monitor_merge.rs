@@ -186,6 +186,15 @@ fn merge_descendants(
             .and_then(|v| v.as_str())
             .map(str::to_string);
         entry.pid = pid;
+        // #1936: a reported generation makes the descendant addressable for
+        // selected termination through its direct ancestor. A row this
+        // harness launched keeps its own minted generation.
+        if entry.launch_generation.is_none() {
+            entry.reported_generation = d
+                .get("launchGeneration")
+                .and_then(serde_json::Value::as_u64)
+                .map(crate::domain::subagent_teardown::LaunchGeneration::new);
+        }
         entry.socket_path = socket_path;
         entry.parent_id = d
             .get("parentId")

@@ -1,5 +1,4 @@
 use super::*;
-use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
 use crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification;
 use std::path::PathBuf;
 
@@ -86,9 +85,8 @@ async fn wave3_agent_error_notification_and_exit_sequence_paths() {
     notify_child_exited(
         &registry,
         "bot",
-        Some(&tx),
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, Some(tx.clone())),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
     assert!(rx.try_recv().unwrap().to_message().contains("exited"));
@@ -129,21 +127,19 @@ fn should_broadcast_and_entry_workflow_mode_cover_remaining_arms() {
 }
 
 #[tokio::test]
-async fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
+async fn notify_child_exited_missing_agent_has_no_effect() {
+    // #1936: a connection ending for a row this registry never held is not
+    // an exit of anything; no note is fabricated for it.
     let registry = super::super::subagent_registry::new_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     notify_child_exited(
         &registry,
         "ghost",
-        Some(&tx),
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, Some(tx)),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
-    let note = rx.try_recv().unwrap();
-    assert_eq!(note.sequence, 0);
-    assert!(note.to_message().contains("ghost"));
-    assert!(note.to_message().contains("exited unexpectedly"));
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]
@@ -180,9 +176,8 @@ async fn notify_child_exited_claims_script_cleanup_once() {
     notify_child_exited(
         &registry,
         "bot",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry, None),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
     assert_eq!(
@@ -290,4 +285,16 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
     );
     assert_eq!(rx.try_recv().unwrap().sequence, 3);
     assert!(rx.try_recv().is_err());
+}
+
+fn test_observer(
+    registry: &super::super::subagent_registry::SubagentRegistry,
+    notify_tx: Option<super::super::subagent_registry::NotificationTx>,
+) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
+    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(
+        registry.clone(),
+        None,
+        notify_tx,
+    )
+    .observe_exit
 }

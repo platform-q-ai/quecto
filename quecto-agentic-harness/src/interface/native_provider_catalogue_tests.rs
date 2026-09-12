@@ -31,6 +31,8 @@ fn bundled_native_registration_preserves_provider_ids() {
             broadcast_tx: None,
             parent_session_name: None,
             inherited_tool_policy: None,
+            owner: crate::domain::ids::AgentUuid::new("harness"),
+            kill_tool: None,
         })
         .extensions,
     );

@@ -1,5 +1,4 @@
 use super::*;
-use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 use std::path::PathBuf;
 
 fn empty_tool() -> AgentCmdTool {
@@ -8,8 +7,6 @@ fn empty_tool() -> AgentCmdTool {
 
 #[test]
 fn constructor_helpers_cover_optional_runtime_wiring() {
-    let (tx, _) = tokio::sync::broadcast::channel(1);
-    let _tool = empty_tool().with_broadcast(Some(tx));
     assert!(AgentCmdTool::is_control_command("prompt"));
     assert!(!AgentCmdTool::is_control_command("get_messages"));
 }
@@ -37,11 +34,14 @@ fn malformed_local_and_kill_commands_fall_through_or_error_without_socket_io() {
             .is_none()
     );
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let missing_agent = rt
-        .block_on(tool.try_kill_command(&serde_json::json!({"command":"kill"})))
+    let unowned = rt
+        .block_on(tool.try_kill_command(
+            r#"{"command":"kill"}"#,
+            &serde_json::json!({"command":"kill"}),
+        ))
         .expect("kill is local");
-    assert!(missing_agent.is_error);
-    assert!(missing_agent.content.contains("agent_id"));
+    assert!(unowned.is_error);
+    assert!(unowned.content.contains("kill is not available"));
 }
 
 #[test]
@@ -530,38 +530,6 @@ fn test_parse_kill_command() {
     // Instead, execute() handles it directly.
     // Just verify it's in SUPPORTED_COMMANDS.
     assert!(SUPPORTED_COMMANDS.contains(&"kill"));
-}
-
-#[tokio::test]
-async fn test_kill_unknown_agent_returns_error() {
-    let tool = empty_tool();
-    let result = tool
-        .execute(r#"{"agent_id":"nonexistent","command":"kill"}"#)
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("not found"));
-}
-
-#[tokio::test]
-async fn test_kill_known_agent_removes_from_registry() {
-    let registry = new_registry();
-    registry.lock().unwrap().insert(
-        "w1".to_string(),
-        SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0),
-    );
-    let tool = AgentCmdTool::new(registry.clone());
-    let result = tool
-        .execute(r#"{"agent_id":"w1","command":"kill"}"#)
-        .await
-        .unwrap();
-    assert!(!result.is_error, "kill should succeed: {}", result.content);
-    assert!(result.content.contains("killed"));
-    assert_eq!(
-        registry.lock().unwrap()["w1"].status,
-        SubagentStatus::Exited,
-        "agent should be retained as a tombstone"
-    );
 }
 
 #[path = "agent_cmd_kill_tests.rs"]

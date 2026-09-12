@@ -189,3 +189,127 @@ impl fmt::Display for TerminateDelegatedAgentError {
 }
 
 impl std::error::Error for TerminateDelegatedAgentError {}
+
+// ─── Operator-selected termination (#1936, #1882) ────────────────────────────
+
+/// An operator asks this harness to terminate one delegated agent, named
+/// by uuid or live display label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KillDelegatedAgentRequest {
+    pub reference: String,
+}
+
+/// How the selected agent ended. `failed` is the error side
+/// ([`KillDelegatedAgentError::Failed`]), never a success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminationResult {
+    /// The child acknowledged the protocol and its exit was observed; no
+    /// fallback signal was sent.
+    Graceful,
+    /// The protocol did not suffice and the directly owned handle's
+    /// fallback produced the exit.
+    Fallback,
+    /// The child had already exited when the termination reached it.
+    AlreadyExited,
+}
+
+impl TerminationResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Graceful => "graceful",
+            Self::Fallback => "fallback",
+            Self::AlreadyExited => "already-exited",
+        }
+    }
+}
+
+impl fmt::Display for TerminationResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KillDelegatedAgentOutcome {
+    pub target: DelegatedAgentIdentity,
+    pub result: TerminationResult,
+    /// The target and every descendant removed with it, target first.
+    pub removed: Vec<AgentUuid>,
+}
+
+/// Every error leaves the registry as it was: a refusal happens before any
+/// effect, and a failed termination lifts its stopping claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KillDelegatedAgentError {
+    /// The reference names no live delegated agent (unknown, ambiguous,
+    /// exited, or not launched through this harness).
+    Unresolved(super::ports::ResolutionError),
+    /// Another termination of the same agent is already in flight.
+    AlreadyStopping,
+    /// Routing policy refused: stale generation, cycle, depth, or the
+    /// lineage disappeared between resolution and routing.
+    Rejected(TerminationRouteError),
+    /// The receiving harness is itself frozen or terminated.
+    NotAccepting,
+    /// The route toward a nested target could not be delivered: the direct
+    /// child it goes through did not accept the command. No fallback exists
+    /// for a target this harness does not own.
+    RouteUnreachable { via: AgentUuid, detail: String },
+    /// The termination ran but the agent's end was not observed: the
+    /// protocol failed with no retained handle to fall back on, the exit
+    /// was not observed within the bound, or the fallback did not end it.
+    Failed { detail: String },
+}
+
+impl fmt::Display for KillDelegatedAgentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unresolved(error) => write!(f, "{error}"),
+            Self::AlreadyStopping => f.write_str("a termination is already in flight"),
+            Self::Rejected(error) => write!(f, "termination rejected: {error}"),
+            Self::NotAccepting => f.write_str("harness is not accepting control commands"),
+            Self::RouteUnreachable { via, detail } => {
+                write!(f, "route via {via} unreachable: {detail}")
+            }
+            Self::Failed { detail } => write!(f, "termination failed: {detail}"),
+        }
+    }
+}
+
+impl std::error::Error for KillDelegatedAgentError {}
+
+// ─── Owned child exit observation ────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveOwnedChildExitRequest {
+    pub child: DelegatedAgentIdentity,
+    pub observation: super::ports::ExitObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObservedExit {
+    /// This observation claimed and ran the row's terminal effects.
+    Compensated { removed: Vec<AgentUuid> },
+    /// Another path had already claimed them; this observation joined it.
+    Joined(super::ports::CompensationObservation),
+    /// A connection-level observation of a child whose process this harness
+    /// still retains: the reaper observes the authoritative exit and runs
+    /// the compensation, so nothing was removed while the process lived.
+    DeferredToProcessExit,
+}
+
+// ─── Failed launch compensation ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompensateFailedLaunchRequest {
+    pub child: DelegatedAgentIdentity,
+    /// Whether this launch created the environment it joined, so its
+    /// rollback discards the record rather than listing it as stopped.
+    pub owns_environment: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedLaunchCompensated {
+    pub conclusion: super::ports::TerminationConclusion,
+    pub removed: Vec<AgentUuid>,
+}

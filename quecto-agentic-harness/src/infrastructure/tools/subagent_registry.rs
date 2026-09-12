@@ -44,6 +44,16 @@ pub struct SubagentEntry {
     /// itself (#1935). `None` for merged descendants, restored rows and
     /// fixtures: they are never direct children of this harness.
     pub launch_generation: Option<crate::domain::subagent_teardown::LaunchGeneration>,
+    /// Launch generation a descendant was reported with by the harness that
+    /// launched it (#1936). Together with `parent_id` it makes a merged row
+    /// addressable for selected termination — routed one edge at a time
+    /// through its direct ancestor, never signalled from here. `None` for
+    /// rows this harness launched itself and for legacy snapshots.
+    pub reported_generation: Option<crate::domain::subagent_teardown::LaunchGeneration>,
+    /// Per-row teardown phase (#1936): the claims every termination path
+    /// (kill, reaper, monitor EOF, rollback, reported prune) takes so the
+    /// row's terminal effects run exactly once, observable by waiters.
+    pub teardown: TeardownPhaseTx,
     /// Opaque handle of the locally spawned process, held by the one
     /// supervisor (#1935). `None` for script/container members and every
     /// other row: no handle, no host signal fallback.
@@ -149,6 +159,28 @@ impl SubagentEntry {
         Self::with_identity(AgentUuid::mint(), display_name, socket_path, pid)
     }
 
+    /// The identity a selected termination addresses this row by: the
+    /// generation this harness minted for a child it launched, else the
+    /// generation the launching descendant reported. `None` for rows that
+    /// are not delegated agents (fixtures, stubs, restored rows).
+    pub fn delegated_identity(
+        &self,
+    ) -> Option<crate::domain::subagent_teardown::DelegatedAgentIdentity> {
+        self.launch_generation
+            .or(self.reported_generation)
+            .map(|generation| {
+                crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
+                    self.agent_uuid.clone(),
+                    generation,
+                )
+            })
+    }
+
+    /// The row's current teardown phase.
+    pub fn teardown_phase(&self) -> TeardownPhase {
+        *self.teardown.borrow()
+    }
+
     /// True when this harness holds the child's process: it launched it
     /// locally and the supervisor still retains the handle.
     pub fn holds_owned_child(&self) -> bool {
@@ -220,6 +252,8 @@ impl SubagentEntry {
             process_owner: ProcessOwner::DirectPid,
             process_ownership: super::process_ownership::ProcessOwnership::unowned(),
             launch_generation: None,
+            reported_generation: None,
+            teardown: new_teardown_phase(),
             owned_child: None,
             owned_child_supervisor: None,
             lifecycle: SubagentLifecycleState::Launched,
@@ -460,6 +494,10 @@ pub enum ExitSignalKind {
     /// The child's socket never accepted the monitor connection; the child
     /// was never observed alive.
     NeverReachable,
+    /// The child was ended by this harness (a selected termination or a
+    /// launch rollback) or fell with the subtree of an ancestor that was;
+    /// no exit status of its own was observed here.
+    Terminated,
 }
 
 impl ExitSignalKind {
@@ -468,8 +506,45 @@ impl ExitSignalKind {
             Self::ProcessExit => "process_exit",
             Self::ConnectionClosed => "connection_closed",
             Self::NeverReachable => "never_reachable",
+            Self::Terminated => "terminated",
         }
     }
+}
+
+/// Where a row stands in its teardown (#1936). Every path that ends a
+/// child claims its way through these phases; `Compensated` is terminal
+/// and is what a kill of a child this harness does not own waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TeardownPhase {
+    #[default]
+    Live,
+    /// A termination claimed the row and its effects are in flight; the
+    /// process (if any) may still be alive. The intent is what the
+    /// compensation honours even when another path (the reaper) observes
+    /// the exit first: a kill is not a post-mortem and posts no note.
+    Stopping(TeardownIntent),
+    /// The exit was observed and one path claimed the terminal effects.
+    Compensating(TeardownIntent),
+    /// The terminal effects ran: cleanup, membership, removal, broadcast.
+    Compensated,
+}
+
+/// Why a row was claimed stopping (#1936).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TeardownIntent {
+    /// No termination claimed it: it ended on its own.
+    #[default]
+    Exit,
+    /// An operator selected it for termination.
+    SelectedTermination,
+    /// Its launch failed after registration.
+    LaunchRollback { owns_environment: bool },
+}
+
+pub type TeardownPhaseTx = tokio::sync::watch::Sender<TeardownPhase>;
+
+pub fn new_teardown_phase() -> TeardownPhaseTx {
+    tokio::sync::watch::channel(TeardownPhase::Live).0
 }
 
 pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;

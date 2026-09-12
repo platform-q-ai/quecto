@@ -41,6 +41,11 @@ impl TurnCancellation for LoopTurnCancellation {
     fn cancel_in_flight_turn(&self) -> PortFuture<'_, bool> {
         Box::pin(async move {
             let was_busy = self.busy.load(std::sync::atomic::Ordering::SeqCst);
+            // Close turn admission first, then cancel the in-flight turn:
+            // whatever the loop does at the idle boundary that follows (a
+            // drained follow-up, a subagent-note nudge) can no longer start
+            // a turn, so it reaches the exit signal promptly (#1936).
+            self.turn_control.mark_shutting_down();
             self.turn_control.mark_abort();
             fire_cancel(&self.cancel_handle);
             was_busy
@@ -131,10 +136,12 @@ impl ShutdownClock for MonotonicShutdownClock {
     }
 }
 
-/// Lifecycle state of this harness plus its direct children as recorded in
-/// the subagent registry: a row is a direct child exactly when this harness
-/// launched it (it carries a launch generation). Merged descendants and
-/// restored rows carry none and are not this harness's to address.
+/// Lifecycle state of this harness plus its delegation lineage as recorded
+/// in the subagent registry: a row is a direct child exactly when this
+/// harness launched it (it carries a launch generation); a merged descendant
+/// reported with its launch generation is a deeper record parented by the
+/// row that reported it (#1936), reachable only by forwarding. Restored rows
+/// and fixtures carry no generation and are not this harness's to address.
 pub struct RegistryLifecycleRepository {
     state: Mutex<HarnessLifecycleState>,
     registry: Option<SubagentRegistry>,
@@ -168,12 +175,36 @@ impl SubagentLifecycleRepository for RegistryLifecycleRepository {
             keys.sort();
             for key in keys {
                 let entry = &entries[&key];
-                let Some(generation) = entry.launch_generation else {
+                // A terminal row is no edge: a target that already ended
+                // is refused as unknown rather than routed toward.
+                if entry.persisted_liveness == crate::domain::session::SubagentLiveness::Dead
+                    || entry.status
+                        == crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+                {
+                    continue;
+                }
+                if let Some(generation) = entry.launch_generation {
+                    records.push(LineageRecord {
+                        identity: DelegatedAgentIdentity::new(entry.agent_uuid.clone(), generation),
+                        parent: self.owner.clone(),
+                    });
+                    continue;
+                }
+                // A descendant reported with its launch generation (#1936)
+                // is addressable one edge at a time through the row that
+                // reported it as parent; a row claiming this harness as its
+                // parent without having been launched here is no edge.
+                let (Some(generation), Some(parent)) =
+                    (entry.reported_generation, entry.parent_id.as_deref())
+                else {
                     continue;
                 };
+                if parent == self.owner.as_str() {
+                    continue;
+                }
                 records.push(LineageRecord {
                     identity: DelegatedAgentIdentity::new(entry.agent_uuid.clone(), generation),
-                    parent: self.owner.clone(),
+                    parent: AgentUuid::new(parent),
                 });
             }
         }

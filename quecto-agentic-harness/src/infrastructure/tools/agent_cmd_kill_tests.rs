@@ -1,281 +1,70 @@
-// #831: kill cascade-removes the dead sub-tree from the registry and broadcasts
-// the survivor-only `subagent_state_changed` so connected clients (the TUI
-// panel) drop the whole dead sub-tree promptly instead of letting it linger.
+// #1936: `agent_cmd kill` is owned by the composed selected-termination tool;
+// this tool only routes the command to it and never decides a lifecycle.
 use super::*;
-use crate::infrastructure::tools::subagent_registry::SubagentStatus;
-use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-fn child_entry(parent: &str) -> SubagentEntry {
-    let mut e = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    e.parent_id = Some(parent.to_string());
-    e
+struct RecordingKill {
+    seen: Arc<Mutex<Vec<String>>>,
 }
 
-#[test]
-fn killed_agents_json_caps_long_lists() {
-    let agents: Vec<String> = (1..=22).map(|n| format!("a{n}")).collect();
-    let parsed = killed_agents_result_json(KilledAgents {
-        killed: &agents,
-        signalled: &agents[..1],
-        unsignalled: &agents[1..],
-    });
-    assert_eq!(parsed["killed"].as_array().unwrap().len(), 20);
-    assert_eq!(parsed["signalled"], serde_json::json!(["a1"]));
-    assert_eq!(parsed["unsignalled"].as_array().unwrap().len(), 20);
-    assert_eq!(parsed["omitted_agents"], 2);
-}
-
-#[tokio::test]
-async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
-    let registry = new_registry();
-    {
-        let mut g = registry.lock().unwrap();
-        // parent → child → grandchild, plus an unrelated live sibling.
-        g.insert(
-            "parent".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0),
-        );
-        g.insert("child".to_string(), child_entry("parent"));
-        g.insert("gchild".to_string(), child_entry("child"));
-        g.insert(
-            "live".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0),
-        );
-    }
-    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
-
-    let result = tool.kill_agent("parent").await;
-    assert!(!result.is_error, "kill should succeed: {}", result.content);
-    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(
-        parsed,
-        serde_json::json!({
-            "killed":["parent","child","gchild"],
-            "signalled":[],
-            "unsignalled":[]
-        })
-    );
-
-    // Whole dead sub-tree pruned; the live sibling is untouched.
-    let g = registry.lock().unwrap();
-    assert_eq!(g["parent"].status, SubagentStatus::Exited);
-    assert_eq!(g["child"].status, SubagentStatus::Exited);
-    assert_eq!(g["gchild"].status, SubagentStatus::Exited);
-    assert!(g.contains_key("live"), "live agent must never be removed");
-    drop(g);
-
-    // A survivor-only state_changed was broadcast. #1055: the payload SENT
-    // from this site must be a single newline-terminated, parseable line.
-    let event = rx.try_recv().expect("a state_changed should be broadcast");
-    assert!(
-        event.ends_with('\n'),
-        "sent broadcast must end with newline"
-    );
-    serde_json::from_str::<serde_json::Value>(&event).expect("sent line parses");
-    assert!(event.contains("subagent_state_changed"));
-    assert!(event.contains("live"));
-    assert!(!event.contains("parent"));
-    assert!(!event.contains("gchild"));
-}
-
-#[tokio::test]
-async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
-    use crate::infrastructure::tools::subagent_registry::new_exit_signal_channel;
-    // A real child so the SIGTERM (pid != 0) branch runs against a live pid.
-    let child = std::process::Command::new("sleep")
-        .arg("30")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn sleep");
-    let pid = child.id();
-
-    let registry = new_registry();
-    let (exit_tx, _exit_rx) = new_exit_signal_channel();
-    let monitor = std::sync::Arc::new(tokio::spawn(async {
-        std::future::pending::<()>().await;
-    }));
-    {
-        let mut g = registry.lock().unwrap();
-        let mut e = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), pid);
-        e.process_ownership =
-            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
-        e.exit_signal_tx = Some(exit_tx.clone());
-        e.monitor_handle = Some(monitor.clone());
-        g.insert("solo".to_string(), e);
-    }
-    // A subscribed await receiver must be signalled with the SIGTERM exit.
-    let mut await_rx = exit_tx.subscribe();
-    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
-    let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
-
-    let result = tool.kill_agent("solo").await;
-    assert!(!result.is_error);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
-        serde_json::json!({"killed":["solo"],"signalled":["solo"],"unsignalled":[]})
-    );
-    assert!(!result.content.contains(&pid.to_string()));
-
-    // await was signalled with the SIGTERM exit, the monitor was aborted.
-    let signal = await_rx.borrow_and_update().clone();
-    assert_eq!(signal.and_then(|s| s.signal), Some(15));
-    // abort() schedules cancellation; let the runtime drive it to completion.
-    for _ in 0..100 {
-        if monitor.is_finished() {
-            break;
+impl Tool for RecordingKill {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "agent_cmd:kill".into(),
+            description: String::new().into(),
+            parameters_schema: "{}".into(),
         }
-        tokio::task::yield_now().await;
     }
-    assert!(monitor.is_finished(), "monitor task should be aborted");
-    assert!(
-        registry
-            .lock()
-            .unwrap()
-            .values()
-            .all(|e| e.status == SubagentStatus::Exited)
-    );
 
-    // Reap the sleep child (kill_agent SIGTERMed it; ensure no zombie).
-    let mut child = child;
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[tokio::test]
-async fn kill_parent_sigterms_owned_process_and_skips_container_descendant_pid() {
-    // #831 wanted descendants terminated on a parent kill; #1925 narrows HOW:
-    // this harness signals pids it launched or that were reported from its
-    // own pid namespace. A descendant reported from inside a container carries
-    // a pid from another namespace, so the root must not signal it directly —
-    // the container child tears its own subtree down when it receives SIGTERM.
-    let spawn_sleep = || {
-        std::process::Command::new("sleep")
-            .arg("30")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn sleep")
-    };
-    let mut parent_proc = spawn_sleep();
-    let mut gchild_proc = spawn_sleep();
-    let parent_pid = parent_proc.id();
-    let gchild_pid = gchild_proc.id();
-
-    let registry = new_registry();
-    {
-        let mut g = registry.lock().unwrap();
-        let mut parent = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid);
-        parent.process_ownership =
-            crate::infrastructure::tools::process_ownership::ProcessOwnership::launched_for_test();
-        g.insert("parent".to_string(), parent);
-        // Descendant merged from a CONTAINER child's snapshot: the merge
-        // records a foreign-namespace report (see
-        // subagent_monitor_merge_ownership_tests), so the pid is never ours.
-        let mut gc = child_entry("parent");
-        gc.pid = gchild_pid;
-        gc.process_ownership =
-            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
-        g.insert("gchild".to_string(), gc);
-    }
-    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
-    let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
-
-    let result = tool.kill_agent("parent").await;
-    assert!(!result.is_error);
-    // The result says which processes were signalled and which were merely
-    // dropped from tracking because no lease authorised a signal.
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
-        serde_json::json!({
-            "killed":["parent","gchild"],
-            "signalled":["parent"],
-            "unsignalled":["gchild"]
+    fn execute(
+        &self,
+        arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        self.seen.lock().unwrap().push(arguments.to_owned());
+        Box::pin(async move {
+            Ok(ToolResult {
+                content: r#"{"result":"graceful","killed":["w1"]}"#.into(),
+                is_error: false,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
         })
-    );
-    assert!(
-        registry
-            .lock()
-            .unwrap()
-            .values()
-            .all(|e| e.status == SubagentStatus::Exited)
-    );
-
-    // The owned parent process received SIGTERM and exits.
-    let parent_status = parent_proc.wait().expect("reap parent");
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        assert_eq!(parent_status.signal(), Some(libc::SIGTERM));
     }
-    // The unowned descendant pid was NOT signalled by this harness.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(
-        matches!(gchild_proc.try_wait(), Ok(None)),
-        "a container-reported descendant pid must not be signalled (#1925)"
-    );
-    let _ = gchild_proc.kill();
-    let _ = gchild_proc.wait();
 }
 
 #[tokio::test]
-async fn kill_unknown_agent_returns_error_and_no_broadcast() {
-    let registry = new_registry();
-    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    let tool = AgentCmdTool::new(registry).with_broadcast(Some(tx));
-    let result = tool.kill_agent("ghost").await;
-    assert!(result.is_error);
-    assert!(result.content.contains("not found"));
-    assert!(rx.try_recv().is_err(), "no broadcast for unknown agent");
-}
-
-#[tokio::test]
-async fn kill_reports_unsignalled_when_only_lease_less_pids_are_removed() {
-    // A restored/merged row with a pid but no lease: dropped, not signalled.
-    let registry = new_registry();
-    {
-        let mut g = registry.lock().unwrap();
-        let mut foreign = SubagentEntry::new(PathBuf::from("/tmp/foreign.sock"), 4242);
-        foreign.process_ownership =
-            crate::infrastructure::tools::process_ownership::ProcessOwnership::reported(false);
-        g.insert("foreign".to_string(), foreign);
-        // A stub entry (pid 0) is neither signalled nor reported unsignalled.
-        g.insert(
-            "stub".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/stub.sock"), 0),
-        );
-    }
-    let tool = AgentCmdTool::new(registry.clone());
-    let foreign = tool.kill_agent("foreign").await;
-    assert!(!foreign.is_error);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&foreign.content).unwrap(),
-        serde_json::json!({"killed":["foreign"],"signalled":[],"unsignalled":["foreign"]})
-    );
-    let stub = tool.kill_agent("stub").await;
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&stub.content).unwrap(),
-        serde_json::json!({"killed":["stub"],"signalled":[],"unsignalled":[]})
-    );
-}
-
-#[tokio::test]
-async fn kill_recovers_from_a_poisoned_registry_lock() {
-    let registry = new_registry();
-    registry.lock().unwrap().insert(
-        "solo".to_string(),
-        SubagentEntry::new(PathBuf::from("/tmp/solo.sock"), 0),
-    );
-    let shared = registry.clone();
-    let _ = std::thread::spawn(move || {
-        let _guard = shared.lock().unwrap();
-        panic!("poison registry for coverage");
-    })
-    .join();
-    let tool = AgentCmdTool::new(registry.clone());
-    let result = tool.kill_agent("solo").await;
+async fn kill_is_delegated_verbatim_to_the_composed_tool() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let tool = AgentCmdTool::new(new_registry())
+        .with_kill_tool(Arc::new(RecordingKill { seen: seen.clone() }));
+    let arguments = r#"{"agent_id":"w1","command":"kill"}"#;
+    let result = tool.execute(arguments).await.unwrap();
     assert!(!result.is_error, "{}", result.content);
-    let missing = tool.kill_agent("nope").await;
-    assert!(missing.is_error);
+    assert!(result.content.contains("graceful"));
+    assert_eq!(seen.lock().unwrap().as_slice(), [arguments]);
+}
+
+#[tokio::test]
+async fn kill_without_a_composed_owner_is_refused() {
+    let tool = AgentCmdTool::new(new_registry());
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"kill"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("kill is not available"));
+    assert!(format!("{tool:?}").contains("kill: false"));
+}
+
+#[tokio::test]
+async fn other_commands_never_reach_the_kill_owner() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let tool = AgentCmdTool::new(new_registry())
+        .with_kill_tool(Arc::new(RecordingKill { seen: seen.clone() }));
+    let result = tool
+        .execute(r#"{"agent_id":"*","command":"get_subagents_all"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert!(seen.lock().unwrap().is_empty());
 }

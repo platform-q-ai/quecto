@@ -32,11 +32,10 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
     ));
     let clock = Arc::new(MonotonicShutdownClock::default());
     let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), clock);
-    let routing = Arc::new(UdsDirectChildRouting::new(
-        inputs
-            .registry
-            .unwrap_or_else(|| Arc::new(Mutex::new(Default::default()))),
-    ));
+    let registry_for_claims = inputs
+        .registry
+        .unwrap_or_else(|| Arc::new(Mutex::new(Default::default())));
+    let routing = Arc::new(UdsDirectChildRouting::new(registry_for_claims.clone()));
     let exit = Arc::new(LoopExitReadiness::new(inputs.exit_notify));
     let persistence = Arc::new(DeferredLoopPersistence::default());
     let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
@@ -54,7 +53,17 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
             spawner: Arc::new(TokioShutdownRunSpawner),
         },
     ));
-    let terminate = Arc::new(TerminateDelegatedAgent::new(lifecycle, routing));
+    // The receiver claims a selected target stopping before routing its
+    // edge (#1936), so its reaper honours the intent when the child exits.
+    let agents = Arc::new(
+        crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents::new(
+            registry_for_claims,
+            None,
+            None,
+        ),
+    );
+    let terminate =
+        Arc::new(TerminateDelegatedAgent::new(lifecycle, routing).with_registry(agents));
     let controller = Arc::new(SubagentTeardownController::new(prepare, execute, terminate));
     TeardownGraph {
         connections: Arc::new(ConnectionTeardown {

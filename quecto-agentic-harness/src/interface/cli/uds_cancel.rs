@@ -55,66 +55,16 @@ pub struct TurnControl {
     /// receipt or wake (#1721); `u64::MAX` until one is observed. Shared by
     /// the reader and the dispatch loop so a suspension can be dated.
     control_generation: std::sync::atomic::AtomicU64,
+    /// The harness shutdown is executing (#1936): the in-flight turn was
+    /// cancelled and no further turn — a queued prompt, a drained follow-up,
+    /// a subagent-note nudge, a workflow auto-continue — may start, so the
+    /// dispatch loop reaches its exit signal instead of a fresh provider
+    /// call. Sticky: a shutdown never un-happens.
+    shutting_down: std::sync::atomic::AtomicBool,
 }
 
 #[path = "uds_turn_generation.rs"]
 mod turn_generation;
-
-impl TurnControl {
-    /// Reader: record a full-stop abort ahead of dispatch (#895).
-    pub fn mark_abort(&self) {
-        self.abort_requested
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Reader: record an explicit steer ahead of dispatch (#896).
-    pub fn mark_steer(&self) {
-        self.pending_steers
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Idle drain: consume the abort flag (true once, then cleared).
-    pub fn take_abort(&self) -> bool {
-        self.abort_requested
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// Whether a full-stop abort is queued but not yet consumed.
-    pub fn is_abort_pending(&self) -> bool {
-        self.abort_requested
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// Whether a steer is queued but not yet handled.
-    pub fn is_steer_pending(&self) -> bool {
-        self.pending_steers
-            .load(std::sync::atomic::Ordering::SeqCst)
-            > 0
-    }
-
-    /// One admitted steering command has reached its handler. Other queued
-    /// steering commands keep priority over buffered follow-ups.
-    pub fn consume_steer(&self) {
-        let _ = self.pending_steers.fetch_update(
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-            |pending| pending.checked_sub(1),
-        );
-    }
-
-    /// Abort/reset releases all pending steering intent.
-    pub fn clear_steer(&self) {
-        self.pending_steers
-            .store(0, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Clear both flags (abort handler / full reset).
-    pub fn clear(&self) {
-        self.abort_requested
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        self.clear_steer();
-    }
-}
 
 /// Shared handle to [`TurnControl`], cloned into the reader task.
 pub type TurnControlHandle = std::sync::Arc<TurnControl>;
