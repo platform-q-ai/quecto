@@ -63,7 +63,6 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
         Box::new(GrepTool::new(workspace, sandbox)),
         Box::new(SpawnTool::new(vec!["child".to_string()])),
         Box::new(AgentCmdTool::new(AgentCmdTool::new_registry())),
-        Box::new(CovNoopTool),
     ];
 
     let names: Vec<String> = tools
@@ -89,7 +88,6 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
             "grep",
             "spawn",
             "agent_cmd",
-            "web_fetch",
         ]
     );
 }

@@ -330,6 +330,16 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 [
                     "crate",
                     "application",
+                    "agent_turn",
+                    "use_cases",
+                    "web_fetch",
+                    "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
+                    | "HttpStatus",
+                    ..,
+                ] => true,
+                [
+                    "crate",
+                    "application",
                     "environment_control",
                     "EnvironmentControlUseCase" | "EnvironmentKillPort",
                     ..,
@@ -2457,6 +2467,7 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     file,
                     "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
                 ),
+                ["crate", "composition", "web_fetch", "build"] => file == "src/interface/shared.rs",
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
             }
