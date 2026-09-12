@@ -72,3 +72,18 @@ Feature: Launcher lifetime and session restore without child readoption (#1937)
     Then the child process of "respawned-worker" exits within 15 seconds
     When the client disconnects from the restoring harness
     Then the restoring harness exits within 10 seconds
+
+  Scenario: Switching sessions ends the current session's launched child instead of stranding it
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    And session "restore-switch" was saved by an earlier harness with legacy child rows naming sockets that must never be connected to
+    And a restoring UDS harness with a subagent registry
+    When the client resumes session "restore-switch"
+    And the restoring harness re-spawns subagent "switch-worker" with initial task "say hello"
+    Then the spawn result should not be an error
+    And the registry entry for "switch-worker" holds an owned child with a launch generation
+    When the client starts a new session
+    Then the re-spawned "switch-worker" is gone within 20 seconds
+    And the operational roster of the restoring harness is empty
+    And get_subagents from the restoring harness lists no children
+    When the client disconnects from the restoring harness
+    Then the restoring harness exits within 10 seconds

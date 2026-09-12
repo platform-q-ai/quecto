@@ -30,6 +30,9 @@ pub(crate) struct RestoreLifetimeState {
     silent_listeners: Vec<(String, UnixListener)>,
     legacy_uuids: Vec<String>,
     legacy_session_key: Option<String>,
+    /// The re-spawned child as registered, captured before any session
+    /// switch removes its row.
+    respawned: Option<SubagentEntry>,
 }
 
 impl std::fmt::Debug for RestoreLifetimeState {
@@ -573,6 +576,12 @@ fn when_harness_respawns(world: &mut QuectoWorld, agent_id: String, task: String
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     world.spawn_result = Some(rt.block_on(tool.execute(&args.to_string())).unwrap());
+    state(world).respawned = registry
+        .lock()
+        .unwrap()
+        .values()
+        .find(|entry| entry.display_name == agent_id)
+        .cloned();
     world.agent_cmd_registry = Some(registry);
     // The runtime carries the monitor task: the child's bound parent
     // connection lives as long as the scenario.
@@ -599,4 +608,42 @@ fn then_fresh_identity(world: &mut QuectoWorld, agent_id: String) {
         "only the re-spawned worker is operational"
     );
     assert!(!entries.keys().any(|key| legacy.contains(key)));
+}
+
+fn process_alive(pid: u32) -> bool {
+    // Nothing is delivered with signal 0.
+    // SAFETY: signal 0 only probes the existence of the pid this scenario spawned.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// The session switch tore the re-spawned child down: the supervisor no
+/// longer retains its handle, its process is gone and its socket removed.
+#[then(expr = "the re-spawned {string} is gone within {int} seconds")]
+fn then_respawned_gone(world: &mut QuectoWorld, agent_id: String, seconds: u64) {
+    let entry = state(world)
+        .respawned
+        .clone()
+        .expect("re-spawned entry captured");
+    assert_eq!(entry.display_name, agent_id);
+    let supervisor = entry.owned_child_supervisor.clone().expect("supervisor");
+    let handle = entry.owned_child.expect("owned handle");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(seconds), supervisor.wait_exit(handle)).await
+        })
+        .expect("the child must exit within the bound");
+    assert!(!supervisor.retains(handle));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process_alive(entry.pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!process_alive(entry.pid), "the child process must be gone");
+    while entry.socket_path.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !entry.socket_path.exists(),
+        "a graceful exit removes the socket"
+    );
 }

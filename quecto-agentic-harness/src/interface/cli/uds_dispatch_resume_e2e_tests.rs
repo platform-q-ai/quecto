@@ -272,3 +272,158 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
         "no operational child existed to snapshot"
     );
 }
+
+// ── Session switch tears down the current session's children (#1937 interim) ─
+
+use crate::infrastructure::processes::owned_child_supervisor::{
+    ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup,
+};
+use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+
+/// A real `sleep` child owned by a fresh supervisor, registered as a live
+/// launched row whose socket does not exist (the protocol attempt fails at
+/// once, so the supervisor's TERM ends it).
+async fn owned_sleeping_child(
+    dir: &std::path::Path,
+) -> (
+    std::sync::Arc<OwnedChildSupervisor>,
+    ChildHandleId,
+    SubagentEntry,
+) {
+    let supervisor = std::sync::Arc::new(OwnedChildSupervisor::new());
+    let mut command = tokio::process::Command::new("sleep");
+    command.arg("60");
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+    let spawned = supervisor
+        .spawn(command, ProcessGroup::Inherited)
+        .await
+        .expect("spawn sleep");
+    let mut entry = SubagentEntry::new(dir.join("owned-child.sock"), spawned.display_pid.0);
+    entry.owned_child = Some(spawned.handle);
+    entry.owned_child_supervisor = Some(supervisor.clone());
+    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
+    (supervisor, spawned.handle, entry)
+}
+
+fn kill_plan_script(log: &std::path::Path) -> std::path::PathBuf {
+    let script = log.parent().unwrap().join("kill.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    script
+}
+
+async fn assert_exited_within_budget(supervisor: &OwnedChildSupervisor, handle: ChildHandleId) {
+    let exit = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        supervisor.wait_exit(handle),
+    )
+    .await
+    .expect("the owned child must exit within the session-switch budget");
+    assert!(
+        matches!(
+            exit,
+            None | Some(ChildExit::Signal(_)) | Some(ChildExit::Code(_))
+        ),
+        "unexpected exit {exit:?}"
+    );
+    assert!(
+        !supervisor.retains(handle),
+        "the handle is released after the exit"
+    );
+}
+
+/// #1937 review: `new_session` must not strand the current session's live
+/// launched child — it can never be readopted, so it is torn down (protocol
+/// first, TERM after the negative outcome) before the roster is reset.
+#[tokio::test]
+async fn e2e_new_session_tears_down_the_current_sessions_live_child() {
+    let mut fx = Fixture::new();
+    let dir = tempfile::tempdir().unwrap();
+    let (supervisor, handle, entry) = owned_sleeping_child(dir.path()).await;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert(entry.agent_uuid.as_str().to_string(), entry);
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry.clone());
+        assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
+    }
+    assert!(registry.lock().unwrap().is_empty());
+    assert_exited_within_budget(&supervisor, handle).await;
+}
+
+/// #1937 review: resuming away from a session with a live launched child
+/// ends that child and restores the target session with an empty roster.
+#[tokio::test]
+async fn e2e_resume_away_tears_down_the_current_sessions_live_child() {
+    let mut fx = Fixture::new();
+    let dir = tempfile::tempdir().unwrap();
+    fx.store
+        .save(&Session {
+            key: "cli:elsewhere".to_string(),
+            messages: vec![Message::user("elsewhere")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let (supervisor, handle, entry) = owned_sleeping_child(dir.path()).await;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert(entry.agent_uuid.as_str().to_string(), entry);
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry.clone());
+        assert!(
+            !super::handle_resume_session(
+                &mut ctx,
+                Some("away"),
+                "resume_session",
+                "elsewhere".into()
+            )
+            .await
+        );
+    }
+    assert_eq!(fx.session_key, "cli:elsewhere");
+    assert!(registry.lock().unwrap().is_empty());
+    assert_exited_within_budget(&supervisor, handle).await;
+}
+
+/// #1937 review: a container member's kill plan runs exactly once on the
+/// session switch instead of being discarded with the row.
+#[tokio::test]
+async fn e2e_session_switch_runs_a_container_childs_kill_plan_once() {
+    let mut fx = Fixture::new();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("kill.log");
+    let script = kill_plan_script(&log);
+    let mut member = SubagentEntry::new(dir.path().join("member.sock"), 0);
+    member.cleanup_environment_id = Some("env-switch".into());
+    member.cleanup_argv = vec![script.to_string_lossy().to_string()];
+    let registry = new_registry();
+    registry.lock().unwrap().insert("member".into(), member);
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry.clone());
+        assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
+        // A second switch finds nothing left to finalize.
+        assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
+    }
+    assert!(registry.lock().unwrap().is_empty());
+    let text = std::fs::read_to_string(&log).expect("the kill plan ran");
+    assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-switch"]);
+}

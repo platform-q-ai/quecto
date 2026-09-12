@@ -98,6 +98,78 @@ pub(crate) fn reset_subagent_roster_on_restore(
     registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
+/// Bound on waiting for the current session's owned children to exit after
+/// the session-transition teardown: the protocol ACK (5 s) plus the
+/// acknowledged-exit wait (10 s) plus the TERM and KILL graces (2 s each).
+const SESSION_TRANSITION_EXIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Tear down the current session's children before the harness switches
+/// away from it (`resume_session` into another session, `new_session`).
+///
+/// Interim for #1937 until #1938 migrates the session-transition exit into
+/// the application-owned teardown: a launcher-created child cannot be
+/// readopted by any later session (restore creates no operational row), so
+/// a child left running past this point would be unreachable from every
+/// teardown path until the master exits. The existing registry-driven
+/// teardown runs — supervisor termination protocol-first for owned children,
+/// the environment kill plans for container members — on a blocking thread,
+/// then the owned children's exit is awaited within a bounded budget.
+pub(crate) async fn tear_down_children_before_session_switch(
+    ctx: &mut DispatchCtx<'_>,
+    transition: &str,
+) {
+    let Some(registry) = ctx.subagent_registry.clone() else {
+        return;
+    };
+    let owned: Vec<_> = {
+        let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.is_empty() {
+            return;
+        }
+        tracing::warn!(
+            transition,
+            live_rows = entries.len(),
+            "session switch: tearing down the current session's children; they cannot be readopted"
+        );
+        entries
+            .values()
+            .filter_map(|entry| Some((entry.owned_child?, entry.owned_child_supervisor.clone()?)))
+            .collect()
+    };
+    let broadcast_tx = ctx.broadcast_tx.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        super::super::uds_delete_all_subagents::delete_all_subagents_from_registry(
+            &registry,
+            broadcast_tx.as_ref(),
+        )
+    })
+    .await
+    .unwrap_or_else(|join_error| {
+        tracing::error!(%join_error, "session switch: teardown thread failed");
+        0
+    });
+    let deadline = tokio::time::Instant::now() + SESSION_TRANSITION_EXIT_BUDGET;
+    let mut exited = 0usize;
+    for (handle, supervisor) in &owned {
+        match tokio::time::timeout_at(deadline, supervisor.wait_exit(*handle)).await {
+            Ok(_) => exited += 1,
+            Err(_elapsed) => {
+                tracing::warn!(
+                    ?handle,
+                    "session switch: owned child did not exit within budget"
+                );
+            }
+        }
+    }
+    tracing::warn!(
+        transition,
+        removed,
+        owned = owned.len(),
+        exited,
+        "session switch: current session's children torn down"
+    );
+}
+
 pub(super) async fn persist_current_session(
     ctx: &mut DispatchCtx<'_>,
 ) -> Result<(), crate::domain::error::DomainError> {
@@ -209,6 +281,7 @@ pub(super) async fn handle_new_session(
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
+    tear_down_children_before_session_switch(ctx, "new_session").await;
     if let Some(registry) = &ctx.subagent_registry {
         registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -325,6 +398,9 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    // The session we are leaving cannot readopt its children later, and no
+    // other session can: end them now, before the roster is reset.
+    tear_down_children_before_session_switch(ctx, "resume_session").await;
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);

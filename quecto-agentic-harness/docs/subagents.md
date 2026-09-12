@@ -680,6 +680,15 @@ Nothing restarts automatically, and no historical roster row is shown as
 live. Externally attached clients reconnecting to a still-running harness
 see that harness's in-memory registry as before.
 
+**Switching sessions ends the current session's launched children.** Because
+no later session can readopt them, `resume_session` into another session and
+`new_session` first run the registry-driven teardown on the children the
+harness holds — protocol-first supervisor termination for locally launched
+children, the environment kill plan for container members — and wait (bounded,
+20 s) for the owned children to exit before the roster is reset. Re-spawn the
+workers you need in the new session. (Interim until #1938 moves the
+session-transition exit into the application-owned teardown.)
+
 ### Running
 
 - The child runs independently as a background process
