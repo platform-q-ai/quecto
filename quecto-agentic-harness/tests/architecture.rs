@@ -2861,35 +2861,45 @@ fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
         }
 
         fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-            fn record_crate_root(tree: &syn::UseTree, roots: &mut BTreeSet<String>) {
-                if let syn::UseTree::Group(group) = tree {
-                    for item in &group.items {
-                        record_crate_root(item, roots);
+            fn record_crate_root(
+                tree: &syn::UseTree,
+                beneath_crate: bool,
+                roots: &mut BTreeSet<String>,
+            ) {
+                match tree {
+                    syn::UseTree::Group(group) => {
+                        for item in &group.items {
+                            record_crate_root(item, beneath_crate, roots);
+                        }
                     }
-                }
-                if let syn::UseTree::Rename(rename) = tree
-                    && rename.ident == "crate"
-                {
-                    roots.insert("<crate alias>".to_owned());
-                }
-                if let syn::UseTree::Path(crate_path) = tree
-                    && crate_path.ident == "crate"
-                {
-                    match crate_path.tree.as_ref() {
-                        syn::UseTree::Path(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        syn::UseTree::Name(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        syn::UseTree::Rename(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        _ => {}
+                    syn::UseTree::Path(path) if beneath_crate => {
+                        roots.insert(path.ident.to_string());
                     }
+                    syn::UseTree::Name(name) if beneath_crate && name.ident == "self" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    syn::UseTree::Name(name) if beneath_crate => {
+                        roots.insert(name.ident.to_string());
+                    }
+                    syn::UseTree::Rename(rename) if beneath_crate && rename.ident == "self" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    syn::UseTree::Rename(rename) if beneath_crate => {
+                        roots.insert(rename.ident.to_string());
+                    }
+                    syn::UseTree::Glob(_) if beneath_crate => {
+                        roots.insert("<crate glob>".to_owned());
+                    }
+                    syn::UseTree::Path(path) if path.ident == "crate" => {
+                        record_crate_root(path.tree.as_ref(), true, roots);
+                    }
+                    syn::UseTree::Rename(rename) if rename.ident == "crate" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    _ => {}
                 }
             }
-            record_crate_root(&item.tree, &mut self.roots);
+            record_crate_root(&item.tree, false, &mut self.roots);
             syn::visit::visit_item_use(self, item);
         }
     }
@@ -2917,11 +2927,30 @@ fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
 
 #[test]
 fn interface_dependency_allowlist_rejects_aliased_composition_reference() {
-    let bypass = "use crate::composition as outer; fn build() { outer::web_fetch::build(); }";
-    let rejected = std::panic::catch_unwind(|| {
-        assert_interface_dependencies_allowlisted("alias_bypass.rs", bypass)
-    });
-    assert!(rejected.is_err(), "composition alias must be rejected");
+    for bypass in [
+        "use crate::composition as outer; fn build() { outer::web_fetch::build(); }",
+        "use crate::{composition as outer}; fn build() { outer::web_fetch::build(); }",
+        "use crate::{domain, {composition as outer}}; fn build() { outer::web_fetch::build(); }",
+        "use crate::{composition::{self as outer}}; fn build() { outer::web_fetch::build(); }",
+    ] {
+        let rejected = std::panic::catch_unwind(|| {
+            assert_interface_dependencies_allowlisted("alias_bypass.rs", bypass)
+        });
+        assert!(
+            rejected.is_err(),
+            "composition alias must be rejected: {bypass}"
+        );
+    }
+}
+
+#[test]
+fn interface_dependency_allowlist_accepts_grouped_permitted_references() {
+    for permitted in [
+        "use crate::{application as app, domain};",
+        "use crate::{interface::{self, tools}, infrastructure as infra};",
+    ] {
+        assert_interface_dependencies_allowlisted("permitted.rs", permitted);
+    }
 }
 
 #[test]
