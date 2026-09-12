@@ -163,6 +163,12 @@ Feature: Subagent teardown contracts (#1934)
     Then the termination is refused with "lineage cycle at X" correlated to "t-c"
     And no child was addressed
 
+  Scenario: A lineage whose parent was never reported never yields an edge
+    Given a harness whose lineage records X under a parent it has never seen
+    When the "bound parent" sends terminate_delegated_agent for "X" generation 1 depth 4 with id "t-d"
+    Then the termination is refused with "lineage cycle at ghost" correlated to "t-d"
+    And no child was addressed
+
   Scenario: A frozen harness refuses to route a selected termination
     Given a harness owning children A and D, where A owns B and C
     When shutdown is prepared for "parent_shutdown" by the "protocol" trigger

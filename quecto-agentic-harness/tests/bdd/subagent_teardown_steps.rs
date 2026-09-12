@@ -341,6 +341,14 @@ fn given_ambiguous_tree(world: &mut QuectoWorld) {
     }));
 }
 
+#[given("a harness whose lineage records X under a parent it has never seen")]
+fn given_dangling_tree(world: &mut QuectoWorld) {
+    world.teardown.rig = Some(Rig::new(LineageSnapshot {
+        owner: AgentUuid::new("root"),
+        records: vec![record("X", 1, "ghost")],
+    }));
+}
+
 #[given("the lifecycle repository loses the freeze behind the transaction's back")]
 fn given_lost_freeze(world: &mut QuectoWorld) {
     rig(world).lifecycle.force(HarnessLifecycleState::Accepting);
