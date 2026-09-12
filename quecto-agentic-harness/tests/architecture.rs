@@ -259,6 +259,39 @@ fn web_fetch_adapter_consults_the_inward_policy_at_each_destination_boundary() {
 }
 
 #[test]
+fn web_fetch_clean_architecture_owns_each_graph_vertex_once() {
+    let application =
+        fs::read_to_string("src/application/agent_turn/use_cases/web_fetch.rs").unwrap();
+    let infrastructure = fs::read_to_string("src/infrastructure/tools/web_fetch.rs").unwrap();
+    let interface = fs::read_to_string("src/interface/tools/web_fetch.rs").unwrap();
+    let composition = fs::read_to_string("src/composition/web_fetch.rs").unwrap();
+
+    assert!(application.contains("pub trait FetchWebContent: Send + Sync"));
+    assert!(application.contains("pub struct WebFetchUseCase"));
+    assert!(!application.contains("reqwest"));
+    assert!(infrastructure.contains("impl FetchWebContent for ReqwestFetchWebContent"));
+    assert!(
+        !infrastructure.contains("impl Tool for"),
+        "mixed monolith must be deleted"
+    );
+    assert!(interface.contains("impl Tool for WebFetchTool"));
+    assert!(
+        !interface.contains("crate::composition"),
+        "delivery adapter must not assemble its graph"
+    );
+    for vertex in [
+        "ReqwestFetchWebContent::new",
+        "WebFetchUseCase::new",
+        "WebFetchTool::new",
+    ] {
+        assert!(
+            composition.contains(vertex),
+            "composition root must construct {vertex}"
+        );
+    }
+}
+
+#[test]
 fn infrastructure_has_no_interface_imports() {
     assert_no_imports(
         "infrastructure",
@@ -395,7 +428,13 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "agent_turn",
                     "use_cases",
                     "web_fetch",
-                    "WebDestinationTarget" | "WebDestinationPolicy" | "WebDestinationAuthorization",
+                    "WebDestinationTarget"
+                    | "WebDestinationPolicy"
+                    | "WebDestinationAuthorization"
+                    | "FetchWebContent"
+                    | "FetchWebContentRequest"
+                    | "FetchedWebContent"
+                    | "FetchWebContentError",
                     ..,
                 ] => true,
                 [
@@ -2528,6 +2567,9 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     file,
                     "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
                 ),
+                ["crate", "composition", "web_fetch", "build_web_fetch_tool"] => {
+                    file == "src/interface/tool_runtime.rs"
+                }
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
             }

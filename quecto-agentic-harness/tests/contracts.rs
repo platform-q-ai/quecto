@@ -104,3 +104,6 @@ mod tool_execution_admission;
 
 #[path = "contracts/find_paths.rs"]
 mod find_paths;
+
+#[path = "contracts/fetch_web_content.rs"]
+mod fetch_web_content;

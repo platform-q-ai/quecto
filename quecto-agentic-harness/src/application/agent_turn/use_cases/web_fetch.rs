@@ -6,7 +6,404 @@
 //! owned, backend-neutral facts here and proceed only after [`Allowed`](
 //! WebDestinationAuthorization::Allowed).
 
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::pin::Pin;
+use std::sync::Arc;
+
+/// Application input after the interface has decoded the public tool request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebFetchRequest {
+    pub url: String,
+    pub raw: bool,
+}
+
+/// Neutral request passed to the outbound content-fetching mechanism.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FetchWebContentRequest {
+    pub url: String,
+}
+
+/// Mechanism result before application content policy is applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FetchedWebContent {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// Mechanical failures reported by the outbound adapter without vendor types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FetchWebContentError {
+    InvalidUrl(String),
+    InvalidScheme,
+    DestinationDenied(String),
+    RedirectLimitExceeded,
+    TimedOut,
+    ResponseTooLarge {
+        actual_bytes: Option<usize>,
+        max_bytes: usize,
+    },
+    Resolution(String),
+    Connection(String),
+    Read(String),
+    Transport(String),
+}
+
+/// Object-safe outward effect owned by the application capability.
+pub trait FetchWebContent: Send + Sync {
+    fn fetch(
+        &self,
+        request: FetchWebContentRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<FetchedWebContent, FetchWebContentError>> + Send + '_>>;
+}
+
+/// Application result ready for the interface's `ToolResult` translation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebFetchResult {
+    pub content: String,
+    pub is_error: bool,
+}
+
+/// Failures which remain errors rather than ordinary error-valued tool output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WebFetchError {
+    InvalidUrl(String),
+    RedirectLimitExceeded,
+    TimedOut,
+    ResponseTooLarge {
+        actual_bytes: Option<usize>,
+        max_bytes: usize,
+    },
+    Resolution(String),
+    Connection(String),
+    Read(String),
+    Transport(String),
+}
+
+/// Coordinates exactly one fetch effect, then applies capability-local content policy.
+pub struct WebFetchUseCase {
+    content: Arc<dyn FetchWebContent>,
+    max_response_kb: u32,
+}
+
+impl WebFetchUseCase {
+    pub fn new(content: Arc<dyn FetchWebContent>, max_response_kb: u32) -> Self {
+        Self {
+            content,
+            max_response_kb,
+        }
+    }
+
+    pub async fn execute(&self, request: WebFetchRequest) -> Result<WebFetchResult, WebFetchError> {
+        let requested_url = request.url;
+        let fetched = match self
+            .content
+            .fetch(FetchWebContentRequest {
+                url: requested_url.clone(),
+            })
+            .await
+        {
+            Ok(fetched) => fetched,
+            Err(FetchWebContentError::InvalidScheme) => {
+                return Ok(WebFetchResult {
+                    content: format!(
+                        "Invalid URL scheme: only http:// and https:// are allowed. Got: {requested_url}"
+                    ),
+                    is_error: true,
+                });
+            }
+            Err(FetchWebContentError::DestinationDenied(host)) => {
+                return Ok(WebFetchResult {
+                    content: format!("Blocked: URL points to a restricted address ({host})"),
+                    is_error: true,
+                });
+            }
+            Err(error) => return Err(map_fetch_error(error)),
+        };
+
+        if !(200..300).contains(&fetched.status) {
+            return Ok(WebFetchResult {
+                content: format!("HTTP {} fetching {requested_url}", fetched.status),
+                is_error: true,
+            });
+        }
+
+        let body = String::from_utf8_lossy(&fetched.body);
+        let content = if request.raw {
+            body.into_owned()
+        } else {
+            strip_html(&body)
+        };
+        let max_bytes = self.max_response_kb as usize * 1024;
+        let content = truncate_output(content, max_bytes, self.max_response_kb);
+
+        Ok(WebFetchResult {
+            content,
+            is_error: false,
+        })
+    }
+}
+
+fn map_fetch_error(error: FetchWebContentError) -> WebFetchError {
+    match error {
+        FetchWebContentError::InvalidUrl(message) => WebFetchError::InvalidUrl(message),
+        FetchWebContentError::RedirectLimitExceeded => WebFetchError::RedirectLimitExceeded,
+        FetchWebContentError::TimedOut => WebFetchError::TimedOut,
+        FetchWebContentError::ResponseTooLarge {
+            actual_bytes,
+            max_bytes,
+        } => WebFetchError::ResponseTooLarge {
+            actual_bytes,
+            max_bytes,
+        },
+        FetchWebContentError::Resolution(message) => WebFetchError::Resolution(message),
+        FetchWebContentError::Connection(message) => WebFetchError::Connection(message),
+        FetchWebContentError::Read(message) => WebFetchError::Read(message),
+        FetchWebContentError::Transport(message) => WebFetchError::Transport(message),
+        FetchWebContentError::InvalidScheme | FetchWebContentError::DestinationDenied(_) => {
+            unreachable!("tool-output errors are handled before mechanical error mapping")
+        }
+    }
+}
+
+fn truncate_output(content: String, max_bytes: usize, max_response_kb: u32) -> String {
+    if content.len() <= max_bytes {
+        return content;
+    }
+    let mut truncated = truncate_utf8(&content, max_bytes).to_owned();
+    truncated.push_str(&format!(
+        "\n\n[Truncated: output exceeded {max_response_kb}KB limit]"
+    ));
+    truncated
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+/// Strip HTML into the established readable-text representation.
+pub fn strip_html(html: &str) -> String {
+    let stripped = remove_configured_tag_blocks(html);
+    let text = tags_to_text(&stripped);
+    let text = decode_entities(&text);
+    collapse_whitespace(&text)
+}
+
+const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "header", "noscript"];
+
+fn remove_configured_tag_blocks(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut position = 0;
+    while position < html.len() {
+        let Some(relative_start) = html[position..].find('<') else {
+            result.push_str(&html[position..]);
+            break;
+        };
+        let tag_start = position + relative_start;
+        let Some(tag) = configured_open_tag_at(html, tag_start) else {
+            result.push_str(&html[position..=tag_start]);
+            position = tag_start + 1;
+            continue;
+        };
+        result.push_str(&html[position..tag_start]);
+        if let Some(close_start) = find_configured_close_tag(html, tag_start + 1, tag) {
+            position = html[close_start..]
+                .find('>')
+                .map(|index| close_start + index + 1)
+                .unwrap_or(html.len());
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+fn configured_open_tag_at(html: &str, tag_start: usize) -> Option<&'static str> {
+    STRIPPED_BLOCK_TAGS
+        .iter()
+        .copied()
+        .find(|tag| specific_open_tag_at(html, tag_start, tag))
+}
+
+fn specific_open_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
+    let after_lt = tag_start + 1;
+    let after_name = after_lt + tag.len();
+    html.get(after_lt..after_name)
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+        && html
+            .as_bytes()
+            .get(after_name)
+            .is_some_and(|next| matches!(*next, b' ' | b'>' | b'/' | b'\t' | b'\n'))
+}
+
+fn find_configured_close_tag(html: &str, mut position: usize, tag: &str) -> Option<usize> {
+    while let Some(relative_start) = html[position..].find('<') {
+        let tag_start = position + relative_start;
+        if specific_close_tag_at(html, tag_start, tag) {
+            return Some(tag_start);
+        }
+        position = tag_start + 1;
+    }
+    None
+}
+
+fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
+    let after_slash = tag_start + 2;
+    let after_name = after_slash + tag.len();
+    html.as_bytes().get(tag_start..after_slash) == Some(b"</")
+        && html
+            .get(after_slash..after_name)
+            .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+        && html.as_bytes().get(after_name) == Some(&b'>')
+}
+
+fn tags_to_text(html: &str) -> String {
+    const BLOCK_TAGS: &[&str] = &[
+        "p",
+        "div",
+        "li",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "blockquote",
+        "pre",
+    ];
+    let mut result = String::with_capacity(html.len());
+    let mut position = 0;
+    while let Some(relative_open) = html[position..].find('<') {
+        let open = position + relative_open;
+        result.push_str(&html[position..open]);
+        if let Some(end_offset) = html[open..].find('>') {
+            let tag_content = &html[open + 1..open + end_offset];
+            let trimmed = tag_content.trim().trim_start_matches('/');
+            let tag_end = trimmed
+                .find(|character: char| character.is_whitespace() || character == '/')
+                .unwrap_or(trimmed.len());
+            let tag_name = &trimmed[..tag_end];
+            if tag_name.eq_ignore_ascii_case("br")
+                || BLOCK_TAGS
+                    .iter()
+                    .any(|tag| tag_name.eq_ignore_ascii_case(tag))
+            {
+                result.push('\n');
+            }
+            position = open + end_offset + 1;
+        } else {
+            result.push('<');
+            position = open + 1;
+        }
+    }
+    result.push_str(&html[position..]);
+    result
+}
+
+fn decode_entities(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut position = 0;
+    while let Some(relative_ampersand) = text[position..].find('&') {
+        let ampersand = position + relative_ampersand;
+        result.push_str(&text[position..ampersand]);
+        if let Some(semicolon) = text[ampersand..].find(';') {
+            let entity = &text[ampersand + 1..ampersand + semicolon];
+            if let Some(decoded) = decode_entity(entity) {
+                result.push(decoded);
+                position = ampersand + semicolon + 1;
+                continue;
+            }
+        }
+        result.push('&');
+        position = ampersand + 1;
+    }
+    result.push_str(&text[position..]);
+    result
+}
+
+fn decode_entity(entity: &str) -> Option<char> {
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" | "#39" => Some('\''),
+        "nbsp" => Some(' '),
+        _ if entity.starts_with('#') => {
+            let number = &entity[1..];
+            if let Some(hexadecimal) = number
+                .strip_prefix('x')
+                .or_else(|| number.strip_prefix('X'))
+            {
+                u32::from_str_radix(hexadecimal, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            } else {
+                number.parse::<u32>().ok().and_then(char::from_u32)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn push_collapsed_line(output: &mut String, line: &str) {
+    let mut previous_space = true;
+    for character in line.chars() {
+        if character.is_whitespace() {
+            if !previous_space {
+                output.push(' ');
+                previous_space = true;
+            }
+        } else {
+            output.push(character);
+            previous_space = false;
+        }
+    }
+    if output.ends_with(' ') {
+        output.pop();
+    }
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    let mut output = String::with_capacity(text.len().min(256 * 1024));
+    let mut consecutive_blank = 0_u32;
+    let mut first_line = true;
+    for line in text.lines() {
+        if line.chars().all(char::is_whitespace) {
+            consecutive_blank += 1;
+            if consecutive_blank <= 1 {
+                if !first_line {
+                    output.push('\n');
+                }
+                first_line = false;
+            }
+            continue;
+        }
+        consecutive_blank = 0;
+        if !first_line {
+            output.push('\n');
+        }
+        first_line = false;
+        push_collapsed_line(&mut output, line);
+    }
+    while output.ends_with('\n') {
+        output.pop();
+    }
+    if let Some(start) = output.find(|character: char| character != '\n') {
+        if start > 0 {
+            output.drain(..start);
+        }
+    }
+    output
+}
 
 /// Backend-neutral facts about one URL or one resolved connection candidate.
 ///

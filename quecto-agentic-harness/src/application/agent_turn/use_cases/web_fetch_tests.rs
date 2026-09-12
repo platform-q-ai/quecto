@@ -1,4 +1,207 @@
+use std::sync::Mutex;
+
 use super::*;
+
+struct RecordingFetch {
+    calls: Mutex<Vec<FetchWebContentRequest>>,
+    response: Mutex<Option<Result<FetchedWebContent, FetchWebContentError>>>,
+}
+
+impl RecordingFetch {
+    fn returning(response: Result<FetchedWebContent, FetchWebContentError>) -> Arc<Self> {
+        Arc::new(Self {
+            calls: Mutex::new(Vec::new()),
+            response: Mutex::new(Some(response)),
+        })
+    }
+}
+
+impl FetchWebContent for RecordingFetch {
+    fn fetch(
+        &self,
+        request: FetchWebContentRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<FetchedWebContent, FetchWebContentError>> + Send + '_>>
+    {
+        self.calls.lock().unwrap().push(request);
+        let response = self.response.lock().unwrap().take().unwrap();
+        Box::pin(async move { response })
+    }
+}
+
+fn fetched(status: u16, body: impl Into<Vec<u8>>) -> FetchedWebContent {
+    FetchedWebContent {
+        status,
+        body: body.into(),
+    }
+}
+
+async fn execute_fake(
+    fake: Arc<RecordingFetch>,
+    url: &str,
+    raw: bool,
+    max_response_kb: u32,
+) -> Result<WebFetchResult, WebFetchError> {
+    WebFetchUseCase::new(fake, max_response_kb)
+        .execute(WebFetchRequest {
+            url: url.to_owned(),
+            raw,
+        })
+        .await
+}
+
+#[tokio::test]
+async fn use_case_invokes_effect_exactly_once_with_owned_url_and_preserves_raw_body() {
+    let fake = RecordingFetch::returning(Ok(fetched(200, b"<p>raw</p>".to_vec())));
+    let result = execute_fake(fake.clone(), "https://example.com/a", true, 32)
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "<p>raw</p>");
+    assert!(!result.is_error);
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![FetchWebContentRequest {
+            url: "https://example.com/a".to_owned()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn use_case_owns_readable_transformation() {
+    let fake = RecordingFetch::returning(Ok(fetched(
+        200,
+        b"<header>omit</header><p>Hello&nbsp;<b>world</b></p>".to_vec(),
+    )));
+
+    let result = execute_fake(fake, "https://example.com", false, 32)
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "Hello world");
+    assert!(!result.is_error);
+}
+
+#[tokio::test]
+async fn use_case_owns_non_success_status_presentation() {
+    let fake = RecordingFetch::returning(Ok(fetched(503, b"ignored".to_vec())));
+
+    let result = execute_fake(fake, "https://example.com/down", false, 32)
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "HTTP 503 fetching https://example.com/down");
+    assert!(result.is_error);
+}
+
+#[tokio::test]
+async fn use_case_caps_output_on_a_utf8_boundary() {
+    let fake = RecordingFetch::returning(Ok(fetched(200, "a".repeat(1023) + "é")));
+
+    let result = execute_fake(fake, "https://example.com", true, 1)
+        .await
+        .unwrap();
+
+    assert!(result.content.starts_with(&"a".repeat(1023)));
+    assert!(!result.content.contains('é'));
+    assert!(
+        result
+            .content
+            .ends_with("[Truncated: output exceeded 1KB limit]")
+    );
+}
+
+#[tokio::test]
+async fn use_case_maps_policy_denials_to_established_error_results() {
+    let scheme = RecordingFetch::returning(Err(FetchWebContentError::InvalidScheme));
+    let denied = RecordingFetch::returning(Err(FetchWebContentError::DestinationDenied(
+        "localhost".to_owned(),
+    )));
+
+    assert_eq!(
+        execute_fake(scheme, "file:///etc/passwd", false, 32)
+            .await
+            .unwrap(),
+        WebFetchResult {
+            content:
+                "Invalid URL scheme: only http:// and https:// are allowed. Got: file:///etc/passwd"
+                    .to_owned(),
+            is_error: true,
+        }
+    );
+    assert_eq!(
+        execute_fake(denied, "http://localhost", false, 32)
+            .await
+            .unwrap(),
+        WebFetchResult {
+            content: "Blocked: URL points to a restricted address (localhost)".to_owned(),
+            is_error: true,
+        }
+    );
+}
+
+#[test]
+fn fetch_port_is_object_safe_send_and_sync() {
+    fn require_port(_: Arc<dyn FetchWebContent + Send + Sync>) {}
+    require_port(RecordingFetch::returning(Ok(fetched(200, Vec::new()))));
+}
+
+#[test]
+fn content_transform_preserves_established_readability_rules() {
+    let html = "<HEADER>hidden</HEADER><h1>Title</h1><p>café&nbsp;&amp;&#x42;</p><script>bad()</script>tail<br>line";
+    assert_eq!(strip_html(html), "Title\n\ncafé &B\ntail\nline");
+    assert_eq!(strip_html("Just plain text."), "Just plain text.");
+    assert_eq!(strip_html("<p>A</p>\n\n\n<p>B</p>"), "A\n\nB");
+}
+
+#[tokio::test]
+async fn use_case_preserves_every_typed_mechanical_error() {
+    let cases = [
+        (
+            FetchWebContentError::InvalidUrl("bad URL".to_owned()),
+            WebFetchError::InvalidUrl("bad URL".to_owned()),
+        ),
+        (
+            FetchWebContentError::RedirectLimitExceeded,
+            WebFetchError::RedirectLimitExceeded,
+        ),
+        (FetchWebContentError::TimedOut, WebFetchError::TimedOut),
+        (
+            FetchWebContentError::ResponseTooLarge {
+                actual_bytes: Some(6_000_000),
+                max_bytes: 5_242_880,
+            },
+            WebFetchError::ResponseTooLarge {
+                actual_bytes: Some(6_000_000),
+                max_bytes: 5_242_880,
+            },
+        ),
+        (
+            FetchWebContentError::Resolution("dns".to_owned()),
+            WebFetchError::Resolution("dns".to_owned()),
+        ),
+        (
+            FetchWebContentError::Connection("connect".to_owned()),
+            WebFetchError::Connection("connect".to_owned()),
+        ),
+        (
+            FetchWebContentError::Read("read".to_owned()),
+            WebFetchError::Read("read".to_owned()),
+        ),
+        (
+            FetchWebContentError::Transport("transport".to_owned()),
+            WebFetchError::Transport("transport".to_owned()),
+        ),
+    ];
+
+    for (effect_error, expected) in cases {
+        let fake = RecordingFetch::returning(Err(effect_error));
+        assert_eq!(
+            execute_fake(fake.clone(), "https://example.com", false, 32).await,
+            Err(expected)
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+    }
+}
 
 fn target(scheme: &str, host: &str, candidate: Option<IpAddr>) -> WebDestinationTarget {
     WebDestinationTarget::new(scheme, host, 443, candidate)

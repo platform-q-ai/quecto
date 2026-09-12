@@ -6,7 +6,7 @@ use super::*;
 // Uses wiremock to mock HTTP responses. The web_fetch tool is registered
 // directly into the tool registry, bypassing the extension system.
 
-use quecto::infrastructure::tools::web_fetch::WebFetchTool;
+use quecto::composition::web_fetch::build_web_fetch_tool_for_destination;
 
 /// Leaked wiremock server for web_fetch BDD (stored in world).
 fn start_web_fetch_mock() -> (&'static wiremock::MockServer, String) {
@@ -49,8 +49,8 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
             Some(format!("{}:{}", host, u.port()?))
         })
         .unwrap_or_else(|| uri.clone());
-    let tool = WebFetchTool::with_allowed_host(32, &host_port);
-    registry.register(Arc::new(tool));
+    let tool = build_web_fetch_tool_for_destination(32, &host_port);
+    registry.register(tool);
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -82,8 +82,8 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
             Some(format!("{}:{}", host, u.port()?))
         })
         .unwrap_or_else(|| uri.clone());
-    let tool = WebFetchTool::with_allowed_host(1, &host_port);
-    registry.register(Arc::new(tool));
+    let tool = build_web_fetch_tool_for_destination(1, &host_port);
+    registry.register(tool);
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);

@@ -375,7 +375,10 @@ fn given_config_web_disabled(world: &mut QuectoWorld) {
 fn when_build_native_extensions(world: &mut QuectoWorld) {
     let config = world.config.as_ref().expect("no config");
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&config.tools.web, &client);
+    let web_fetch = config.tools.web.fetch.enabled.then(|| {
+        quecto::composition::web_fetch::build_web_fetch_tool(config.tools.web.fetch.max_response_kb)
+    });
+    let exts = build_native_extensions(&config.tools.web, &client, web_fetch);
     world.native_extensions_built = Some(exts.into_iter().map(DebugExtension).collect());
 }
 

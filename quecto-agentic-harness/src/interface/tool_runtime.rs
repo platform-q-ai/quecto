@@ -316,8 +316,13 @@ pub(crate) fn build_tool_runtime(
         });
     }
 
-    let ext_registry =
-        crate::interface::shared::build_and_register_native_extensions(config, http_client);
+    let ext_registry = crate::interface::shared::build_and_register_native_extensions(
+        config,
+        http_client,
+        Some(crate::composition::web_fetch::build_web_fetch_tool(
+            config.tools.web.fetch.max_response_kb,
+        )),
+    );
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_bundled_native_extension_tools(&mut registry, &ext_registry);
     if !policy_state.web_default_enabled {

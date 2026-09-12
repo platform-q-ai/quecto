@@ -216,7 +216,13 @@ fn build_and_register_native_extensions_registers_web_fetch() {
     config.tools.web.fetch.enabled = true;
     let client = reqwest::Client::new();
 
-    let ext_registry = build_and_register_native_extensions(&config, &client);
+    let ext_registry = build_and_register_native_extensions(
+        &config,
+        &client,
+        Some(crate::composition::web_fetch::build_web_fetch_tool(
+            config.tools.web.fetch.max_response_kb,
+        )),
+    );
     let tools = ext_registry.all_tools();
     assert!(
         !tools.is_empty(),
@@ -249,7 +255,13 @@ fn build_and_register_native_extensions_registers_web_fetch() {
 fn build_and_register_native_extensions_empty_when_no_web_tools() {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
-    let ext_registry = build_and_register_native_extensions(&config, &client);
+    let ext_registry = build_and_register_native_extensions(
+        &config,
+        &client,
+        Some(crate::composition::web_fetch::build_web_fetch_tool(
+            config.tools.web.fetch.max_response_kb,
+        )),
+    );
     assert!(
         ext_registry.all_tools().is_empty(),
         "no web tools enabled -> no extensions"
