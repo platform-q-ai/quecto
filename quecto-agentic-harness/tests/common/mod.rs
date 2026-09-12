@@ -2,6 +2,7 @@
 
 pub mod catalogue_conformance;
 pub mod repo_docs;
+pub mod teardown_fixture;
 
 use std::fs;
 use std::path::{Path, PathBuf};

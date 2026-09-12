@@ -2556,3 +2556,226 @@ fn find_constructor_aliases_cannot_build_graph_in_interface() {
         );
     }
 }
+
+// ─── Subagent teardown capability (#1934, epic #1929) ───────────────────────
+
+const TEARDOWN_PORTS: &[&str] = &[
+    "DirectChildRouting",
+    "SubagentLifecycleRepository",
+    "TurnCancellation",
+    "ShutdownSessionPersistence",
+    "ShutdownClock",
+    "CompositionExitReadiness",
+    "ShutdownRunSpawner",
+];
+
+/// Application teardown code may name the domain, its own capability and
+/// pure `std` only: no other application capability, no adapters, no
+/// runtime, serialization, socket, process or persistence vocabulary.
+fn teardown_application_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..] | ["crate", "application", "subagents", ..] => true,
+        ["crate", ..] => false,
+        // Two `super`s reach the capability root from `use_cases/`; a third
+        // would escape into the application root or a sibling capability.
+        ["super", "super", "super", ..] => false,
+        [
+            "tokio" | "serde" | "serde_json" | "quecto_line_io" | "reqwest" | "futures",
+            ..,
+        ] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+/// The UDS teardown edge maps wire DTOs onto the capability and presents
+/// results. It never reaches infrastructure, the legacy CLI socket code, or
+/// the async runtime, and it never names another application capability.
+fn teardown_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "subagents", ..]
+        | ["crate", "interface", "uds", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+fn assert_dependencies(dir: &str, allowed: fn(&str) -> bool) {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(dir), &mut files);
+    assert!(!files.is_empty(), "{dir} must contain production sources");
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let paths = dependency_paths(source).unwrap_or_else(|| panic!("parse {path}"));
+        let violations: Vec<_> = paths.iter().filter(|dep| !allowed(dep)).collect();
+        assert!(
+            violations.is_empty(),
+            "{path} depends outward or on forbidden vocabulary: {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn subagent_teardown_application_depends_only_inward() {
+    assert_dependencies(
+        "src/application/subagents",
+        teardown_application_dependency_allowed,
+    );
+}
+
+#[test]
+fn subagent_teardown_domain_is_pure() {
+    let source = fs::read_to_string("src/domain/subagent_teardown.rs").unwrap();
+    let paths = dependency_paths(&source).unwrap();
+    for dep in paths {
+        let parts: Vec<_> = dep.split("::").collect();
+        let allowed = match parts.as_slice() {
+            ["crate", "domain", ..] | ["super", ..] => true,
+            ["crate", ..] => false,
+            ["tokio" | "serde" | "serde_json" | "uuid" | "futures", _, ..] => false,
+            [
+                "std",
+                "fmt" | "cmp" | "collections" | "option" | "result",
+                ..,
+            ] => true,
+            ["std", ..] => false,
+            _ => true,
+        };
+        assert!(allowed, "domain teardown policy names {dep}");
+    }
+}
+
+#[test]
+fn subagent_teardown_interface_only_parses_maps_and_presents() {
+    assert_dependencies("src/interface/uds", teardown_interface_dependency_allowed);
+}
+
+/// `pub trait` names declared in a source file, in declaration order.
+fn declared_pub_traits(path: &str) -> Vec<String> {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub trait "))
+        .map(|rest| {
+            rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// `pub trait`s the shared application facade is allowed to declare. It
+/// declares none today; a teardown port (or any new port) added there
+/// fails this pin.
+const SHARED_APPLICATION_PORT_TRAITS: &[&str] = &[];
+
+#[test]
+fn subagent_teardown_ports_are_capability_local() {
+    // The capability declares exactly this port set: an unlisted addition
+    // fails here so every new port is a deliberate contract change.
+    let declared = declared_pub_traits("src/application/subagents/ports.rs");
+    let mut expected: Vec<String> = TEARDOWN_PORTS.iter().map(|p| p.to_string()).collect();
+    let mut actual = declared.clone();
+    expected.sort();
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS"
+    );
+    // Ports belong to the capability whose use case requires them; the
+    // shared application facade must not grow a port.
+    let shared = declared_pub_traits("src/application/ports.rs");
+    assert_eq!(
+        shared,
+        SHARED_APPLICATION_PORT_TRAITS
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>(),
+        "application/ports.rs gained a trait; ports are capability-local"
+    );
+    // Only this capability declares them: no duplicate port definitions.
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        if path == "src/application/subagents/ports.rs" {
+            continue;
+        }
+        for port in TEARDOWN_PORTS {
+            assert!(
+                !source.contains(&format!("trait {port}")),
+                "{path} redeclares teardown port {port}"
+            );
+        }
+    }
+}
+
+#[test]
+fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
+    for dep in [
+        "crate::infrastructure::tools::spawn_registry::shutdown_all",
+        "crate::application::ports::SessionStore",
+        "crate::application::environments::use_cases::ListEnvironmentsQuery",
+        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "tokio::sync::Notify",
+        "serde_json::Value",
+        "std::process::Command",
+        "std::io::Write",
+        "super::super::super::ports::SessionStore",
+    ] {
+        assert!(
+            !teardown_application_dependency_allowed(dep),
+            "application guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::domain::subagent_teardown::ShutdownReason",
+        "crate::application::subagents::dto::ShutdownToken",
+        "std::sync::Arc",
+        "std::future::Future",
+        "super::super::dto::ShutdownToken",
+    ] {
+        assert!(
+            teardown_application_dependency_allowed(dep),
+            "application guard must allow {dep}"
+        );
+    }
+    for dep in [
+        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
+        "crate::interface::cli::uds::DispatchCtx",
+        "crate::application::ports::SessionStore",
+        "tokio::net::UnixStream",
+        "std::os::unix::net::UnixStream",
+    ] {
+        assert!(
+            !teardown_interface_dependency_allowed(dep),
+            "interface guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::application::subagents::use_cases::PrepareHarnessShutdown",
+        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "serde::Deserialize",
+        "serde_json::from_str",
+    ] {
+        assert!(
+            teardown_interface_dependency_allowed(dep),
+            "interface guard must allow {dep}"
+        );
+    }
+}
