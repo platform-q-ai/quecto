@@ -216,7 +216,16 @@ fn build_and_register_native_extensions_registers_web_fetch() {
     config.tools.web.fetch.enabled = true;
     let client = reqwest::Client::new();
 
-    let ext_registry = build_and_register_native_extensions(&config, &client);
+    let ext_registry = build_and_register_native_extensions(
+        &config,
+        &client,
+        config.tools.web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(
+                client.clone(),
+                config.tools.web.fetch.max_response_kb,
+            )
+        }),
+    );
     let tools = ext_registry.all_tools();
     assert!(
         !tools.is_empty(),
@@ -245,11 +254,124 @@ fn build_and_register_native_extensions_registers_web_fetch() {
     ));
 }
 
+#[tokio::test]
+async fn production_registry_preserves_injected_client_default_headers() {
+    use reqwest::header::{HeaderMap, HeaderValue};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let read = socket.read(&mut request).await.unwrap();
+        request.truncate(read);
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            .await
+            .unwrap();
+        request
+    });
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-quecto-client-sentinel",
+        HeaderValue::from_static("preserved"),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .no_proxy()
+        .build()
+        .unwrap();
+    let mut config = crate::infrastructure::config::Config::default();
+    config.tools.web.fetch.enabled = true;
+    let graph = crate::composition::web_fetch::build(
+        client.clone(),
+        config.tools.web.fetch.max_response_kb,
+    );
+    let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    register_bundled_native_extension_tools(&mut registry, &extensions);
+    let result = registry
+        .execute(
+            "web_fetch",
+            &format!(r#"{{"url":"http://localtest.me:{port}/","raw":true}}"#),
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert_eq!(result.content, "ok");
+    let wire = String::from_utf8_lossy(&peer.await.unwrap()).to_ascii_lowercase();
+    assert!(wire.contains("x-quecto-client-sentinel: preserved"));
+}
+
+#[tokio::test]
+async fn production_registry_preserves_injected_private_ca_tls_trust() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::rustls::{ServerConfig, pki_types::PrivateKeyDer};
+
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+    let certified = rcgen::generate_simple_self_signed(vec!["localtest.me".into()]).unwrap();
+    let cert_der = certified.cert.der().clone();
+    let key = PrivateKeyDer::try_from(certified.key_pair.serialize_der()).unwrap();
+    let tls = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der.clone()], key)
+            .unwrap(),
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tls.accept(socket).await.unwrap();
+        let mut request = [0; 4096];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecure")
+            .await
+            .unwrap();
+    });
+    let certificate = reqwest::Certificate::from_der(cert_der.as_ref()).unwrap();
+    let client = reqwest::Client::builder()
+        .add_root_certificate(certificate)
+        .no_proxy()
+        .build()
+        .unwrap();
+    let mut config = crate::infrastructure::config::Config::default();
+    config.tools.web.fetch.enabled = true;
+    let graph = crate::composition::web_fetch::build(
+        client.clone(),
+        config.tools.web.fetch.max_response_kb,
+    );
+    let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    register_bundled_native_extension_tools(&mut registry, &extensions);
+    let result = registry
+        .execute(
+            "web_fetch",
+            &format!(r#"{{"url":"https://localtest.me:{port}/","raw":true}}"#),
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert_eq!(result.content, "secure");
+    peer.await.unwrap();
+}
+
 #[test]
 fn build_and_register_native_extensions_empty_when_no_web_tools() {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
-    let ext_registry = build_and_register_native_extensions(&config, &client);
+    let ext_registry = build_and_register_native_extensions(
+        &config,
+        &client,
+        config.tools.web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(
+                client.clone(),
+                config.tools.web.fetch.max_response_kb,
+            )
+        }),
+    );
     assert!(
         ext_registry.all_tools().is_empty(),
         "no web tools enabled -> no extensions"
@@ -464,6 +586,12 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 base_dir: tmp.path(),
                 config: &config,
                 http_client: &client,
+                web_fetch_tool: config.tools.web.fetch.enabled.then(|| {
+                    crate::composition::web_fetch::build(
+                        client.clone(),
+                        config.tools.web.fetch.max_response_kb,
+                    )
+                }),
                 workspace: tmp.path().to_path_buf(),
                 sandbox,
                 exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),

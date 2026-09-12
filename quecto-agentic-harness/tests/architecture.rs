@@ -330,6 +330,16 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 [
                     "crate",
                     "application",
+                    "agent_turn",
+                    "use_cases",
+                    "web_fetch",
+                    "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
+                    | "HttpStatus",
+                    ..,
+                ] => true,
+                [
+                    "crate",
+                    "application",
                     "environment_control",
                     "EnvironmentControlUseCase" | "EnvironmentKillPort",
                     ..,
@@ -2457,6 +2467,14 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     file,
                     "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
                 ),
+                ["crate", "composition", "web_fetch", "build"] => matches!(
+                    file,
+                    "src/interface/cli/agent/agent_tool_registry.rs"
+                        | "src/interface/find_runtime_tests.rs"
+                        | "src/interface/shared_cov_tests.rs"
+                        | "src/interface/tool_runtime_catalogue_tests.rs"
+                        | "src/interface/tool_runtime_profile_tests.rs"
+                ),
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
             }
@@ -2778,4 +2796,211 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
             "interface guard must allow {dep}"
         );
     }
+}
+
+#[test]
+fn web_fetch_has_target_layer_ownership() {
+    for path in [
+        "src/application/agent_turn/use_cases/web_fetch.rs",
+        "src/interface/tools/web_fetch.rs",
+        "src/infrastructure/http/web_fetch.rs",
+        "src/composition/web_fetch.rs",
+    ] {
+        assert!(
+            Path::new(path).is_file(),
+            "missing target web_fetch owner: {path}"
+        );
+    }
+}
+
+fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
+    use syn::visit::Visit;
+
+    #[derive(Default)]
+    struct DependencyVisitor {
+        roots: BTreeSet<String>,
+    }
+
+    impl<'ast> Visit<'ast> for DependencyVisitor {
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            let is_test = item.attrs.iter().any(|attr| {
+                attr.path().is_ident("cfg")
+                    && attr
+                        .parse_args::<syn::Path>()
+                        .is_ok_and(|path| path.is_ident("test"))
+            });
+            if !is_test {
+                syn::visit::visit_item_mod(self, item);
+            }
+        }
+
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            if path.leading_colon.is_none()
+                && path
+                    .segments
+                    .first()
+                    .is_some_and(|segment| segment.ident == "crate")
+                && path.segments.len() > 1
+            {
+                let root = path.segments[1].ident.to_string();
+                if root == "composition" {
+                    let child = path
+                        .segments
+                        .get(2)
+                        .map(|segment| segment.ident.to_string());
+                    self.roots.insert(match child.as_deref() {
+                        Some("find") => "composition::find".to_owned(),
+                        Some(other) => format!("composition::{other}"),
+                        None => "composition".to_owned(),
+                    });
+                } else {
+                    self.roots.insert(root);
+                }
+            }
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            fn record_crate_root(
+                tree: &syn::UseTree,
+                beneath_crate: bool,
+                roots: &mut BTreeSet<String>,
+            ) {
+                match tree {
+                    syn::UseTree::Group(group) => {
+                        for item in &group.items {
+                            record_crate_root(item, beneath_crate, roots);
+                        }
+                    }
+                    syn::UseTree::Path(path) if beneath_crate => {
+                        roots.insert(path.ident.to_string());
+                    }
+                    syn::UseTree::Name(name) if beneath_crate && name.ident == "self" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    syn::UseTree::Name(name) if beneath_crate => {
+                        roots.insert(name.ident.to_string());
+                    }
+                    syn::UseTree::Rename(rename) if beneath_crate && rename.ident == "self" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    syn::UseTree::Rename(rename) if beneath_crate => {
+                        roots.insert(rename.ident.to_string());
+                    }
+                    syn::UseTree::Glob(_) if beneath_crate => {
+                        roots.insert("<crate glob>".to_owned());
+                    }
+                    syn::UseTree::Path(path) if path.ident == "crate" => {
+                        record_crate_root(path.tree.as_ref(), true, roots);
+                    }
+                    syn::UseTree::Rename(rename) if rename.ident == "crate" => {
+                        roots.insert("<crate alias>".to_owned());
+                    }
+                    _ => {}
+                }
+            }
+            record_crate_root(&item.tree, false, &mut self.roots);
+            syn::visit::visit_item_use(self, item);
+        }
+    }
+
+    let syntax =
+        syn::parse_file(source).unwrap_or_else(|error| panic!("valid Rust: {error}: {source}"));
+    let mut visitor = DependencyVisitor::default();
+    visitor.visit_file(&syntax);
+    visitor.roots
+}
+
+fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
+    const ALLOWED: &[&str] = &["application", "domain", "infrastructure", "interface"];
+    for root in interface_dependency_roots(source) {
+        const LEGACY_FIND_EXCEPTIONS: &[&str] =
+            &["src/interface/shared.rs", "src/interface/tool_runtime.rs"];
+        let explicitly_allowed = ALLOWED.contains(&root.as_str())
+            || (LEGACY_FIND_EXCEPTIONS.contains(&path) && root == "composition::find");
+        assert!(
+            explicitly_allowed,
+            "production interface dependency is not allowlisted: {path}: crate::{root}"
+        );
+    }
+}
+
+#[test]
+fn interface_dependency_allowlist_rejects_aliased_composition_reference() {
+    for bypass in [
+        "use crate::composition as outer; fn build() { outer::web_fetch::build(); }",
+        "use crate::{composition as outer}; fn build() { outer::web_fetch::build(); }",
+        "use crate::{domain, {composition as outer}}; fn build() { outer::web_fetch::build(); }",
+        "use crate::{composition::{self as outer}}; fn build() { outer::web_fetch::build(); }",
+    ] {
+        let rejected = std::panic::catch_unwind(|| {
+            assert_interface_dependencies_allowlisted("alias_bypass.rs", bypass)
+        });
+        assert!(
+            rejected.is_err(),
+            "composition alias must be rejected: {bypass}"
+        );
+    }
+}
+
+#[test]
+fn interface_dependency_allowlist_accepts_grouped_permitted_references() {
+    for permitted in [
+        "use crate::{application as app, domain};",
+        "use crate::{interface::{self, tools}, infrastructure as infra};",
+    ] {
+        assert_interface_dependencies_allowlisted("permitted.rs", permitted);
+    }
+}
+
+#[test]
+fn web_fetch_is_constructed_only_by_outer_composition() {
+    let native = fs::read_to_string("src/infrastructure/extensions/native.rs").expect("native");
+    assert!(
+        !native.contains("WebFetchTool::with_client"),
+        "native still constructs web_fetch"
+    );
+    let composition = fs::read_to_string("src/composition/web_fetch.rs").expect("composition");
+    assert!(composition.contains("ReqwestFetchWebContent"));
+    assert!(composition.contains("WebFetchTool"));
+
+    let mut interface_files = Vec::new();
+    collect_rs_files(Path::new("src/interface"), &mut interface_files);
+    for file in interface_files {
+        let (path, source) = file.split_once(":\n").expect("collected source");
+        assert_interface_dependencies_allowlisted(path, source);
+    }
+}
+
+#[test]
+fn web_fetch_application_external_dependencies_are_allowlisted() {
+    let source = fs::read_to_string("src/application/agent_turn/use_cases/web_fetch.rs")
+        .expect("application web_fetch");
+    let syntax = syn::parse_file(&source).expect("valid Rust");
+    let allowed_roots = ["std", "url"];
+    for item in syntax.items {
+        if let syn::Item::Use(item_use) = item {
+            let root = match item_use.tree {
+                syn::UseTree::Path(path) => path.ident.to_string(),
+                syn::UseTree::Name(name) => name.ident.to_string(),
+                _ => continue,
+            };
+            assert!(
+                allowed_roots.contains(&root.as_str()),
+                "application web_fetch imports non-allowlisted dependency {root}"
+            );
+        }
+    }
+    assert!(
+        source.contains("url::Url"),
+        "pure URL dependency must be explicit"
+    );
+}
+
+#[test]
+fn legacy_mixed_web_fetch_path_is_retired() {
+    assert!(
+        !Path::new("src/infrastructure/tools/web_fetch.rs").exists(),
+        "legacy mixed web_fetch implementation survives"
+    );
 }

@@ -146,7 +146,13 @@ fn test_native_extension_with_tools_system_prompt() {
 fn test_build_native_extensions_brave_enabled() {
     let web = web_config(true, "test-key", false, false);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "web");
     assert!(has_tool(&exts, "web_search"));
@@ -156,7 +162,13 @@ fn test_build_native_extensions_brave_enabled() {
 fn test_build_native_extensions_ddg_enabled() {
     let web = web_config(false, "", true, false);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "web");
     assert!(has_tool(&exts, "web_search"));
@@ -166,7 +178,13 @@ fn test_build_native_extensions_ddg_enabled() {
 fn test_build_native_extensions_all_disabled() {
     let web = web_config(false, "", false, false);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert!(exts.is_empty());
 }
 
@@ -174,7 +192,13 @@ fn test_build_native_extensions_all_disabled() {
 fn test_build_native_extensions_brave_enabled_no_key_falls_back() {
     let web = web_config(true, "", false, false);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert_eq!(exts.len(), 1);
 }
 
@@ -182,7 +206,13 @@ fn test_build_native_extensions_brave_enabled_no_key_falls_back() {
 fn test_build_native_extensions_fetch_enabled() {
     let web = web_config(false, "", false, true);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "web");
     assert!(has_tool(&exts, "web_fetch"));
@@ -193,7 +223,13 @@ fn test_build_native_extensions_fetch_enabled() {
 fn test_build_native_extensions_search_and_fetch() {
     let web = web_config(true, "key", false, true);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "web");
     assert!(has_tool(&exts, "web_search"));
@@ -204,7 +240,13 @@ fn test_build_native_extensions_search_and_fetch() {
 fn test_build_native_extensions_fetch_disabled() {
     let web = web_config(true, "key", false, false);
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
     assert!(has_tool(&exts, "web_search"));
     assert!(!has_tool(&exts, "web_fetch"));
 }

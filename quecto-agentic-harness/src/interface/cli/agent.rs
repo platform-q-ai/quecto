@@ -1,5 +1,3 @@
-use std::{collections::HashMap, sync::Arc};
-
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
@@ -8,14 +6,13 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-
+use std::{collections::HashMap, sync::Arc};
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
 }
-
 mod agent_deadline;
 mod flag_parse;
 mod startup_prompt;
@@ -27,7 +24,6 @@ use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
     parse_session_name,
 };
-
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut no_session = false;
@@ -50,7 +46,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
-
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
@@ -161,7 +156,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
-
     if (workflow || no_workflow_requested || workflow_guards || workflow_spec_path.is_some())
         && !uds_mode
     {
@@ -170,12 +164,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         );
         return None;
     }
-
     if workflow_spec_path.is_some() && no_workflow_requested {
         stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
         return None;
     }
-
     let mut flags = AgentFlags {
         session_name,
         no_session,
@@ -200,14 +192,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context,
     };
     flags = flag_parse::validate_agent_flags(flags, stderr)?;
-
     if let Some(path) = inherited_tool_policy_path {
         flag_private::load_inherited_tool_policy_for_valid_child(&path, stderr, &mut flags)?;
     }
-
     Some(flags)
 }
 
@@ -226,6 +217,7 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
     flags.cwd_override = ctx.cwd.clone();
+    flags.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
     if !swarm_runtime::admit(&mut flags, stderr) {
         return 1;
     }
@@ -337,6 +329,16 @@ pub(crate) fn build_agent_from_config(
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
+    let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
+        assert!(
+            flags.web_fetch_tool_factory.is_some(),
+            "web-fetch factory missing"
+        );
+        flags.web_fetch_tool_factory.expect("checked")(
+            http_client.clone(),
+            config.tools.web.fetch.max_response_kb,
+        )
+    });
     let ToolRegistryBuild {
         registry,
         spill_store,
@@ -353,6 +355,7 @@ pub(crate) fn build_agent_from_config(
         config_path,
         config: &config,
         http_client: &http_client,
+        web_fetch_tool,
         flags,
         stderr,
         broadcast_tx,

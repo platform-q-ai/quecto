@@ -110,6 +110,8 @@ mod find_paths;
 mod composition_exit_readiness;
 #[path = "contracts/direct_child_routing.rs"]
 mod direct_child_routing;
+#[path = "contracts/fetch_web_content.rs"]
+mod fetch_web_content;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
 #[path = "contracts/shutdown_run_spawner.rs"]

@@ -71,7 +71,6 @@ pub mod swarm_test_support;
 #[cfg(test)]
 mod swarm_tests;
 pub mod truncate;
-pub mod web_fetch;
 pub mod web_search;
 pub mod workflow_tool;
 

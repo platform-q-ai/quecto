@@ -43,6 +43,8 @@ pub(crate) struct AgentFlags {
     pub(crate) session_key_override: Option<String>,
     /// Test-only effective cwd override supplied by CliContext.
     pub(crate) cwd_override: Option<std::path::PathBuf>,
+    /// Opaque constructor injected by the executable bootstrap.
+    pub(crate) web_fetch_tool_factory: Option<super::super::WebFetchToolFactory>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,

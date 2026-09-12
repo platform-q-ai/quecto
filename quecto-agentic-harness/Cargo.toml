@@ -44,6 +44,7 @@ similar = "2"
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
+url = "2"
 urlencoding = "2"
 # Secret redaction in surfaced subagent error causes (#752). Already present
 # transitively via tracing-subscriber's env-filter.
@@ -73,6 +74,8 @@ wiremock = "0.6"
 regex = "1"
 filetime = "0.2"
 serial_test = "3"
+rcgen = "0.13"
+tokio-rustls = "0.26"
 # `test-harness` exposes quecto-tui's headless render harness so the `bdd`
 # target can drive the real TUI render/key path without a TTY (#805).
 quecto-tui = { version = "0.77.3", path = "../quecto-tui", features = ["test-harness"] }

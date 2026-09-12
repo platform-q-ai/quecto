@@ -243,6 +243,9 @@ pub struct CliOutput {
 }
 
 /// Runtime context for CLI commands, allowing override of paths for testing.
+pub type WebFetchToolFactory =
+    fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::domain::tool::Tool>;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -259,6 +262,8 @@ pub struct CliContext {
     pub oauth_base_url: Option<String>,
     /// Override process current working directory for hermetic tests.
     pub cwd: Option<PathBuf>,
+    /// Opaque outer-layer constructor for the optional web-fetch graph.
+    pub web_fetch_tool_factory: Option<WebFetchToolFactory>,
 }
 
 impl CliContext {
@@ -346,9 +351,9 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
     stripped
 }
 
-/// Run the CLI with the given args, printing to real stdout/stderr.
-/// Returns the exit code.
-pub fn run(args: Vec<String>) -> i32 {
+/// Run the CLI with the given args and required outer-owned web-fetch factory,
+/// printing to real stdout/stderr. Returns the exit code.
+pub fn run(args: Vec<String>, web_fetch_tool_factory: WebFetchToolFactory) -> i32 {
     let config_path = match extract_config_flag(&args) {
         Ok(path) => path,
         Err(error) => {
@@ -360,6 +365,7 @@ pub fn run(args: Vec<String>) -> i32 {
     let ctx = CliContext {
         config_path,
         stdin_is_tty: Some(stdin_is_tty),
+        web_fetch_tool_factory: Some(web_fetch_tool_factory),
         ..Default::default()
     };
 

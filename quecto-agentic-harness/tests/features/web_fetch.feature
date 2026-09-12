@@ -1,4 +1,4 @@
-@done
+@done @web-fetch
 Feature: Web Fetch Tool
   As an AI agent
   I want to fetch web pages and extract readable text

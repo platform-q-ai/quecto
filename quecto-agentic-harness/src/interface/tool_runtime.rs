@@ -127,6 +127,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub base_dir: &'a std::path::Path,
     pub config: &'a crate::infrastructure::config::Config,
     pub http_client: &'a reqwest::Client,
+    /// Completed web-fetch graph, assembled by the outer composition boundary.
+    pub web_fetch_tool: Option<std::sync::Arc<dyn crate::domain::tool::Tool>>,
     pub workspace: std::path::PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -187,6 +189,7 @@ pub(crate) fn build_tool_runtime(
         base_dir,
         config,
         http_client,
+        web_fetch_tool,
         workspace,
         sandbox,
         exec_options,
@@ -316,8 +319,11 @@ pub(crate) fn build_tool_runtime(
         });
     }
 
-    let ext_registry =
-        crate::interface::shared::build_and_register_native_extensions(config, http_client);
+    let ext_registry = crate::interface::shared::build_and_register_native_extensions(
+        config,
+        http_client,
+        web_fetch_tool,
+    );
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_bundled_native_extension_tools(&mut registry, &ext_registry);
     if !policy_state.web_default_enabled {

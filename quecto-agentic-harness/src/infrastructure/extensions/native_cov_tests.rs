@@ -60,7 +60,13 @@ async fn build_native_extensions_combines_search_and_fetch_in_one_web_extension(
     assert_eq!(tiny.definition().name.as_ref(), "tiny");
     assert_eq!(tiny.execute("{}").await.unwrap().content, "ok");
 
-    let exts = build_native_extensions(&web, &client);
+    let exts = build_native_extensions(
+        &web,
+        &client,
+        web.fetch.enabled.then(|| {
+            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+        }),
+    );
 
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "web");

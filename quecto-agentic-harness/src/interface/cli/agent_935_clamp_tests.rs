@@ -46,6 +46,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
+        web_fetch_tool_factory: None,
         admission_context: None,
     };
     let mut stderr = String::new();

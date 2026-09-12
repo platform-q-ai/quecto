@@ -8,7 +8,7 @@ use crate::infrastructure::tools::docs::DocsTool;
 use crate::infrastructure::tools::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use crate::infrastructure::tools::grep::GrepTool;
 use crate::infrastructure::tools::spawn::SpawnTool;
-use crate::infrastructure::tools::web_fetch::WebFetchTool;
+
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::infrastructure::tools::workflow_tool::WorkflowTool;
 use std::path::PathBuf;
@@ -63,7 +63,6 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
         Box::new(GrepTool::new(workspace, sandbox)),
         Box::new(SpawnTool::new(vec!["child".to_string()])),
         Box::new(AgentCmdTool::new(AgentCmdTool::new_registry())),
-        Box::new(WebFetchTool::with_client(reqwest::Client::new(), 1)),
     ];
 
     let names: Vec<String> = tools
@@ -89,7 +88,6 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
             "grep",
             "spawn",
             "agent_cmd",
-            "web_fetch",
         ]
     );
 }

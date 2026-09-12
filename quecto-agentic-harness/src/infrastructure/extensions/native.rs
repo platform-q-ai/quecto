@@ -349,6 +349,7 @@ pub fn build_official_tool_registry_with_context(
 pub fn build_native_extensions(
     web_config: &crate::infrastructure::config::WebToolConfig,
     http_client: &reqwest::Client,
+    web_fetch_tool: Option<Arc<dyn Tool>>,
 ) -> Vec<Arc<dyn Extension>> {
     let mut web_tools: Vec<Arc<dyn Tool>> = Vec::new();
 
@@ -371,12 +372,7 @@ pub fn build_native_extensions(
 
     // Web fetch
     if web_config.fetch.enabled {
-        web_tools.push(Arc::new(
-            crate::infrastructure::tools::web_fetch::WebFetchTool::with_client(
-                http_client.clone(),
-                web_config.fetch.max_response_kb,
-            ),
-        ));
+        web_tools.push(web_fetch_tool.expect("enabled web_fetch requires composition dependency"));
     }
 
     let mut extensions: Vec<Arc<dyn Extension>> = Vec::new();
