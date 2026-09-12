@@ -1,5 +1,4 @@
 use std::{collections::HashMap, sync::Arc};
-
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
@@ -8,14 +7,12 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
 }
-
 mod agent_deadline;
 mod flag_parse;
 mod startup_prompt;
@@ -27,7 +24,6 @@ use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
     parse_session_name,
 };
-
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut no_session = false;
@@ -50,7 +46,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
-
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
@@ -340,10 +335,9 @@ pub(crate) fn build_agent_from_config(
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
     let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
-        let factory = flags
-            .web_fetch_tool_factory
-            .expect("production bootstrap must inject web-fetch construction");
-        factory(http_client.clone(), config.tools.web.fetch.max_response_kb)
+        assert!(flags.web_fetch_tool_factory.is_some(), "web-fetch factory missing");
+        flags.web_fetch_tool_factory.expect("checked")(
+            http_client.clone(), config.tools.web.fetch.max_response_kb)
     });
     let ToolRegistryBuild {
         registry,
