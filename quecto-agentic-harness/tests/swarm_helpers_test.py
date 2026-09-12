@@ -360,8 +360,14 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(self.worker.summary()['goal'], 'new goal')
         self.assertEqual(self.worker.events(limit=100)['events'][-1]['actor'], 'coordinator')
 
+    def test_member_limit_accepts_upper_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = Workbench(str(pathlib.Path(directory) / 'coordination.sqlite'), directory, 'coordinator')
+            client.create('x', [], [{'id':'t','kind':'command','description':'pass'}], 25, time.time() + 1)
+            self.assertEqual(client.summary()['member_limit'], 25)
+
     def test_invalid_limits_and_deadlines_are_rejected(self):
-        for limit in (0, 11, True):
+        for limit in (0, 26, True):
             with self.subTest(limit=limit), self.assertRaises(SwarmError):
                 self.client('coordinator').create('x', [], [{'id':'t','kind':'command','description':'pass'}], limit, time.time() + 1)
         with self.assertRaises(SwarmError):

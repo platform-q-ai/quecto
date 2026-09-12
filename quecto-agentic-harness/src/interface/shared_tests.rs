@@ -19,8 +19,6 @@ fn workflow_test_config() -> crate::domain::workflow::WorkflowConfig {
     }
 }
 
-// --- expires_at_with_margin tests (issue #256) ---
-
 #[test]
 fn test_expires_at_with_margin_subtracts_300_seconds() {
     let now = crate::infrastructure::time::unix_timestamp_secs();
@@ -73,23 +71,6 @@ fn test_merge_prompts_user_only() {
 fn test_merge_prompts_empty_user() {
     let result = merge_prompts(&Some(String::new()));
     assert!(result.is_empty());
-}
-
-#[test]
-fn test_parent_prompt_contains_only_role_and_routing_guidance() {
-    let result = build_system_prompt(&None, false);
-    assert!(!result.contains("Current date and time:"));
-    assert!(result.contains(agent_role_preamble()));
-    assert!(result.contains("Parent Agent"));
-    assert!(!result.contains("`docs` tool"));
-    assert!(!result.contains("operating manual"));
-    assert!(!result.contains("quick-start"));
-    assert!(!result.contains("definitive source"));
-    assert!(!result.contains("name `quecto`"));
-    assert!(!result.contains("quecto-tui"));
-    assert!(!result.contains("quecto-api"));
-    assert!(!result.contains("quecto-mcp"));
-    assert!(result.contains("## Parent Software Development Orchestration Playbook:"));
 }
 
 #[test]
@@ -462,8 +443,6 @@ async fn test_resolve_api_key_with_refresh_async_updates_refresh_token_when_prov
         "refresh token should be updated when server provides a new one"
     );
 }
-
-// --- append_extension_prompt tests ---
 
 #[test]
 fn test_append_extension_prompt_adds_section() {

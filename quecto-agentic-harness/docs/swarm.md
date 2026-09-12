@@ -65,7 +65,7 @@ membership in a setup board; creation cannot choose a smaller limit than the
 already live/reserved population. Create the run before launching the pool.
 
 Call `swarm` with `op=create`, a nonempty `goal`, a list of `constraints`,
-`criteria`, `member_limit` (1 through 10), and `deadline` (Unix seconds, in the
+`criteria`, `member_limit` (1 through 25), and `deadline` (Unix seconds, in the
 future and no more than seven days away). Each criterion has an `id`, a
 `description`, and `kind` of `command` or `review`. For example:
 

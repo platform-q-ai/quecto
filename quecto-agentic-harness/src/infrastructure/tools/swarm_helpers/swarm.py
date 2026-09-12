@@ -40,8 +40,8 @@ class Workbench(Tasks):
         self._criteria(criteria)
         if not isinstance(constraints, list) or any(not isinstance(c, str) for c in constraints):
             raise SwarmError('constraints must be a list of strings')
-        if type(member_limit) is not int or not 1 <= member_limit <= 10:
-            raise SwarmError('member limit must be 1 through 10 including coordinator')
+        if type(member_limit) is not int or not 1 <= member_limit <= 25:
+            raise SwarmError('member limit must be 1 through 25 including coordinator')
         if not isinstance(deadline, (int, float)) or not time.time() < deadline <= time.time() + 604800:
             raise SwarmError('deadline must be in the next seven days')
         with self.store.transaction(create=True) as db:

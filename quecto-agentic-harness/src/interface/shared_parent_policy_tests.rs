@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn parent_prompt_contains_only_role_and_routing_guidance() {
+    let result = build_system_prompt(&None, false);
+    assert!(!result.contains("Current date and time:"));
+    assert!(result.contains(agent_role_preamble()));
+    assert!(result.contains("Parent Agent"));
+    for excluded in [
+        "`docs` tool",
+        "operating manual",
+        "quick-start",
+        "definitive source",
+        "name `quecto`",
+        "quecto-tui",
+        "quecto-api",
+        "quecto-mcp",
+    ] {
+        assert!(!result.contains(excluded));
+    }
+    for expected in [
+        "## Parent Software Development Orchestration Playbook:",
+        "Always configure `member_limit` to 25",
+        "task-appropriate fixed pool up front",
+        "rather than filling capacity",
+        "### Swarm completion and cleanup",
+    ] {
+        assert!(result.contains(expected));
+    }
+}
+
 /// Given either prompt builder, the approved playbook belongs only to the parent.
 #[test]
 fn parent_playbook_contract_is_excluded_from_children() {
