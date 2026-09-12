@@ -63,7 +63,7 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
         Box::new(GrepTool::new(workspace, sandbox)),
         Box::new(SpawnTool::new(vec!["child".to_string()])),
         Box::new(AgentCmdTool::new(AgentCmdTool::new_registry())),
-        Box::new(WebFetchTool::with_client(reqwest::Client::new(), 1)),
+        Box::new(WebFetchTool::new(1)),
     ];
 
     let names: Vec<String> = tools

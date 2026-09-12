@@ -73,6 +73,9 @@ wiremock = "0.6"
 regex = "1"
 filetime = "0.2"
 serial_test = "3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 # `test-harness` exposes quecto-tui's headless render harness so the `bdd`
 # target can drive the real TUI render/key path without a TTY (#805).
 quecto-tui = { version = "0.77.3", path = "../quecto-tui", features = ["test-harness"] }

@@ -372,8 +372,7 @@ pub fn build_native_extensions(
     // Web fetch
     if web_config.fetch.enabled {
         web_tools.push(Arc::new(
-            crate::infrastructure::tools::web_fetch::WebFetchTool::with_client(
-                http_client.clone(),
+            crate::infrastructure::tools::web_fetch::WebFetchTool::new(
                 web_config.fetch.max_response_kb,
             ),
         ));

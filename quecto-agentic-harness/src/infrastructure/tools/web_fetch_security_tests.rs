@@ -67,6 +67,85 @@ fn fixed_tool(
 }
 
 #[tokio::test]
+async fn configured_client_recipe_preserves_custom_root_with_authorized_tls_pin() {
+    use rustls::ServerConfig;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::TlsAcceptor;
+
+    const CA_CERTIFICATE: &[u8] = include_bytes!("testdata/public_test_ca.der");
+    const SERVER_CERTIFICATE: &[u8] = include_bytes!("testdata/public_test_leaf.der");
+    const PRIVATE_KEY: &[u8] = include_bytes!("testdata/public_test_key.der");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let tls =
+        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(SERVER_CERTIFICATE.to_vec())],
+                PrivateKeyDer::try_from(PRIVATE_KEY.to_vec()).unwrap(),
+            )
+            .unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = TlsAcceptor::from(Arc::new(tls))
+            .accept(stream)
+            .await
+            .unwrap();
+        let mut request = [0_u8; 1024];
+        let count = stream.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET / HTTP/1.1")
+        );
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\ntrusted custom",
+            )
+            .await
+            .unwrap();
+    });
+
+    let certificate = reqwest::Certificate::from_der(CA_CERTIFICATE).unwrap();
+    let factory: ClientBuilderFactory = Arc::new(move || {
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(certificate.clone())
+    });
+    let resolver = Arc::new(FixedResolver {
+        candidates: vec![address],
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+    let policy =
+        WebDestinationPolicy::with_test_destination("public.test", address.port(), address.ip());
+    let tool = WebFetchTool::with_test_dependencies_and_client_factory(
+        32,
+        REQUEST_TIMEOUT,
+        policy,
+        resolver,
+        factory,
+    );
+
+    let request = format!(
+        r#"{{"url":"https://public.test:{}/","raw":true}}"#,
+        address.port()
+    );
+    let result = tool
+        .execute(&request)
+        .await
+        .unwrap_or_else(|error| panic!("configured TLS request failed: {error:?}"));
+
+    assert_eq!(result.content, "trusted custom");
+    assert!(!result.is_error);
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn controlled_resolver_pins_the_authorized_candidate_without_re_resolving() {
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};

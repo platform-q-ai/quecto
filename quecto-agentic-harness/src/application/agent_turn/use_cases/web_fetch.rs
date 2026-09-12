@@ -253,29 +253,166 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    // Affirmative globally-routable unicast intervals. In particular, the
-    // 6to4 block 2002::/16 is absent: its embedded IPv4 destination cannot be
-    // proved public from IPv6 routing facts alone, so it fails closed.
+    // Affirmative IANA-allocated, globally-reachable unicast intervals. The
+    // global-unicast envelope (2000::/3) is not itself an allocation: every
+    // unlisted hole is reserved and therefore denied by default. Special-use
+    // prefixes are admitted only where IANA explicitly marks them globally
+    // reachable. 6to4 (2002::/16) remains absent because its reachability is
+    // conditional on an embedded IPv4 destination.
     const GLOBALLY_REACHABLE: &[(u128, u128)] = &[
+        // Globally-reachable special-purpose assignments in 2001::/23.
         (
-            0x2000_0000_0000_0000_0000_0000_0000_0000,
-            0x2000_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x20010001000000000000000000000001,
+            0x20010001000000000000000000000003,
         ),
         (
-            0x2001_0200_0000_0000_0000_0000_0000_0000,
-            0x2001_0db7_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x20010003000000000000000000000000,
+            0x20010003ffffffffffffffffffffffff,
         ),
         (
-            0x2001_0db9_0000_0000_0000_0000_0000_0000,
-            0x2001_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x20010004011200000000000000000000,
+            0x200100040112ffffffffffffffffffff,
         ),
         (
-            0x2003_0000_0000_0000_0000_0000_0000_0000,
-            0x3ffe_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x20010020000000000000000000000000,
+            0x2001002fffffffffffffffffffffffff,
         ),
         (
-            0x3fff_1000_0000_0000_0000_0000_0000_0000,
-            0x3fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x20010030000000000000000000000000,
+            0x2001003fffffffffffffffffffffffff,
+        ),
+        // IANA regional allocations. Gaps between these entries remain denied.
+        (
+            0x20010200000000000000000000000000,
+            0x200103ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20010400000000000000000000000000,
+            0x200105ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20010600000000000000000000000000,
+            0x200107ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20010800000000000000000000000000,
+            0x20010bffffffffffffffffffffffffff,
+        ),
+        (
+            0x20010c00000000000000000000000000,
+            0x20010db7ffffffffffffffffffffffff,
+        ),
+        (
+            0x20010db9000000000000000000000000,
+            0x20010dffffffffffffffffffffffffff,
+        ),
+        (
+            0x20010e00000000000000000000000000,
+            0x20010fffffffffffffffffffffffffff,
+        ),
+        (
+            0x20011200000000000000000000000000,
+            0x200113ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20011400000000000000000000000000,
+            0x200117ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20011800000000000000000000000000,
+            0x200119ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20011a00000000000000000000000000,
+            0x20011bffffffffffffffffffffffffff,
+        ),
+        (
+            0x20011c00000000000000000000000000,
+            0x20011fffffffffffffffffffffffffff,
+        ),
+        (
+            0x20012000000000000000000000000000,
+            0x20013fffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014000000000000000000000000000,
+            0x200141ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014200000000000000000000000000,
+            0x200143ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014400000000000000000000000000,
+            0x200145ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014600000000000000000000000000,
+            0x200147ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014800000000000000000000000000,
+            0x200149ffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014a00000000000000000000000000,
+            0x20014bffffffffffffffffffffffffff,
+        ),
+        (
+            0x20014c00000000000000000000000000,
+            0x20014dffffffffffffffffffffffffff,
+        ),
+        (
+            0x20015000000000000000000000000000,
+            0x20015fffffffffffffffffffffffffff,
+        ),
+        (
+            0x20018000000000000000000000000000,
+            0x20019fffffffffffffffffffffffffff,
+        ),
+        (
+            0x2001a000000000000000000000000000,
+            0x2001afffffffffffffffffffffffffff,
+        ),
+        (
+            0x2001b000000000000000000000000000,
+            0x2001bfffffffffffffffffffffffffff,
+        ),
+        (
+            0x20030000000000000000000000000000,
+            0x20033fffffffffffffffffffffffffff,
+        ),
+        (
+            0x24000000000000000000000000000000,
+            0x241fffffffffffffffffffffffffffff,
+        ),
+        (
+            0x26000000000000000000000000000000,
+            0x260fffffffffffffffffffffffffffff,
+        ),
+        (
+            0x26100000000000000000000000000000,
+            0x2611ffffffffffffffffffffffffffff,
+        ),
+        (
+            0x26200000000000000000000000000000,
+            0x2621ffffffffffffffffffffffffffff,
+        ),
+        (
+            0x26300000000000000000000000000000,
+            0x263fffffffffffffffffffffffffffff,
+        ),
+        (
+            0x28000000000000000000000000000000,
+            0x280fffffffffffffffffffffffffffff,
+        ),
+        (
+            0x2a000000000000000000000000000000,
+            0x2a1fffffffffffffffffffffffffffff,
+        ),
+        (
+            0x2c000000000000000000000000000000,
+            0x2c0fffffffffffffffffffffffffffff,
         ),
     ];
 

@@ -105,11 +105,52 @@ fn every_non_public_ipv6_class_is_denied() {
         "2002:0a00:1::1",     // 6to4 encoding RFC-1918
         "2002:a9fe:a9fe::1",  // 6to4 encoding link-local metadata
         "2002:0808:0808::1",  // 6to4 fails closed even with public embedded IPv4
+        "2000::1",            // unlisted 2000::/16
+        "3000::1",            // IANA-reserved 3000::/5
+        "3ffe::1",            // returned 6bone allocation
+        "3fff::1",            // documentation
+        "3fff:1000::1",       // unallocated space above 3fff::/20
     ] {
         assert_eq!(
             authorization("https", host),
             WebDestinationAuthorization::Denied,
             "expected {host} to be denied"
+        );
+    }
+}
+
+#[test]
+fn ipv6_allocation_boundaries_are_affirmative_and_fail_closed_between_allocations() {
+    let cases = [
+        ("2001:1::1", true),
+        ("2001:1::3", true),
+        ("2001:1::4", false),
+        ("2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff", false),
+        ("2001:200::", true),
+        ("2001:db7:ffff:ffff:ffff:ffff:ffff:ffff", true),
+        ("2001:db8::", false),
+        ("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", false),
+        ("2001:db9::", true),
+        ("2001:bfff:ffff:ffff:ffff:ffff:ffff:ffff", true),
+        ("2001:c000::", false),
+        ("2002::", false),
+        ("2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false),
+        ("2003::", true),
+        ("2003:3fff:ffff:ffff:ffff:ffff:ffff:ffff", true),
+        ("2003:4000::", false),
+        ("23ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false),
+        ("2400::", true),
+        ("241f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true),
+        ("2420::", false),
+        ("2c0f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true),
+        ("2c10::", false),
+    ];
+
+    for (host, expected_allowed) in cases {
+        assert_eq!(
+            authorization("https", host) == WebDestinationAuthorization::Allowed,
+            expected_allowed,
+            "unexpected authorization at IPv6 allocation boundary {host}"
         );
     }
 }

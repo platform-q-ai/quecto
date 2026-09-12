@@ -28,6 +28,7 @@ const MAX_REDIRECTS: usize = 10;
 
 type ResolutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<SocketAddr>, DomainError>> + Send + 'a>>;
+pub type ClientBuilderFactory = Arc<dyn Fn() -> reqwest::ClientBuilder + Send + Sync>;
 
 /// Fetch-controlled DNS seam. Implementations return candidates once; the
 /// adapter authorizes that exact set and pins it into the connector.
@@ -57,6 +58,7 @@ pub struct WebFetchTool {
     request_timeout: Duration,
     destination_policy: WebDestinationPolicy,
     resolver: Arc<dyn DestinationResolver>,
+    client_builder_factory: ClientBuilderFactory,
 }
 
 impl std::fmt::Debug for WebFetchTool {
@@ -71,22 +73,37 @@ impl std::fmt::Debug for WebFetchTool {
 }
 
 impl WebFetchTool {
-    /// Create with the output cap. A dedicated client is deliberately built
-    /// for each authorized hop so automatic redirects and a second DNS lookup
-    /// can never bypass the destination decision.
+    /// Create with the output cap and the default replayable HTTP/TLS recipe.
+    /// A dedicated client is built for each authorized hop so automatic
+    /// redirects and a second DNS lookup can never bypass the destination
+    /// decision.
     pub fn new(max_response_kb: u32) -> Self {
+        Self::with_client_builder_factory(
+            Arc::new(crate::infrastructure::providers::default_client_builder),
+            max_response_kb,
+        )
+    }
+
+    /// Create from a replayable configured-client recipe.
+    ///
+    /// Reqwest clients are opaque after construction: an injected, already-built
+    /// `Client` cannot be augmented with a per-hop DNS pin or have proxy and
+    /// redirect policy safely overridden. Accept the recipe instead, then apply
+    /// those mandatory security settings after every authorized resolution.
+    /// This preserves TLS trust, identity, timeout, header, and pool settings
+    /// intentionally configured by the caller rather than replacing them with
+    /// reqwest defaults.
+    pub fn with_client_builder_factory(
+        client_builder_factory: ClientBuilderFactory,
+        max_response_kb: u32,
+    ) -> Self {
         Self {
             max_response_kb,
             request_timeout: REQUEST_TIMEOUT,
             destination_policy: WebDestinationPolicy::new(),
             resolver: Arc::new(SystemDestinationResolver),
+            client_builder_factory,
         }
-    }
-
-    /// Retain the established constructor shape while using a fetch-specific
-    /// client whose security settings cannot be weakened by a shared client.
-    pub fn with_client(_client: reqwest::Client, max_response_kb: u32) -> Self {
-        Self::new(max_response_kb)
     }
 
     /// Permit one exact local destination for deterministic tests.
@@ -102,6 +119,7 @@ impl WebFetchTool {
             request_timeout: REQUEST_TIMEOUT,
             destination_policy: WebDestinationPolicy::with_test_destination(host, port, candidate),
             resolver: Arc::new(SystemDestinationResolver),
+            client_builder_factory: Arc::new(reqwest::Client::builder),
         }
     }
 
@@ -130,11 +148,33 @@ impl WebFetchTool {
             !request_timeout.is_zero(),
             "request timeout must be positive"
         );
+        Self::with_test_dependencies_and_client_factory(
+            max_response_kb,
+            request_timeout,
+            destination_policy,
+            resolver,
+            Arc::new(reqwest::Client::builder),
+        )
+    }
+
+    #[cfg(test)]
+    fn with_test_dependencies_and_client_factory(
+        max_response_kb: u32,
+        request_timeout: Duration,
+        destination_policy: WebDestinationPolicy,
+        resolver: Arc<dyn DestinationResolver>,
+        client_builder_factory: ClientBuilderFactory,
+    ) -> Self {
+        assert!(
+            !request_timeout.is_zero(),
+            "request timeout must be positive"
+        );
         Self {
             max_response_kb,
             request_timeout,
             destination_policy,
             resolver,
+            client_builder_factory,
         }
     }
 
@@ -151,31 +191,33 @@ impl WebFetchTool {
             return Err(FetchHopError::Denied);
         }
 
-        let authorized_addresses = if let Some(ip) = literal_candidate {
-            vec![SocketAddr::new(ip, port)]
-        } else {
-            let resolved = self
-                .resolver
-                .resolve(host, port)
-                .await
-                .map_err(FetchHopError::Mechanical)?;
-            authorized_candidates(&self.destination_policy, url, resolved)
-        };
+        let authorized_addresses = authorized_candidates(
+            &self.destination_policy,
+            url,
+            if let Some(ip) = literal_candidate {
+                vec![SocketAddr::new(ip, port)]
+            } else {
+                self.resolver
+                    .resolve(host, port)
+                    .await
+                    .map_err(FetchHopError::Mechanical)?
+            },
+        );
         if authorized_addresses.is_empty() {
             return Err(FetchHopError::Denied);
         }
-        debug_assert!(
-            authorized_addresses.iter().all(|address| {
-                let target =
-                    WebDestinationTarget::new(url.scheme(), host, port, Some(address.ip()));
-                self.destination_policy.authorize(&target) == WebDestinationAuthorization::Allowed
-            }),
+        let every_connector_candidate_is_authorized = authorized_addresses.iter().all(|address| {
+            let target = WebDestinationTarget::new(url.scheme(), host, port, Some(address.ip()));
+            self.destination_policy.authorize(&target) == WebDestinationAuthorization::Allowed
+        });
+        assert!(
+            every_connector_candidate_is_authorized,
             "every connector candidate must have explicit authorization"
         );
 
         // No proxy, no automatic redirect, and no resolver fallback. The only
         // connector candidates are the exact addresses authorized above.
-        let client = reqwest::Client::builder()
+        let client = (self.client_builder_factory)()
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .resolve_to_addrs(host, &authorized_addresses)

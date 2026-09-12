@@ -134,7 +134,7 @@ async fn test_fetch_truncates_large_response() {
 }
 
 #[tokio::test]
-async fn test_fetch_accepts_shared_client() {
-    let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
+async fn test_fetch_accepts_replayable_client_recipe() {
+    let tool = WebFetchTool::with_client_builder_factory(Arc::new(reqwest::Client::builder), 32);
     assert_eq!(tool.definition().name.as_ref(), "web_fetch");
 }

@@ -278,6 +278,7 @@ fn web_fetch_adapter_architecture_allowed(source: &str) -> bool {
     let expected_authorizations = [
         "authorized_candidates:target".to_owned(),
         "fetch_hop:target".to_owned(),
+        "fetch_hop:target".to_owned(),
     ];
     guard.authorizations.sort();
     guard.allowed_decisions.sort();
@@ -290,6 +291,13 @@ fn web_fetch_adapter_architecture_allowed(source: &str) -> bool {
                 .collect()
         && guard.authorizations == expected_authorizations.as_slice()
         && guard.allowed_decisions == expected_authorizations.as_slice()
+        && guard.authorized_address_bindings == vec!["fetch_hop".to_owned()]
+        && guard.authorized_address_uses == vec!["fetch_hop".to_owned(); 3]
+        && guard.authorized_address_methods
+            == ["fetch_hop:is_empty", "fetch_hop:iter"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>()
         && guard.connector_inputs == vec!["authorized_addresses".to_owned()]
         && guard.redirect_policy_none_owners == vec!["fetch_hop".to_owned()]
         && guard.no_proxy_owners == vec!["fetch_hop".to_owned()]
@@ -302,6 +310,9 @@ struct WebFetchAdapterGuard {
     local_constants: BTreeSet<String>,
     authorizations: Vec<String>,
     allowed_decisions: Vec<String>,
+    authorized_address_bindings: Vec<String>,
+    authorized_address_uses: Vec<String>,
+    authorized_address_methods: BTreeSet<String>,
     connector_inputs: Vec<String>,
     redirect_policy_none_owners: Vec<String>,
     no_proxy_owners: Vec<String>,
@@ -357,9 +368,41 @@ impl<'ast> syn::visit::Visit<'ast> for WebFetchAdapterGuard {
         self.visit_owned(name, |guard| syn::visit::visit_impl_item_fn(guard, item));
     }
 
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if pattern_binds_identifier(&local.pat, "authorized_addresses") {
+            let initializer_is_authorized_filter = local
+                .init
+                .as_ref()
+                .is_some_and(|init| call_is_named(&init.expr, "authorized_candidates"));
+            self.allowed &= initializer_is_authorized_filter
+                && !pattern_is_mutable_identifier(&local.pat, "authorized_addresses");
+            self.authorized_address_bindings.push(self.owner());
+        }
+        syn::visit::visit_local(self, local);
+    }
+
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.is_ident("authorized_addresses") {
+            self.authorized_address_uses.push(self.owner());
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.to_string();
+        if referenced_identifier(&call.receiver).as_deref() == Some("authorized_addresses") {
+            self.authorized_address_methods
+                .insert(format!("{}:{method}", self.owner()));
+        }
         match method.as_str() {
+            "resolve" => {
+                // Affirmatively permit only the owned destination-resolver seam.
+                // `ClientBuilder::resolve` can replace a previously pinned host
+                // with one unchecked address and must fail the ratchet.
+                self.allowed &= self.owner() == "fetch_hop"
+                    && call.args.len() == 2
+                    && expression_is_self_field(&call.receiver, "resolver");
+            }
             "authorize" => {
                 match (
                     call.args.len(),
@@ -417,6 +460,24 @@ impl<'ast> syn::visit::Visit<'ast> for WebFetchAdapterGuard {
         }
         syn::visit::visit_expr_binary(self, binary);
     }
+}
+
+fn expression_is_self_field(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Field(field)
+        if matches!(&field.member, syn::Member::Named(ident) if ident == expected)
+            && matches!(&*field.base, syn::Expr::Path(path) if path.path.is_ident("self")))
+}
+
+fn pattern_binds_identifier(pattern: &syn::Pat, expected: &str) -> bool {
+    matches!(pattern, syn::Pat::Ident(ident) if ident.ident == expected)
+}
+
+fn pattern_is_mutable_identifier(pattern: &syn::Pat, expected: &str) -> bool {
+    matches!(pattern, syn::Pat::Ident(ident) if ident.ident == expected && ident.mutability.is_some())
+}
+
+fn call_is_named(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Call(call) if expression_path(&call.func).is_some_and(|path| path == [expected]))
 }
 
 fn authorize_call(expression: &syn::Expr) -> bool {
@@ -548,6 +609,31 @@ fn web_fetch_architecture_guard_rejects_dependency_and_flow_mutations() {
             source.replace(
                 ".resolve_to_addrs(host, &authorized_addresses)",
                 ".resolve_to_addrs(host, &resolved)",
+            ),
+        ),
+        (
+            "extra connector address overrides the authorized set",
+            source.replace(
+                ".resolve_to_addrs(host, &authorized_addresses)",
+                ".resolve_to_addrs(host, &authorized_addresses)\n            .resolve(host, \"127.0.0.1:80\".parse().unwrap())",
+            ),
+        ),
+        (
+            "authorized candidates mutated after filtering",
+            source.replace(
+                "let authorized_addresses = authorized_candidates(",
+                "let mut authorized_addresses = authorized_candidates(",
+            )
+            .replace(
+                "if authorized_addresses.is_empty() {",
+                "authorized_addresses.push(SocketAddr::new(\"127.0.0.1\".parse().unwrap(), port));\n        if authorized_addresses.is_empty() {",
+            ),
+        ),
+        (
+            "authorized candidates replaced after filtering",
+            source.replace(
+                "if authorized_addresses.is_empty() {",
+                "let authorized_addresses = vec![SocketAddr::new(\"127.0.0.1\".parse().unwrap(), port)];\n        if authorized_addresses.is_empty() {",
             ),
         ),
         (
