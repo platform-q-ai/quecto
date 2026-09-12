@@ -668,3 +668,22 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
             .is_empty()
     );
 }
+
+/// Characterisation (#1937, to be replaced): before slice D a resumed
+/// session probed each persisted socket and readopted a live child as a
+/// sendable operational row.
+#[test]
+fn characterise_restore_probes_persisted_socket_and_readopts_live_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("live.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let server = serve_matching_session_stats(listener, "live");
+    let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![roster_entry("live", socket)]);
+    server.join().unwrap();
+    let entries = registry.lock().unwrap();
+    assert!(
+        entries.contains_key("live"),
+        "pre-#1937 restore readopted a live socket as an operational row"
+    );
+}
