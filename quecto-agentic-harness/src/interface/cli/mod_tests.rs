@@ -24,8 +24,43 @@ fn live_cli_commands_keep_help_version_and_unknown_dispatch() {
 
 #[test]
 fn real_run_dispatches_non_repl_commands() {
-    assert_eq!(run(args("version")), 0);
-    assert_eq!(run(args("definitely-not-a-command")), 1);
+    let factory = crate::composition::web_fetch::build;
+    assert_eq!(run(args("version"), factory), 0);
+    assert_eq!(run(args("definitely-not-a-command"), factory), 1);
+}
+
+#[test]
+fn public_run_accepts_required_web_fetch_factory_when_fetch_is_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config.json");
+    std::fs::write(
+        &config,
+        r#"{
+            "providers":{"openai":{"api_key":"sk-test","api_base":"http://127.0.0.1:1"}},
+            "tools":{"web":{"fetch":{"enabled":true}}}
+        }"#,
+    )
+    .unwrap();
+    let result = std::panic::catch_unwind(|| {
+        run(
+            vec![
+                "quecto".into(),
+                "--config".into(),
+                config.display().to_string(),
+                "agent".into(),
+                "--no-session".into(),
+                "--message".into(),
+                "hello".into(),
+                "--max-iterations".into(),
+                "1".into(),
+            ],
+            crate::composition::web_fetch::build,
+        )
+    });
+    assert!(
+        result.is_ok(),
+        "public run must not panic with fetch enabled"
+    );
 }
 
 /// The blocking pool keeps a resident thread: two sequential blocking tasks
