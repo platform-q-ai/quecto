@@ -1,74 +1,219 @@
 // Web fetch tool: fetch a URL and return its content as text.
 //
-// Strips HTML tags to produce readable text, saving LLM tokens.
-// The `raw` parameter bypasses stripping for JSON APIs, markdown, etc.
-//
-// HTML stripping is done with simple string scanning (no regex crate)
-// to avoid adding a runtime dependency.
+// Destination authorization is owned by the application policy. This adapter
+// owns only URL parsing, DNS, redirect, connection, HTTP, and body mechanisms.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::future::Future;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
+use crate::application::agent_turn::use_cases::web_fetch::{
+    WebDestinationAuthorization, WebDestinationPolicy, WebDestinationTarget,
+};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 /// Maximum raw download size before text extraction (5 MB).
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
-
 /// Default request timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Reqwest's historic default is ten followed redirects.
+const MAX_REDIRECTS: usize = 10;
+
+type ResolutionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<SocketAddr>, DomainError>> + Send + 'a>>;
+
+/// Fetch-controlled DNS seam. Implementations return candidates once; the
+/// adapter authorizes that exact set and pins it into the connector.
+trait DestinationResolver: Send + Sync {
+    fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolutionFuture<'a>;
+}
+
+#[derive(Debug, Default)]
+struct SystemDestinationResolver;
+
+impl DestinationResolver for SystemDestinationResolver {
+    fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolutionFuture<'a> {
+        Box::pin(async move {
+            tokio::net::lookup_host((host, port))
+                .await
+                .map(|addresses| addresses.collect())
+                .map_err(|error| {
+                    DomainError::Tool(format!("Fetch failed: DNS resolution failed: {error}"))
+                })
+        })
+    }
+}
 
 /// Fetch a URL and return its content as readable text.
-#[derive(Debug)]
 pub struct WebFetchTool {
-    client: reqwest::Client,
     max_response_kb: u32,
-    /// Allowlisted host:port pairs that bypass SSRF checks (for tests).
-    #[cfg(any(test, feature = "test-support"))]
-    allowed_hosts: Vec<String>,
+    destination_policy: WebDestinationPolicy,
+    resolver: Arc<dyn DestinationResolver>,
+}
+
+impl std::fmt::Debug for WebFetchTool {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WebFetchTool")
+            .field("max_response_kb", &self.max_response_kb)
+            .field("destination_policy", &self.destination_policy)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WebFetchTool {
-    /// Create with a shared `reqwest::Client` and output size cap.
-    pub fn with_client(client: reqwest::Client, max_response_kb: u32) -> Self {
+    /// Create with the output cap. A dedicated client is deliberately built
+    /// for each authorized hop so automatic redirects and a second DNS lookup
+    /// can never bypass the destination decision.
+    pub fn new(max_response_kb: u32) -> Self {
         Self {
-            client,
             max_response_kb,
-            #[cfg(any(test, feature = "test-support"))]
-            allowed_hosts: Vec::new(),
+            destination_policy: WebDestinationPolicy::new(),
+            resolver: Arc::new(SystemDestinationResolver),
         }
     }
 
-    /// Create with default settings (for unit tests only).
-    #[cfg(test)]
-    fn new() -> Self {
-        Self::with_client(reqwest::Client::new(), 32)
+    /// Retain the established constructor shape while using a fetch-specific
+    /// client whose security settings cannot be weakened by a shared client.
+    pub fn with_client(_client: reqwest::Client, max_response_kb: u32) -> Self {
+        Self::new(max_response_kb)
     }
 
-    /// Create a tool that allowlists a specific host:port for SSRF bypass
-    /// (for wiremock BDD tests on localhost). Other restricted hosts are
-    /// still blocked, so SSRF protection scenarios continue to work.
+    /// Permit one exact local destination for deterministic tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_allowed_host(max_response_kb: u32, host_port: &str) -> Self {
+        let (host, port) = parse_test_destination(host_port)
+            .expect("test destination must be one exact host:port pair");
         Self {
-            client: reqwest::Client::new(),
             max_response_kb,
-            allowed_hosts: vec![host_port.to_string()],
+            destination_policy: WebDestinationPolicy::with_test_destination(host, port),
+            resolver: Arc::new(SystemDestinationResolver),
         }
     }
 
-    /// Create with localhost SSRF bypass for all loopback ports (for unit tests).
     #[cfg(test)]
-    fn new_allow_localhost(max_response_kb: u32) -> Self {
+    fn with_test_dependencies(
+        max_response_kb: u32,
+        destination_policy: WebDestinationPolicy,
+        resolver: Arc<dyn DestinationResolver>,
+    ) -> Self {
         Self {
-            client: reqwest::Client::new(),
             max_response_kb,
-            allowed_hosts: vec!["*".to_string()], // wildcard = skip all SSRF checks
+            destination_policy,
+            resolver,
         }
     }
+
+    async fn fetch_hop(&self, url: &reqwest::Url) -> Result<reqwest::Response, FetchHopError> {
+        let host = url.host_str().ok_or(FetchHopError::Denied)?;
+        let port = url.port_or_known_default().ok_or(FetchHopError::Denied)?;
+        let literal_candidate = normalized_ip_literal(host);
+        let target = WebDestinationTarget::new(url.scheme(), host, port, literal_candidate);
+        if self.destination_policy.authorize(&target) != WebDestinationAuthorization::Allowed {
+            return Err(FetchHopError::Denied);
+        }
+
+        let authorized_addresses = if let Some(ip) = literal_candidate {
+            vec![SocketAddr::new(ip, port)]
+        } else {
+            let resolved = self
+                .resolver
+                .resolve(host, port)
+                .await
+                .map_err(FetchHopError::Mechanical)?;
+            authorized_candidates(&self.destination_policy, url, resolved)
+        };
+        if authorized_addresses.is_empty() {
+            return Err(FetchHopError::Denied);
+        }
+        debug_assert!(
+            authorized_addresses.iter().all(|address| {
+                let target =
+                    WebDestinationTarget::new(url.scheme(), host, port, Some(address.ip()));
+                self.destination_policy.authorize(&target) == WebDestinationAuthorization::Allowed
+            }),
+            "every connector candidate must have explicit authorization"
+        );
+
+        // No proxy, no automatic redirect, and no resolver fallback. The only
+        // connector candidates are the exact addresses authorized above.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .resolve_to_addrs(host, &authorized_addresses)
+            .build()
+            .map_err(|error| {
+                FetchHopError::Mechanical(DomainError::Tool(format!("Fetch failed: {error}")))
+            })?;
+        client
+            .get(url.clone())
+            .timeout(REQUEST_TIMEOUT)
+            .header("User-Agent", concat!("quecto/", env!("CARGO_PKG_VERSION")))
+            .send()
+            .await
+            .map_err(|error| {
+                let domain_error = if error.is_timeout() {
+                    DomainError::Tool(format!(
+                        "Request timed out after {REQUEST_TIMEOUT:?}: {url}"
+                    ))
+                } else {
+                    DomainError::Tool(format!("Fetch failed: {error}"))
+                };
+                FetchHopError::Mechanical(domain_error)
+            })
+    }
+}
+
+#[derive(Debug)]
+enum FetchHopError {
+    Denied,
+    Mechanical(DomainError),
+}
+
+fn authorized_candidates(
+    policy: &WebDestinationPolicy,
+    url: &reqwest::Url,
+    candidates: Vec<SocketAddr>,
+) -> Vec<SocketAddr> {
+    let Some(host) = url.host_str() else {
+        return Vec::new();
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return Vec::new();
+    };
+    candidates
+        .into_iter()
+        .map(|candidate| SocketAddr::new(candidate.ip(), port))
+        .filter(|candidate| {
+            let target = WebDestinationTarget::new(url.scheme(), host, port, Some(candidate.ip()));
+            policy.authorize(&target) == WebDestinationAuthorization::Allowed
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn normalized_ip_literal(host: &str) -> Option<IpAddr> {
+    host.strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host)
+        .parse()
+        .ok()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn parse_test_destination(host_port: &str) -> Option<(String, u16)> {
+    if let Ok(address) = host_port.parse::<SocketAddr>() {
+        return Some((address.ip().to_string(), address.port())).filter(|(_, port)| *port > 0);
+    }
+    let (host, port) = host_port.rsplit_once(':')?;
+    let port = port.parse::<u16>().ok()?;
+    (!host.is_empty() && port > 0).then(|| (host.to_owned(), port))
 }
 
 impl Tool for WebFetchTool {
@@ -89,127 +234,114 @@ impl Tool for WebFetchTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args = arguments.to_string();
+        let arguments = arguments.to_owned();
         Box::pin(async move {
-            let parsed: serde_json::Value = serde_json::from_str(&args)
-                .map_err(|e| DomainError::Tool(format!("invalid JSON: {e}")))?;
-
-            let url = parsed
+            let parsed: serde_json::Value = serde_json::from_str(&arguments)
+                .map_err(|error| DomainError::Tool(format!("invalid JSON: {error}")))?;
+            let requested_url = parsed
                 .get("url")
-                .and_then(|v| v.as_str())
+                .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| DomainError::Tool("missing required field: url".into()))?;
+            let raw = parsed
+                .get("raw")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let mut current_url = reqwest::Url::parse(requested_url)
+                .map_err(|error| DomainError::Tool(format!("Invalid URL: {error}")))?;
 
-            let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-
-            // Parse and validate URL
-            let parsed_url = reqwest::Url::parse(url)
-                .map_err(|e| DomainError::Tool(format!("Invalid URL: {e}")))?;
-
-            if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
-                return Ok(ToolResult {
-                    content: format!(
-                        "Invalid URL scheme: only http:// and https:// are allowed. Got: {url}"
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
-
-            // SSRF protection: reject internal/loopback/metadata hosts
-            #[cfg(any(test, feature = "test-support"))]
-            let skip_ssrf = {
-                let host_port = parsed_url
-                    .host_str()
-                    .map(|h| {
-                        if let Some(port) = parsed_url.port() {
-                            format!("{}:{}", h, port)
-                        } else {
-                            h.to_string()
-                        }
-                    })
-                    .unwrap_or_default();
-                self.allowed_hosts
-                    .iter()
-                    .any(|h| h == "*" || h == &host_port)
-            };
-            #[cfg(not(any(test, feature = "test-support")))]
-            let skip_ssrf = false;
-
-            if !skip_ssrf {
-                if let Some(host) = parsed_url.host_str() {
-                    if is_restricted_host_or_ip(host) {
-                        return Ok(ToolResult {
-                            content: format!(
-                                "Blocked: URL points to a restricted address ({host})"
-                            ),
-                            is_error: true,
-                            image_blocks: vec![],
-                            delivery_metadata: None,
-                        });
+            let mut redirects = 0_usize;
+            let response = loop {
+                let response = match self.fetch_hop(&current_url).await {
+                    Ok(response) => response,
+                    Err(FetchHopError::Denied) => {
+                        return Ok(denied_destination_result(&current_url, requested_url));
                     }
+                    Err(FetchHopError::Mechanical(error)) => return Err(error),
+                };
+                if !response.status().is_redirection() {
+                    break response;
                 }
-            }
-
-            // Fetch with timeout
-            let resp = self
-                .client
-                .get(parsed_url)
-                .timeout(REQUEST_TIMEOUT)
-                .header("User-Agent", concat!("quecto/", env!("CARGO_PKG_VERSION")))
-                .send()
-                .await
-                .map_err(|e| {
-                    if e.is_timeout() {
-                        DomainError::Tool(format!(
-                            "Request timed out after {REQUEST_TIMEOUT:?}: {url}"
-                        ))
-                    } else {
-                        DomainError::Tool(format!("Fetch failed: {e}"))
-                    }
-                })?;
-
-            if !resp.status().is_success() {
-                return Ok(ToolResult {
-                    content: format!("HTTP {} fetching {url}", resp.status()),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
-
-            // Read body with streaming size cap
-            let bytes = read_body_capped(resp, MAX_RAW_BYTES).await?;
-            let body = String::from_utf8_lossy(&bytes);
-
-            // Extract or return raw
-            let content = if raw {
-                body.into_owned()
-            } else {
-                strip_html(&body)
+                let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+                    break response;
+                };
+                let location = match location.to_str() {
+                    Ok(location) => location,
+                    Err(_) => return Ok(denied_destination_result(&current_url, requested_url)),
+                };
+                let next_url = match current_url.join(location) {
+                    Ok(next_url) => next_url,
+                    Err(_) => return Ok(denied_destination_result(&current_url, requested_url)),
+                };
+                redirects += 1;
+                if redirects > MAX_REDIRECTS {
+                    return Err(DomainError::Tool(format!(
+                        "Fetch failed: redirect limit exceeded fetching {requested_url}"
+                    )));
+                }
+                // The next iteration authorizes the redirect target before its
+                // DNS lookup or request, then repeats candidate authorization.
+                current_url = next_url;
             };
 
-            // Truncate to max_response_kb
-            let max_bytes = self.max_response_kb as usize * 1024;
-            let content = if content.len() > max_bytes {
-                let mut truncated = truncate_utf8(&content, max_bytes).to_string();
-                truncated.push_str(&format!(
-                    "\n\n[Truncated: output exceeded {}KB limit]",
-                    self.max_response_kb
-                ));
-                truncated
-            } else {
-                content
-            };
-
-            Ok(ToolResult {
-                content,
-                is_error: false,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            })
+            present_response(response, requested_url, raw, self.max_response_kb).await
         })
     }
+}
+
+fn denied_destination_result(url: &reqwest::Url, requested_url: &str) -> ToolResult {
+    let content = if matches!(url.scheme(), "http" | "https") {
+        format!(
+            "Blocked: URL points to a restricted address ({})",
+            url.host_str().unwrap_or("unknown")
+        )
+    } else {
+        format!("Invalid URL scheme: only http:// and https:// are allowed. Got: {requested_url}")
+    };
+    ToolResult {
+        content,
+        is_error: true,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    }
+}
+
+async fn present_response(
+    response: reqwest::Response,
+    requested_url: &str,
+    raw: bool,
+    max_response_kb: u32,
+) -> Result<ToolResult, DomainError> {
+    if !response.status().is_success() {
+        return Ok(ToolResult {
+            content: format!("HTTP {} fetching {requested_url}", response.status()),
+            is_error: true,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        });
+    }
+    let bytes = read_body_capped(response, MAX_RAW_BYTES).await?;
+    let body = String::from_utf8_lossy(&bytes);
+    let content = if raw {
+        body.into_owned()
+    } else {
+        strip_html(&body)
+    };
+    let max_bytes = max_response_kb as usize * 1024;
+    let content = if content.len() > max_bytes {
+        let mut truncated = truncate_utf8(&content, max_bytes).to_owned();
+        truncated.push_str(&format!(
+            "\n\n[Truncated: output exceeded {max_response_kb}KB limit]"
+        ));
+        truncated
+    } else {
+        content
+    };
+    Ok(ToolResult {
+        content,
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    })
 }
 
 /// Read response body up to `max_bytes` using streaming chunks.
@@ -243,47 +375,6 @@ async fn read_body_capped(
         }
     }
     Ok(buf)
-}
-
-/// Check if a host string (IP or domain) is restricted.
-///
-/// Blocks loopback, link-local, private RFC-1918, cloud metadata IPs,
-/// and known restricted domain names to prevent SSRF attacks.
-///
-/// `host` comes from `url::Url::host_str()` which wraps IPv6 in brackets
-/// (e.g. `[::1]`), so we strip them before parsing.
-fn is_restricted_host_or_ip(host: &str) -> bool {
-    // Strip IPv6 brackets: host_str() returns "[::1]" for IPv6
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-
-    if let Ok(ip) = bare.parse::<IpAddr>() {
-        return is_restricted_ip(ip);
-    }
-    // Known restricted domain names
-    matches!(
-        bare,
-        "localhost" | "metadata.google.internal" | "metadata.google.internal."
-    )
-}
-
-/// Check if an IP address is in a restricted range.
-fn is_restricted_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()       // 127.0.0.0/8
-            || v4.is_private()     // 10/8, 172.16/12, 192.168/16
-            || v4.is_link_local()  // 169.254.0.0/16 (AWS IMDS)
-            || v4.is_unspecified() // 0.0.0.0
-            || v4.is_broadcast() // 255.255.255.255
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()       // ::1
-            || v6.is_unspecified() // ::
-        }
-    }
 }
 
 /// Truncate a string to at most `max_bytes`, respecting UTF-8 boundaries.

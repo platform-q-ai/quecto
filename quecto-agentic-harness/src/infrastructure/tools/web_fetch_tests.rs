@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_definition() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let def = tool.definition();
     assert_eq!(def.name.as_ref(), "web_fetch");
     assert!(def.description.contains("Fetch"));
@@ -185,35 +185,6 @@ fn test_truncate_utf8_no_truncation() {
 
 // ─── SSRF protection ─────────────────────────────────────────────────────
 
-#[test]
-fn test_is_restricted_host_or_ip() {
-    assert!(is_restricted_host_or_ip("localhost"));
-    assert!(is_restricted_host_or_ip("metadata.google.internal"));
-    assert!(!is_restricted_host_or_ip("example.com"));
-    assert!(is_restricted_host_or_ip("127.0.0.1"));
-    assert!(is_restricted_host_or_ip("[::1]"));
-    assert!(is_restricted_host_or_ip("::1"));
-    assert!(is_restricted_host_or_ip("10.0.0.1"));
-    assert!(is_restricted_host_or_ip("172.16.0.1"));
-    assert!(is_restricted_host_or_ip("192.168.1.1"));
-    assert!(is_restricted_host_or_ip("169.254.169.254"));
-    assert!(!is_restricted_host_or_ip("8.8.8.8"));
-}
-
-#[test]
-fn test_is_restricted_ip() {
-    use std::net::{Ipv4Addr, Ipv6Addr};
-    assert!(is_restricted_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
-    assert!(is_restricted_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-    assert!(is_restricted_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-    assert!(is_restricted_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
-    assert!(is_restricted_ip(IpAddr::V4(Ipv4Addr::new(
-        169, 254, 169, 254
-    ))));
-    assert!(is_restricted_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
-    assert!(!is_restricted_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-}
-
 #[tokio::test]
 async fn test_ssrf_restricted_urls() {
     let cases = [
@@ -228,7 +199,7 @@ async fn test_ssrf_restricted_urls() {
         ),
     ];
 
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     for (url, label) in cases {
         let result = tool
             .execute(&format!(r#"{{"url":"{url}"}}"#))
@@ -247,21 +218,21 @@ async fn test_ssrf_restricted_urls() {
 
 #[tokio::test]
 async fn test_missing_url() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let result = tool.execute(r#"{"wrong":"field"}"#).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_invalid_json() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let result = tool.execute("not json").await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_invalid_scheme() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let result = tool
         .execute(r#"{"url":"ftp://example.com"}"#)
         .await
@@ -272,7 +243,7 @@ async fn test_invalid_scheme() {
 
 #[tokio::test]
 async fn test_invalid_scheme_file() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let result = tool
         .execute(r#"{"url":"file:///etc/passwd"}"#)
         .await
@@ -297,7 +268,7 @@ async fn test_fetch_html_strips_tags() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new_allow_localhost(32);
+    let tool = WebFetchTool::with_allowed_host(32, server.uri().trim_start_matches("http://"));
     let result = tool
         .execute(&format!(r#"{{"url":"{}"}}"#, server.uri()))
         .await
@@ -323,7 +294,7 @@ async fn test_fetch_raw_mode() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new_allow_localhost(32);
+    let tool = WebFetchTool::with_allowed_host(32, server.uri().trim_start_matches("http://"));
     let result = tool
         .execute(&format!(r#"{{"url":"{}","raw":true}}"#, server.uri()))
         .await
@@ -344,7 +315,7 @@ async fn test_fetch_http_error() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new_allow_localhost(32);
+    let tool = WebFetchTool::with_allowed_host(32, server.uri().trim_start_matches("http://"));
     let result = tool
         .execute(&format!(r#"{{"url":"{}"}}"#, server.uri()))
         .await
@@ -366,7 +337,7 @@ async fn test_fetch_truncates_large_response() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new_allow_localhost(1); // 1KB cap
+    let tool = WebFetchTool::with_allowed_host(1, server.uri().trim_start_matches("http://")); // 1KB cap
     let result = tool
         .execute(&format!(r#"{{"url":"{}","raw":true}}"#, server.uri()))
         .await
@@ -378,6 +349,127 @@ async fn test_fetch_truncates_large_response() {
 
 #[tokio::test]
 async fn test_fetch_accepts_shared_client() {
-    let tool = WebFetchTool::new_allow_localhost(32);
+    let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
     assert_eq!(tool.definition().name.as_ref(), "web_fetch");
+}
+
+#[derive(Debug)]
+struct FixedResolver {
+    candidates: Vec<SocketAddr>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl DestinationResolver for FixedResolver {
+    fn resolve<'a>(&'a self, _host: &'a str, _port: u16) -> ResolutionFuture<'a> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let candidates = self.candidates.clone();
+        Box::pin(async move { Ok(candidates) })
+    }
+}
+
+fn fixed_tool(
+    host: &str,
+    port: u16,
+    candidates: Vec<SocketAddr>,
+) -> (WebFetchTool, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resolver = Arc::new(FixedResolver {
+        candidates,
+        calls: Arc::clone(&calls),
+    });
+    let policy = WebDestinationPolicy::with_test_destination(host, port);
+    (
+        WebFetchTool::with_test_dependencies(32, policy, resolver),
+        calls,
+    )
+}
+
+#[tokio::test]
+async fn controlled_resolver_pins_the_authorized_candidate_without_re_resolving() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("pinned"))
+        .mount(&server)
+        .await;
+    let port = server.address().port();
+    let (tool, calls) = fixed_tool("public.test", port, vec![*server.address()]);
+
+    let result = tool
+        .execute(&format!(r#"{{"url":"http://public.test:{port}/"}}"#))
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "pinned");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "resolution must happen exactly once"
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resolver_with_only_denied_candidates_sends_zero_requests() {
+    use wiremock::MockServer;
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resolver = Arc::new(FixedResolver {
+        candidates: vec![*server.address()],
+        calls,
+    });
+    let tool = WebFetchTool::with_test_dependencies(32, WebDestinationPolicy::new(), resolver);
+
+    let result = tool
+        .execute(&format!(r#"{{"url":"http://public.test:{port}/"}}"#))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        0,
+        "a denied candidate must receive no request"
+    );
+}
+
+#[test]
+fn mixed_dns_answers_expose_only_the_affirmatively_authorized_subset() {
+    let policy = WebDestinationPolicy::new();
+    let url = reqwest::Url::parse("https://example.com/").unwrap();
+    let allowed: SocketAddr = "8.8.8.8:443".parse().unwrap();
+    let denied: SocketAddr = "127.0.0.1:443".parse().unwrap();
+
+    let candidates = authorized_candidates(&policy, &url, vec![denied, allowed]);
+
+    assert_eq!(candidates, vec![allowed]);
+}
+
+#[tokio::test]
+async fn redirect_target_is_authorized_before_the_denied_server_receives_a_request() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let allowed = MockServer::start().await;
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(302).insert_header("Location", denied.uri()))
+        .mount(&allowed)
+        .await;
+    let port = allowed.address().port();
+    let (tool, _) = fixed_tool("public.test", port, vec![*allowed.address()]);
+
+    let result = tool
+        .execute(&format!(r#"{{"url":"http://public.test:{port}/"}}"#))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(allowed.received_requests().await.unwrap().len(), 1);
+    assert_eq!(
+        denied.received_requests().await.unwrap().len(),
+        0,
+        "redirect denial must happen before send"
+    );
 }

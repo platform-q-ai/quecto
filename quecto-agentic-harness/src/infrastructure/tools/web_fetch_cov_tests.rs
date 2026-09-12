@@ -27,7 +27,7 @@ async fn with_allowed_host_fetches_local_html_and_truncates_utf8() {
 
 #[tokio::test]
 async fn execute_rejects_restricted_host_and_oversized_body() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     let blocked = tool
         .execute(r#"{"url":"http://127.0.0.1:9/"}"#)
         .await
@@ -40,7 +40,7 @@ async fn execute_rejects_restricted_host_and_oversized_body() {
         .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; MAX_RAW_BYTES + 1]))
         .mount(&server)
         .await;
-    let tool = WebFetchTool::new_allow_localhost(32);
+    let tool = WebFetchTool::with_allowed_host(32, server.uri().trim_start_matches("http://"));
     let err = tool
         .execute(&format!(r#"{{"url":"{}","raw":true}}"#, server.uri()))
         .await
@@ -49,10 +49,7 @@ async fn execute_rejects_restricted_host_and_oversized_body() {
 }
 
 #[test]
-fn html_helpers_cover_entities_and_restricted_addresses() {
-    assert!(is_restricted_host_or_ip("[::1]"));
-    assert!(is_restricted_host_or_ip("metadata.google.internal."));
-    assert!(!is_restricted_host_or_ip("example.com"));
+fn html_helpers_cover_entities_and_utf8_boundaries() {
     assert_eq!(truncate_utf8("éclair", 1), "");
     assert_eq!(
         strip_html("<DIV>A&nbsp;&amp;&#x42;<br> C <broken"),
@@ -62,7 +59,7 @@ fn html_helpers_cover_entities_and_restricted_addresses() {
 
 #[tokio::test]
 async fn malformed_url_is_rejected_before_any_request() {
-    let tool = WebFetchTool::new();
+    let tool = WebFetchTool::new(32);
     // Not a parse-able URL at all: must fail at validation, not surface as a
     // network error (which would imply a request was attempted).
     let err = tool

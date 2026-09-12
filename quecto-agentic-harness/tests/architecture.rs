@@ -197,6 +197,68 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
 }
 
 #[test]
+fn web_fetch_destination_policy_remains_pure_and_capability_local() {
+    let path = "src/application/agent_turn/use_cases/web_fetch.rs";
+    let source = fs::read_to_string(path).expect("read web-fetch application policy");
+    for forbidden in [
+        "serde",
+        "reqwest",
+        "tokio",
+        "crate::infrastructure",
+        "crate::interface",
+        "crate::composition",
+        "crate::domain",
+        "std::fs",
+        "std::process",
+        "std::env",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{path} must remain an owned/std destination policy; found {forbidden}"
+        );
+    }
+    for required in [
+        "WebDestinationTarget",
+        "WebDestinationAuthorization",
+        "WebDestinationPolicy",
+    ] {
+        assert!(source.contains(required), "{path} must own {required}");
+    }
+}
+
+#[test]
+fn web_fetch_adapter_consults_the_inward_policy_at_each_destination_boundary() {
+    let path = "src/infrastructure/tools/web_fetch.rs";
+    let source = fs::read_to_string(path).expect("read web-fetch infrastructure adapter");
+    let policy_calls = source.matches(".authorize(").count();
+    assert!(
+        policy_calls >= 2,
+        "{path} must authorize URL targets and resolved/connected candidates"
+    );
+    for forbidden in [
+        "is_restricted_ip",
+        "is_restricted_host_or_ip",
+        "169.254.169.254",
+        "metadata.google.internal",
+        "allowed_hosts",
+        "skip_ssrf",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{path} must not define a second destination authority; found {forbidden}"
+        );
+    }
+    assert!(
+        source.contains("Policy::none()"),
+        "redirects must be disabled in reqwest and inspected hop by hop"
+    );
+    assert!(
+        source.contains("resolve_to_addrs"),
+        "the connector must be pinned to authorized DNS candidates"
+    );
+}
+
+#[test]
 fn infrastructure_has_no_interface_imports() {
     assert_no_imports(
         "infrastructure",
@@ -325,6 +387,15 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "use_cases",
                     "find",
                     "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+                    ..,
+                ] => true,
+                [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "web_fetch",
+                    "WebDestinationTarget" | "WebDestinationPolicy" | "WebDestinationAuthorization",
                     ..,
                 ] => true,
                 [
