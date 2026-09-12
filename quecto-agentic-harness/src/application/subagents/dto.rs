@@ -13,6 +13,8 @@ pub enum ShutdownTrigger {
     ProtocolCommand,
     /// The authenticated launch-bound parent connection closed.
     ParentConnectionClosed,
+    /// No parent bound its control connection within the bind deadline.
+    ParentNeverBound,
     /// SIGTERM/SIGINT delivered by the operating system.
     TerminationSignal,
 }

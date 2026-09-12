@@ -875,6 +875,75 @@ Return the result of a tool execution request. Sent by an extension client in re
 
 ---
 
+### `bind_parent_control`
+
+Launcher-only. A harness started by another harness (`--spawned
+--parent-control <sidecar>`) accepts **exactly one** connection presenting
+the capability its launcher minted for it; the launcher's monitor sends this
+as the first frame on that connection (#1935). Ordinary clients never send
+it.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"bind_parent_control"` | yes | |
+| `generation` | integer | yes | The launch generation the sidecar carried |
+| `capability` | string | yes | 64 lowercase hex characters, exactly the sidecar's material |
+
+**Response:** `{"type":"response","command":"bind_parent_control","success":true}`
+on the accepted connection. A missing, mismatched, malformed, replayed or
+second presentation — or any presentation to a harness that was not launched
+with a parent control sidecar — **closes the presenting connection** with no
+response (fail closed).
+
+The bound connection carries the `BoundParent` authority for `shutdown` and
+`terminate_delegated_agent`. Its EOF or reset is the only client disconnect
+that ends the harness: the common shutdown runs with reason
+`parent_connection_lost`. Every other client disconnect, including the last
+one, leaves a launched harness running. A launched harness that no parent
+binds within its bind deadline (30 s; `QUECTO_PARENT_BIND_DEADLINE_MS`) runs
+the same shutdown with reason `parent_never_bound`.
+
+---
+
+### `shutdown`
+
+Ask the harness to end itself and its directly owned subtree (#1934, live
+since #1935). Authorized on the bound parent connection and, until peer
+authentication exists on the harness's own socket, on any local client.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"shutdown"` | yes | |
+| `id` | string | no | Correlation id echoed on the response |
+| `reason` | string | yes | One of `parent_shutdown`, `selected_termination`, `parent_connection_lost`, `parent_never_bound`, `termination_signal`, `operator_request` |
+
+**Response:** `{"type":"response","id":…,"command":"shutdown","success":true,"data":{"status":"shutting_down","reason":…}}`
+is written and flushed **before** any teardown effect; the harness then
+cancels the in-flight turn, sends `shutdown` to each direct child, persists
+the session and exits. A duplicate `shutdown` joins the admission already in
+progress. Unknown fields, unknown reasons and an already terminated harness
+are rejected with a correlated `success:false` response.
+
+### `terminate_delegated_agent`
+
+Resolve exactly one direct edge toward a selected descendant (#1934). The
+target must be known, identified by uuid **and** launch generation, and
+reachable within `remaining_depth` (1..=32) hops; intermediates stay alive.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"terminate_delegated_agent"` | yes | |
+| `id` | string | no | Correlation id echoed on the response |
+| `target_uuid` | string | yes | |
+| `target_generation` | integer | yes | |
+| `remaining_depth` | integer | yes | |
+
+**Response:** `data.status` is `shutdown_requested` (the target was a direct
+child and received `shutdown`) or `forwarded` (one hop consumed via
+`via_uuid`, `remaining_depth` decremented). Refused routes touch no edge.
+
+---
+
 ## Events (agent → client)
 
 Events are emitted as length-prefixed JSON frames. Every connected client receives every event (broadcast model).

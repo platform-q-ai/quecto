@@ -608,11 +608,52 @@ that need to restrict which subagents can be spawned.
 
 ### Startup
 
-1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --persist`
+1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --persist --spawned --parent-control <sidecar>`
 2. Polls for socket readiness (100ms intervals, 10s timeout)
-3. If the socket does not become ready, the child is killed and an error is returned
+3. If the socket does not become ready, the child is terminated through the owned-child supervisor and an error is returned
 4. Registers the child in the shared `SubagentRegistry` by UUID while retaining `agent_id` as the display label
 5. If `task` was provided, sends it as the initial `prompt` via UDS (fire-and-forget)
+
+#### Launch-bound parent control (#1935)
+
+A launcher-created child is lifetime-scoped to the harness that launched it.
+At launch the parent mints one random, generation-scoped capability for the
+child and writes it to a private (`0600`, exclusively created) sidecar under
+the runtime directory; only the sidecar *path* is passed on argv
+(`--parent-control`), never the material, and nothing is put in the
+environment. The child reads and removes the sidecar before it announces its
+socket (a missing or malformed sidecar fails startup closed), then accepts
+**exactly one** connection presenting that capability — the parent's monitor
+connection, which sends the presentation as its first frame. A missing,
+mismatched, replayed or second presentation closes that connection. Only the
+loss (EOF/reset) of the bound connection runs the child's common shutdown
+(reason `parent_connection_lost`: cancel the turn, ask its own direct
+children to shut down over the protocol, persist, exit). Ordinary TUI,
+inspector, tool or probe clients disconnecting — even the last one — never
+end a launched child. The bound connection also carries the `BoundParent`
+authority for the `shutdown` and `terminate_delegated_agent` commands.
+
+Over the proxy (container) transport the same connection rides one bridged
+proxy process whose stdin is the parent's pipe, so a parent that dies —
+even by SIGKILL — closes the pipe, the proxy exits, and the child observes
+its bound connection lost end to end. The capability is never forwarded to
+the child's own children: each launch mints its own.
+
+A launcher that dies *between* spawning the child and presenting the
+capability would otherwise leave an unbound `--persist` orphan, so a
+launched child arms a **bind deadline** (30 s by default;
+`QUECTO_PARENT_BIND_DEADLINE_MS` overrides it for tests): if no parent has
+bound by then, the binding is spent and the same common shutdown runs with
+reason `parent_never_bound`.
+
+**Not yet covered (#1939):** the parent-loss / never-bound shutdown runs the
+common teardown only — cancel the turn, ask direct children to shut down
+over the protocol, persist, exit. It does **not** finalize script-managed
+environments the way the SIGTERM path does (which additionally runs
+`delete_all_subagents_from_registry`, i.e. each environment's retained
+`kill`). A child that owns container environments and loses its parent
+therefore leaves those containers running until #1939 moves environment
+finalization into the application-owned teardown.
 
 ### Running
 
@@ -623,16 +664,23 @@ that need to restrict which subagents can be spawned.
 
 ### Cleanup
 
-- **Background reaper**: Each child has a `tokio::spawn` reaper task that calls
-  `child.wait()` and removes the registry entry when the child exits
-- **Explicit shutdown**: `shutdown_all()` sends SIGTERM to every tracked
-  entry holding a signal lease and clears the registry. A lease is granted
-  only from provenance the harness can prove (#1925): *launched* (this
-  process spawned the child and holds its handle), or *reported
-  same-namespace* (a host-local descendant reported by a host-local child, or
-  a restored session child whose live socket round-trip confirmed the
-  persisted pid is its own). Descendants reported from inside a container,
-  unconfirmed restores and fixture-built entries are never signalled
+- **Owned-child supervisor** (#1935): every process this harness spawns
+  directly (local launches and per-connection proxy bridge processes) is
+  spawned and reaped by one `OwnedChildSupervisor` on its own runtime.
+  Callers hold an opaque handle, never a pid or a `Child`. The reaper task
+  takes its exit signal from the supervisor and removes the registry entry
+  when the child exits
+- **Explicit shutdown**: `shutdown_all()` asks the supervisor to terminate
+  every locally launched child: the `shutdown` protocol command is always
+  attempted first over the child's endpoint; only a negative outcome
+  (unreachable, refused, no ACK within 5 s, or no exit within 10 s after an
+  ACK) authorises SIGTERM to the retained handle (and its own process group
+  where one was created), then SIGKILL after a 2 s grace. Each signal kind
+  is sent at most once per handle and never after the reap. Script and
+  container members hold no local handle and have no host signal fallback.
+  The #1925 *reported same-namespace* lease still covers descendant rows
+  reported by a host-local child until #1940 retires it; restored,
+  container-reported and fixture-built rows are never signalled
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 

@@ -318,6 +318,9 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
+                // Subagent teardown ports are capability-local (#1934); the
+                // process adapters implement them (#1935).
+                ["crate", "application", "subagents", "ports", ..] => true,
                 [
                     "crate",
                     "application",
@@ -1322,7 +1325,7 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
 fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
     let consumers = [
         "src/interface/cli/uds_reader.rs",
-        "src/interface/cli/uds_multi.rs",
+        "src/interface/cli/uds_multi_client.rs",
         "src/infrastructure/tools/subagent_monitor.rs",
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
@@ -3003,4 +3006,251 @@ fn legacy_mixed_web_fetch_path_is_retired() {
         !Path::new("src/infrastructure/tools/web_fetch.rs").exists(),
         "legacy mixed web_fetch implementation survives"
     );
+}
+
+// ─── Launch-bound parent control and owned-child supervision (#1935) ────────
+
+/// Production launch and transport modules of the subagent capability. None
+/// of them may hold a `tokio::process::Child`, wait on one, or signal a pid:
+/// the supervisor is the one owner and the only signaller. Sibling process
+/// users outside this list (bash invocation containment, the Python swarm
+/// execution scope) are out of this slice's ratchet by design.
+const SUBAGENT_PROCESS_MODULES: &[&str] = &[
+    "src/infrastructure/tools/spawn.rs",
+    "src/infrastructure/tools/spawn_container.rs",
+    "src/infrastructure/tools/spawn_prepared.rs",
+    "src/infrastructure/tools/spawn_launch_ports.rs",
+    "src/infrastructure/tools/spawn_reaper.rs",
+    "src/infrastructure/tools/spawn_proxy_bridge.rs",
+    "src/infrastructure/tools/spawn_registry.rs",
+    "src/infrastructure/tools/subagent_cascade.rs",
+    "src/infrastructure/tools/subagent_registry.rs",
+    "src/infrastructure/tools/subagent_monitor.rs",
+    "src/infrastructure/tools/subagent_monitor_exit.rs",
+    "src/infrastructure/tools/subagent_monitor_merge.rs",
+    "src/infrastructure/processes/direct_child_routing.rs",
+    "src/infrastructure/processes/parent_control.rs",
+    "src/interface/cli/uds_multi.rs",
+    "src/interface/cli/uds_multi_client.rs",
+    "src/interface/cli/uds_parent_control.rs",
+    "src/interface/cli/uds_teardown_adapters.rs",
+    "src/interface/cli/uds_teardown_graph.rs",
+    "src/composition/subagent_teardown.rs",
+];
+
+/// Only the part of a source file before its `#[cfg(test)]` modules.
+fn production_source(path: &str) -> String {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    source
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The interface receives composition's teardown graph builder through
+/// `CliContext` (`run`, via `CliComposition`) and the process-wide supervisor from
+/// infrastructure: no subagent module of the interface names the
+/// composition layer (the find capability's delegation predates this and
+/// keeps its own allowlist).
+#[test]
+fn subagent_interface_modules_never_import_composition() {
+    for path in SUBAGENT_PROCESS_MODULES
+        .iter()
+        .filter(|path| path.starts_with("src/interface/"))
+        .chain(["src/interface/cli/agent.rs", "src/interface/cli/mod.rs"].iter())
+    {
+        let source = production_source(path);
+        assert!(
+            !source.contains("crate::composition"),
+            "{path} names the composition layer"
+        );
+    }
+}
+
+/// The capability compares in constant time only: no derived `PartialEq`
+/// (byte-by-byte, early exit) and no `Hash` (a hash of the material is a
+/// second, unredacted representation).
+#[test]
+fn parent_control_capability_equality_is_the_manual_constant_time_impl() {
+    let source = production_source("src/domain/parent_control.rs");
+    let derive_line = source
+        .lines()
+        .zip(source.lines().skip(1))
+        .find(|(_, next)| next.starts_with("pub struct ParentControlCapability"))
+        .map(|(derive, _)| derive)
+        .expect("the capability's derive line precedes its declaration");
+    assert!(derive_line.starts_with("#[derive("), "{derive_line}");
+    for forbidden in ["PartialEq", "Hash"] {
+        assert!(
+            !derive_line.contains(forbidden),
+            "ParentControlCapability derives {forbidden}: {derive_line}"
+        );
+    }
+    assert!(source.contains("impl PartialEq for ParentControlCapability"));
+    assert!(source.contains("self.matches(other)"));
+}
+
+#[test]
+fn owned_child_supervisor_is_the_one_child_owner_and_signaller() {
+    let owner = "src/infrastructure/processes/owned_child_supervisor.rs";
+    let source = production_source(owner);
+    assert!(
+        source.contains("fn adopt(") && !source.contains("pub fn adopt("),
+        "the supervisor adopts only what it spawned itself"
+    );
+    assert!(
+        source.contains("pub async fn spawn(") && source.contains("libc::kill("),
+        "the supervisor spawns and signals"
+    );
+    for path in SUBAGENT_PROCESS_MODULES {
+        let source = production_source(path);
+        for forbidden in [
+            "tokio::process::Child,",
+            "tokio::process::Child>",
+            "tokio::process::Child)",
+            "process::Child ",
+            ".start_kill(",
+            ".kill().await",
+            ".wait().await",
+            "libc::kill(",
+            "kill_on_drop(",
+            "terminate_owned_process_tree(",
+            "sigterm_pid(",
+            "terminate_local_process_group(",
+            "ProcessOwnership::launched(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must not own or signal a process directly ({forbidden}); \
+                 only the OwnedChildSupervisor may"
+            );
+        }
+    }
+}
+
+/// The retained #1925 scaffolding may still signal *reported* pids until
+/// #1940, but no production path publishes a launched lease any more: the
+/// launched-child authority lives exclusively in the supervisor's handle.
+#[test]
+fn local_launch_publishes_no_signal_lease() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        if path == "src/infrastructure/tools/process_ownership.rs" {
+            continue;
+        }
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(
+            !production.contains("ProcessOwnership::launched"),
+            "{path} publishes a launched signal lease; launched children are \
+             owned through the supervisor (#1935)"
+        );
+    }
+    let launch = production_source("src/infrastructure/tools/spawn_launch_ports.rs");
+    assert!(launch.contains("entry.owned_child = prepared.owned_child;"));
+    assert!(launch.contains("entry.launch_generation ="));
+}
+
+/// Dependencies point inward: the process adapters name only domain types,
+/// the subagent ports, their own module tree and the registry/transport
+/// they adapt; never the interface or composition.
+fn processes_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "subagents", "ports", ..]
+        | ["crate", "infrastructure", "processes", ..]
+        | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
+        ["crate", ..] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn process_adapters_depend_only_inward() {
+    assert_dependencies("src/infrastructure/processes", processes_dependency_allowed);
+    for dep in [
+        "crate::interface::cli::uds_multi::BusyFlag",
+        "crate::composition::processes::owned_child_supervisor",
+        "crate::application::subagents::use_cases::ExecuteHarnessShutdown",
+        "crate::infrastructure::tools::spawn::SpawnTool",
+    ] {
+        assert!(
+            !processes_dependency_allowed(dep),
+            "process adapter guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::domain::parent_control::ParentControlCredential",
+        "crate::application::subagents::ports::DirectChildRouting",
+        "super::owned_child_supervisor::ProtocolOutcome",
+        "tokio::sync::watch",
+    ] {
+        assert!(
+            processes_dependency_allowed(dep),
+            "process adapter guard must allow {dep}"
+        );
+    }
+}
+
+/// The parent control capability never reaches argv or the environment:
+/// the launch args builder forwards only the sidecar path, and the child's
+/// flag parser records only a path.
+#[test]
+fn parent_control_capability_never_travels_on_argv_or_env() {
+    let args = production_source("src/infrastructure/tools/spawn_launch_args.rs");
+    assert!(args.contains("\"--parent-control\""));
+    assert!(
+        !args.contains("expose("),
+        "the argv builder never sees the material"
+    );
+    let container = production_source("src/infrastructure/tools/spawn_container.rs");
+    assert!(
+        !container.contains("expose(") && !container.contains("PARENT_CONTROL"),
+        "no environment variable carries the capability"
+    );
+    // Every file that touches the sidecar path may forward it only on
+    // argv: no `env(`/`set_var(` call may carry it (or anything) into the
+    // child's environment from there.
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    let mut touched = 0;
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        if !production.contains("parent_control_path") {
+            continue;
+        }
+        touched += 1;
+        for forbidden in [".env(", "set_var(", ".envs("] {
+            assert!(
+                !production.contains(forbidden),
+                "{path} touches the parent control sidecar path and writes an environment ({forbidden})"
+            );
+        }
+    }
+    assert!(
+        touched >= 2,
+        "the launch ports and the args builder must be scanned"
+    );
+    let flags = production_source("src/interface/cli/agent/flag_parse.rs");
+    assert!(flags.contains("parent_control: Option<std::path::PathBuf>"));
+    // The material is exposed only where it is written out of band and
+    // where the bound connection presents it.
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        if production.contains(".expose()") {
+            assert!(
+                matches!(
+                    path,
+                    "src/infrastructure/processes/parent_control.rs"
+                        | "src/domain/parent_control.rs"
+                ),
+                "{path} exposes parent control material"
+            );
+        }
+    }
 }

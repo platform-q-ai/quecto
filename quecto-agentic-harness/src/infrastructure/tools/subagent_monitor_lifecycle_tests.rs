@@ -15,7 +15,7 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
         .insert("child".to_string(), test_entry());
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
 
-    let handle = spawn_monitor_task(
+    let handle = spawn_monitor_task_unbound(
         "child".to_string(),
         sock,
         registry.clone(),

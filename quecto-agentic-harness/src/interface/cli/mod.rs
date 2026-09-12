@@ -189,8 +189,9 @@ mod uds_extensions;
 mod uds_latest_report;
 mod uds_lifecycle;
 pub mod uds_models;
-mod uds_multi;
+pub(crate) mod uds_multi;
 mod uds_multi_accept;
+pub(crate) mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
@@ -203,6 +204,8 @@ mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
 mod uds_swarm_control;
+pub(crate) mod uds_teardown_adapters;
+pub mod uds_teardown_graph;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
@@ -264,6 +267,10 @@ pub struct CliContext {
     pub cwd: Option<PathBuf>,
     /// Opaque outer-layer constructor for the optional web-fetch graph.
     pub web_fetch_tool_factory: Option<WebFetchToolFactory>,
+    /// Composition's subagent teardown graph builder (#1935). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; a launched child
+    /// (one started with `--parent-control`) refuses to start without it.
+    pub teardown_graph: Option<uds_teardown_graph::TeardownGraphBuilder>,
 }
 
 impl CliContext {
@@ -351,9 +358,18 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
     stripped
 }
 
-/// Run the CLI with the given args and required outer-owned web-fetch factory,
+/// The outer-owned graph builders a binary's `main` hands to the CLI: the
+/// composition layer constructs them, the interface only threads them into
+/// its [`CliContext`].
+#[derive(Debug, Clone, Copy)]
+pub struct CliComposition {
+    pub web_fetch_tool_factory: WebFetchToolFactory,
+    pub teardown_graph: uds_teardown_graph::TeardownGraphBuilder,
+}
+
+/// Run the CLI with the given args and the required outer-owned builders,
 /// printing to real stdout/stderr. Returns the exit code.
-pub fn run(args: Vec<String>, web_fetch_tool_factory: WebFetchToolFactory) -> i32 {
+pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
     let config_path = match extract_config_flag(&args) {
         Ok(path) => path,
         Err(error) => {
@@ -365,7 +381,8 @@ pub fn run(args: Vec<String>, web_fetch_tool_factory: WebFetchToolFactory) -> i3
     let ctx = CliContext {
         config_path,
         stdin_is_tty: Some(stdin_is_tty),
-        web_fetch_tool_factory: Some(web_fetch_tool_factory),
+        web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
+        teardown_graph: Some(composition.teardown_graph),
         ..Default::default()
     };
 

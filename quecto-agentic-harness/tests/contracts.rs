@@ -122,5 +122,9 @@ mod shutdown_session_persistence;
 mod subagent_lifecycle_repository;
 #[path = "common/teardown_fixture.rs"]
 mod teardown_fixture;
+#[path = "contracts/teardown_loop_adapters.rs"]
+mod teardown_loop_adapters;
 #[path = "contracts/turn_cancellation.rs"]
 mod turn_cancellation;
+#[path = "contracts/uds_direct_child_routing.rs"]
+mod uds_direct_child_routing;

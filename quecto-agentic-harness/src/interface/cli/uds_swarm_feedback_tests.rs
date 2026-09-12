@@ -133,6 +133,7 @@ async fn approval_exchange(busy: bool) {
             subagent_registry: None,
             workflow_state: None,
             workspace_path: workspace.as_ref().clone(),
+            teardown: None,
         },
     );
     let delivery = tokio::spawn(async move {
@@ -235,6 +236,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
             subagent_registry: None,
             workflow_state: None,
             workspace_path: workspace.as_ref().clone(),
+            teardown: None,
         },
     );
 

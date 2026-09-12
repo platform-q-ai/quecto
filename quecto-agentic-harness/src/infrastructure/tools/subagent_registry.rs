@@ -36,9 +36,22 @@ pub struct SubagentEntry {
     pub pid: u32,
     /// Owned OS process topology used by infrastructure cleanup paths.
     pub process_owner: ProcessOwner,
-    /// Shared with the local reaper; retained clones lose authority on reap.
-    /// Unowned unless the local launch path claimed it (#1925).
+    /// Reported-pid lease scaffolding (#1925, removed by #1940). A locally
+    /// launched child never carries a lease any more: its process is owned
+    /// by the supervisor through `owned_child` (#1935).
     pub(crate) process_ownership: super::process_ownership::ProcessOwnership,
+    /// Launch generation minted by this harness for a child it launched
+    /// itself (#1935). `None` for merged descendants, restored rows and
+    /// fixtures: they are never direct children of this harness.
+    pub launch_generation: Option<crate::domain::subagent_teardown::LaunchGeneration>,
+    /// Opaque handle of the locally spawned process, held by the one
+    /// supervisor (#1935). `None` for script/container members and every
+    /// other row: no handle, no host signal fallback.
+    pub owned_child:
+        Option<crate::infrastructure::processes::owned_child_supervisor::ChildHandleId>,
+    /// The supervisor that retains `owned_child`.
+    pub owned_child_supervisor:
+        Option<Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>>,
     /// Internal lifecycle state; projected to the existing UDS status vocabulary.
     pub lifecycle: SubagentLifecycleState,
     /// Live status updated by the monitor task (#522).
@@ -138,11 +151,51 @@ impl SubagentEntry {
 
     /// Grant a signallable lease because the harness answering on this entry's
     /// socket self-reported `self.pid` as its own pid in our namespace (#1925,
-    /// restored sessions). Never replaces a launched lease held by a reaper.
+    /// restored sessions). Never replaces a launched lease held by a reaper,
+    /// and never touches a child whose process the supervisor owns.
     pub(crate) fn confirm_reported_pid_in_our_namespace(&mut self) {
-        if self.pid != 0 && !self.process_ownership.is_launched() {
+        if self.pid != 0 && !self.process_ownership.is_launched() && self.owned_child.is_none() {
             self.process_ownership = super::process_ownership::ProcessOwnership::reported(true);
         }
+    }
+
+    /// True when this harness holds the child's process: it launched it
+    /// locally and the supervisor still retains the handle.
+    pub fn holds_owned_child(&self) -> bool {
+        match (&self.owned_child, &self.owned_child_supervisor) {
+            (Some(handle), Some(supervisor)) => supervisor.retains(*handle),
+            _ => false,
+        }
+    }
+
+    /// Ask the supervisor to terminate the owned child: the `shutdown`
+    /// protocol over this entry's endpoint first, TERM/KILL only after a
+    /// negative outcome. Returns `false`, having done nothing, when this
+    /// harness holds no handle for the entry (a script/container member, a
+    /// merged, restored or fixture row).
+    pub fn request_owned_child_termination(
+        &self,
+        reason: crate::domain::subagent_teardown::ShutdownReason,
+    ) -> bool {
+        let (Some(handle), Some(supervisor)) = (self.owned_child, &self.owned_child_supervisor)
+        else {
+            return false;
+        };
+        if !supervisor.retains(handle) {
+            return false;
+        }
+        let protocol =
+            crate::infrastructure::processes::direct_child_routing::shutdown_protocol_attempt(
+                self.socket_path.clone(),
+                reason,
+                crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT,
+            );
+        supervisor.request_termination(
+            handle,
+            Box::pin(protocol),
+            crate::infrastructure::processes::owned_child_supervisor::TerminationBudget::DEFAULT,
+        );
+        true
     }
 
     /// Create a new entry with explicit hidden identity and display label.
@@ -159,6 +212,9 @@ impl SubagentEntry {
             pid,
             process_owner: ProcessOwner::DirectPid,
             process_ownership: super::process_ownership::ProcessOwnership::unowned(),
+            launch_generation: None,
+            owned_child: None,
+            owned_child_supervisor: None,
             lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,

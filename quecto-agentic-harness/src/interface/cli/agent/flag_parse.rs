@@ -48,6 +48,11 @@ pub(crate) struct AgentFlags {
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
+    /// `--parent-control <file>`: private sidecar carrying the launch-bound
+    /// parent control credential (#1935). Consumed (read and removed) before
+    /// the socket is announced; only the launcher's own control connection
+    /// can then present it.
+    pub(crate) parent_control: Option<std::path::PathBuf>,
 }
 
 /// Post-parse validation of mutually exclusive / dependent flags.
@@ -58,6 +63,10 @@ pub(super) fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Op
     }
     if flags.persist && !flags.uds_mode {
         stderr.push_str("agent: --persist requires --mode uds\n");
+        return None;
+    }
+    if flags.parent_control.is_some() && !(flags.uds_mode && flags.spawned) {
+        stderr.push_str("agent: --parent-control requires --mode uds and --spawned\n");
         return None;
     }
     if flags.workflow_guards && flags.workflow_disabled {

@@ -80,8 +80,15 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             handle.abort();
             tracing::info!(agent = %name, "aborted monitor task");
         }
-        // Only a pid this harness launched itself may be signalled (#1925).
-        if entry.pid != 0
+        // A locally launched child is terminated through its owned handle:
+        // protocol first, TERM/KILL only after a negative outcome (#1935).
+        // Everything else keeps the reported-pid lease scaffolding (#1925)
+        // until #1940 retires it.
+        if entry.request_owned_child_termination(
+            crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+        ) {
+            tracing::info!(agent = %name, "requested owned child termination");
+        } else if entry.pid != 0
             && entry
                 .process_ownership
                 .signal(entry.pid, entry.process_owner)

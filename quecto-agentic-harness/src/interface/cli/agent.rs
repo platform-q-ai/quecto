@@ -43,6 +43,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
     let mut admission_context: Option<std::path::PathBuf> = None;
+    let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
@@ -131,9 +132,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 parent_id = Some(val.to_string());
                 i += 2;
             }
-            "--admission-context" => {
-                let val = next_arg(args, i, "--admission-context requires a path", stderr)?;
-                admission_context = Some(std::path::PathBuf::from(val));
+            f @ ("--admission-context" | "--parent-control") => {
+                let msg = format!("{f} requires a path");
+                let val = next_arg(args, i, &msg, stderr)?;
+                *(match f {
+                    "--admission-context" => &mut admission_context,
+                    _ => &mut parent_control,
+                }) = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
             "--inherited-tool-policy-snapshot" => {
@@ -194,6 +199,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context,
+        parent_control,
     };
     flags = flag_parse::validate_agent_flags(flags, stderr)?;
     if let Some(path) = inherited_tool_policy_path {
@@ -558,15 +564,7 @@ pub(crate) fn run_agent_session(
 
 use crate::interface::shared::scrub_ephemeral_spill;
 
-/// Run the agent with a wall-clock deadline.
-///
-/// Uses `thread::scope` + `recv_timeout` so the deadline is enforced without
-/// requiring `tokio::time::timeout` (which needs an active reactor context
-/// that may conflict with test harness runtimes). After timeout, the scoped
-/// thread still runs until the in-flight LLM/tool call completes (bounded by
-/// per-tool and HTTP client timeouts), then the scope exits.
-/// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
-/// Resolve UDS persistence key.
+/// Resolve the UDS session key (ephemeral → empty, no persistence).
 #[path = "agent_session_identity.rs"]
 mod session_identity;
 use session_identity::resolve_uds_session_key;
@@ -585,6 +583,14 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     if flags.persist {
         stderr.push_str("WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n");
     }
+
+    let Some(parent_control) = parent_control_startup::consume(
+        flags.parent_control.as_deref(),
+        ctx.teardown_graph.is_some(),
+        stderr,
+    ) else {
+        return 1;
+    };
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
     let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
@@ -661,20 +667,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     );
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
-    let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
-        let dir = crate::interface::shared::xdg_runtime_dir_or_temp();
-        // Best-effort: reap dead quecto-agent-*.sock files (kernel-table
-        // probed, #1460 — a live agent is never touched, let alone severed,
-        // regardless of age; the 24 h threshold only gates files whose probe
-        // is inconclusive). Drop guards do not run on SIGKILL so dead
-        // sockets can accumulate.
-        crate::interface::cli::uds::reap_stale_sockets(
-            &dir,
-            std::time::Duration::from_secs(86_400),
-        );
-        let id = uuid::Uuid::new_v4();
-        dir.join(format!("quecto-agent-{id}.sock"))
-    });
+    let socket_path = flags
+        .socket_path
+        .clone()
+        .unwrap_or_else(parent_control_startup::auto_socket_path);
 
     if !swarm_runtime::bind_socket(&socket_path, stderr) {
         return 1;
@@ -700,6 +696,8 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         broadcast_tx,
         provider_reload: Some(&mut provider_reload),
         provider_reload_inputs: Some(&build.provider_reload_inputs),
+        parent_control,
+        teardown_graph: ctx.teardown_graph,
     });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
@@ -711,6 +709,8 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 mod admission_startup;
 #[path = "agent_provider.rs"]
 mod agent_provider;
+#[path = "agent/parent_control_startup.rs"]
+mod parent_control_startup;
 pub use agent_provider::build_agent_provider;
 #[cfg(test)]
 #[path = "agent_agents_md_tests.rs"]

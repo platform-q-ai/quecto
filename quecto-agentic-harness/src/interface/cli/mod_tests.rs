@@ -22,11 +22,18 @@ fn live_cli_commands_keep_help_version_and_unknown_dispatch() {
     assert!(unknown.stderr.contains("Unknown command: not-a-command"));
 }
 
+fn test_composition() -> CliComposition {
+    CliComposition {
+        web_fetch_tool_factory: crate::composition::web_fetch::build,
+        teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
+    }
+}
+
 #[test]
 fn real_run_dispatches_non_repl_commands() {
-    let factory = crate::composition::web_fetch::build;
-    assert_eq!(run(args("version"), factory), 0);
-    assert_eq!(run(args("definitely-not-a-command"), factory), 1);
+    let composition = test_composition();
+    assert_eq!(run(args("version"), composition), 0);
+    assert_eq!(run(args("definitely-not-a-command"), composition), 1);
 }
 
 #[test]
@@ -54,7 +61,7 @@ fn public_run_accepts_required_web_fetch_factory_when_fetch_is_enabled() {
                 "--max-iterations".into(),
                 "1".into(),
             ],
-            crate::composition::web_fetch::build,
+            test_composition(),
         )
     });
     assert!(

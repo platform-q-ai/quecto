@@ -119,6 +119,9 @@ pub enum ShutdownReason {
     SelectedTermination,
     /// The authenticated launch-bound parent connection closed.
     ParentConnectionLost,
+    /// A launched harness's parent never bound its control connection
+    /// within the bind deadline: the launcher is presumed gone.
+    ParentNeverBound,
     /// SIGTERM/SIGINT or equivalent delivered to the harness process.
     TerminationSignal,
     /// An operator asked for the roster to be torn down (delete-all, exit).
@@ -126,10 +129,11 @@ pub enum ShutdownReason {
 }
 
 impl ShutdownReason {
-    pub const ALL: [ShutdownReason; 5] = [
+    pub const ALL: [ShutdownReason; 6] = [
         Self::ParentShutdown,
         Self::SelectedTermination,
         Self::ParentConnectionLost,
+        Self::ParentNeverBound,
         Self::TerminationSignal,
         Self::OperatorRequest,
     ];
@@ -139,6 +143,7 @@ impl ShutdownReason {
             Self::ParentShutdown => "parent_shutdown",
             Self::SelectedTermination => "selected_termination",
             Self::ParentConnectionLost => "parent_connection_lost",
+            Self::ParentNeverBound => "parent_never_bound",
             Self::TerminationSignal => "termination_signal",
             Self::OperatorRequest => "operator_request",
         }

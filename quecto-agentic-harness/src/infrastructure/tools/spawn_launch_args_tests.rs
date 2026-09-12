@@ -31,6 +31,7 @@ fn spec<'a>(config: &'a SubagentConfig) -> ChildLaunchSpec<'a> {
         parent_id: None,
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
+        parent_control_path: None,
     }
 }
 
@@ -130,6 +131,7 @@ fn forwards_existing_flags_alongside_model() {
         parent_id: Some("parent-7"),
         workflow_spec_path: Some(Path::new("/run/spec.json")),
         inherited_tool_policy_path: None,
+        parent_control_path: None,
     };
     let args = build_child_cli_args(&s);
     let strs = as_strings(&args);
@@ -204,6 +206,7 @@ fn child_session_flag_uses_uuid_key_not_display_label() {
         parent_id: None,
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
+        parent_control_path: None,
     };
     let strs = as_strings(&build_child_cli_args(&s));
     let s_pos = strs

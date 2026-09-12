@@ -27,7 +27,7 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
-    let handle = spawn_monitor_task(
+    let handle = spawn_monitor_task_unbound(
         "child".to_string(),
         sock.clone(),
         registry.clone(),

@@ -318,13 +318,16 @@ async fn wait_for_socket_returns_ok_when_socket_is_connectable() {
 async fn wait_for_socket_or_child_exit_reports_pre_ready_exit() {
     let dir = tempfile::TempDir::new().unwrap();
     let socket_path = dir.path().join("never-ready.sock");
-    let mut child = tokio::process::Command::new("/usr/bin/false")
-        .spawn()
-        .expect("test helper process should spawn");
+    let prepared = crate::infrastructure::tools::spawn_container::PreparedChild::new_for_test(
+        Some(tokio::process::Command::new("/usr/bin/false")),
+        None,
+        None,
+    )
+    .await;
     let tool = SpawnTool::new(vec![]);
 
     let err = tool
-        .wait_for_socket_or_child_exit(&socket_path, &mut child)
+        .wait_for_socket_or_child_exit(&socket_path, &prepared)
         .await
         .unwrap_err();
 

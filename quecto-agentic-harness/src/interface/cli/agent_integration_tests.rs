@@ -75,6 +75,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context: None,
+        parent_control: None,
     }
 }
 

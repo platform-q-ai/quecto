@@ -97,6 +97,9 @@ pub(super) struct ChildLaunchSpec<'a> {
     /// Already-written workflow spec file path, if any.
     pub workflow_spec_path: Option<&'a Path>,
     pub inherited_tool_policy_path: Option<&'a Path>,
+    /// Private sidecar carrying the launch-bound parent control credential
+    /// (#1935). Only the path is forwarded; the material never reaches argv.
+    pub parent_control_path: Option<&'a Path>,
 }
 
 /// Build the ordered CLI argument list for launching a child `quecto agent` in
@@ -112,6 +115,7 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         parent_id,
         workflow_spec_path,
         inherited_tool_policy_path,
+        parent_control_path,
     } = *spec;
 
     let mut args: Vec<OsString> = vec![
@@ -176,6 +180,11 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     if let Some(policy_path) = inherited_tool_policy_path {
         args.push("--inherited-tool-policy-snapshot".into());
         args.push(policy_path.into());
+    }
+
+    if let Some(control_path) = parent_control_path {
+        args.push("--parent-control".into());
+        args.push(control_path.into());
     }
 
     // Forward each read-only tool restriction as `--disable-tool <name>` so the

@@ -31,6 +31,7 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context: None,
+        parent_control: None,
     }
 }
 

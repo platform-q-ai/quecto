@@ -434,6 +434,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context: None,
+        parent_control: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -469,6 +470,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context: None,
+        parent_control: None,
     };
     flags.persist = true;
     stderr.clear();

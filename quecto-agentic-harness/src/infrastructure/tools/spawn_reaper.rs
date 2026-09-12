@@ -1,36 +1,43 @@
 //! Reaper for locally spawned subagent children.
 //!
-//! Local launches (only) own an OS child process; this task waits for it,
-//! translates its exit status into the shared exit signal, and drives the
+//! Local launches (only) own an OS child process, held by the one
+//! [`OwnedChildSupervisor`] (#1935); this task waits for the supervisor's
+//! exit report, translates it into the shared exit signal, and drives the
 //! same exactly-once cleanup and cascade removal the monitor path uses.
 //! Script-managed children have no local process and rely on the monitor's
-//! socket-EOF death signal instead; Slice 3 unifies the two paths.
+//! socket-EOF death signal instead.
+
+use std::sync::Arc;
 
 use super::subagent_cleanup;
 use super::subagent_registry::{ExitSignal, ExitSignalTx, SubagentRegistry};
+use crate::infrastructure::processes::owned_child_supervisor::{
+    ChildExit, ChildHandleId, OwnedChildSupervisor,
+};
 
 pub(super) struct ReaperContext {
-    pub ownership: super::process_ownership::ProcessOwnership,
+    pub exit_tx: ExitSignalTx,
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub swarm_context: Option<super::swarm_bridge::SwarmContext>,
 }
 
 pub(super) fn spawn_reaper_task(
-    mut child: tokio::process::Child,
+    handle: ChildHandleId,
+    supervisor: Arc<OwnedChildSupervisor>,
     registry: SubagentRegistry,
     registry_key: String,
-    exit_tx: ExitSignalTx,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     context: ReaperContext,
 ) {
     let ReaperContext {
-        ownership,
+        exit_tx,
+        broadcast_tx,
         swarm_context,
     } = context;
     tokio::spawn(async move {
-        let status = ownership.wait(&mut child).await;
+        let exit = supervisor.wait_exit(handle).await;
         // send_replace: store the real exit status even when no awaiter holds
         // a receiver yet, so late awaits report it instead of a fallback.
-        exit_tx.send_replace(Some(exit_signal_from_status(status)));
+        exit_tx.send_replace(Some(exit_signal_from_exit(exit)));
         subagent_cleanup::cleanup_registered_once(&registry, &registry_key).await;
         let super::subagent_cascade::CascadeOutcome { removed, event } =
             super::subagent_cascade::cascade_remove_and_state_changed(&registry, &registry_key);
@@ -68,39 +75,28 @@ pub(super) fn spawn_reaper_task(
                 }
             }).await;
         }
+        // The exit was published and every cleanup ran: the handle's slot
+        // can go; retained registry clones then see "no retained handle".
+        supervisor.retire(handle);
     });
 }
 
-fn exit_signal_from_status(status: std::io::Result<std::process::ExitStatus>) -> ExitSignal {
-    match status {
-        Ok(exit_status) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::ExitStatusExt;
-                if let Some(signal) = exit_status.signal() {
-                    ExitSignal {
-                        exit_code: None,
-                        signal: Some(signal),
-                        kind: Default::default(),
-                    }
-                } else {
-                    ExitSignal {
-                        exit_code: exit_status.code(),
-                        signal: None,
-                        kind: Default::default(),
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                ExitSignal {
-                    exit_code: exit_status.code(),
-                    signal: None,
-                    kind: Default::default(),
-                }
-            }
-        }
-        Err(_) => ExitSignal {
+/// The supervisor's exit report in the registry's exit-signal vocabulary.
+/// An unknown handle or an unobservable wait yields the empty signal, as a
+/// failed `wait` always did.
+pub(super) fn exit_signal_from_exit(exit: Option<ChildExit>) -> ExitSignal {
+    match exit {
+        Some(ChildExit::Code(code)) => ExitSignal {
+            exit_code: Some(code),
+            signal: None,
+            kind: Default::default(),
+        },
+        Some(ChildExit::Signal(signal)) => ExitSignal {
+            exit_code: None,
+            signal: Some(signal),
+            kind: Default::default(),
+        },
+        Some(ChildExit::Unobservable(_)) | None => ExitSignal {
             exit_code: None,
             signal: None,
             kind: Default::default(),

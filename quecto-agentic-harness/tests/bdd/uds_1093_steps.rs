@@ -343,6 +343,8 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
+            parent_control: None,
+            teardown_graph: None,
         })
     });
     let deadline = Instant::now() + Duration::from_secs(5);

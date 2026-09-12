@@ -45,6 +45,12 @@ pub struct UdsLoopArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
+    /// The launch-bound parent control binding (#1935); `None` for a
+    /// top-level harness.
+    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
+    /// Composition's teardown graph builder; `None` runs the loop without
+    /// the teardown edge (unit rigs) and is refused for a launched child.
+    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -79,6 +85,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         broadcast_tx,
         provider_reload,
         provider_reload_inputs,
+        parent_control,
+        teardown_graph,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -166,6 +174,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 provider_reload,
                 provider_reload_inputs,
                 last_persisted_message_index: loaded_message_count,
+                parent_control,
+                teardown_graph,
             },
             listener,
             session_store,

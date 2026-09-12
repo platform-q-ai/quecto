@@ -1,9 +1,13 @@
 use super::*;
 
-fn parse_create(stdout: &[u8]) -> Result<CreateResult, DomainError> {
+pub(super) fn test_supervisor() -> Arc<OwnedChildSupervisor> {
+    Arc::new(OwnedChildSupervisor::new())
+}
+
+pub(super) fn parse_create(stdout: &[u8]) -> Result<CreateResult, DomainError> {
     parse_create_result(stdout, None)
 }
-fn parse_exec(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
+pub(super) fn parse_exec(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
     parse_exec_result(stdout, None)
 }
 use std::collections::HashMap;
@@ -88,7 +92,7 @@ fn configured_container_configs() -> Config {
     }
 }
 
-fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
+pub(super) fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: env_ref.into(),
         environment_id: env_id.into(),
@@ -108,7 +112,7 @@ fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
     }
 }
 
-fn base_config(container: ContainerSelection) -> SubagentConfig {
+pub(super) fn base_config(container: ContainerSelection) -> SubagentConfig {
     SubagentConfig {
         container,
         task: None,
@@ -178,6 +182,7 @@ async fn local_subagent_inherits_parent_process_group() {
     let cli_args = vec![std::ffi::OsString::from("2")];
     let mut prepared = spawn_local_child(&ChildCommand {
         swarm_context: None,
+        supervisor: &test_supervisor(),
         binary: Path::new("/bin/sleep"),
         cli_args: &cli_args,
         base_dir: dir.path(),
@@ -186,15 +191,14 @@ async fn local_subagent_inherits_parent_process_group() {
     .await
     .expect("local child should spawn");
 
-    let child = prepared.child.as_mut().expect("local launch owns child");
-    let pid = child.id().expect("child pid") as libc::pid_t;
+    assert!(prepared.owned_child.is_some(), "local launch owns child");
+    let pid = prepared.display_pid as libc::pid_t;
     // SAFETY: `pid` comes from a live child process we just spawned.
     let child_pgid = unsafe { libc::getpgid(pid) };
     // SAFETY: `getpgrp` reads the current process group and has no preconditions.
     let parent_pgid = unsafe { libc::getpgrp() };
 
-    let _ = child.start_kill();
-    let _ = child.wait().await;
+    prepared.rollback_once().await;
 
     assert_eq!(
         child_pgid, parent_pgid,
@@ -312,9 +316,19 @@ async fn run_cleanup_once_ignores_missing_env_or_empty_argv() {
 
 #[tokio::test]
 async fn cleanup_plan_clones_environment_and_argv() {
+    let supervisor = test_supervisor();
+    let spawned = supervisor
+        .spawn(
+            tokio::process::Command::new("true"),
+            ProcessGroup::Inherited,
+        )
+        .await
+        .unwrap();
     let prepared = PreparedChild {
         swarm_reservation: None,
-        child: Some(tokio::process::Command::new("true").spawn().unwrap()),
+        owned_child: Some(spawned.handle),
+        display_pid: spawned.display_pid.0,
+        supervisor: supervisor.clone(),
         environment_ref: Some("C-test".into()),
         endpoint: None,
         proxy_bridge: None,
@@ -336,6 +350,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &local,
             &ChildCommand {
                 swarm_context: None,
+                supervisor: &test_supervisor(),
                 binary: Path::new("/definitely/not/quecto"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -357,6 +372,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &without_config,
             &ChildCommand {
                 swarm_context: None,
+                supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -375,6 +391,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &without_config,
             &ChildCommand {
                 swarm_context: None,
+                supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -412,6 +429,7 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
             &config,
             &ChildCommand {
                 swarm_context: None,
+                supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: dir.path(),
@@ -485,6 +503,7 @@ async fn script_env_includes_optional_selection_values() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: dir.path(),
@@ -512,10 +531,11 @@ async fn script_env_includes_optional_selection_values() {
 #[tokio::test]
 async fn local_child_success_has_no_cleanup_plan() {
     let config = base_config(ContainerSelection::Local);
-    let mut prepared = spawn_prepared_child(
+    let prepared = spawn_prepared_child(
         &config,
         &ChildCommand {
             swarm_context: None,
+            supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: Path::new("/tmp"),
@@ -529,7 +549,7 @@ async fn local_child_success_has_no_cleanup_plan() {
     let (env_ref, argv) = prepared.cleanup_plan();
     assert!(env_ref.is_none());
     assert!(argv.is_empty());
-    let _ = prepared.child.as_mut().unwrap().wait().await;
+    assert!(prepared.wait_owned_child_exit().await.is_some());
 }
 
 #[tokio::test]
@@ -545,205 +565,4 @@ async fn cleanup_runner_consumes_argv_only_when_command_exists() {
     let mut cmd = vec!["true".into()];
     run_cleanup_once(Some("C-test".into()), &mut cmd).await;
     assert!(cmd.is_empty());
-}
-
-#[tokio::test]
-async fn rollback_kills_child_and_consumes_cleanup_once() {
-    let registry = EnvironmentRegistry::new();
-    registry.commit(test_record("C-test", "env-test"));
-    let mut prepared = PreparedChild {
-        swarm_reservation: None,
-        child: Some(
-            tokio::process::Command::new("sleep")
-                .arg("30")
-                .spawn()
-                .unwrap(),
-        ),
-        environment_ref: Some("C-test".into()),
-        endpoint: None,
-        proxy_bridge: None,
-        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
-        cleanup_environment_id: Some("env-test".into()),
-        cleanup_argv: vec!["true".into()],
-        environments: Some(registry.clone()),
-    };
-    prepared.rollback_once().await;
-    assert!(prepared.cleanup_argv.is_empty());
-    assert!(registry.get("C-test").is_none());
-}
-
-#[tokio::test]
-async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
-    let dir = TempDir::new().unwrap();
-    let cfg_path = dir.path().join("config.toml");
-    std::fs::write(
-        &cfg_path,
-        r#"{
-  "container_configs": {
-    "default": {"default": true, "create": ["printf", "{\"environment_id\":\"env-1\",\"workspace_path\":\"/tmp/ws\",\"metadata\":{},\"socket_path\":\"/tmp/child.sock\"}"], "cleanup": ["true"]}
-  }
-}
-"#,
-    )
-    .unwrap();
-    let mut config = base_config(ContainerSelection::New {
-        container_config: None,
-        name: None,
-    });
-    config.config_path = Some(cfg_path);
-    let registry = EnvironmentRegistry::new();
-    let prepared = spawn_prepared_child(
-        &config,
-        &ChildCommand {
-            swarm_context: None,
-            binary: Path::new("true"),
-            cli_args: &[],
-            base_dir: dir.path(),
-            admission_dir: None,
-        },
-        &registry,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(prepared.environment_ref.as_deref(), Some("C1"));
-    let committed = registry.get("C1").unwrap();
-    assert_eq!(committed.environment_id, "env-1");
-    assert_eq!(committed.workspace_path, PathBuf::from("/tmp/ws"));
-    assert_eq!(committed.script_name, "default");
-    // No repository in the script's metadata -> sandbox listing (#1410).
-    assert_eq!(committed.repository, "");
-    let (env_ref, argv) = prepared.cleanup_plan();
-    assert!(env_ref.as_deref().unwrap() == "env-1");
-    assert_eq!(argv, vec!["true"]);
-    assert!(prepared.child.is_none());
-}
-
-#[test]
-fn create_result_contract_rejects_invalid_shapes_and_proxy() {
-    assert!(parse_create(b"").is_err());
-    let unknown_key = br#"{"environment_id":"e-unknown","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock","bogus":1}"#;
-    assert!(parse_create(unknown_key).is_err());
-    assert_eq!(
-        salvage_environment_id(unknown_key).as_deref(),
-        Some("e-unknown")
-    );
-    assert!(salvage_environment_id(br#"{"no_id":true}"#).is_none());
-    assert!(salvage_environment_id(br#"{"environment_id":""}"#).is_none());
-    let trailing =
-        br#"{"environment_id":"e-trail","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock"} extra"#;
-    assert!(parse_create(trailing).is_err());
-    assert_eq!(salvage_environment_id(trailing).as_deref(), Some("e-trail"));
-    assert!(
-        parse_create(
-            br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":{},"socket_proxy":{}}"#
-        )
-        .is_err()
-    );
-    assert!(parse_create(br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":[],"socket_path":"/tmp/sock"}"#).is_err());
-}
-
-#[test]
-fn create_result_contract_accepts_direct_endpoint() {
-    let parsed = parse_create(
-        br#"{"environment_id":"env","workspace_path":"/tmp/ws","metadata":{"k":"v"},"socket_path":"/tmp/sock"}"#,
-    )
-    .unwrap();
-    assert_eq!(parsed.environment_id, "env");
-    assert_eq!(
-        parsed.endpoint,
-        crate::domain::subagent_launch::ParentEndpoint::Direct {
-            socket_path: PathBuf::from("/tmp/sock")
-        }
-    );
-}
-
-#[test]
-fn unsafe_arg_detects_empty_and_nul_only() {
-    assert!(unsafe_arg(""));
-    assert!(unsafe_arg("bad\0arg"));
-    assert!(!unsafe_arg("safe-arg"));
-}
-
-#[test]
-fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
-    assert!(parse_exec(b"").is_err());
-    assert!(parse_exec(br#"{"metadata":{},"socket_path":""}"#).is_err());
-    assert!(parse_exec(br#"{"metadata":{},"socket_proxy":{},"socket_path":"/tmp/s"}"#).is_err());
-    assert!(parse_exec(br#"{"metadata":[],"socket_path":"/tmp/s"}"#).is_err());
-    assert!(parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s"} extra"#).is_err());
-    assert!(parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s","bogus":1}"#).is_err());
-    assert_eq!(
-        parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s"}"#).unwrap(),
-        crate::domain::subagent_launch::ParentEndpoint::Direct {
-            socket_path: PathBuf::from("/tmp/s")
-        }
-    );
-}
-
-#[test]
-fn environment_name_is_taken_from_new_mode_only() {
-    let named = base_config(ContainerSelection::New {
-        container_config: None,
-        name: Some("review-env".into()),
-    });
-    assert_eq!(environment_name(&named).as_deref(), Some("review-env"));
-    assert!(environment_name(&base_config(ContainerSelection::Local)).is_none());
-}
-
-#[tokio::test]
-async fn join_fails_for_unknown_target_and_missing_retained_exec() {
-    let registry = EnvironmentRegistry::new();
-    let child = ChildCommand {
-        swarm_context: None,
-        binary: Path::new("true"),
-        cli_args: &[],
-        base_dir: Path::new("/tmp"),
-        admission_dir: None,
-    };
-    // Unknown ref: no exec is attempted.
-    let err = join_script_managed_child(
-        &child,
-        &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C9".into()),
-    )
-    .await
-    .unwrap_err();
-    assert!(err.to_string().contains("unknown"), "{err}");
-
-    // Committed environment without retained exec argv cannot be joined.
-    registry.commit(test_record("C1", "env-noexec"));
-    let err = join_script_managed_child(
-        &child,
-        &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
-    )
-    .await
-    .unwrap_err();
-    assert!(err.to_string().contains("retained exec"), "{err}");
-}
-
-#[test]
-fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
-    // #1410 accepted trade-off: exactly-one-default is a LOAD invariant, so a
-    // config file with entries but no `"default": true` label blocks ALL
-    // container spawns — including explicitly named selection, which needs no
-    // default. Explicit selection is only reachable through a valid config.
-    let dir = TempDir::new().unwrap();
-    let cfg_path = dir.path().join("config.json");
-    std::fs::write(
-        &cfg_path,
-        r#"{"container_configs":{"a":{"create":["c"],"cleanup":["k"]}}}"#,
-    )
-    .unwrap();
-    let mut config = base_config(ContainerSelection::New {
-        container_config: Some("a".into()),
-        name: None,
-    });
-    config.config_path = Some(cfg_path);
-    let err = load_container_config(&config, None, Path::new("/tmp"))
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("no container config is labeled"), "{err}");
-    assert!(err.contains("a"), "error must enumerate names: {err}");
 }

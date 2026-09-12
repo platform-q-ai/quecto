@@ -8,6 +8,7 @@
 //! a hand-written BDD mock.
 
 use super::*;
+use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -80,6 +81,7 @@ fn make_args(
         subagent_registry,
         workflow_state: None,
         workspace_path: std::env::current_dir().unwrap(),
+        teardown: None,
     };
     (args, broadcast_tx, cmd_tx, cmd_rx)
 }
