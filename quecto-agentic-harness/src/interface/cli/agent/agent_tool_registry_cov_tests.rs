@@ -339,7 +339,7 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
-        web_fetch_tool: None,
+        web_fetch_tool: Some(crate::composition::web_fetch::build(http.clone(), 1024)),
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
