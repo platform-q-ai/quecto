@@ -351,9 +351,16 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
     stripped
 }
 
-/// Run the CLI with the given args and required outer-owned web-fetch factory,
-/// printing to real stdout/stderr. Returns the exit code.
-pub fn run(args: Vec<String>, web_fetch_tool_factory: WebFetchToolFactory) -> i32 {
+/// Run the CLI with the given args, printing to real stdout/stderr.
+/// Returns the exit code.
+pub fn run(args: Vec<String>) -> i32 {
+    run_with_web_fetch_factory(args, None)
+}
+
+pub fn run_with_web_fetch_factory(
+    args: Vec<String>,
+    web_fetch_tool_factory: Option<WebFetchToolFactory>,
+) -> i32 {
     let config_path = match extract_config_flag(&args) {
         Ok(path) => path,
         Err(error) => {
@@ -365,7 +372,7 @@ pub fn run(args: Vec<String>, web_fetch_tool_factory: WebFetchToolFactory) -> i3
     let ctx = CliContext {
         config_path,
         stdin_is_tty: Some(stdin_is_tty),
-        web_fetch_tool_factory: Some(web_fetch_tool_factory),
+        web_fetch_tool_factory,
         ..Default::default()
     };
 

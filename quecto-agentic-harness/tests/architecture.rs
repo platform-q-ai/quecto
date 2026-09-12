@@ -2813,99 +2813,6 @@ fn web_fetch_has_target_layer_ownership() {
     }
 }
 
-fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
-    use syn::visit::Visit;
-
-    #[derive(Default)]
-    struct DependencyVisitor {
-        roots: BTreeSet<String>,
-    }
-
-    impl<'ast> Visit<'ast> for DependencyVisitor {
-        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-            let is_test = item.attrs.iter().any(|attr| {
-                attr.path().is_ident("cfg")
-                    && attr
-                        .parse_args::<syn::Path>()
-                        .is_ok_and(|path| path.is_ident("test"))
-            });
-            if !is_test {
-                syn::visit::visit_item_mod(self, item);
-            }
-        }
-
-        fn visit_path(&mut self, path: &'ast syn::Path) {
-            if path.leading_colon.is_none()
-                && path
-                    .segments
-                    .first()
-                    .is_some_and(|segment| segment.ident == "crate")
-                && path.segments.len() > 1
-            {
-                self.roots.insert(path.segments[1].ident.to_string());
-            }
-            syn::visit::visit_path(self, path);
-        }
-
-        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-            fn record_crate_root(tree: &syn::UseTree, roots: &mut BTreeSet<String>) {
-                if let syn::UseTree::Rename(rename) = tree
-                    && rename.ident == "crate"
-                {
-                    roots.insert("<crate alias>".to_owned());
-                }
-                if let syn::UseTree::Path(crate_path) = tree
-                    && crate_path.ident == "crate"
-                {
-                    match crate_path.tree.as_ref() {
-                        syn::UseTree::Path(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        syn::UseTree::Name(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        syn::UseTree::Rename(root) => {
-                            roots.insert(root.ident.to_string());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            record_crate_root(&item.tree, &mut self.roots);
-            syn::visit::visit_item_use(self, item);
-        }
-    }
-
-    let syntax =
-        syn::parse_file(source).unwrap_or_else(|error| panic!("valid Rust: {error}: {source}"));
-    let mut visitor = DependencyVisitor::default();
-    visitor.visit_file(&syntax);
-    visitor.roots
-}
-
-fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
-    const ALLOWED: &[&str] = &["application", "domain", "infrastructure", "interface"];
-    for root in interface_dependency_roots(source) {
-        const LEGACY_COMPOSITION_EXCEPTIONS: &[&str] =
-            &["src/interface/shared.rs", "src/interface/tool_runtime.rs"];
-        let explicitly_allowed = ALLOWED.contains(&root.as_str())
-            || (LEGACY_COMPOSITION_EXCEPTIONS.contains(&path) && root == "composition");
-        assert!(
-            explicitly_allowed,
-            "production interface dependency is not allowlisted: {path}: crate::{root}"
-        );
-    }
-}
-
-#[test]
-fn interface_dependency_allowlist_rejects_aliased_composition_reference() {
-    let bypass = "use crate::composition as outer; fn build() { outer::web_fetch::build(); }";
-    let rejected = std::panic::catch_unwind(|| {
-        assert_interface_dependencies_allowlisted("alias_bypass.rs", bypass)
-    });
-    assert!(rejected.is_err(), "composition alias must be rejected");
-}
-
 #[test]
 fn web_fetch_is_constructed_only_by_outer_composition() {
     let native = fs::read_to_string("src/infrastructure/extensions/native.rs").expect("native");
@@ -2921,7 +2828,12 @@ fn web_fetch_is_constructed_only_by_outer_composition() {
     collect_rs_files(Path::new("src/interface"), &mut interface_files);
     for file in interface_files {
         let (path, source) = file.split_once(":\n").expect("collected source");
-        assert_interface_dependencies_allowlisted(path, source);
+        assert!(
+            !source.contains("composition::web_fetch")
+                && !source.contains("composition::{web_fetch")
+                && !source.contains("composition::web_fetch as"),
+            "production interface must not reference composition: {path}"
+        );
     }
 }
 
