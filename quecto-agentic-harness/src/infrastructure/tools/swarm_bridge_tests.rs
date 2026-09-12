@@ -242,7 +242,10 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
     assert_eq!(context.summary().unwrap()["usage"], 1);
     for index in 1..25 {
         context
-            .call("_admit", json!([format!("worker-{index}"), format!("r-{index}")]))
+            .call(
+                "_admit",
+                json!([format!("worker-{index}"), format!("r-{index}")]),
+            )
             .unwrap();
     }
     assert_eq!(context.summary().unwrap()["usage"], 25);

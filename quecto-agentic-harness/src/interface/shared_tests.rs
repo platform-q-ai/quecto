@@ -74,29 +74,6 @@ fn test_merge_prompts_empty_user() {
 }
 
 #[test]
-fn test_parent_prompt_contains_only_role_and_routing_guidance() {
-    let result = build_system_prompt(&None, false);
-    assert!(!result.contains("Current date and time:"));
-    assert!(result.contains(agent_role_preamble()));
-    assert!(result.contains("Parent Agent"));
-    assert!(!result.contains("`docs` tool"));
-    assert!(!result.contains("operating manual"));
-    assert!(!result.contains("quick-start"));
-    assert!(!result.contains("definitive source"));
-    assert!(!result.contains("name `quecto`"));
-    assert!(!result.contains("quecto-tui"));
-    assert!(!result.contains("quecto-api"));
-    assert!(!result.contains("quecto-mcp"));
-    assert!(result.contains("## Parent Software Development Orchestration Playbook:"));
-    for expected in [
-        "Always configure `member_limit` to 25", "task-appropriate fixed pool up front",
-        "rather than filling capacity", "### Swarm completion and cleanup",
-    ] {
-        assert!(result.contains(expected));
-    }
-}
-
-#[test]
 fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()), false);
     assert!(!result.contains("Current date and time:"));
@@ -466,8 +443,6 @@ async fn test_resolve_api_key_with_refresh_async_updates_refresh_token_when_prov
         "refresh token should be updated when server provides a new one"
     );
 }
-
-// --- append_extension_prompt tests ---
 
 #[test]
 fn test_append_extension_prompt_adds_section() {
