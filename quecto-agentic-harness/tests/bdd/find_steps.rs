@@ -1,8 +1,8 @@
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
+use quecto::composition::find::{build_find_tool, build_find_tool_with_binary};
 use quecto::domain::tool::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
-use quecto::infrastructure::tools::find::FindTool;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -41,14 +41,14 @@ fn given_find_git_workspace(world: &mut QuectoWorld) {
     assert!(status.success(), "git init failed in find workspace");
 }
 
-fn make_find_tool(world: &mut QuectoWorld) -> FindTool {
+fn make_find_tool(world: &mut QuectoWorld) -> Arc<dyn Tool> {
     let ws = ensure_find_workspace(world);
     let ws_arc = Arc::new(ws.clone());
     let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
-    FindTool::new(ws_arc, sandbox)
+    build_find_tool(ws_arc, sandbox)
 }
 
-fn run_find(tool: FindTool, args: serde_json::Value) -> quecto::domain::tool::ToolResult {
+fn run_find(tool: Arc<dyn Tool>, args: serde_json::Value) -> quecto::domain::tool::ToolResult {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { tool.execute(&args.to_string()).await })
@@ -60,11 +60,12 @@ fn run_find(tool: FindTool, args: serde_json::Value) -> quecto::domain::tool::To
         })
 }
 
-fn fd_available() -> bool {
-    std::process::Command::new("fd")
+fn require_fd() {
+    let output = std::process::Command::new("fd")
         .arg("--version")
         .output()
-        .is_ok()
+        .expect("real find scenarios require fd installed on PATH");
+    assert!(output.status.success(), "fd --version must succeed");
 }
 
 // ---------------------------------------------------------------------------
@@ -128,15 +129,7 @@ fn given_find_file_with_content(world: &mut QuectoWorld, filepath: String, conte
 
 #[when(regex = r#"^I find files matching "([^"]+)"$"#)]
 fn when_find_pattern(world: &mut QuectoWorld, pattern: String) {
-    if !fd_available() {
-        world.find_result = Some(quecto::domain::tool::ToolResult {
-            content: "fd not available — skipping".to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        });
-        return;
-    }
+    require_fd();
     let tool = make_find_tool(world);
     let args = serde_json::json!({ "pattern": pattern });
     world.find_result = Some(run_find(tool, args));
@@ -144,15 +137,7 @@ fn when_find_pattern(world: &mut QuectoWorld, pattern: String) {
 
 #[when(regex = r#"^I find files matching "([^"]+)" with no path specified$"#)]
 fn when_find_default_path(world: &mut QuectoWorld, pattern: String) {
-    if !fd_available() {
-        world.find_result = Some(quecto::domain::tool::ToolResult {
-            content: "fd not available — skipping".to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        });
-        return;
-    }
+    require_fd();
     let tool = make_find_tool(world);
     // No "path" arg — defaults to "."
     let args = serde_json::json!({ "pattern": pattern });
@@ -161,16 +146,7 @@ fn when_find_default_path(world: &mut QuectoWorld, pattern: String) {
 
 #[when(regex = r#"^I find files matching "([^"]+)" with limit (\d+)$"#)]
 fn when_find_with_limit(world: &mut QuectoWorld, pattern: String, limit: usize) {
-    if !fd_available() {
-        world.find_result = Some(quecto::domain::tool::ToolResult {
-            content: "[10 results limit reached. Use limit=20 for more, or refine pattern]"
-                .to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        });
-        return;
-    }
+    require_fd();
     let tool = make_find_tool(world);
     let args = serde_json::json!({ "pattern": pattern, "limit": limit });
     world.find_result = Some(run_find(tool, args));
@@ -178,17 +154,7 @@ fn when_find_with_limit(world: &mut QuectoWorld, pattern: String, limit: usize) 
 
 #[when(regex = r#"^I find files matching "([^"]+)" with float limit (\d+\.\d+)$"#)]
 fn when_find_with_float_limit(world: &mut QuectoWorld, pattern: String, limit: f64) {
-    if !fd_available() {
-        // Simulate limit reached for float test
-        world.find_result = Some(quecto::domain::tool::ToolResult {
-            content: "[5 results limit reached. Use limit=10 for more, or refine pattern]"
-                .to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        });
-        return;
-    }
+    require_fd();
     let tool = make_find_tool(world);
     // Pass float as JSON number
     let args = serde_json::json!({ "pattern": pattern, "limit": limit });
@@ -200,7 +166,7 @@ fn when_find_missing_binary(world: &mut QuectoWorld, pattern: String) {
     let ws = ensure_find_workspace(world);
     let ws_arc = Arc::new(ws.clone());
     let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
-    let tool = FindTool::with_fd_binary(
+    let tool = build_find_tool_with_binary(
         ws_arc,
         sandbox,
         "/nonexistent/path/to/fd_binary_xyz".to_string(),
@@ -211,15 +177,7 @@ fn when_find_missing_binary(world: &mut QuectoWorld, pattern: String) {
 
 #[when(regex = r#"^I find files matching "([^"]+)" in path "([^"]+)"$"#)]
 fn when_find_with_path(world: &mut QuectoWorld, pattern: String, path: String) {
-    if !fd_available() {
-        world.find_result = Some(quecto::domain::tool::ToolResult {
-            content: "fd not available — skipping".to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        });
-        return;
-    }
+    require_fd();
     let tool = make_find_tool(world);
     let args = serde_json::json!({ "pattern": pattern, "path": path });
     world.find_result = Some(run_find(tool, args));
@@ -245,10 +203,6 @@ fn then_find_contains(world: &mut QuectoWorld, expected: String) {
         .find_result
         .as_ref()
         .expect("no find result — did you run a When step?");
-    // Skip assertion when fd was not available (graceful degradation in CI).
-    if result.content.starts_with("fd not available") {
-        return;
-    }
     assert!(
         result.content.contains(&expected),
         "find result should contain {:?}, got:\n{}",
@@ -263,9 +217,6 @@ fn then_find_not_contains(world: &mut QuectoWorld, expected: String) {
         .find_result
         .as_ref()
         .expect("no find result — did you run a When step?");
-    if result.content.starts_with("fd not available") {
-        return;
-    }
     assert!(
         !result.content.contains(&expected),
         "find result should NOT contain {:?}, got:\n{}",
@@ -280,11 +231,6 @@ fn then_find_not_error(world: &mut QuectoWorld) {
         .find_result
         .as_ref()
         .expect("no find result — did you run a When step?");
-    if result.content.contains("fd not found on PATH")
-        || result.content.starts_with("fd not available")
-    {
-        return;
-    }
     assert!(
         !result.is_error,
         "find result should not be an error, got:\n{}",
@@ -309,7 +255,7 @@ fn then_find_is_error(world: &mut QuectoWorld) {
 fn then_find_description_supports_path_segments(world: &mut QuectoWorld) {
     let ws = ensure_find_workspace(world);
     let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
-    let tool = FindTool::new(Arc::new(ws), sandbox);
+    let tool = build_find_tool(Arc::new(ws), sandbox);
     let def = tool.definition();
     // The description should document that path-segment patterns like src/*.rs work.
     // It must not only advertise **/*.json without mentioning that src/*.rs also works.

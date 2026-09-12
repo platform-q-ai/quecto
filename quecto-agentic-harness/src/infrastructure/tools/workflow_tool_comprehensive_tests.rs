@@ -624,6 +624,10 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     let workspace = tmp.path().to_path_buf();
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace,
         sandbox,
         Default::default(),

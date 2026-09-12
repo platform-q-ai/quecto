@@ -175,9 +175,8 @@ fn application_has_no_interface_imports() {
 fn infrastructure_has_no_application_imports() {
     // Dependency inversion (epic #1193): infrastructure adapters implement
     // application-defined contracts, so references to `crate::application` are
-    // allowed only through `crate::application::ports`, the module that names
-    // the inward-facing surface. Anything else is a use-case dependency
-    // pointing the wrong way.
+    // allowed through explicit ports and named environment/find contracts.
+    // Find use-case construction remains outside infrastructure.
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
@@ -319,6 +318,15 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
+                [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "find",
+                    "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+                    ..,
+                ] => true,
                 [
                     "crate",
                     "application",
@@ -1833,5 +1841,718 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
+    }
+}
+
+#[test]
+fn find_vertical_slice_has_one_owner_per_role() {
+    for path in [
+        "src/application/agent_turn/use_cases/find.rs",
+        "src/interface/tools/find.rs",
+        "src/infrastructure/tools/find_fd.rs",
+        "src/composition/find.rs",
+    ] {
+        assert!(Path::new(path).is_file(), "missing find role owner: {path}");
+    }
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/infrastructure/tools"), &mut files);
+    for file in files {
+        let (path, _) = file.split_once(":\n").expect("collected source");
+        let name = Path::new(path).file_name().unwrap().to_str().unwrap();
+        if name.starts_with("find") {
+            assert!(
+                matches!(name, "find_fd.rs" | "find_fd_tests.rs"),
+                "superseded find owner: {path}"
+            );
+        }
+    }
+}
+
+/// Concrete find vertices may only be named by their owner or composition.
+/// Type aliases of these vertices are allowed only in composition, including
+/// unused aliases: reject at the declaration rather than approximate Rust name
+/// resolution. Alias names are conservatively tracked across scopes so a sibling
+/// rename cannot hide a concrete origin. Non-find aliases remain unrestricted.
+fn find_graph_dependencies_allowed(file: &str, source: &str) -> bool {
+    use syn::visit::Visit;
+    let Ok(parsed) = syn::parse_file(source) else {
+        return false;
+    };
+    let mut guard = FindGraphGuard {
+        file,
+        aliases: Vec::new(),
+        impl_types: Vec::new(),
+        allowed: true,
+    };
+    guard.visit_file(&parsed);
+    // Existing dependency inventory excludes test-only items and sees grouped
+    // imports, attributes and fully qualified paths as before.
+    guard.allowed
+        && dependency_paths(source)
+            .is_some_and(|paths| paths.iter().all(|path| guard.path_allowed(path, false)))
+}
+
+struct FindGraphGuard<'a> {
+    file: &'a str,
+    aliases: Vec<(String, String)>,
+    impl_types: Vec<String>,
+    allowed: bool,
+}
+
+impl FindGraphGuard<'_> {
+    fn concrete_names(&self, path: &str) -> Vec<String> {
+        let mut names: Vec<String> = path.split("::").map(str::to_owned).collect();
+        // Finite monotonic closure: aliases in any order, cycles and shadowed
+        // names cannot suppress a concrete origin or make traversal loop.
+        loop {
+            let before = names.len();
+            for (alias, original) in &self.aliases {
+                if names.contains(alias) && names.iter().all(|name| name != original) {
+                    names.push(original.clone());
+                }
+            }
+            if names.len() == before {
+                return names;
+            }
+        }
+    }
+
+    fn path_allowed(&self, path: &str, alias_declaration: bool) -> bool {
+        let names = self.concrete_names(path);
+        names.iter().all(|name| {
+            let owner_allowed = match name.as_str() {
+                "FdFindPaths" => self.file == "src/infrastructure/tools/find_fd.rs",
+                "FindTool" => self.file == "src/interface/tools/find.rs",
+                "FindUseCase" => matches!(
+                    self.file,
+                    "src/application/agent_turn/use_cases/find.rs" | "src/interface/tools/find.rs"
+                ),
+                _ => return true,
+            };
+            let constructor = path.split("::").any(|part| {
+                matches!(
+                    (name.as_str(), part),
+                    ("FindUseCase" | "FindTool" | "FdFindPaths", "new")
+                        | ("FdFindPaths", "with_fd_binary")
+                )
+            });
+            match (alias_declaration, constructor) {
+                (false, false) => owner_allowed || self.file == "src/composition/find.rs",
+                _ => self.file == "src/composition/find.rs",
+            }
+        })
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for FindGraphGuard<'_> {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        // Collect all rename origins first; lexical ordering is irrelevant to
+        // item visibility. Keeping every origin is deliberately fail-closed.
+        struct Renames(Vec<(String, String)>);
+        impl<'ast> syn::visit::Visit<'ast> for Renames {
+            fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
+                self.0
+                    .push((item.rename.to_string(), item.ident.to_string()));
+            }
+        }
+        let mut renames = Renames(Vec::new());
+        renames.visit_file(file);
+        self.aliases = renames.0;
+        syn::visit::visit_file(self, file);
+    }
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let attrs = match item {
+            syn::Item::Mod(item) => &item.attrs,
+            syn::Item::Fn(item) => &item.attrs,
+            syn::Item::Impl(item) => &item.attrs,
+            syn::Item::Type(item) => &item.attrs,
+            _ => {
+                syn::visit::visit_item(self, item);
+                return;
+            }
+        };
+        if attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        syn::visit::visit_item(self, item);
+    }
+
+    fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+        if method.attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        syn::visit::visit_impl_item_fn(self, method);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        // The existing parser walks every RHS type path (including parens and
+        // generic arguments), so no special-case type spelling escapes policy.
+        struct TypePaths(Vec<String>);
+        impl<'ast> syn::visit::Visit<'ast> for TypePaths {
+            fn visit_path(&mut self, path: &'ast syn::Path) {
+                self.0.push(find_graph_path(path));
+                syn::visit::visit_path(self, path);
+            }
+        }
+        let mut paths = TypePaths(Vec::new());
+        paths.visit_type(&item.ty);
+        self.allowed &= paths.0.iter().all(|path| {
+            self.path_allowed(path, true)
+                && match path.as_str() {
+                    "Self" => self.impl_types.iter().all(|ty| self.path_allowed(ty, true)),
+                    _ => true,
+                }
+        });
+        syn::visit::visit_item_type(self, item);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        let previous = self.impl_types.clone();
+        self.impl_types = find_graph_type_path(&item.self_ty).into_iter().collect();
+        syn::visit::visit_item_impl(self, item);
+        self.impl_types = previous;
+    }
+
+    fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+        let path = find_graph_path(&expr.path);
+        let qualified = expr
+            .qself
+            .as_ref()
+            .and_then(|q| find_graph_type_path(&q.ty));
+        let path = qualified.map_or(path.clone(), |ty| format!("{ty}::{path}"));
+        if path.split("::").any(|part| part == "Self") {
+            for ty in &self.impl_types {
+                self.allowed &= self.path_allowed(&path.replace("Self", ty), false);
+            }
+        } else {
+            self.allowed &= self.path_allowed(&path, false);
+        }
+        syn::visit::visit_expr_path(self, expr);
+    }
+}
+
+// Parentheses and invisible macro groups preserve the receiver's identity.
+// Only path types and these transparent wrappers participate in resolution.
+fn find_graph_type_path(ty: &syn::Type) -> Option<String> {
+    match ty {
+        syn::Type::Paren(ty) => find_graph_type_path(&ty.elem),
+        syn::Type::Group(ty) => find_graph_type_path(&ty.elem),
+        syn::Type::Path(ty) => {
+            let path = find_graph_path(&ty.path);
+            Some(match &ty.qself {
+                Some(qself) => format!("{}::{path}", find_graph_type_path(&qself.ty)?),
+                None => path,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn find_graph_path(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|part| part.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+#[test]
+fn find_graph_guards_preserve_parenthesized_receivers() {
+    for (file, vertex, constructor) in [
+        ("src/interface/tools/find.rs", "FindTool", "new"),
+        ("src/interface/tools/find.rs", "FindUseCase", "new"),
+        (
+            "src/application/agent_turn/use_cases/find.rs",
+            "FindUseCase",
+            "new",
+        ),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
+        (
+            "src/infrastructure/tools/find_fd.rs",
+            "FdFindPaths",
+            "with_fd_binary",
+        ),
+    ] {
+        for source in [
+            format!("fn build() {{ <(({vertex}))>::{constructor}(); }}"),
+            format!("fn build() {{ <(<(({vertex})) as Factory>::Output)>::{constructor}(); }}"),
+            format!(
+                "use owner::{{{vertex} as Imported}}; fn build() {{ <((Imported))>::{constructor}(); }}"
+            ),
+            format!("impl (({vertex})) {{ fn alternate() {{ <((Self))>::{constructor}(); }} }}"),
+            format!(
+                "use owner::{{{vertex} as Imported}}; impl (Imported) {{ fn alternate() {{ <(Self)>::{constructor}(); }} }}"
+            ),
+            format!(
+                "impl ({vertex}) {{ fn alternate() {{ type Alias = ((Self)); <(Alias)>::{constructor}(); }} }}"
+            ),
+            format!("type Alias = (({vertex})); fn build() {{ <(Alias)>::{constructor}(); }}"),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+    }
+    let source = "impl FindTool { fn alternate(paths: Paths) -> Self { <(Self)>::new(<(FindUseCase)>::new(paths)) } }";
+    assert!(!find_graph_dependencies_allowed(
+        "src/interface/tools/find.rs",
+        source
+    ));
+    for source in [
+        "impl ((NotFindTool)) { fn alternate() { <((Self))>::new(); } }",
+        "use owner::{NotFindUseCase as Imported}; fn build() { <(Imported)>::new(); }",
+        "type Alias = ((Other)); fn build() { <(Alias)>::new(); }",
+        "impl (FindTool) { fn new() -> Self { panic!() } }",
+        "#[cfg(test)] impl (FindTool) { fn alternate() { <(Self)>::new(); } }",
+    ] {
+        assert!(
+            find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn find_graph_guards_preserve_invisible_group_receivers() {
+    use syn::visit::Visit;
+    // Macro-expanded groups have no textual delimiter; construct their AST.
+    for vertex in ["FindTool", "NotFindTool"] {
+        let mut item: syn::ItemImpl = syn::parse_str(&format!("impl ({vertex}) {{}}")).unwrap();
+        item.self_ty = Box::new(syn::Type::Group(syn::TypeGroup {
+            group_token: Default::default(),
+            elem: item.self_ty,
+        }));
+        let mut expr: syn::ExprPath = syn::parse_str("<((Self))>::new").unwrap();
+        let qself = expr.qself.as_mut().expect("qualified receiver");
+        *qself.ty = syn::Type::Group(syn::TypeGroup {
+            group_token: Default::default(),
+            elem: qself.ty.clone(),
+        });
+        let statement: syn::Stmt = syn::parse_quote! { placeholder(); };
+        let syn::Stmt::Expr(syn::Expr::Call(mut call), semi) = statement else {
+            panic!("call fixture")
+        };
+        call.func = Box::new(syn::Expr::Path(expr));
+        let mut method: syn::ImplItemFn = syn::parse_quote! { fn alternate() {} };
+        method
+            .block
+            .stmts
+            .push(syn::Stmt::Expr(syn::Expr::Call(call), semi));
+        item.items.push(syn::ImplItem::Fn(method));
+        for file in ["src/interface/tools/find.rs", "src/composition/find.rs"] {
+            let mut guard = FindGraphGuard {
+                file,
+                aliases: Vec::new(),
+                impl_types: Vec::new(),
+                allowed: true,
+            };
+            guard.visit_item_impl(&item);
+            assert_eq!(
+                guard.allowed,
+                vertex == "NotFindTool" || file == "src/composition/find.rs",
+                "{file}: {vertex}"
+            );
+        }
+    }
+}
+
+#[test]
+fn find_graph_guards_reject_type_alias_constructors() {
+    for (file, vertex, constructor) in [
+        ("src/interface/tools/find.rs", "FindUseCase", "new"),
+        ("src/interface/tools/find.rs", "FindTool", "new"),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
+        (
+            "src/infrastructure/tools/find_fd.rs",
+            "FdFindPaths",
+            "with_fd_binary",
+        ),
+    ] {
+        for source in [
+            format!("type Alias = {vertex}; fn build() {{ Alias::{constructor}(); }}"),
+            format!(
+                "type Alias = Next; type Next = {vertex}; fn build() {{ Alias::{constructor}(); }}"
+            ),
+            format!(
+                "use {vertex} as Imported; type Alias = Imported; fn build() {{ Alias::{constructor}(); }}"
+            ),
+            format!("type Alias = ({vertex}); fn build() {{ Alias::{constructor}(); }}"),
+            format!(
+                "type Alias = {vertex}; fn build() {{ let constructor = Alias::{constructor}; }}"
+            ),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn find_graph_alias_declarations_have_an_explicit_composition_allowlist() {
+    for source in [
+        "type Case = FindUseCase;",
+        "type Case = crate::application::agent_turn::use_cases::find::FindUseCase;",
+        "use crate::application::agent_turn::use_cases::find::{FindUseCase as Case}; type Alias = Case;",
+        "type First = Second; type Second = FindUseCase;",
+        "type First = FindUseCase; type Second = First;",
+        "fn build() { type Local = FindUseCase; Local::new(); }",
+        "mod nested { type Local = FindUseCase; fn build() { Local::new(); } }",
+        "mod unrelated { use Other as Case; } use FindUseCase as Case; type Alias = Case;",
+        "use FindUseCase as Imported; use Imported as Renamed; type Alias = Renamed;",
+    ] {
+        assert!(
+            !find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+        assert!(
+            find_graph_dependencies_allowed("src/composition/find.rs", source),
+            "{source}"
+        );
+    }
+    for source in [
+        "// type Alias = FindUseCase;\n type Alias = NotFindUseCase; fn build() { Alias::new(); }",
+        "type Alias = Other; mod nested { type Alias = Different; fn build() { Alias::new(); } }",
+        "use First as Second; use Second as First; type Alias = First;",
+        "#[cfg(test)] mod tests { type Alias = FindUseCase; fn build() { Alias::new(); } }",
+    ] {
+        assert!(
+            find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+    }
+    assert!(!find_graph_dependencies_allowed(
+        "src/interface/tools/find.rs",
+        "type = ;"
+    ));
+}
+
+#[test]
+fn find_graph_guards_resolve_self_in_the_enclosing_impl() {
+    for (file, vertex) in [
+        ("src/interface/tools/find.rs", "FindTool"),
+        (
+            "src/application/agent_turn/use_cases/find.rs",
+            "FindUseCase",
+        ),
+        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths"),
+    ] {
+        for source in [
+            format!("impl {vertex} {{ fn alternate() {{ Self::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ <Self>::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ <{vertex}>::new(); }} }}"),
+            format!("impl {vertex} {{ fn alternate() {{ type Alias = Self; Alias::new(); }} }}"),
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, &source),
+                "{file}: {source}"
+            );
+            assert!(
+                find_graph_dependencies_allowed("src/composition/find.rs", &source),
+                "{source}"
+            );
+        }
+        assert!(find_graph_dependencies_allowed(
+            file,
+            &format!(
+                "impl {vertex} {{ fn new() -> Self {{ panic!() }} }} impl Other {{ fn alternate() {{ Self::new(); }} }}"
+            )
+        ));
+    }
+}
+
+fn infrastructure_outward_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                ["crate", layer, ..] => matches!(
+                    *layer,
+                    "application"
+                        | "domain"
+                        | "infrastructure"
+                        | "test_support"
+                        | "subagent_launch_app"
+                        | "swarm_control_fixture"
+                ),
+                _ => true,
+            }
+        })
+    })
+}
+
+#[test]
+fn find_concrete_graph_is_owned_by_composition() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in files {
+        let (path, source) = file.split_once(":\n").expect("collected source");
+        assert!(find_graph_dependencies_allowed(path, source), "{path}");
+    }
+}
+
+#[test]
+fn infrastructure_outward_paths_follow_layer_allowlist() {
+    for path in [
+        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/extensions/native.rs",
+    ] {
+        let source = fs::read_to_string(path).expect("find effect/registration owner");
+        assert!(
+            infrastructure_outward_dependencies_allowed(&source),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn find_graph_guards_parse_grouping_aliases_and_calls() {
+    for source in [
+        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
+        "use crate::{infrastructure::tools::find_fd::FdFindPaths, domain::Tool};",
+        "fn build() { crate::infrastructure::tools::find_fd::FdFindPaths::new(); }",
+    ] {
+        assert!(find_graph_dependencies_allowed(
+            "src/composition/find.rs",
+            source
+        ));
+        for file in [
+            "src/interface/tool_runtime.rs",
+            "src/interface/shared.rs",
+            "src/interface/tools/find.rs",
+        ] {
+            assert!(
+                !find_graph_dependencies_allowed(file, source),
+                "{file}: {source}"
+            );
+        }
+    }
+    assert!(find_graph_dependencies_allowed(
+        "src/interface/shared.rs",
+        "// FdFindPaths::new()\nfn allowed() { NotFdFindPaths::new(); }"
+    ));
+    for source in [
+        "use crate::interface::tools::find::FindTool as Tool;",
+        "use crate::{domain::Tool, composition::find};",
+        "fn build() { crate::composition::find::build_find_tool(); }",
+        "use crate::interfaces::NearMatch; // crate::domain",
+    ] {
+        assert!(
+            !infrastructure_outward_dependencies_allowed(source),
+            "{source}"
+        );
+    }
+}
+
+fn find_application_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                ["std", "sync", "Arc"] | ["std", "future", "Future"] | ["std", "pin", "Pin"] => {
+                    true
+                }
+                ["std", ..] | ["crate", ..] => false,
+                [name, ..] => matches!(
+                    *name,
+                    "FindRequest"
+                        | "FindPathsRequest"
+                        | "FindOutput"
+                        | "FindError"
+                        | "FindPaths"
+                        | "FindUseCase"
+                        | "FindResult"
+                        | "String"
+                        | "Vec"
+                        | "Option"
+                        | "Some"
+                        | "None"
+                        | "Result"
+                        | "Ok"
+                        | "Err"
+                        | "Self"
+                        | "Arc"
+                        | "Future"
+                        | "Pin"
+                        | "Box"
+                        | "Send"
+                        | "Sync"
+                        | "Clone"
+                        | "Debug"
+                        | "PartialEq"
+                        | "Eq"
+                        | "Default"
+                        | "f64"
+                        | "usize"
+                        | "self"
+                        | "bool"
+                        | "request"
+                        | "value"
+                        | "limit"
+                        | "output"
+                        | "paths"
+                        | "assert"
+                        | "DEFAULT_LIMIT"
+                        | "MAX_LIMIT"
+                ),
+                [] => false,
+            }
+        })
+    })
+}
+
+fn find_interface_dependencies_allowed(source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                [
+                    "crate",
+                    "application",
+                    "agent_turn",
+                    "use_cases",
+                    "find",
+                    ..,
+                ]
+                | ["crate", "domain", ..] => true,
+                ["crate", ..] => false,
+                _ => true,
+            }
+        })
+    })
+}
+
+fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
+    dependency_paths(source).is_some_and(|paths| {
+        paths.iter().all(|path| {
+            let parts: Vec<_> = path.split("::").collect();
+            match parts.as_slice() {
+                [
+                    "crate",
+                    "composition",
+                    "find",
+                    "build_find_tool" | "build_find_tool_with_binary",
+                ] => matches!(
+                    file,
+                    "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
+                ),
+                ["crate", "composition", ..] => file == "src/composition/find.rs",
+                _ => true,
+            }
+        })
+    })
+}
+
+#[test]
+fn find_inward_boundaries_are_typed_and_effect_free() {
+    let source = fs::read_to_string("src/application/agent_turn/use_cases/find.rs").unwrap();
+    assert!(
+        find_application_dependencies_allowed(&source),
+        "{:?}",
+        dependency_paths(&source)
+    );
+    let source = fs::read_to_string("src/interface/tools/find.rs").unwrap();
+    assert!(
+        find_interface_dependencies_allowed(&source),
+        "{:?}",
+        dependency_paths(&source)
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        assert!(find_composition_delegation_allowed(path, source), "{path}");
+    }
+}
+
+#[test]
+fn find_boundary_allowlists_reject_unauthorized_siblings() {
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::{FindPaths, FindOutput as Output};",
+        "fn classify() { crate::application::agent_turn::use_cases::find::FindError::Io(String::new()); }",
+    ] {
+        assert!(application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::{FindPaths, FindUseCase};",
+        "use crate::application::agent_turn::use_cases::find::*;",
+        "use crate::application::agent_turn::use_cases::find::FindPathsExtra;",
+        "use crate::application::agent_turn::use_cases::other::FindPaths;",
+        "fn build() { crate::application::agent_turn::use_cases::find::FindUseCase::new(); }",
+    ] {
+        assert!(!application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use serde_json::Value as Request;",
+        "use tokio::{process::Child, io::AsyncRead};",
+        "use crate::domain::{ToolResult, ToolDefinition};",
+        "use std::process::ExitStatus;",
+        "fn run() { tokio::process::Command::new(\"fd\"); } // std::sync::Arc",
+    ] {
+        assert!(!find_application_dependencies_allowed(source), "{source}");
+    }
+    for source in [
+        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
+        "use crate::{domain::Tool, infrastructure::tools::truncate::format_size};",
+        "fn run() { crate::composition::find::build_find_tool(); }",
+    ] {
+        assert!(!find_interface_dependencies_allowed(source), "{source}");
+    }
+    for file in ["src/interface/tool_runtime.rs", "src/interface/shared.rs"] {
+        assert!(find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::build_find_tool as build;"
+        ));
+        assert!(!find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::{build_find_tool, unexpected};"
+        ));
+        assert!(!find_composition_delegation_allowed(
+            file,
+            "use crate::composition::find::*;"
+        ));
+    }
+    assert!(!find_composition_delegation_allowed(
+        "src/interface/tools/find.rs",
+        "fn build() { crate::composition::find::build_find_tool(); }"
+    ));
+}
+
+#[test]
+fn find_constructor_aliases_cannot_build_graph_in_interface() {
+    for source in [
+        "use crate::application::agent_turn::use_cases::find::FindUseCase as Case; fn build() { Case::new(); }",
+        "fn build() { crate::application::agent_turn::use_cases::find::FindUseCase::new(); }",
+        "fn build() { FindTool::new(); }",
+    ] {
+        assert!(
+            !find_graph_dependencies_allowed("src/interface/tools/find.rs", source),
+            "{source}"
+        );
+        assert!(
+            find_graph_dependencies_allowed("src/composition/find.rs", source),
+            "{source}"
+        );
     }
 }

@@ -87,6 +87,10 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     let workspace = PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace,
         sandbox,
         Default::default(),
@@ -487,6 +491,10 @@ fn test_run_with_deadline_completes_before_timeout() {
     let workspace = PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace,
         sandbox,
         Default::default(),

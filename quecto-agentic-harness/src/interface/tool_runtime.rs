@@ -237,6 +237,10 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            find_tool: crate::composition::find::build_find_tool(
+                std::sync::Arc::new(workspace.clone()),
+                std::sync::Arc::new(sandbox.clone()),
+            ),
             swarm_context: swarm_context.clone(),
             swarm_participation: swarm_participation.clone(),
             workflow_engine: workflow_engine.clone(),

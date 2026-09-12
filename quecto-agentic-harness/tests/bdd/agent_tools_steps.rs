@@ -9,6 +9,10 @@ fn given_tool_workspace(world: &mut QuectoWorld) {
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()));
     let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        quecto::composition::find::build_find_tool(
+            std::sync::Arc::new((ws.clone()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         ws.clone(),
         sandbox,
         Default::default(),
@@ -24,6 +28,10 @@ fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs:
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()));
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        quecto::composition::find::build_find_tool(
+            std::sync::Arc::new((ws.clone()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         ws.clone(),
         sandbox,
         Default::default(),
@@ -62,6 +70,10 @@ fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
     let ws = tmp.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()));
     let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        quecto::composition::find::build_find_tool(
+            std::sync::Arc::new((ws.clone()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         ws.clone(),
         sandbox,
         Default::default(),

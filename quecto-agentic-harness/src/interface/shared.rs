@@ -645,6 +645,10 @@ pub fn build_official_tool_registry(
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     crate::infrastructure::extensions::native::build_official_tool_registry_with_context(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new(workspace.clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace,
         sandbox,
         exec_options,

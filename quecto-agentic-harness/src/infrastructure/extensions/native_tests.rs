@@ -237,6 +237,10 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
     let sandbox =
         crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
     let exts = build_official_tool_extensions(OfficialToolDeps {
+        find_tool: crate::composition::find::build_find_tool(
+            Arc::new(tmp.path().to_path_buf()),
+            Arc::new(sandbox.clone()),
+        ),
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         workflow_engine: Default::default(),
         swarm_context: None,
@@ -327,6 +331,10 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            find_tool: crate::composition::find::build_find_tool(
+                Arc::new(tmp.path().to_path_buf()),
+                Arc::new(sandbox.clone()),
+            ),
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
             swarm_context: None,

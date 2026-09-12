@@ -112,6 +112,10 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        quecto::composition::find::build_find_tool(
+            std::sync::Arc::new((workspace.clone()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
         workspace.clone(),
         sandbox,
         quecto::infrastructure::tools::bash::ExecOptions {

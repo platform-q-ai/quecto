@@ -401,7 +401,7 @@ fn then_each_search_tool_keeps_direct_install_guidance(_world: &mut QuectoWorld)
         grep_message
     );
 
-    let find_tool = quecto::infrastructure::tools::find::FindTool::with_fd_binary(
+    let find_tool = quecto::composition::find::build_find_tool_with_binary(
         workspace,
         sandbox,
         "definitely-missing-fd-for-dependency-hygiene".to_string(),

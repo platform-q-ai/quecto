@@ -58,6 +58,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install fd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find
+          # Ubuntu names the fd-find executable `fdfind`; expose the upstream name.
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/fd" --version
       - name: All workspace unit and integration tests except sharded BDD targets
         run: |
           cargo test --workspace --lib --bins
@@ -83,6 +92,15 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install fd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find
+          # Ubuntu names the fd-find executable `fdfind`; expose the upstream name.
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/fd" --version
       - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m --coverage --coverage-threshold 72
 
   tui-bdd:
@@ -125,6 +143,15 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install fd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find
+          # Ubuntu names the fd-find executable `fdfind`; expose the upstream name.
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/fd" --version
       - run: cargo llvm-cov clean --workspace
       - run: cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 92 --summary-only
       - run: cargo llvm-cov clean --workspace

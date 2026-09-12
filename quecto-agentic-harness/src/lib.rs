@@ -89,3 +89,5 @@ mod swarm_run_control_contracts;
 #[cfg(test)]
 #[path = "../tests/contracts/tool_execution_admission.rs"]
 mod tool_execution_admission_contracts;
+
+pub mod composition;

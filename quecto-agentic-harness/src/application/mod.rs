@@ -31,3 +31,5 @@ pub mod inference_observation;
 
 pub mod inference_attempt;
 pub mod swarm;
+
+pub mod agent_turn;
