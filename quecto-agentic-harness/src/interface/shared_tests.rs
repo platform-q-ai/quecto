@@ -19,8 +19,6 @@ fn workflow_test_config() -> crate::domain::workflow::WorkflowConfig {
     }
 }
 
-// --- expires_at_with_margin tests (issue #256) ---
-
 #[test]
 fn test_expires_at_with_margin_subtracts_300_seconds() {
     let now = crate::infrastructure::time::unix_timestamp_secs();
@@ -90,12 +88,13 @@ fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
     assert!(result.contains("## Parent Software Development Orchestration Playbook:"));
-    assert!(result.contains("Always configure `member_limit` to 25"));
-    assert!(result.contains("task-appropriate fixed pool up front"));
-    assert!(result.contains("rather than filling capacity"));
-    assert!(result.contains("### Swarm completion and cleanup"));
+    for expected in [
+        "Always configure `member_limit` to 25", "task-appropriate fixed pool up front",
+        "rather than filling capacity", "### Swarm completion and cleanup",
+    ] {
+        assert!(result.contains(expected));
+    }
 }
-
 
 #[test]
 fn test_build_system_prompt_with_user_only() {
