@@ -175,7 +175,8 @@ and continue when the note arrives; do not invent a same-turn wait.
 ## Overview
 
 When the LLM calls the `spawn` tool, quecto launches a new `quecto agent`
-process in UDS mode (`--mode uds --persist`). The child process:
+process in UDS mode (`--mode uds --spawned --parent-control <sidecar>`; never
+`--persist`, see [Lifetime](#lifetime-and-session-restore-1937)). The child process:
 
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
@@ -608,7 +609,7 @@ that need to restrict which subagents can be spawned.
 
 ### Startup
 
-1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --persist --spawned --parent-control <sidecar>`
+1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --spawned --parent-control <sidecar>` (no `--persist`, #1937)
 2. Polls for socket readiness (100ms intervals, 10s timeout)
 3. If the socket does not become ready, the child is terminated through the owned-child supervisor and an error is returned
 4. Registers the child in the shared `SubagentRegistry` by UUID while retaining `agent_id` as the display label
@@ -640,8 +641,8 @@ its bound connection lost end to end. The capability is never forwarded to
 the child's own children: each launch mints its own.
 
 A launcher that dies *between* spawning the child and presenting the
-capability would otherwise leave an unbound `--persist` orphan, so a
-launched child arms a **bind deadline** (30 s by default;
+capability would otherwise leave an unbound orphan (a launch-bound child
+ignores client churn), so a launched child arms a **bind deadline** (30 s by default;
 `QUECTO_PARENT_BIND_DEADLINE_MS` overrides it for tests): if no parent has
 bound by then, the binding is spent and the same common shutdown runs with
 reason `parent_never_bound`.
@@ -654,6 +655,30 @@ environments the way the SIGTERM path does (which additionally runs
 `kill`). A child that owns container environments and loses its parent
 therefore leaves those containers running until #1939 moves environment
 finalization into the application-owned teardown.
+
+#### Lifetime and session restore (#1937)
+
+A launcher-created child is **launch-bound**, not persistent. Its argv
+carries no `--persist`; the harness resolves one lifetime at startup:
+
+| Harness | Lifetime |
+| --- | --- |
+| Top-level, default | Exits when the last client disconnects |
+| Top-level `--persist` (user-started, e.g. the TUI's tab agent or `quecto agent --mode uds --persist`) | Stays alive across client churn until SIGTERM/SIGINT or a protocol shutdown — unchanged |
+| Launcher-created (`--parent-control`) | Ignores client churn; ends on loss of the bound parent connection or at the bind deadline. `--persist` is refused at startup (after the sidecar is consumed) |
+
+Because a child cannot outlive its launcher, **session restore never
+readopts children**. `resume_session` (and a new harness loading a saved
+session) restores the transcript, the workflow run and past child messages,
+and resets the operational roster to empty: persisted roster rows — live,
+detached, dead, explicitly killed or malformed — are read only to be
+ignored. No socket is probed, no pid compared, no monitor created. The
+legacy `socketPath`/`pid` fields are no longer written; a legacy record is
+migrated without them on its next save. The master explicitly re-spawns the
+workers it needs; each re-spawn mints a fresh UUID and launch generation.
+Nothing restarts automatically, and no historical roster row is shown as
+live. Externally attached clients reconnecting to a still-running harness
+see that harness's in-memory registry as before.
 
 ### Running
 

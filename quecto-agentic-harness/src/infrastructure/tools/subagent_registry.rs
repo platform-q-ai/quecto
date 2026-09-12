@@ -149,16 +149,6 @@ impl SubagentEntry {
         Self::with_identity(AgentUuid::mint(), display_name, socket_path, pid)
     }
 
-    /// Grant a signallable lease because the harness answering on this entry's
-    /// socket self-reported `self.pid` as its own pid in our namespace (#1925,
-    /// restored sessions). Never replaces a launched lease held by a reaper,
-    /// and never touches a child whose process the supervisor owns.
-    pub(crate) fn confirm_reported_pid_in_our_namespace(&mut self) {
-        if self.pid != 0 && !self.process_ownership.is_launched() && self.owned_child.is_none() {
-            self.process_ownership = super::process_ownership::ProcessOwnership::reported(true);
-        }
-    }
-
     /// True when this harness holds the child's process: it launched it
     /// locally and the supervisor still retains the handle.
     pub fn holds_owned_child(&self) -> bool {

@@ -126,11 +126,15 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         session_name.into(),
         "--socket".into(),
         socket_path.into(),
-        "--persist".into(),
         // Explicit internal provenance flag (#1319). Always set for SpawnTool
         // children; never inferred from --parent-id / session / env / UDS.
         "--spawned".into(),
     ];
+    // Deliberately no `--persist` (#1937): a launcher-created child is
+    // lifetime-scoped to its launcher through the parent control binding
+    // (`--parent-control`, #1935). It ignores ordinary client churn because
+    // it is launch-bound, not because it persists, and it cannot survive
+    // launcher death.
 
     if let Some(ref system) = config.system {
         args.push("--system".into());

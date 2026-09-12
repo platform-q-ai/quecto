@@ -1594,7 +1594,11 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_reg),
-            persist,
+            lifetime: if persist {
+                quecto::domain::harness_lifetime::HarnessLifetime::Persistent
+            } else {
+                quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
+            },
             notification_rx: None,
             subagent_registry: None,
             workflow_state: None,

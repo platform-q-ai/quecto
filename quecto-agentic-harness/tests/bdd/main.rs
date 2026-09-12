@@ -285,6 +285,8 @@ pub struct QuectoWorld {
     pub teardown: subagent_teardown_steps::TeardownState,
     /// #1935 launch-bound parent control and owned-child supervisor state.
     pub parent_control: parent_control_steps::ParentControlState,
+    /// #1937 launcher lifetime and restore-without-readoption state.
+    pub restore_lifetime: restore_lifetime_steps::RestoreLifetimeState,
     /// Runtimes that spawned real children through the SpawnTool: their
     /// monitor tasks are the children's bound parent connections, so they
     /// live for the scenario and drop with the world.
@@ -1420,6 +1422,7 @@ mod release_profile_steps;
 mod reload_steps;
 mod repl_steps;
 mod repo_docs_steps;
+mod restore_lifetime_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;

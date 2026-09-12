@@ -335,7 +335,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_reg),
-            persist: true,
+            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::Persistent,
             notification_rx: None,
             subagent_registry: None,
             workflow_state: None,

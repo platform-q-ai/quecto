@@ -49,3 +49,44 @@ fn a_launched_child_without_the_composed_graph_fails_closed_and_consumes_the_sid
     assert!(stderr.contains("composed teardown graph"), "{stderr}");
     assert!(!path.exists(), "the material never lingers");
 }
+
+/// #1937: the lifetime is decided from the consumed sidecar and `--persist`.
+#[test]
+fn lifetime_resolution_follows_the_launch_facts() {
+    let mut stderr = String::new();
+    let (binding, lifetime) = consume_and_resolve_lifetime(None, false, true, &mut stderr).unwrap();
+    assert!(binding.is_none());
+    assert_eq!(lifetime, HarnessLifetime::UntilLastClientDisconnects);
+    assert!(stderr.is_empty());
+
+    let (_, lifetime) = consume_and_resolve_lifetime(None, true, true, &mut stderr).unwrap();
+    assert_eq!(lifetime, HarnessLifetime::Persistent);
+    assert!(stderr.contains("WARNING: --persist"), "{stderr}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sidecar");
+    write_sidecar(&path, &mint_credential()).unwrap();
+    let mut stderr = String::new();
+    let (binding, lifetime) =
+        consume_and_resolve_lifetime(Some(&path), false, true, &mut stderr).unwrap();
+    assert!(binding.unwrap().binding.is_launched_child());
+    assert_eq!(lifetime, HarnessLifetime::LaunchBound);
+    assert!(stderr.is_empty(), "no persist warning for a launched child");
+}
+
+/// #1937: a launched child asking for `--persist` is refused after its
+/// sidecar was consumed, so no credential lingers on disk.
+#[test]
+fn a_persistent_launched_child_is_refused_and_its_sidecar_consumed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sidecar");
+    write_sidecar(&path, &mint_credential()).unwrap();
+    let mut stderr = String::new();
+    assert!(consume_and_resolve_lifetime(Some(&path), true, true, &mut stderr).is_none());
+    assert!(
+        stderr.contains("--persist is refused with --parent-control"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("WARNING"), "{stderr}");
+    assert!(!path.exists(), "the sidecar is consumed before the refusal");
+}

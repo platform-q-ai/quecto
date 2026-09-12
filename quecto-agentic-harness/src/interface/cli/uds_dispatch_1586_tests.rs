@@ -7,89 +7,12 @@ use crate::domain::message::Message;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 
-fn serve_session_stats_once(
-    listener: std::os::unix::net::UnixListener,
-    session_key: &'static str,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        use std::io::{Read, Write};
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut prefix = [0u8; 4];
-        stream.read_exact(&mut prefix).unwrap();
-        let len = u32::from_be_bytes(prefix) as usize;
-        let mut request = vec![0u8; len];
-        stream.read_exact(&mut request).unwrap();
-        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let response = serde_json::json!({
-            "type": "response",
-            "id": request_id,
-            "command": "get_session_stats",
-            "success": true,
-            "data": { "sessionKey": session_key }
-        })
-        .to_string();
-        stream
-            .write_all(&(response.len() as u32).to_be_bytes())
-            .unwrap();
-        stream.write_all(response.as_bytes()).unwrap();
-        stream.flush().unwrap();
-    })
-}
-
-#[test]
-fn legacy_ordinary_exit_marker_restores_only_verified_live_socket_identity() {
-    use crate::domain::session::{SubagentLiveness, SubagentRestoreReason};
-    use crate::interface::cli::uds::uds_dispatch_session::restore_persisted_subagent_roster;
-
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("compat-live.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    let server = serve_session_stats_once(listener, "compat-live");
-
-    let compat = crate::domain::session::PersistedSubagentRosterEntry {
-        agent_uuid: "compat-live".into(),
-        display_name: "Compat live".into(),
-        session_key: "compat-live".into(),
-        socket_path: socket,
-        pid: 99,
-        liveness: SubagentLiveness::Live,
-        restore_reason: SubagentRestoreReason::OrdinaryTuiExitStopped,
-        parent_id: Some("parent".into()),
-        read_only: true,
-        delivered_message_ordinal: Some(7),
-        pending_message_reports: std::collections::VecDeque::new(),
-        status: Some("idle".into()),
-    };
-    let mut exited_control = compat.clone();
-    exited_control.agent_uuid = "exited-control".into();
-    exited_control.session_key = "exited-control".into();
-    exited_control.status = Some("exited".into());
-
-    let registry = new_registry();
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![compat, exited_control]);
-
-    let entries = registry.lock().unwrap();
-    assert_eq!(entries.len(), 1);
-    let restored = entries
-        .get("compat-live")
-        .expect("verified live ordinary marker restored");
-    assert_eq!(restored.persisted_liveness, SubagentLiveness::Live);
-    assert_eq!(restored.status.to_wire_str(), "idle");
-    assert_eq!(restored.display_name, "Compat live");
-    assert!(!entries.contains_key("exited-control"));
-    drop(entries);
-    server.join().unwrap();
-}
-
 #[test]
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {
     use crate::domain::session::SubagentRestoreReason;
     use crate::interface::cli::protocol::build_compact_subagent_roster;
     use crate::interface::cli::uds::uds_dispatch_session::{
-        restore_persisted_subagent_roster, snapshot_subagent_roster_with_restore_reason,
+        reset_subagent_roster_on_restore, snapshot_subagent_roster_with_restore_reason,
     };
 
     let registry = new_registry();
@@ -99,7 +22,7 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
             SubagentRestoreReason::OrdinaryTuiExitStopped,
         );
         assert!(snapshot.is_empty());
-        restore_persisted_subagent_roster(&Some(registry.clone()), snapshot);
+        reset_subagent_roster_on_restore(&Some(registry.clone()), &snapshot);
         assert!(
             build_compact_subagent_roster(&Some(registry.clone()), None)
                 .unwrap()
@@ -219,8 +142,6 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
                 agent_uuid: "stale-child".into(),
                 display_name: "stale child".into(),
                 session_key: "stale-child".into(),
-                socket_path: "/tmp/stale.sock".into(),
-                pid: 0,
                 liveness: SubagentLiveness::Dead,
                 restore_reason: SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,
@@ -241,8 +162,6 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
                 agent_uuid: "other-child".into(),
                 display_name: "other child".into(),
                 session_key: "other-child".into(),
-                socket_path: "/tmp/other.sock".into(),
-                pid: 0,
                 liveness: SubagentLiveness::Live,
                 restore_reason: SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,
@@ -288,8 +207,6 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
                 agent_uuid: "stale-child".into(),
                 display_name: "stale child".into(),
                 session_key: "stale-child".into(),
-                socket_path: "/tmp/stale.sock".into(),
-                pid: 0,
                 liveness: SubagentLiveness::Dead,
                 restore_reason: SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,

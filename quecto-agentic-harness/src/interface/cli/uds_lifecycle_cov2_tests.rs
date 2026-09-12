@@ -69,7 +69,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         socket_override: None,
         session_store_override: None,
         ext_registry: None,
-        persist: false,
+        lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
         workflow_state: None,

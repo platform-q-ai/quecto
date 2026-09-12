@@ -21,7 +21,7 @@ The agent prints the socket path to stderr on startup. Options:
 | `--session <name>` | Named session for persistence across restarts |
 | `--no-session` | Ephemeral mode — no session saved to disk |
 | `--system <text>` | Inject a system prompt (not persisted in session history) |
-| `--persist` | Stay alive when all clients disconnect. Default: agent exits when the last client disconnects |
+| `--persist` | Stay alive when all clients disconnect. Default: agent exits when the last client disconnects. Top-level only: a launcher-created child (`--parent-control`) is lifetime-bound to its launcher and refuses `--persist` (#1937) |
 
 ## Wire format
 
@@ -29,7 +29,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Framing:** Length-prefixed UTF-8 JSON frames (ADR-0008), with dual-mode readers that also accept legacy `\n`-delimited JSON lines during the deprecation window. Shared bound: **8 MiB** per message (`quecto-line-io::PROTOCOL_LINE_CAP_BYTES`, including the trailing newline on legacy lines)
 - **Direction:** Client sends **commands**, agent emits **events**
 - **Multi-client:** Multiple clients can connect simultaneously. Events are broadcast to all clients; commands from all clients merge into a single serial dispatch loop
-- **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running.  Socket file is removed on exit
+- **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running. A launcher-created child ignores client churn and ends on the loss of its launch-bound parent connection instead (#1935/#1937). Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). On startup, dead auto-generated sockets are reaped by liveness check; the 24h age threshold is a fallback for sockets whose liveness cannot be determined
 - **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window, and the [protocol capability matrix](architecture/protocol-capability-matrix.md) for the current compatibility/evolution map
 
@@ -272,6 +272,7 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 - **Agent running:** Returns `success: false` with error `"cannot resume a session while agent is running"`
 - Invalid session names are rejected using the same rules as `quecto agent --session`
 - Missing sessions return `success: false` with `"session not found: <name>"`
+- **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, nothing readopted or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
 
 **Example:**
 
@@ -1390,7 +1391,7 @@ All flags for `quecto agent` that affect UDS mode:
 | `--model <model>` | Override default model from config |
 | `--max-iterations <n>` | Max tool call rounds per prompt |
 | `--max-time <secs>` | Wall-clock timeout for the entire agent |
-| `--persist` | Keep agent alive after all clients disconnect |
+| `--persist` | Keep agent alive after all clients disconnect (top-level only; refused with `--parent-control`) |
 | `--effort <level>` | Reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`). Provider vocabulary still applies at request time. Overrides config and env var |
 | `--workflow` | Start workflow-driven prompt injection immediately |
 | `--workflow-guards` | Enable workflow bash command guards |

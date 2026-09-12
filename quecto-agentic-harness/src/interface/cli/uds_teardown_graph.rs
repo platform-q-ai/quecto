@@ -21,7 +21,8 @@ use super::uds_teardown_adapters::{DeferredLoopPersistence, LoopExitReadiness};
 
 /// Default time a launched harness waits for its parent to bind before it
 /// presumes the launcher gone (#1935 review: a parent that dies between
-/// spawning and presenting must not leave a `--persist` orphan).
+/// spawning and presenting must not leave an unbound orphan: a launch-bound
+/// child ignores client churn, #1937).
 pub const DEFAULT_BIND_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Test-only override of the bind deadline, in milliseconds. Read once at

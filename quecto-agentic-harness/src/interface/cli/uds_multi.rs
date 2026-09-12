@@ -85,8 +85,10 @@ pub(super) struct MultiClientArgs<'a> {
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
-    /// When true, keep the agent alive after all clients disconnect (#348).
-    pub persist: bool,
+    /// How long this harness lives (#1937): the top-level default exits
+    /// when the last client disconnects; `--persist` (#348) and a
+    /// launch-bound child ignore client churn.
+    pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     /// Receiver for subagent notifications (#523).
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Shared subagent registry for get_subagents / state_changed (#524).
@@ -165,7 +167,7 @@ pub(super) async fn multi_client_loop(
     session_store: &dyn SessionStore,
 ) -> i32 {
     let ext_registry = args.ext_registry;
-    let persist = args.persist;
+    let lifetime = args.lifetime;
     let notification_rx = args.notification_rx;
     let subagent_registry = args.subagent_registry;
     let wf_state = args.workflow_state;
@@ -327,7 +329,7 @@ pub(super) async fn multi_client_loop(
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
     // are gone.  The accept loop's clone keeps the channel open while
-    // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
+    // it runs — the lifetime guard in `run_dispatch_loop` controls shutdown.
     drop(cmd_tx);
 
     let mut ctx = DispatchCtx {
@@ -370,7 +372,7 @@ pub(super) async fn multi_client_loop(
         DispatchLoopArgs {
             cmd_rx,
             disconnect_rx,
-            persist,
+            lifetime,
             shutdown,
         },
         &live_clients,
@@ -404,7 +406,7 @@ pub(super) async fn multi_client_loop(
 struct DispatchLoopArgs {
     cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
     disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
-    persist: bool,
+    lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     shutdown: super::uds_shutdown::ShutdownRequest,
 }
 
@@ -419,7 +421,7 @@ async fn run_dispatch_loop(
     let DispatchLoopArgs {
         mut cmd_rx,
         mut disconnect_rx,
-        persist,
+        lifetime,
         shutdown,
     } = args;
     loop {
@@ -440,7 +442,7 @@ async fn run_dispatch_loop(
                 break;
             }
             DispatchMsg::Client(client_msg) => {
-                if handle_client_msg(ctx, client_msg, persist, live_clients).await {
+                if handle_client_msg(ctx, client_msg, lifetime, live_clients).await {
                     break;
                 }
             }
@@ -508,7 +510,7 @@ use recv::{DispatchMsg, recv_next_message};
 async fn handle_client_msg(
     ctx: &mut DispatchCtx<'_>,
     client_msg: ClientMessage,
-    persist: bool,
+    lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     live_clients: &std::sync::atomic::AtomicU32,
 ) -> bool {
     match client_msg {
@@ -537,7 +539,8 @@ async fn handle_client_msg(
         }
         ClientMessage::Disconnected(disc) => {
             handle_disconnect(ctx, disc.client_id).await;
-            !persist && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0
+            lifetime.exits_when_last_client_disconnects()
+                && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0
         }
     }
 }

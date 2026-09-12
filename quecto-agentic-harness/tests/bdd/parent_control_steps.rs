@@ -333,13 +333,13 @@ fn then_argv_only_path(world: &mut QuectoWorld) {
 
 // ── Composed in-process harness ────────────────────────────────────────────
 
-#[given("a persistent UDS harness launched with a parent control credential")]
+#[given("a launch-bound UDS harness launched with a parent control credential")]
 fn given_launched_harness(world: &mut QuectoWorld) {
     launch_harness(world, BindDeadline::After(Duration::from_secs(30)));
 }
 
 #[given(
-    "a persistent UDS harness launched with a parent control credential and a triggered bind deadline"
+    "a launch-bound UDS harness launched with a parent control credential and a triggered bind deadline"
 )]
 fn given_launched_harness_with_triggered_deadline(world: &mut QuectoWorld) {
     let trigger = Arc::new(tokio::sync::Notify::new());
@@ -396,9 +396,9 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            // A launcher-created child always runs with --persist: ordinary
-            // client churn must never end it.
-            persist: true,
+            // A launcher-created child is launch-bound (#1937): ordinary
+            // client churn must never end it, and it never persists.
+            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::LaunchBound,
             notification_rx: None,
             subagent_registry: None,
             workflow_state,
