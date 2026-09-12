@@ -33,4 +33,5 @@ mod line_cap_tests;
 #[cfg(test)]
 mod issue_996_efficiency_tests;
 
+pub mod http;
 pub mod session_export;

@@ -6,8 +6,6 @@ use super::*;
 // Uses wiremock to mock HTTP responses. The web_fetch tool is registered
 // directly into the tool registry, bypassing the extension system.
 
-use quecto::infrastructure::tools::web_fetch::WebFetchTool;
-
 /// Leaked wiremock server for web_fetch BDD (stored in world).
 fn start_web_fetch_mock() -> (&'static wiremock::MockServer, String) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -40,17 +38,9 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
-    // Allowlist only the mock server's host:port so SSRF protection still
-    // blocks other restricted URLs (localhost:other, 127.0.0.1, etc.).
-    let host_port = reqwest::Url::parse(&uri)
-        .ok()
-        .and_then(|u| {
-            let host = u.host_str()?.to_string();
-            Some(format!("{}:{}", host, u.port()?))
-        })
-        .unwrap_or_else(|| uri.clone());
-    let tool = WebFetchTool::with_allowed_host(32, &host_port);
-    registry.register(Arc::new(tool));
+    let tool = quecto::composition::web_fetch::build(reqwest::Client::new(), 32);
+    registry.register(tool);
+    let uri = uri.replace("127.0.0.1", "localtest.me");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -75,15 +65,9 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
-    let host_port = reqwest::Url::parse(&uri)
-        .ok()
-        .and_then(|u| {
-            let host = u.host_str()?.to_string();
-            Some(format!("{}:{}", host, u.port()?))
-        })
-        .unwrap_or_else(|| uri.clone());
-    let tool = WebFetchTool::with_allowed_host(1, &host_port);
-    registry.register(Arc::new(tool));
+    let tool = quecto::composition::web_fetch::build(reqwest::Client::new(), 1);
+    registry.register(tool);
+    let uri = uri.replace("127.0.0.1", "localtest.me");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);

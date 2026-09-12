@@ -669,6 +669,10 @@ pub fn build_and_register_native_extensions(
     for ext in crate::infrastructure::extensions::native::build_native_extensions(
         &config.tools.web,
         http_client,
+        Some(crate::composition::web_fetch::build(
+            http_client.clone(),
+            config.tools.web.fetch.max_response_kb,
+        )),
     ) {
         ext_registry.register(ext);
     }

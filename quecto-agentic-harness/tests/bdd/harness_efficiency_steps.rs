@@ -5,10 +5,10 @@
 //! declared for these scenarios, so no new World wiring is required.
 
 use super::*;
+use quecto::application::agent_turn::use_cases::web_fetch::strip_html;
 use quecto::domain::audit::content_preview;
 use quecto::infrastructure::tools::bash::ExecTool;
 use quecto::infrastructure::tools::filesystem::{EditTool, ReadTool};
-use quecto::infrastructure::tools::web_fetch::strip_html;
 
 #[when("a 500-character multibyte string is previewed to 100 characters")]
 fn when_preview_multibyte(world: &mut QuectoWorld) {
