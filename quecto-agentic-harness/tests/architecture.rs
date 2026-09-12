@@ -2779,3 +2779,32 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
         );
     }
 }
+
+#[test]
+fn web_fetch_has_target_layer_ownership() {
+    for path in [
+        "src/application/agent_turn/use_cases/web_fetch.rs",
+        "src/interface/tools/web_fetch.rs",
+        "src/infrastructure/http/web_fetch.rs",
+        "src/composition/web_fetch.rs",
+    ] {
+        assert!(Path::new(path).is_file(), "missing target web_fetch owner: {path}");
+    }
+}
+
+#[test]
+fn web_fetch_is_constructed_only_by_outer_composition() {
+    let native = fs::read_to_string("src/infrastructure/extensions/native.rs").expect("native");
+    assert!(!native.contains("WebFetchTool::with_client"), "native still constructs web_fetch");
+    let composition = fs::read_to_string("src/composition/web_fetch.rs").expect("composition");
+    assert!(composition.contains("ReqwestFetchWebContent"));
+    assert!(composition.contains("WebFetchTool"));
+}
+
+#[test]
+fn legacy_mixed_web_fetch_path_is_retired() {
+    assert!(
+        !Path::new("src/infrastructure/tools/web_fetch.rs").exists(),
+        "legacy mixed web_fetch implementation survives"
+    );
+}
