@@ -6,6 +6,7 @@ use crate::application::subagents::dto::{
     HarnessShutdownError, PersistenceOutcome, PrepareShutdownRequest, ReleaseOutcome,
     ShutdownTrigger,
 };
+use crate::application::subagents::ports::ExitReadiness;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
@@ -142,8 +143,8 @@ async fn execute_detaches_the_run_and_records_the_common_teardown_in_order() {
     );
     assert!(outcome.exit_signalled);
     assert_eq!(
-        *rig.exit.signalled.lock().unwrap(),
-        [ShutdownReason::OperatorRequest]
+        rig.exit.signalled(),
+        [ExitReadiness::Completed(ShutdownReason::OperatorRequest)]
     );
     // Terminated is set last, after exit readiness was signalled.
     assert_eq!(
@@ -457,7 +458,7 @@ async fn a_repository_that_lost_the_freeze_is_a_lifecycle_violation_shared_by_jo
     );
     assert_eq!(rig.execute.execute(&token).await, Err(error));
     // Exit readiness was signalled before the terminate step failed.
-    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.signalled().len(), 1);
 }
 
 #[test]
@@ -481,43 +482,6 @@ fn terminal_error_vocabulary_is_stable() {
             "shutdown execution was interrupted",
         ]
     );
-}
-
-#[tokio::test]
-async fn a_dropped_run_hands_the_admission_back_and_a_rerun_resumes_at_the_first_incomplete_step() {
-    let rig = rig();
-    // Exit readiness never resolves the first time: the run is parked after
-    // cancellation, children and persistence have all happened.
-    rig.exit.hold.store(true, Ordering::SeqCst);
-    let token = rig
-        .prepare
-        .execute(protocol(ShutdownReason::ParentShutdown))
-        .unwrap()
-        .token;
-    let joiner = tokio::spawn({
-        let execute = rig.execute.clone();
-        let token = token.clone();
-        async move { execute.execute(&token).await }
-    });
-    while rig.exit.attempts.load(Ordering::SeqCst) == 0 {
-        tokio::task::yield_now().await;
-    }
-    // The runtime drops the detached run (simulated by aborting it).
-    rig.spawner.abort_latest().await;
-    assert_eq!(
-        joiner.await.unwrap(),
-        Err(HarnessShutdownError::ExecutionInterrupted)
-    );
-    // Lifecycle was NOT terminated early, and the admission is still held
-    // with its progress: no LifecycleViolation, no thaw.
-    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
-    assert_eq!(rig.prepare.release(&token), Ok(ReleaseOutcome::Released));
-    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
-    // Re-admit with a fresh admission: progress belongs to the admission
-    // that was released, so a new admission starts over. Re-driving the
-    // SAME admission instead resumes; see the next test.
-    assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -553,6 +517,126 @@ async fn re_driving_the_same_admission_skips_every_completed_step() {
     assert_eq!(rig.exit.attempts.load(Ordering::SeqCst), 2);
     assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 2);
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
+}
+
+#[tokio::test]
+async fn release_after_an_interrupted_run_keeps_the_admission_and_a_new_prepare_resumes_it() {
+    let rig = rig();
+    rig.exit.hold.store(true, Ordering::SeqCst);
+    let token = rig
+        .prepare
+        .execute(protocol(ShutdownReason::ParentShutdown))
+        .unwrap()
+        .token;
+    let joiner = tokio::spawn({
+        let execute = rig.execute.clone();
+        let token = token.clone();
+        async move { execute.execute(&token).await }
+    });
+    while rig.exit.attempts.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    rig.spawner.abort_latest().await;
+    assert_eq!(
+        joiner.await.unwrap(),
+        Err(HarnessShutdownError::ExecutionInterrupted)
+    );
+    // Effects have run: the only holder releasing must NOT thaw or discard
+    // the progress, otherwise a new admission would repeat every effect.
+    assert_eq!(
+        rig.prepare.release(&token),
+        Ok(ReleaseOutcome::ExecutionUnderway)
+    );
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
+    let later = rig.prepare.execute(signal()).unwrap();
+    assert!(later.joined, "a later trigger joins the same admission");
+    rig.exit.hold.store(false, Ordering::SeqCst);
+    let outcome = rig.execute.execute(&later.token).await.unwrap();
+    assert_eq!(
+        outcome.triggers,
+        [
+            ShutdownTrigger::ProtocolCommand,
+            ShutdownTrigger::TerminationSignal
+        ]
+    );
+    effects_once(&rig);
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
+}
+
+#[tokio::test]
+async fn a_run_interrupted_mid_children_never_re_sends_to_a_recorded_child() {
+    let rig = rig();
+    *rig.routing.hold_child.lock().unwrap() = Some(AgentUuid::new("D"));
+    let token = rig
+        .prepare
+        .execute(protocol(ShutdownReason::ParentShutdown))
+        .unwrap()
+        .token;
+    let joiner = tokio::spawn({
+        let execute = rig.execute.clone();
+        let token = token.clone();
+        async move { execute.execute(&token).await }
+    });
+    // A was shut down and recorded; the run is parked on D.
+    while rig.routing.calls().len() < 2 {
+        tokio::task::yield_now().await;
+    }
+    rig.spawner.abort_latest().await;
+    assert_eq!(
+        joiner.await.unwrap(),
+        Err(HarnessShutdownError::ExecutionInterrupted)
+    );
+    *rig.routing.hold_child.lock().unwrap() = None;
+    let outcome = rig.execute.execute(&token).await.unwrap();
+    assert_eq!(
+        outcome.children_shut_down,
+        [AgentUuid::new("A"), AgentUuid::new("D")]
+    );
+    // A once, D twice (its first attempt was interrupted before its record);
+    // the port contract makes that second D request a join, not a repeat.
+    let calls = rig.routing.calls();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| matches!(c, RoutingCall::Shutdown(id, _) if id.uuid.as_str() == "A"))
+            .count(),
+        1
+    );
+    assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.signalled().len(), 1);
+}
+
+#[tokio::test]
+async fn abandon_signals_exit_readiness_with_the_failure_and_keeps_the_admission() {
+    let rig = rig();
+    let token = rig
+        .prepare
+        .execute(protocol(ShutdownReason::ParentShutdown))
+        .unwrap()
+        .token;
+    rig.execute.abandon(&token, "runtime gone").await.unwrap();
+    assert_eq!(
+        rig.exit.signalled(),
+        [ExitReadiness::Abandoned {
+            reason: ShutdownReason::ParentShutdown,
+            detail: "runtime gone".into(),
+        }]
+    );
+    assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
+    assert_eq!(
+        rig.execute.abandon(&foreign_token(), "x").await,
+        Err(HarnessShutdownError::UnknownToken)
+    );
+    assert_eq!(
+        ExitReadiness::Abandoned {
+            reason: ShutdownReason::ParentShutdown,
+            detail: String::new()
+        }
+        .reason(),
+        ShutdownReason::ParentShutdown
+    );
 }
 
 #[tokio::test]

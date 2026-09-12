@@ -239,6 +239,12 @@ pub struct LineageRecord {
 
 /// The receiving harness's view of its delegation subtree: every record whose
 /// `parent` is `owner` is a direct child; deeper records were reported upward.
+///
+/// The snapshot must hold **current-generation records only**: one record per
+/// live uuid. A uuid listed twice — even across generations — is
+/// [`TerminationRouteError::AmbiguousLineage`], because the walk cannot tell
+/// which edge is meant. Retiring a superseded generation is the lifecycle
+/// repository's job, not the router's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineageSnapshot {
     pub owner: AgentUuid,
@@ -246,10 +252,12 @@ pub struct LineageSnapshot {
 }
 
 impl LineageSnapshot {
+    /// Records parented by the owner. A record claiming the owner's own uuid
+    /// is a corrupt snapshot, never a child, and is skipped.
     pub fn direct_children(&self) -> impl Iterator<Item = &DelegatedAgentIdentity> {
         self.records
             .iter()
-            .filter(|record| record.parent == self.owner)
+            .filter(|record| record.parent == self.owner && record.identity.uuid != self.owner)
             .map(|record| &record.identity)
     }
 

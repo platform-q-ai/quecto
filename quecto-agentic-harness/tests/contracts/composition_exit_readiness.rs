@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use quecto::application::subagents::dto::HarnessShutdownError;
 use quecto::application::subagents::ports::{
-    CompositionExitReadiness, SubagentLifecycleRepository,
+    CompositionExitReadiness, ExitReadiness, SubagentLifecycleRepository,
 };
 use quecto::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
@@ -15,12 +15,20 @@ use super::teardown_fixture::{Exit, Harness, root_tree};
 async fn port_is_object_safe_and_records_the_reason() {
     let exit = Arc::new(Exit::default());
     let port: Arc<dyn CompositionExitReadiness> = exit.clone();
-    port.signal_exit_ready(ShutdownReason::TerminationSignal)
+    port.signal_exit_ready(ExitReadiness::Completed(ShutdownReason::TerminationSignal))
         .await;
+    port.signal_exit_ready(ExitReadiness::Abandoned {
+        reason: ShutdownReason::TerminationSignal,
+        detail: "runtime gone".into(),
+    })
+    .await;
+    let signalled = exit.signalled();
     assert_eq!(
-        *exit.signalled.lock().unwrap(),
-        [ShutdownReason::TerminationSignal]
+        signalled[0],
+        ExitReadiness::Completed(ShutdownReason::TerminationSignal)
     );
+    assert_eq!(signalled[1].reason(), ShutdownReason::TerminationSignal);
+    assert!(matches!(signalled[1], ExitReadiness::Abandoned { .. }));
 }
 
 #[tokio::test]
@@ -35,8 +43,8 @@ async fn readiness_is_signalled_once_after_termination_and_shared_by_joiners() {
         HarnessLifecycleState::Terminated
     );
     assert_eq!(
-        *harness.exit.signalled.lock().unwrap(),
-        [ShutdownReason::OperatorRequest]
+        harness.exit.signalled(),
+        [ExitReadiness::Completed(ShutdownReason::OperatorRequest)]
     );
     let joined = harness.execute.execute(&prepared.token).await.unwrap();
     assert_eq!(joined, outcome);

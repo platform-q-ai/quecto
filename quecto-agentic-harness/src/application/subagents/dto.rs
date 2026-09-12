@@ -27,6 +27,11 @@ pub struct PrepareShutdownRequest {
 /// participant gets its own token (one admission, one holder each), so a
 /// holder's release can never be mistaken for another's. Only the
 /// transaction that minted it can read it.
+///
+/// A token is a plain value: it has no drop behaviour. A holder that loses
+/// it (or `mem::forget`s it) without releasing or executing leaks the freeze
+/// until another trigger executes; keeping the token reachable is the
+/// caller's responsibility (the UDS controller guards its own).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ShutdownToken {
     admission: u64,

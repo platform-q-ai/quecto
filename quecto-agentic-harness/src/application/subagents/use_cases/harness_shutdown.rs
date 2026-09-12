@@ -33,24 +33,47 @@ use super::super::dto::{
     ReleaseOutcome, ShutdownOutcome, ShutdownToken, ShutdownTrigger,
 };
 use super::super::ports::{
-    CompositionExitReadiness, DirectChildRouting, ShutdownClock, ShutdownRunSpawner,
+    CompositionExitReadiness, DirectChildRouting, ExitReadiness, ShutdownClock, ShutdownRunSpawner,
     ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
 };
 
 type Outcome = Result<ShutdownOutcome, HarnessShutdownError>;
 
-/// Direct children addressed by the children step: shut down, and failed
-/// with the routing error rendered.
-type ChildrenOutcome = (Vec<AgentUuid>, Vec<(AgentUuid, String)>);
-
 /// Steps of the common teardown that have already produced their effect.
-/// A re-driven run skips every recorded step.
+/// A re-driven run skips every recorded step, and within the children step
+/// every child already recorded.
 #[derive(Debug, Clone, Default)]
 struct Progress {
+    /// A run was polled at least once: some port may already have been
+    /// asked, even if its result was never recorded.
+    started: bool,
     turn_cancelled: Option<bool>,
-    children: Option<ChildrenOutcome>,
+    children_shut_down: Vec<AgentUuid>,
+    children_failed: Vec<(AgentUuid, String)>,
+    children_complete: bool,
     persistence: Option<PersistenceOutcome>,
     exit_signalled: bool,
+}
+
+impl Progress {
+    /// Whether any effect has already happened for this admission.
+    fn any_effect(&self) -> bool {
+        self.started
+            || self.turn_cancelled.is_some()
+            || !self.children_shut_down.is_empty()
+            || !self.children_failed.is_empty()
+            || self.children_complete
+            || self.persistence.is_some()
+            || self.exit_signalled
+    }
+
+    fn child_recorded(&self, uuid: &AgentUuid) -> bool {
+        self.children_shut_down.contains(uuid)
+            || self
+                .children_failed
+                .iter()
+                .any(|(failed, _)| failed == uuid)
+    }
 }
 
 /// One admitted shutdown and everyone holding it.
@@ -165,6 +188,17 @@ impl HarnessShutdownTransaction {
         self.lifecycle.lifecycle().accepts_new_work()
     }
 
+    /// Number of callers currently parked on the in-flight run. Test probe
+    /// so a test can make a joiner's registration observable before it
+    /// interrupts the run.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn waiting_joiners(&self) -> usize {
+        match &*self.lock() {
+            Phase::Executing { wakers, .. } => wakers.len(),
+            Phase::Idle | Phase::Prepared(_) | Phase::Completed { .. } => 0,
+        }
+    }
+
     fn with_progress<T>(&self, admission_id: u64, update: impl FnOnce(&mut Progress) -> T) -> T {
         let mut phase = self.lock();
         let admission = phase
@@ -228,7 +262,9 @@ impl PrepareHarnessShutdown {
 
     /// Give back one holder's admission (its ACK could not be delivered).
     /// Idempotent per holder. The freeze lifts only when the last holder
-    /// leaves; once execution has begun there is nothing to give back.
+    /// leaves *and nothing has run yet*; once any effect has happened (the
+    /// run started, even if it was later interrupted) the admission is kept
+    /// so a later trigger joins and resumes it instead of repeating effects.
     pub fn release(&self, token: &ShutdownToken) -> Result<ReleaseOutcome, HarnessShutdownError> {
         let transaction = &self.transaction;
         let mut phase = transaction.lock();
@@ -243,6 +279,9 @@ impl PrepareHarnessShutdown {
         admission.holders.remove(&token.holder());
         admission.released.insert(token.holder());
         match &*phase {
+            Phase::Prepared(admission) if admission.progress.any_effect() => {
+                Ok(ReleaseOutcome::ExecutionUnderway)
+            }
             Phase::Prepared(admission) if admission.holders.is_empty() => {
                 let thawed = transaction
                     .lifecycle
@@ -314,6 +353,31 @@ impl ExecuteHarnessShutdown {
         }
     }
 
+    /// Give up on driving the run for `token` after repeated interruption:
+    /// composition is told to exit anyway, with the failure recorded, so an
+    /// ACKed parent never sees silence. The admission stays as it is for any
+    /// later trigger that can still resume it.
+    pub async fn abandon(
+        &self,
+        token: &ShutdownToken,
+        detail: impl Into<String>,
+    ) -> Result<(), HarnessShutdownError> {
+        let reason = {
+            let phase = self.transaction.lock();
+            let admission = phase.admission().ok_or(HarnessShutdownError::NotPrepared)?;
+            admission.validate(token)?;
+            admission.reason
+        };
+        self.ports
+            .exit
+            .signal_exit_ready(ExitReadiness::Abandoned {
+                reason,
+                detail: detail.into(),
+            })
+            .await;
+        Ok(())
+    }
+
     fn admit(&self, token: &ShutdownToken) -> Result<Admit, HarnessShutdownError> {
         let mut phase = self.transaction.lock();
         let admission = phase.admission().ok_or(HarnessShutdownError::NotPrepared)?;
@@ -346,6 +410,7 @@ impl ExecuteHarnessShutdown {
 /// that progress intact for the next `Execute`.
 async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admission_id: u64) {
     let transaction = guard.transaction.clone();
+    transaction.with_progress(admission_id, |p| p.started = true);
     let (reason, done) = {
         let phase = transaction.lock();
         let admission = phase
@@ -357,21 +422,26 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
         let cancelled = ports.cancellation.cancel_in_flight_turn().await;
         transaction.with_progress(admission_id, |p| p.turn_cancelled = Some(cancelled));
     }
-    if done.children.is_none() {
+    if !done.children_complete {
         let lineage = transaction.lifecycle.lineage();
-        let mut shut_down = Vec::new();
-        let mut failed = Vec::new();
         for child in lineage.direct_children() {
-            match ports
+            // Each child is recorded as soon as it is addressed, so a run
+            // interrupted mid-loop never re-sends to a recorded child.
+            if done.child_recorded(&child.uuid) {
+                continue;
+            }
+            let outcome = ports
                 .routing
                 .shutdown_child(child, ShutdownReason::ParentShutdown)
-                .await
-            {
-                Ok(()) => shut_down.push(child.uuid.clone()),
-                Err(error) => failed.push((child.uuid.clone(), error.to_string())),
-            }
+                .await;
+            transaction.with_progress(admission_id, |p| match outcome {
+                Ok(()) => p.children_shut_down.push(child.uuid.clone()),
+                Err(error) => p
+                    .children_failed
+                    .push((child.uuid.clone(), error.to_string())),
+            });
         }
-        transaction.with_progress(admission_id, |p| p.children = Some((shut_down, failed)));
+        transaction.with_progress(admission_id, |p| p.children_complete = true);
     }
     if done.persistence.is_none() {
         let persistence = match ports.persistence.persist_for_shutdown(reason).await {
@@ -381,7 +451,10 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
         transaction.with_progress(admission_id, |p| p.persistence = Some(persistence));
     }
     if !done.exit_signalled {
-        ports.exit.signal_exit_ready(reason).await;
+        ports
+            .exit
+            .signal_exit_ready(ExitReadiness::Completed(reason))
+            .await;
         transaction.with_progress(admission_id, |p| p.exit_signalled = true);
     }
     // Terminate last: everything the exit depends on has already happened,
@@ -398,13 +471,12 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
             .admission()
             .expect("the running admission stays present until it completes");
         let progress = admission.progress.clone();
-        let (children_shut_down, children_failed) = progress.children.unwrap_or_default();
         ShutdownOutcome {
             reason,
             triggers: admission.triggers.clone(),
             turn_cancelled: progress.turn_cancelled.unwrap_or(false),
-            children_shut_down,
-            children_failed,
+            children_shut_down: progress.children_shut_down,
+            children_failed: progress.children_failed,
             persistence: progress
                 .persistence
                 .unwrap_or(PersistenceOutcome::Failed("not attempted".into())),

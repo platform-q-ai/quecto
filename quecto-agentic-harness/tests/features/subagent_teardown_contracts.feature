@@ -105,6 +105,20 @@ Feature: Subagent teardown contracts (#1934)
     Then the executed outcome shut down "A, D"
     And the harness lifecycle is "Terminated"
 
+  Scenario: Releasing after an interrupted run keeps the admission and a later trigger resumes it
+    Given a harness owning children A and D, where A owns B and C
+    And the in-flight turn holds cancellation open
+    When shutdown is prepared for "parent_shutdown" by the "protocol" trigger
+    And the detached run is dropped by its runtime while a joiner waits
+    And the admitted token is released
+    Then the release outcome is "execution underway"
+    And the harness lifecycle is "Frozen"
+    When shutdown is prepared for "termination_signal" by the "signal" trigger
+    And cancellation is released and the latest token is executed
+    Then the executed outcome shut down "A, D"
+    And the shutdown outcome records reason "parent_shutdown" and triggers "protocol, signal"
+    And the harness lifecycle is "Terminated"
+
   Scenario: A spawner with no runtime left reports interruption instead of hanging
     Given a harness owning children A and D, where A owns B and C
     When shutdown is prepared for "operator_request" by the "protocol" trigger

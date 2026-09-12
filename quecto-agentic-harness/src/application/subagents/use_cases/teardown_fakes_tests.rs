@@ -9,8 +9,8 @@ use crate::domain::subagent_teardown::{
 };
 
 use crate::application::subagents::ports::{
-    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, PortFuture, ShutdownClock,
-    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
+    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, ExitReadiness, PortFuture,
+    ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
     SubagentLifecycleRepository, TurnCancellation,
 };
 
@@ -83,10 +83,14 @@ pub enum RoutingCall {
     },
 }
 
+/// Routing that can hold one child's shutdown open so a run can be
+/// interrupted mid-loop.
 #[derive(Default)]
 pub struct FakeRouting {
     pub calls: Mutex<Vec<RoutingCall>>,
     pub unreachable: Mutex<Vec<AgentUuid>>,
+    pub hold_child: Mutex<Option<AgentUuid>>,
+    pub gate: tokio::sync::Notify,
 }
 
 impl FakeRouting {
@@ -118,7 +122,13 @@ impl DirectChildRouting for FakeRouting {
             .unwrap()
             .push(RoutingCall::Shutdown(child.clone(), reason));
         let outcome = self.outcome(&child.uuid);
-        Box::pin(async move { outcome })
+        let held = self.hold_child.lock().unwrap().as_ref() == Some(&child.uuid);
+        Box::pin(async move {
+            if held {
+                self.gate.notified().await;
+            }
+            outcome
+        })
     }
 
     fn forward_termination<'a>(
@@ -222,7 +232,7 @@ impl ShutdownClock for FakeClock {
 /// persistence and the exit signal.
 #[derive(Default)]
 pub struct FakeExit {
-    pub signalled: Mutex<Vec<ShutdownReason>>,
+    pub signalled: Mutex<Vec<ExitReadiness>>,
     pub attempts: AtomicU64,
     pub hold: AtomicBool,
     pub gate: tokio::sync::Notify,
@@ -232,16 +242,20 @@ impl FakeExit {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
+
+    pub fn signalled(&self) -> Vec<ExitReadiness> {
+        self.signalled.lock().unwrap().clone()
+    }
 }
 
 impl CompositionExitReadiness for FakeExit {
-    fn signal_exit_ready(&self, reason: ShutdownReason) -> PortFuture<'_, ()> {
+    fn signal_exit_ready(&self, readiness: ExitReadiness) -> PortFuture<'_, ()> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             if self.hold.load(Ordering::SeqCst) {
                 self.gate.notified().await;
             }
-            self.signalled.lock().unwrap().push(reason);
+            self.signalled.lock().unwrap().push(readiness);
         })
     }
 }

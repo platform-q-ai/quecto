@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 
 use super::rig::*;
 use super::*;
+use crate::application::subagents::ports::ExitReadiness;
 use crate::application::subagents::ports::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
@@ -178,6 +179,10 @@ async fn an_interrupted_run_is_re_driven_until_the_shutdown_completes() {
         ControllerOutcome::ShutdownExecuted { outcome: Ok(_), .. }
     ));
     assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        rig.exit.signalled(),
+        [ExitReadiness::Completed(ShutdownReason::ParentShutdown)]
+    );
     assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
 }
@@ -202,11 +207,20 @@ async fn re_driving_is_bounded_when_the_spawner_never_runs_anything() {
             outcome: Err(HarnessShutdownError::ExecutionInterrupted),
         }
     );
+    // First attempt plus MAX_REDRIVES re-drives.
     assert_eq!(
         rig.spawner.spawned.load(Ordering::SeqCst),
-        u64::from(MAX_REDRIVES)
+        u64::from(MAX_REDRIVES) + 1
     );
-    // The admission is intact for a later trigger to finish.
+    // The parent was ACKed, so composition is told to exit anyway with the
+    // failure recorded; the admission is intact for a later trigger.
+    assert_eq!(
+        rig.exit.signalled(),
+        [ExitReadiness::Abandoned {
+            reason: ShutdownReason::ParentShutdown,
+            detail: "shutdown run interrupted 5 times after its ACK was flushed".into(),
+        }]
+    );
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Frozen);
 }
 

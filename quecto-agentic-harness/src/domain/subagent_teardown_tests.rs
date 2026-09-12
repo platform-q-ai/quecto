@@ -113,6 +113,19 @@ fn direct_children_are_records_parented_by_the_owner() {
 }
 
 #[test]
+fn a_record_claiming_the_owners_own_uuid_is_never_a_direct_child() {
+    let corrupt = LineageSnapshot {
+        owner: AgentUuid::new("root"),
+        records: vec![record("root", 1, "root"), record("A", 1, "root")],
+    };
+    let direct: Vec<_> = corrupt
+        .direct_children()
+        .map(|identity| identity.uuid.as_str().to_owned())
+        .collect();
+    assert_eq!(direct, ["A"]);
+}
+
+#[test]
 fn targeting_a_direct_child_resolves_to_self_shutdown_of_that_child() {
     assert_eq!(
         resolve_termination_route(&tree(), &id("A", 1), depth(1)),

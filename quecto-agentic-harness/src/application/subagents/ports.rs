@@ -37,6 +37,12 @@ impl fmt::Display for ChildRoutingError {
 pub trait DirectChildRouting: Send + Sync {
     /// Ask a direct child to shut itself (and its subtree) down. Resolves once
     /// the child has acknowledged the request, not once it has exited.
+    ///
+    /// Must be idempotent per child: the use case records each child as it
+    /// completes and never re-sends to a recorded one, but a run interrupted
+    /// between the child's acknowledgement and that record may ask once
+    /// more, and the child (already shutting down) must treat that as a
+    /// join, not a second teardown.
     fn shutdown_child<'a>(
         &'a self,
         child: &'a DelegatedAgentIdentity,
@@ -79,10 +85,32 @@ pub trait ShutdownClock: Send + Sync {
     fn now(&self) -> ShutdownInstant;
 }
 
+/// Why composition is being told the harness may exit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitReadiness {
+    /// The common teardown ran to completion for this reason.
+    Completed(ShutdownReason),
+    /// The teardown could not be driven to completion after its ACK was on
+    /// the wire; composition must still exit (falling back to process exit)
+    /// so the parent never sees an ACK followed by nothing.
+    Abandoned {
+        reason: ShutdownReason,
+        detail: String,
+    },
+}
+
+impl ExitReadiness {
+    pub const fn reason(&self) -> ShutdownReason {
+        match self {
+            Self::Completed(reason) | Self::Abandoned { reason, .. } => *reason,
+        }
+    }
+}
+
 /// Tells composition the harness may now exit; composition owns the actual
 /// process exit and the order in which runtimes stop.
 pub trait CompositionExitReadiness: Send + Sync {
-    fn signal_exit_ready(&self, reason: ShutdownReason) -> PortFuture<'_, ()>;
+    fn signal_exit_ready(&self, readiness: ExitReadiness) -> PortFuture<'_, ()>;
 }
 
 /// The executed teardown, detached from whichever caller admitted it.

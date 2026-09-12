@@ -2664,24 +2664,50 @@ fn subagent_teardown_interface_only_parses_maps_and_presents() {
     assert_dependencies("src/interface/uds", teardown_interface_dependency_allowed);
 }
 
+/// `pub trait` names declared in a source file, in declaration order.
+fn declared_pub_traits(path: &str) -> Vec<String> {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub trait "))
+        .map(|rest| {
+            rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// `pub trait`s the shared application facade is allowed to declare. It
+/// declares none today; a teardown port (or any new port) added there
+/// fails this pin.
+const SHARED_APPLICATION_PORT_TRAITS: &[&str] = &[];
+
 #[test]
 fn subagent_teardown_ports_are_capability_local() {
-    let ports = fs::read_to_string("src/application/subagents/ports.rs").unwrap();
-    for port in TEARDOWN_PORTS {
-        assert!(
-            ports.contains(&format!("pub trait {port}")),
-            "{port} must be declared in application/subagents/ports.rs"
-        );
-    }
+    // The capability declares exactly this port set: an unlisted addition
+    // fails here so every new port is a deliberate contract change.
+    let declared = declared_pub_traits("src/application/subagents/ports.rs");
+    let mut expected: Vec<String> = TEARDOWN_PORTS.iter().map(|p| p.to_string()).collect();
+    let mut actual = declared.clone();
+    expected.sort();
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS"
+    );
     // Ports belong to the capability whose use case requires them; the
-    // shared application facade must not grow a teardown port.
-    let shared = fs::read_to_string("src/application/ports.rs").unwrap();
-    for port in TEARDOWN_PORTS {
-        assert!(
-            !shared.contains(port),
-            "{port} leaked into the shared application ports facade"
-        );
-    }
+    // shared application facade must not grow a port.
+    let shared = declared_pub_traits("src/application/ports.rs");
+    assert_eq!(
+        shared,
+        SHARED_APPLICATION_PORT_TRAITS
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>(),
+        "application/ports.rs gained a trait; ports are capability-local"
+    );
     // Only this capability declares them: no duplicate port definitions.
     let mut files = Vec::new();
     collect_rs_files(Path::new("src"), &mut files);

@@ -214,18 +214,31 @@ impl SubagentTeardownController {
         ControllerOutcome::ShutdownExecuted { delivery, outcome }
     }
 
-    /// Join the detached run, re-driving it if its runtime dropped it. The
-    /// bound keeps a spawner that drops every run from spinning forever.
+    /// Join the detached run, re-driving it up to [`MAX_REDRIVES`] times if
+    /// its runtime keeps dropping it. When even that fails the parent has
+    /// still been ACKed, so composition is told to exit anyway (with the
+    /// failure recorded) rather than leaving an ACK followed by silence.
     async fn execute_to_completion(
         &self,
         token: &crate::application::subagents::dto::ShutdownToken,
     ) -> Result<ShutdownOutcome, HarnessShutdownError> {
-        let mut attempt = 0;
+        let mut redrives = 0;
         loop {
-            attempt += 1;
             match self.execute.execute(token).await {
-                Err(HarnessShutdownError::ExecutionInterrupted) if attempt < MAX_REDRIVES => {
+                Err(HarnessShutdownError::ExecutionInterrupted) if redrives < MAX_REDRIVES => {
+                    redrives += 1;
                     continue;
+                }
+                Err(HarnessShutdownError::ExecutionInterrupted) => {
+                    let detail = format!(
+                        "shutdown run interrupted {} times after its ACK was flushed",
+                        redrives + 1
+                    );
+                    tracing::error!(%detail, "abandoning shutdown re-drive; signalling exit anyway");
+                    if let Err(error) = self.execute.abandon(token, detail).await {
+                        tracing::error!(%error, "could not signal exit readiness for abandoned shutdown");
+                    }
+                    return Err(HarnessShutdownError::ExecutionInterrupted);
                 }
                 outcome => return outcome,
             }
@@ -233,7 +246,8 @@ impl SubagentTeardownController {
     }
 }
 
-/// Upper bound on re-driving an interrupted run for one command.
+/// Re-drives attempted after the first run of one command is interrupted:
+/// one command drives the run at most `1 + MAX_REDRIVES` times.
 pub const MAX_REDRIVES: u32 = 4;
 
 /// One holder's token between `Prepare` and the flushed ACK. Dropped before

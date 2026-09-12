@@ -14,7 +14,7 @@ use quecto::domain::subagent_teardown::{
     LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
 
-use super::teardown_fixture::{Call, Lifecycle, Routing, identity, record, root_tree};
+use super::teardown_fixture::{Call, Harness, Lifecycle, Routing, identity, record, root_tree};
 
 fn depth(hops: u32) -> RoutingDepth {
     RoutingDepth::new(hops).unwrap()
@@ -64,6 +64,48 @@ async fn port_is_object_safe_and_send_and_reports_in_its_own_vocabulary() {
         ChildRoutingError::Unreachable("x".into()).to_string(),
         "unreachable: x"
     );
+}
+
+/// `shutdown_child` must be idempotent per child: the use case never re-sends
+/// to a child it has recorded, but an interruption between the child's
+/// acknowledgement and that record may ask the same child once more.
+#[tokio::test]
+async fn shutdown_child_is_idempotent_per_child_across_a_re_drive() {
+    let harness = Harness::new(root_tree());
+    *harness.routing.hold_child.lock().unwrap() = Some(AgentUuid::new("D"));
+    let prepared = harness.prepared(ShutdownReason::ParentShutdown);
+    let joiner = tokio::spawn({
+        let token = prepared.token.clone();
+        let execute = harness.execute.clone();
+        async move { execute.execute(&token).await }
+    });
+    while harness.routing.calls().len() < 2 {
+        tokio::task::yield_now().await;
+    }
+    harness.spawner.abort_latest().await;
+    assert!(joiner.await.unwrap().is_err());
+    *harness.routing.hold_child.lock().unwrap() = None;
+    let outcome = harness.execute.execute(&prepared.token).await.unwrap();
+    assert_eq!(
+        outcome.children_shut_down,
+        [AgentUuid::new("A"), AgentUuid::new("D")]
+    );
+    let to_a = harness
+        .routing
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call, Call::Shutdown(id, _) if id.uuid.as_str() == "A"))
+        .count();
+    assert_eq!(to_a, 1, "a recorded child is never re-sent");
+    // The port itself tolerates the repeat for D (asked twice, once
+    // interrupted): the fake answers Ok both times.
+    let to_d = harness
+        .routing
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call, Call::Shutdown(id, _) if id.uuid.as_str() == "D"))
+        .count();
+    assert_eq!(to_d, 2);
 }
 
 #[tokio::test]

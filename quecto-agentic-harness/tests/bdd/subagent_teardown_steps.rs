@@ -189,9 +189,23 @@ pub(crate) fn writer(world: &mut QuectoWorld) -> Arc<Writer> {
         .clone()
 }
 
-pub(crate) fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Runtime::new().expect("tokio runtime")
+/// Drive one step's future to completion on a single-threaded runtime
+/// (so `yield_now` deterministically lets spawned tasks run) under a bounded
+/// timeout, so a hang is a failed step rather than a wedged cucumber
+/// executor.
+pub(crate) fn drive<F: std::future::Future>(future: F) -> F::Output {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    // The timeout must be built inside the runtime context (it needs the
+    // timer driver), so wrap it in the driven future.
+    runtime
+        .block_on(async { tokio::time::timeout(STEP_TIMEOUT, future).await })
+        .expect("teardown step exceeded its 10 s bound")
 }
+
+const STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(crate) fn trigger(name: &str) -> ShutdownTrigger {
     match name {
@@ -240,12 +254,11 @@ pub(crate) fn handle(world: &mut QuectoWorld, line: &str, who: &str, how: &str) 
     let writer = writer(world);
     let rig = rig(world);
     *writer.effects_probe.lock().unwrap() = Some(rig.cancellation.clone());
-    let outcome = runtime().block_on(rig.controller.handle(
-        line,
-        authority(who),
-        delivery(how),
-        writer.as_ref(),
-    ));
+    let outcome =
+        drive(
+            rig.controller
+                .handle(line, authority(who), delivery(how), writer.as_ref()),
+        );
     world.teardown.controller_outcome = Some(outcome);
 }
 
@@ -283,9 +296,7 @@ fn then_execute_foreign_fails(world: &mut QuectoWorld, message: String) {
         .unwrap()
         .token;
     let rig = rig(world);
-    let error = runtime()
-        .block_on(rig.execute.execute(&token))
-        .expect_err("foreign token");
+    let error = drive(rig.execute.execute(&token)).expect_err("foreign token");
     assert_eq!(error.to_string(), message);
 }
 
@@ -405,7 +416,7 @@ fn when_prepared(world: &mut QuectoWorld, reason: String, by: String) {
 fn when_executed(world: &mut QuectoWorld) {
     let token = world.teardown.prepared[0].token.clone();
     let rig = rig(world);
-    let outcome = runtime().block_on(rig.execute.execute(&token));
+    let outcome = drive(rig.execute.execute(&token));
     world.teardown.outcome = Some(outcome);
 }
 
@@ -424,8 +435,7 @@ fn when_released(world: &mut QuectoWorld) {
 fn when_run_dropped(world: &mut QuectoWorld) {
     let token = world.teardown.prepared[0].token.clone();
     let rig = rig(world);
-    let rt = runtime();
-    let joiner = rt.block_on(async {
+    let joiner = drive(async {
         let starter = tokio::spawn({
             let execute = rig.execute.clone();
             let token = token.clone();
@@ -440,7 +450,12 @@ fn when_run_dropped(world: &mut QuectoWorld) {
             let token = token.clone();
             async move { execute.execute(&token).await }
         });
-        tokio::task::yield_now().await;
+        // Make the joiner's registration observable before interrupting the
+        // run: otherwise an unpolled joiner could admit a second run after
+        // the guard hands the admission back.
+        while rig.transaction.waiting_joiners() < 2 {
+            tokio::task::yield_now().await;
+        }
         assert!(
             !starter.is_finished(),
             "starter waits on the running teardown"
@@ -463,7 +478,22 @@ fn when_spawner_drops(world: &mut QuectoWorld) {
     rig(world).spawner.drop_next.store(1, Ordering::SeqCst);
     let token = world.teardown.prepared[0].token.clone();
     let rig = rig(world);
-    world.teardown.joiner = Some(runtime().block_on(rig.execute.execute(&token)));
+    world.teardown.joiner = Some(drive(rig.execute.execute(&token)));
+}
+
+#[when("cancellation is released and the latest token is executed")]
+fn when_latest_executed_after_release(world: &mut QuectoWorld) {
+    rig(world).cancellation.hold.store(false, Ordering::SeqCst);
+    let token = world
+        .teardown
+        .prepared
+        .last()
+        .expect("a token was prepared")
+        .token
+        .clone();
+    let rig = rig(world);
+    let outcome = drive(rig.execute.execute(&token));
+    world.teardown.outcome = Some(outcome);
 }
 
 #[when("cancellation is released and the same token is executed again")]
@@ -477,8 +507,7 @@ fn when_task_aborted_after_ack(world: &mut QuectoWorld) {
     let writer = writer(world);
     let rig = rig(world);
     rig.cancellation.hold.store(true, Ordering::SeqCst);
-    let rt = runtime();
-    rt.block_on(async {
+    drive(async {
         let task = tokio::spawn({
             let controller = rig.controller.clone();
             let writer = writer.clone();
@@ -563,7 +592,7 @@ fn when_oversized(world: &mut QuectoWorld) {
 fn when_terminate_use_case(world: &mut QuectoWorld) {
     let rig = rig(world);
     let use_case = TerminateDelegatedAgent::new(rig.lifecycle.clone(), rig.routing.clone());
-    let result = runtime().block_on(use_case.execute(TerminateDelegatedAgentRequest {
+    let result = drive(use_case.execute(TerminateDelegatedAgentRequest {
         target: identity("B", 1),
         remaining_depth: RoutingDepth::new(2).unwrap(),
     }));
@@ -650,9 +679,7 @@ fn then_joined(world: &mut QuectoWorld) {
 fn then_execute_holder_fails(world: &mut QuectoWorld, holder: usize, message: String) {
     let token = world.teardown.prepared[holder - 1].token.clone();
     let rig = rig(world);
-    let error = runtime()
-        .block_on(rig.execute.execute(&token))
-        .expect_err("spent token");
+    let error = drive(rig.execute.execute(&token)).expect_err("spent token");
     assert_eq!(error.to_string(), message);
 }
 
@@ -725,7 +752,7 @@ fn then_late_prepare_joins(world: &mut QuectoWorld) {
     assert_eq!(late.reason, first.reason);
     let expected = world.teardown.outcome.clone().unwrap();
     let rig = rig(world);
-    let again = runtime().block_on(rig.execute.execute(&late.token));
+    let again = drive(rig.execute.execute(&late.token));
     assert_eq!(again, expected);
     assert_eq!(
         rig.prepare.release(&late.token),
