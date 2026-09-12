@@ -25,6 +25,11 @@ pub(super) struct SpawnLaunchPorts<'a> {
     socket_path: Option<PathBuf>,
     owns_environment: bool,
     initial_prompt_retry_deadline: Option<tokio::time::Instant>,
+    /// The launch-bound parent control credential minted for this child
+    /// (#1935): kept in memory only until the monitor presents it, and
+    /// mirrored once into a private sidecar the child consumes at startup.
+    parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
+    parent_control_path: Option<PathBuf>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -35,6 +40,17 @@ impl<'a> SpawnLaunchPorts<'a> {
             socket_path: None,
             owns_environment: false,
             initial_prompt_retry_deadline: None,
+            parent_control: None,
+            parent_control_path: None,
+        }
+    }
+
+    /// Remove the sidecar if the child never consumed it (a launch that
+    /// failed before the child started): capability material must not
+    /// outlive the launch attempt on disk.
+    fn discard_unconsumed_parent_control_sidecar(&mut self) {
+        if let Some(path) = self.parent_control_path.take() {
+            let _ = std::fs::remove_file(path);
         }
     }
 }
@@ -105,6 +121,22 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
+        // Launch-bound parent control (#1935): one random, generation-scoped
+        // credential per child, delivered through a private sidecar. Only
+        // the sidecar PATH reaches argv; the material never does.
+        let credential = crate::infrastructure::processes::parent_control::mint_credential();
+        let parent_control_path = self.tool.socket_dir.join(child_sidecar_filename(
+            "quecto-parent-control",
+            agent_uuid,
+            std::process::id(),
+        ));
+        crate::infrastructure::processes::parent_control::write_sidecar(
+            &parent_control_path,
+            &credential,
+        )
+        .map_err(|e| DomainError::Tool(format!("failed to write parent control sidecar: {e}")))?;
+        self.parent_control = Some(credential);
+        self.parent_control_path = Some(parent_control_path.clone());
         let inherited_tool_policy =
             super::spawn_inherited_policy::snapshot(&self.tool.inherited_tool_policy);
         let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
@@ -152,6 +184,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .as_deref(),
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
+                parent_control_path: Some(&parent_control_path),
             },
         ))
     }
@@ -213,6 +246,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 config,
                 &super::spawn_container::ChildCommand {
                     swarm_context: self.tool.swarm_context.as_ref(),
+                    supervisor: &self.tool.supervisor,
                     binary,
                     cli_args: &launch_args,
                     base_dir: &self.tool.base_dir,
@@ -225,6 +259,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             if prepared.is_err() {
                 // A child that never started must not keep a live scope or a
                 // capability file behind.
+                self.discard_unconsumed_parent_control_sidecar();
                 if let (Some(admission), Some((path, credential))) =
                     (admission.as_ref(), registered)
                 {
@@ -245,11 +280,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
     ) -> LaunchFuture<'b, Result<PreparedRuntime, DomainError>> {
         Box::pin(async move {
             self.owns_environment = prepared.owns_environment();
-            let pid = prepared
-                .child
-                .as_ref()
-                .and_then(|child| child.id())
-                .unwrap_or(0);
+            let pid = prepared.display_pid;
             // #1369 slice 3: the endpoint the launch adapter prepared is
             // authoritative from here on. Only a LOCAL child (no endpoint)
             // uses the requested socket path; a proxy endpoint is
@@ -262,9 +293,9 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         .as_ref()
                         .expect("socket path allocated")
                         .clone();
-                    let child = prepared.child.as_mut().expect("local launch owns a child");
+                    debug_assert!(prepared.owned_child.is_some(), "local launch owns a child");
                     self.tool
-                        .wait_for_socket_or_child_exit(&socket_path, child)
+                        .wait_for_socket_or_child_exit(&socket_path, prepared)
                         .await?;
                     socket_path
                 }
@@ -285,6 +316,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         argv,
                         &self.tool.socket_dir,
                         &agent_key,
+                        std::sync::Arc::clone(&self.tool.supervisor),
                     )
                     .map_err(|e| {
                         DomainError::Tool(format!("failed to bind proxy bridge socket: {e}"))
@@ -315,7 +347,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         &'b mut self,
         prepared: &'b mut Self::Prepared,
     ) -> LaunchFuture<'b, ()> {
-        Box::pin(async move { prepared.rollback_once().await })
+        Box::pin(async move {
+            // A local child is asked over its requested socket first; a
+            // script-managed child has no local handle to fall back on.
+            let endpoint = prepared.owned_child.and_then(|_| self.socket_path.clone());
+            prepared.rollback_once_via(endpoint.as_deref()).await;
+            self.discard_unconsumed_parent_control_sidecar();
+        })
     }
 
     fn uncommit_registered<'b>(&'b mut self, registry_key: &'b str) -> LaunchFuture<'b, ()> {
@@ -395,15 +433,15 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 environment_ref: prepared.environment_ref.clone(),
                 process_owner: prepared.process_owner,
             });
-            // Only a LOCAL launch holds the child it spawned; that handle is
-            // the sole source of signal authority over `runtime.pid` (#1925).
-            if let Some(child) = prepared.child.as_ref() {
-                entry.process_ownership =
-                    super::process_ownership::ProcessOwnership::launched(child);
-            }
-            // Retain the lease before publication; shutdown can drain the
-            // registry before the reaper task starts.
-            let ownership = entry.process_ownership.clone();
+            // Only a LOCAL launch holds a process, and only through the one
+            // supervisor's opaque handle (#1935): the registry row carries no
+            // signal lease and no authority over `runtime.pid`.
+            let parent_control = self.parent_control.take();
+            entry.launch_generation = parent_control
+                .as_ref()
+                .map(|credential| credential.generation);
+            entry.owned_child = prepared.owned_child;
+            entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));
             register_and_broadcast(
                 &self.tool.registry,
                 self.tool.broadcast_tx.as_ref(),
@@ -441,18 +479,24 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     )));
                 }
             }
-            let monitor_handle = super::subagent_monitor::spawn_monitor_task(
-                identity.registry_key.clone(),
-                runtime.socket_path.clone(),
-                self.tool.registry.clone(),
-                self.tool.notify_tx.clone(),
-                self.tool.broadcast_tx.clone(),
-                self.tool
-                    .parent_id
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone(),
-            );
+            // The monitor connection IS the launch-bound parent control
+            // connection: it presents the credential first, and its loss is
+            // what the child treats as "parent gone" (#1935).
+            let monitor_handle =
+                super::subagent_monitor::spawn_monitor_task(super::subagent_monitor::MonitorSpec {
+                    agent_id: identity.registry_key.clone(),
+                    socket_path: runtime.socket_path.clone(),
+                    registry: self.tool.registry.clone(),
+                    notify_tx: self.tool.notify_tx.clone(),
+                    broadcast_tx: self.tool.broadcast_tx.clone(),
+                    parent_id: self
+                        .tool
+                        .parent_id
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone(),
+                    parent_control,
+                });
             let proxy_bridge = prepared.proxy_bridge.take().map(|bridge| {
                 let (socket, handle) = bridge.into_parts();
                 (socket, std::sync::Arc::new(handle))
@@ -467,15 +511,15 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     }
                 }
             }
-            if let Some(child) = prepared.child.take() {
+            if let Some(handle) = prepared.owned_child {
                 super::spawn_reaper::spawn_reaper_task(
-                    child,
+                    handle,
+                    std::sync::Arc::clone(&prepared.supervisor),
                     self.tool.registry.clone(),
                     identity.registry_key.clone(),
-                    exit_tx,
-                    self.tool.broadcast_tx.clone(),
                     super::spawn_reaper::ReaperContext {
-                        ownership,
+                        exit_tx,
+                        broadcast_tx: self.tool.broadcast_tx.clone(),
                         swarm_context: self.tool.swarm_context.clone(),
                     },
                 );

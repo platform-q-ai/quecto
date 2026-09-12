@@ -6,95 +6,21 @@ use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::config::{Config, ContainerConfig};
+use crate::infrastructure::processes::owned_child_supervisor::{
+    OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
+};
+use std::sync::Arc;
 
-#[derive(Debug)]
-pub(super) struct PreparedChild {
-    pub(super) swarm_reservation: Option<super::swarm_admission::LaunchReservation>,
-    pub child: Option<tokio::process::Child>,
-    pub environment_ref: Option<String>,
-    /// Typed parent endpoint from the create/exec result (#1369 slice 3).
-    /// `None` for local children, whose requested socket path is authoritative.
-    pub endpoint: Option<ParentEndpoint>,
-    /// Proxy bridge materialized at readiness; carried so registration can
-    /// take ownership and rollback can abort it.
-    pub proxy_bridge: Option<super::spawn_proxy_bridge::ProxyBridge>,
-    pub process_owner: super::process_tree::ProcessOwner,
-    cleanup_environment_id: Option<String>,
-    cleanup_argv: Vec<String>,
-    /// Session registry the environment was committed to, so rollback can
-    /// uncommit the entry it created.
-    environments: Option<EnvironmentRegistry>,
-}
-
-impl PreparedChild {
-    #[cfg(test)]
-    pub(super) fn new_for_test(
-        child: Option<tokio::process::Child>,
-        environment_ref: Option<String>,
-        endpoint: Option<ParentEndpoint>,
-    ) -> Self {
-        Self {
-            swarm_reservation: None,
-            child,
-            environment_ref,
-            endpoint,
-            proxy_bridge: None,
-            process_owner: super::process_tree::ProcessOwner::DirectPid,
-            cleanup_environment_id: None,
-            cleanup_argv: vec![],
-            environments: None,
-        }
-    }
-
-    /// True when this launch created its environment (rather than joining an
-    /// existing one) and therefore owns the record on rollback.
-    pub fn owns_environment(&self) -> bool {
-        self.environments.is_some()
-    }
-
-    pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
-        (
-            self.cleanup_environment_id.clone(),
-            self.cleanup_argv.clone(),
-        )
-    }
-
-    pub async fn rollback_once(&mut self) {
-        if let Some(child) = &mut self.child {
-            if let Some(pid) = child.id() {
-                super::process_tree::terminate_owned_process_tree(pid, self.process_owner);
-            } else {
-                let _ = child.kill().await;
-            }
-            if child.wait().await.is_ok() {
-                if let Some(reservation) = &mut self.swarm_reservation {
-                    if let Err(error) = reservation.rolled_back() {
-                        tracing::error!(%error, "swarm launch rollback requires reconciliation");
-                    }
-                }
-            }
-        }
-        if let Some(bridge) = self.proxy_bridge.take() {
-            bridge.teardown();
-        }
-        run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
-        if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
-            environments.remove(env_ref);
-        }
-    }
-}
-
-pub(super) async fn run_cleanup_once(env_ref: Option<String>, cleanup_argv: &mut Vec<String>) {
-    if let Some(mut cmd) = cleanup_command(env_ref.as_deref(), cleanup_argv) {
-        let _ = cmd.status().await;
-        cleanup_argv.clear();
-    }
-}
+#[path = "spawn_prepared.rs"]
+mod prepared;
+pub(super) use prepared::{PreparedChild, run_cleanup_once};
 
 /// The child command a launch adapter must run (or hand to a create script):
 /// binary, final CLI args, and the parent's base directory.
 pub(super) struct ChildCommand<'a> {
     pub swarm_context: Option<&'a super::swarm_bridge::SwarmContext>,
+    /// The one owner of every locally spawned process (#1935).
+    pub supervisor: &'a Arc<OwnedChildSupervisor>,
     pub binary: &'a Path,
     pub cli_args: &'a [std::ffi::OsString],
     pub base_dir: &'a Path,
@@ -188,7 +114,9 @@ async fn join_script_managed_child(
     let endpoint = parse_exec_result(&output.stdout, child.admission_dir)?;
     Ok(PreparedChild {
         swarm_reservation: None,
-        child: None,
+        owned_child: None,
+        display_pid: 0,
+        supervisor: Arc::clone(child.supervisor),
         environment_ref: Some(record.environment_ref),
         endpoint: Some(endpoint),
         proxy_bridge: None,
@@ -302,7 +230,6 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     let mut cmd = tokio::process::Command::new(child.binary);
     if let Some(reservation) = &reservation {
         reservation.configure(&mut cmd);
-        cmd.kill_on_drop(true);
     }
     #[cfg(unix)]
     if reservation.is_some() {
@@ -310,26 +237,55 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     }
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
-    let mut child = cmd
-        .spawn()
+    let swarm_member = reservation.is_some();
+    // Spawned and owned by the supervisor from the first instant: no other
+    // holder of the process ever exists (#1935). The parent-loss contract
+    // for an agent child is its launch-bound control connection, never a
+    // parent-death signal: `PR_SET_PDEATHSIG` fires when the forking
+    // *thread* exits, which a launcher on a short-lived runtime would
+    // trigger spuriously.
+    let spawned = child
+        .supervisor
+        .spawn(
+            cmd,
+            if swarm_member {
+                ProcessGroup::Own
+            } else {
+                ProcessGroup::Inherited
+            },
+        )
+        .await
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
+    let (handle, display_pid) = (spawned.handle, spawned.display_pid);
     if let Some(reservation) = &mut reservation {
-        let result = child
-            .id()
-            .ok_or_else(|| DomainError::Tool("swarm child has no pid".into()))
-            .and_then(|pid| reservation.launched(pid));
+        let result = if display_pid.0 == 0 {
+            Err(DomainError::Tool("swarm child has no pid".into()))
+        } else {
+            reservation.launched(display_pid.0)
+        };
         if let Err(error) = result {
-            let _ = child.start_kill();
-            if child.wait().await.is_ok() {
+            let outcome = child
+                .supervisor
+                .terminate(
+                    handle,
+                    async { ProtocolOutcome::Negative("swarm reservation refused".into()) },
+                    TerminationBudget::DEFAULT,
+                )
+                .await;
+            if !matches!(
+                outcome,
+                super::super::processes::owned_child_supervisor::TerminationOutcome::StillRunning { .. }
+            ) {
                 reservation.rolled_back()?;
             }
             return Err(error);
         }
     }
-    let swarm_member = reservation.is_some();
     Ok(PreparedChild {
         swarm_reservation: reservation,
-        child: Some(child),
+        owned_child: Some(handle),
+        display_pid: display_pid.0,
+        supervisor: Arc::clone(child.supervisor),
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
@@ -487,7 +443,9 @@ async fn spawn_script_managed_child(
     });
     Ok(PreparedChild {
         swarm_reservation: None,
-        child: None,
+        owned_child: None,
+        display_pid: 0,
+        supervisor: Arc::clone(child.supervisor),
         environment_ref: Some(environment_ref),
         endpoint: Some(result.endpoint),
         proxy_bridge: None,
@@ -715,6 +673,10 @@ fn apply_common_child_env(cmd: &mut tokio::process::Command, base_dir: &Path) {
 #[cfg(test)]
 #[path = "spawn_container_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spawn_container_owned_tests.rs"]
+mod owned_tests;
 
 #[cfg(test)]
 #[path = "spawn_container_slice3_tests.rs"]

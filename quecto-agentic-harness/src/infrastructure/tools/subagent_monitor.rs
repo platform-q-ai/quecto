@@ -173,7 +173,29 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.updated_at = Instant::now();
 }
 
-pub fn spawn_monitor_task(
+/// Everything one monitor task needs.
+pub struct MonitorSpec {
+    pub agent_id: String,
+    pub socket_path: std::path::PathBuf,
+    pub registry: SubagentRegistry,
+    pub notify_tx: Option<NotificationTx>,
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub parent_id: Option<String>,
+    /// The launch-bound parent control credential to present first (#1935).
+    /// `Some` only for a child this harness launched; the monitor of any
+    /// other connection presents nothing and is an ordinary client.
+    pub parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
+}
+
+pub fn spawn_monitor_task(spec: MonitorSpec) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        monitor_loop(spec).await;
+    })
+}
+
+/// Test/coverage entry point that mirrors the legacy positional signature
+/// with no parent control credential.
+pub fn spawn_monitor_task_unbound(
     agent_id: String,
     socket_path: std::path::PathBuf,
     registry: SubagentRegistry,
@@ -181,140 +203,39 @@ pub fn spawn_monitor_task(
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        monitor_loop(
-            &agent_id,
-            &socket_path,
-            &registry,
-            notify_tx.as_ref(),
-            broadcast_tx.as_ref(),
-            parent_id.as_deref(),
-        )
-        .await;
+    spawn_monitor_task(MonitorSpec {
+        agent_id,
+        socket_path,
+        registry,
+        notify_tx,
+        broadcast_tx,
+        parent_id,
+        parent_control: None,
     })
 }
 
-async fn notify_child_exited(
-    registry: &SubagentRegistry,
-    agent_id: &str,
-    notify_tx: Option<&NotificationTx>,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
-    kind: super::subagent_registry::ExitSignalKind,
-) {
-    // #1369 slice 3: a script-managed child has no local process to reap, so
-    // the monitor connection's EOF/reset IS its death signal. Feed the
-    // existing exit signal so lifecycle observers wake instantly; the local-child
-    // reaper keeps owning the signal (with the real exit status) when a
-    // process exists.
-    let exit_tx = {
-        let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        entries
-            .get(agent_id)
-            .filter(|entry| entry.pid == 0)
-            .and_then(|entry| entry.exit_signal_tx.clone())
-    };
-    // Post-mortem inspect + membership/cleanup claims run BEFORE the exit
-    // signal fires and BEFORE the entry is marked exited: a woken `await`er
-    // (or its immediate `get_containers`) must observe the authoritative
-    // aggregate already updated, per the documented contract.
-    super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
-    let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
-    // Terminal transition: nothing may connect to a dead child's bridge, so
-    // tear the accept loop and its socket file down while the entry itself
-    // stays listed as exited until the cascade prune below.
-    {
-        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = entries.get_mut(agent_id) {
-            super::spawn_proxy_bridge::teardown_entry_bridge(
-                entry.proxy_bridge_handle.take().as_ref(),
-                entry.proxy_bridge_socket.take().as_deref(),
-            );
-        }
-    }
-    let label = notification_display_label(registry, agent_id);
-    let agent_uuid = notification_agent_uuid(registry, agent_id);
-    let super::subagent_cascade::CascadeOutcome { removed, event } =
-        super::subagent_cascade::cascade_remove_and_state_changed(registry, agent_id);
-    if let Some(event) = event {
-        if let Some(tx) = broadcast_tx {
-            // Push the survivor-only roster onto the live event stream (snapshots
-            // and the TUI roster observe the dead subtree removal without polling).
-            let _ = tx.send(event);
-        }
-    }
-    let mut removed = removed;
-    super::subagent_cleanup::cleanup_removed_entries_once(
-        &mut removed,
-        super::subagent_cleanup::FinalizeMode::Exit,
-    )
-    .await;
-    for (id, entry) in &removed {
-        if id == agent_id {
-            continue;
-        }
-        if let Some(ref tx) = entry.exit_signal_tx {
-            tx.send_replace(Some(super::subagent_registry::ExitSignal {
-                exit_code: None,
-                signal: None,
-                kind,
-            }));
-        }
-        super::subagent_cascade::terminate_removed_entry(entry);
-    }
-    if let Some(tx) = exit_tx {
-        // No exit status exists for a script-managed death: the kind keeps
-        // the await reason honest (connection_closed / never_reachable)
-        // instead of fabricating a clean exit. Publish only after cascade
-        // cleanup/broadcast and descendant signals so a woken awaiter observes
-        // the authoritative survivor set and terminal subtree.
-        tx.send_replace(Some(super::subagent_registry::ExitSignal {
-            exit_code: None,
-            signal: None,
-            kind,
-        }));
-    }
-    send_notification(
-        notify_tx,
-        super::subagent_registry::SequencedSubagentNotification::new_for_agent(
-            sequence,
-            SubagentNotification::Exited {
-                agent_id: label,
-                reason: Some(kind.to_wire_str().to_string()),
-            },
-            agent_uuid,
-        ),
-    );
-}
-
-fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -> String {
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries
-        .get(agent_id)
-        .map(|entry| entry.effective_display_name(agent_id).to_string())
-        .unwrap_or_else(|| agent_id.to_string())
-}
-
-fn notification_agent_uuid(
-    registry: &SubagentRegistry,
-    agent_id: &str,
-) -> crate::domain::ids::AgentUuid {
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries
-        .get(agent_id)
-        .map(|entry| entry.agent_uuid.clone())
-        .unwrap_or_else(|| crate::domain::ids::AgentUuid::new(agent_id))
-}
+#[path = "subagent_monitor_exit.rs"]
+mod exit;
+use exit::{notification_agent_uuid, notification_display_label, notify_child_exited};
 
 /// Internal monitor loop: connect → read lines → apply events → detect close.
-async fn monitor_loop(
-    agent_id: &str,
-    socket_path: &std::path::Path,
-    registry: &SubagentRegistry,
-    notify_tx: Option<&NotificationTx>,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
-    parent_id: Option<&str>,
-) {
+async fn monitor_loop(spec: MonitorSpec) {
     use tokio::io::BufReader;
+    let MonitorSpec {
+        agent_id,
+        socket_path,
+        registry,
+        notify_tx,
+        broadcast_tx,
+        parent_id,
+        parent_control,
+    } = spec;
+    let (agent_id, socket_path, registry) = (agent_id.as_str(), socket_path.as_path(), &registry);
+    let (notify_tx, broadcast_tx, parent_id) = (
+        notify_tx.as_ref(),
+        broadcast_tx.as_ref(),
+        parent_id.as_deref(),
+    );
 
     // Retry connection with increasing backoff — the socket should already be
     // ready because spawn waits for it, but there's a tiny race window.
@@ -348,21 +269,30 @@ async fn monitor_loop(
         }
     };
 
-    // The monitor is otherwise listen-only, so announce framed mode with an
-    // empty hello frame (ignored by the dispatch loop) — the child then
-    // replies in length-prefixed frames (#1059 / ADR-0008 part 1). The write
-    // half must stay open: dropping it would shut down the socket's write
-    // direction and read as a client disconnect on the child.
+    // The monitor is otherwise listen-only, so announce framed mode with a
+    // hello frame — the child then replies in length-prefixed frames (#1059
+    // / ADR-0008 part 1). For a child this harness launched the hello IS the
+    // parent control presentation (#1935): the credential goes over the
+    // socket once and is never logged; the child binds this connection as
+    // its parent and treats its loss as parent loss. The write half must
+    // stay open: dropping it would shut down the socket's write direction
+    // and read as a disconnect on the child.
     let (read_half, mut write_half) = tokio::io::split(stream);
+    let hello = parent_control
+        .as_ref()
+        .map(crate::infrastructure::processes::parent_control::presentation_json)
+        .unwrap_or_default();
+    drop(parent_control);
     if let Err(e) = quecto_line_io::write_frame(
         &mut write_half,
-        b"",
+        hello.as_bytes(),
         quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
     )
     .await
     {
         tracing::warn!(agent = %agent_id, error = %e, "monitor: framed hello not delivered");
     }
+    drop(hello);
 
     // Use a smaller BufReader capacity (1 KiB) since JSON events are
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.

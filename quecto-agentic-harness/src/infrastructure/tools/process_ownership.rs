@@ -25,6 +25,7 @@ mod cov_tests;
 mod tests;
 
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
 use std::task::Poll;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,11 @@ impl ProcessOwnership {
     /// Claim signal authority over a child this process just spawned. The
     /// child handle is required (not merely a pid) so authority can only be
     /// asserted by the code that holds the launched process.
+    ///
+    /// No production path publishes this lease any more: a local launch is
+    /// owned by the `OwnedChildSupervisor` (#1935). Kept for the #1925
+    /// scaffolding tests until #1940 deletes the module.
+    #[cfg(test)]
     pub(crate) fn launched(child: &tokio::process::Child) -> Self {
         debug_assert!(
             child.id().is_some(),
@@ -145,6 +151,7 @@ impl ProcessOwnership {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait(
         &self,
         child: &mut tokio::process::Child,

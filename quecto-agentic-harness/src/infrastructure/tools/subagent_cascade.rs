@@ -123,12 +123,16 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) -> bool {
         entry.proxy_bridge_handle.as_ref(),
         entry.proxy_bridge_socket.as_deref(),
     );
-    // Only a pid this harness launched or that was reported from its own pid
-    // namespace may be signalled (#1925).
-    entry.pid != 0
+    // A locally launched child goes through its owned handle (#1935):
+    // protocol first, TERM/KILL only after a negative outcome. Only a pid
+    // reported from this harness's own pid namespace may still be signalled
+    // directly (#1925 scaffolding, retired by #1940).
+    entry.request_owned_child_termination(
+        crate::domain::subagent_teardown::ShutdownReason::ParentShutdown,
+    ) || (entry.pid != 0
         && entry
             .process_ownership
-            .signal(entry.pid, entry.process_owner)
+            .signal(entry.pid, entry.process_owner))
 }
 
 /// Best-effort SIGTERM a pid via a direct syscall. Avoids fork+exec of `kill(1)`

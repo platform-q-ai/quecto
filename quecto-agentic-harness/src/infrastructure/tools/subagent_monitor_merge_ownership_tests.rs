@@ -43,22 +43,33 @@ async fn launch_a_merge_b_and_let_a_die(
     snapshot: serde_json::Value,
 ) -> crate::infrastructure::tools::subagent_registry::SubagentRegistry {
     let registry = new_registry();
-    let a_child = tokio::process::Command::new("true").spawn().unwrap();
+    let supervisor = std::sync::Arc::new(
+        crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(),
+    );
+    let handle = supervisor
+        .spawn(
+            tokio::process::Command::new("true"),
+            crate::infrastructure::processes::owned_child_supervisor::ProcessGroup::Inherited,
+        )
+        .await
+        .unwrap()
+        .handle;
     let mut a_entry = a_entry;
-    a_entry.process_ownership = ProcessOwnership::launched(&a_child);
-    let ownership = a_entry.process_ownership.clone();
+    // A locally launched child: owned through the supervisor (#1935), no lease.
+    a_entry.owned_child = Some(handle);
+    a_entry.owned_child_supervisor = Some(supervisor.clone());
     registry.lock().unwrap().insert("a-uuid".into(), a_entry);
     assert!(merge_and_forward_state_changed(&snapshot, &registry, "a-uuid").is_some());
 
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     spawn_reaper_task(
-        a_child,
+        handle,
+        supervisor,
         registry.clone(),
         "a-uuid".into(),
-        exit_tx,
-        None,
         ReaperContext {
-            ownership,
+            exit_tx,
+            broadcast_tx: None,
             swarm_context: None,
         },
     );

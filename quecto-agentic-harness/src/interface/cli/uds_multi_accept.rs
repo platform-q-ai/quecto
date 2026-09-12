@@ -29,6 +29,9 @@ pub(super) struct AcceptLoopArgs {
     /// current step progress, not the turn-boundary frozen snapshot.
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub(super) workspace_path: std::path::PathBuf,
+    /// Launch-bound parent control / teardown edge shared by every
+    /// connection (#1935).
+    pub(super) teardown: Option<std::sync::Arc<super::uds_parent_control::ConnectionTeardown>>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -51,6 +54,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         subagent_registry,
         workflow_state,
         workspace_path,
+        teardown,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -151,6 +155,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         conversation_snapshot: conversation_snapshot.clone(),
                         subagent_registry: subagent_registry.clone(),
                         broadcast_tx: broadcast_tx.clone(),
+                        teardown: teardown.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });

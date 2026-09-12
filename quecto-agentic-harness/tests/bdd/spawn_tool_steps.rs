@@ -697,6 +697,9 @@ fn when_live_spawn_subagent_with_task(world: &mut QuectoWorld, agent_id: String,
             delivery_metadata: None,
         },
     });
+    // The monitor task (the launch-bound parent control connection, #1935)
+    // lives on this runtime: it must outlive the step, not the scenario.
+    world.spawn_runtimes.push(rt);
 }
 
 #[when(expr = "I run live agent_cmd for {string} with {string}")]
@@ -1030,6 +1033,9 @@ fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::
             delivery_metadata: None,
         },
     });
+    // The monitor task (the launch-bound parent control connection, #1935)
+    // lives on this runtime: it must outlive the step, not the scenario.
+    world.spawn_runtimes.push(rt);
 }
 
 #[then(expr = "child {string} should receive {string}")]

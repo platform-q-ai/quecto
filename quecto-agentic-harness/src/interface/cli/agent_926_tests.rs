@@ -44,6 +44,7 @@ fn spawn_capable_flags() -> AgentFlags {
         cwd_override: None,
         web_fetch_tool_factory: None,
         admission_context: None,
+        parent_control: None,
     }
 }
 

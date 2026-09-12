@@ -229,7 +229,16 @@ but the acknowledgement did not return before the retry deadline.
 
 After readiness the parent holds one persistent monitor connection to the
 endpoint. EOF or connection reset on it IS the child's death signal — no
-lifecycle polling, no wrapper process. On death, the environment's
+lifecycle polling, no wrapper process. That same connection is the child's
+**launch-bound parent control connection** (#1935): the parent presents the
+launch capability as its first frame and the child treats the loss of that
+one connection as "my parent is gone" and shuts itself down. For this to
+hold end to end through a proxy, the proxy argv must exit (closing its
+connection into the child) when its stdin reaches EOF — the parent's side of
+that pipe closes whenever the parent dies, SIGKILL included. Every proxy
+process is owned by the parent's child supervisor; when the bridged
+connection ends its stdin is closed first and it is only signalled if it
+does not exit by itself. On death, the environment's
 retained `inspect` runs exactly once for that member (repeated EOF/reset
 signals do not re-run it), the authoritative environment record is
 updated before the member is removed, and the exit feeds passive

@@ -14,6 +14,7 @@ pub mod line_cap;
 pub mod logging;
 pub mod model_registry;
 pub mod persistence;
+pub mod processes;
 pub mod provider_runtime;
 pub mod provider_runtime_admission;
 pub mod providers;

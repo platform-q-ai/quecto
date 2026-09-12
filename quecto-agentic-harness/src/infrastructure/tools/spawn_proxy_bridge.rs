@@ -10,8 +10,22 @@
 //! its environment/proxy) dies, the proxy's stdout reaches EOF and the bridge
 //! shuts the connection down, so death is pushed to the monitor as EOF with
 //! no polling and no fake wrapper process.
+//!
+//! Every proxy process is owned by the one [`OwnedChildSupervisor`] (#1935).
+//! The bound parent control connection (the monitor's) rides one bridged
+//! connection like any other; its liveness is preserved end to end because
+//! the proxy's stdin is the parent's pipe: when the parent dies — even by
+//! SIGKILL — the pipe closes, the proxy exits (its contract is to exit on
+//! stdin EOF; on Linux `PR_SET_PDEATHSIG` also ends it), and its connection
+//! into the child closes, so the child sees its bound connection lost.
+//! Nothing here ever reconnects a bridged connection on the parent's behalf.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::infrastructure::processes::owned_child_supervisor::{
+    OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
+};
 
 /// One materialized proxy endpoint: the parent-side bridge socket path and
 /// the accept-loop task serving it.
@@ -61,6 +75,7 @@ pub(super) fn materialize(
     argv: Vec<String>,
     socket_dir: &Path,
     agent_key: &str,
+    supervisor: Arc<OwnedChildSupervisor>,
 ) -> std::io::Result<ProxyBridge> {
     let socket_path = socket_dir.join(format!("quecto-proxy-{agent_key}.sock"));
     let _ = std::fs::remove_file(&socket_path);
@@ -73,18 +88,22 @@ pub(super) fn materialize(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
-    let handle = tokio::spawn(accept_loop(listener, argv));
+    let handle = tokio::spawn(accept_loop(listener, argv, supervisor));
     Ok(ProxyBridge {
         socket_path,
         handle,
     })
 }
 
-async fn accept_loop(listener: tokio::net::UnixListener, argv: Vec<String>) {
+async fn accept_loop(
+    listener: tokio::net::UnixListener,
+    argv: Vec<String>,
+    supervisor: Arc<OwnedChildSupervisor>,
+) {
     loop {
         match listener.accept().await {
             Ok((conn, _)) => {
-                tokio::spawn(bridge_one(conn, argv.clone()));
+                tokio::spawn(bridge_one(conn, argv.clone(), Arc::clone(&supervisor)));
             }
             Err(e) => {
                 tracing::warn!(error = %e, "proxy bridge: accept failed");
@@ -94,34 +113,49 @@ async fn accept_loop(listener: tokio::net::UnixListener, argv: Vec<String>) {
     }
 }
 
+/// Grace the proxy gets to exit on its own after its stdin is closed (its
+/// protocol), before the supervisor's TERM/KILL fallback.
+const PROXY_EXIT_BUDGET: TerminationBudget = TerminationBudget {
+    exit_after_ack: std::time::Duration::from_millis(500),
+    term_grace: std::time::Duration::from_millis(500),
+    kill_grace: std::time::Duration::from_secs(2),
+};
+
 /// Serve one bridged connection: run the proxy argv and pump both directions,
 /// racing them so either side closing tears the pair down.
 ///
 /// - Proxy stdout closing (child or proxy died) shuts the parent connection
 ///   down so its reader observes EOF — death stays pushed.
 /// - The parent connection closing (quecto clients never half-close their
-///   write side, so read-side EOF means the connection is gone) kills the
-///   proxy immediately. Without this, a dropped probe or command connection
-///   would leak a live proxy process — and its open connection into the
-///   child — for the child's entire lifetime.
-async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
+///   write side, so read-side EOF means the connection is gone) ends the
+///   proxy: its stdin is closed first, and the retained handle is only
+///   signalled if it does not exit by itself. Without this, a dropped probe
+///   or command connection would leak a live proxy process — and its open
+///   connection into the child — for the child's entire lifetime.
+async fn bridge_one(
+    conn: tokio::net::UnixStream,
+    argv: Vec<String>,
+    supervisor: Arc<OwnedChildSupervisor>,
+) {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
-    cmd.kill_on_drop(true);
-    let mut proxy = match cmd.spawn() {
+    // Defence in depth: a parent killed outright takes its proxies with it
+    // on Linux even if a proxy ignores stdin EOF.
+    crate::infrastructure::processes::parent_death_signal::arm(&mut cmd, std::process::id());
+    // Spawned and owned by the supervisor: the only holder of the process.
+    let proxy = match supervisor.spawn(cmd, ProcessGroup::Inherited).await {
         Ok(proxy) => proxy,
         Err(e) => {
             tracing::warn!(error = %e, "proxy bridge: failed to spawn proxy argv");
             return;
         }
     };
-    let Some(mut stdin) = proxy.stdin.take() else {
-        return;
-    };
-    let Some(mut stdout) = proxy.stdout.take() else {
+    let handle = proxy.handle;
+    let (Some(mut stdin), Some(mut stdout)) = (proxy.stdin, proxy.stdout) else {
+        end_proxy(&supervisor, handle, None).await;
         return;
     };
     let (mut conn_read, mut conn_write) = conn.into_split();
@@ -140,8 +174,33 @@ async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
             let _ = conn_write.shutdown().await;
         }
     }
-    let _ = proxy.kill().await;
-    let _ = proxy.wait().await;
+    // The proxy's protocol is its stdin: closing it asks it to exit. Only
+    // when it does not is the retained handle TERMed, then KILLed.
+    end_proxy(&supervisor, handle, Some(stdin)).await;
+}
+
+async fn end_proxy(
+    supervisor: &Arc<OwnedChildSupervisor>,
+    handle: crate::infrastructure::processes::owned_child_supervisor::ChildHandleId,
+    stdin: Option<tokio::process::ChildStdin>,
+) {
+    let protocol = async move {
+        match stdin {
+            Some(stdin) => {
+                drop(stdin);
+                ProtocolOutcome::Acknowledged
+            }
+            None => ProtocolOutcome::Negative("proxy stdio was not piped".into()),
+        }
+    };
+    let outcome = supervisor
+        .terminate(handle, protocol, PROXY_EXIT_BUDGET)
+        .await;
+    tracing::debug!(?outcome, "proxy bridge: proxy process ended");
+    // One bridged connection, one proxy: nothing else observes its exit,
+    // so the slot goes now, or as soon as a proxy that outlived its budget
+    // is finally reaped.
+    supervisor.retire_when_reaped(handle);
 }
 
 /// Wait until the child answers THROUGH the bridge (never via any direct

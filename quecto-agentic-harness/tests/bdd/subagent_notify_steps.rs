@@ -1,5 +1,5 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task;
+use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
 use quecto::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
     new_registry,
@@ -33,7 +33,7 @@ fn drive_monitor_with_lines(
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind monitor socket");
-        let handle = spawn_monitor_task(
+        let handle = spawn_monitor_task_unbound(
             agent_id.to_string(),
             socket_path.clone(),
             registry,
