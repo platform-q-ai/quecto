@@ -23,6 +23,7 @@ pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]
 mod subagent_launch_tests;
+pub mod subagents;
 
 pub mod inference_admission;
 pub mod inference_authority;

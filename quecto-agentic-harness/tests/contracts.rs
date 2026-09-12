@@ -104,3 +104,19 @@ mod tool_execution_admission;
 
 #[path = "contracts/find_paths.rs"]
 mod find_paths;
+
+// Subagent teardown ports (#1934).
+#[path = "contracts/composition_exit_readiness.rs"]
+mod composition_exit_readiness;
+#[path = "contracts/direct_child_routing.rs"]
+mod direct_child_routing;
+#[path = "contracts/shutdown_clock.rs"]
+mod shutdown_clock;
+#[path = "contracts/shutdown_session_persistence.rs"]
+mod shutdown_session_persistence;
+#[path = "contracts/subagent_lifecycle_repository.rs"]
+mod subagent_lifecycle_repository;
+#[path = "common/teardown_fixture.rs"]
+mod teardown_fixture;
+#[path = "contracts/turn_cancellation.rs"]
+mod turn_cancellation;

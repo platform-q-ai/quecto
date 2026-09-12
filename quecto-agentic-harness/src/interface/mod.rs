@@ -8,6 +8,7 @@ pub(crate) mod tool_runtime;
 pub(crate) mod test_support;
 
 pub mod tools;
+pub mod uds;
 
 #[cfg(test)]
 mod find_runtime_tests;

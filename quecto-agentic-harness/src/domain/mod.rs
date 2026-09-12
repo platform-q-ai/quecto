@@ -23,6 +23,7 @@ pub mod request_observation;
 pub mod session;
 pub mod subagent;
 pub mod subagent_launch;
+pub mod subagent_teardown;
 pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
