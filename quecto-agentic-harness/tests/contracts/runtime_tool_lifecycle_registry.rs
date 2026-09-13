@@ -5,9 +5,10 @@
 //! - unregister removes extension tools without allowing removal of core tools.
 //! - extension tools cannot shadow core tools.
 
-use quecto::domain::tool::{
-    RuntimeToolLifecycleRegistry, Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolResult,
+use quecto::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, Tool, ToolCatalog, ToolExecutor,
 };
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

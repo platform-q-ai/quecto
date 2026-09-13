@@ -356,7 +356,7 @@ impl crate::domain::swarm::SwarmRunControl for SwarmContext {
     }
 }
 
-impl crate::domain::tool::ToolExecutionAdmission for SwarmContext {
+impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
     fn check<'a>(
         &'a self,
         name: &'a str,

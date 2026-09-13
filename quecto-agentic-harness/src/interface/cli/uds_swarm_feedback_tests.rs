@@ -1,7 +1,7 @@
 //! Real socket delivery into a workflow-free coordinator, followed by board action.
 use super::dispatch_test_env::{DispatchTestEnv, make_workflow};
+use crate::application::tools::ports::Tool;
 use crate::domain::message::{LlmResponse, ToolCall};
-use crate::domain::tool::Tool;
 use crate::infrastructure::tools::{
     swarm::{SwarmConfig, SwarmTool},
     swarm_bridge::SwarmContext,

@@ -8,7 +8,7 @@ use crate::domain::tool::ToolDefinition;
 ///
 /// The source is metadata for policy, UI, and protocol descriptors only. It is
 /// not a second execution model: every source still registers a normal
-/// [`crate::domain::tool::Tool`] in the same registry.
+/// [`crate::application::tools::ports::Tool`] in the same registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolSource {

@@ -13,6 +13,7 @@ pub mod context_pruning;
 pub mod environments;
 #[cfg(any(test, feature = "test-support"))]
 pub mod extension_tool;
+pub mod extensions;
 pub mod ports;
 pub mod provider_runtime;
 mod request_observation;
@@ -29,5 +30,6 @@ pub mod inference_observation;
 
 pub mod inference_attempt;
 pub mod swarm;
+pub mod tools;
 
 pub mod agent_turn;

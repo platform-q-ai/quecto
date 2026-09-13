@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use super::registration::ToolRegistration;
+use crate::application::tools::ports::{Tool, ToolGuard};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
-    Tool, ToolDefinition, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation,
-    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyOperation,
-    ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext, ToolResult,
+    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
+    ToolPolicyMutationStatus, ToolPolicyOperation, ToolPolicyReconciliation, ToolPolicyRequest,
+    ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,

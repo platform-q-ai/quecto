@@ -1,8 +1,9 @@
 use super::policy_tests::mock_catalogue_entry;
 use super::*;
-use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, ToolPolicyMutator, ToolProfileContext, ToolRegistry,
+use crate::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, ToolPolicyMutator, ToolRegistry,
 };
+use crate::domain::tool::ToolProfileContext;
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 
 struct ReloadPolicyRegistry {

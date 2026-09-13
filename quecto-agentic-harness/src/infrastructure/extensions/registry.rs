@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::domain::extension::Extension;
-use crate::domain::tool::Tool;
+use crate::application::extensions::ports::Extension;
+use crate::application::tools::ports::Tool;
 
 /// Registry of all extensions (native and UDS-registered).
 pub struct ExtensionRegistry {

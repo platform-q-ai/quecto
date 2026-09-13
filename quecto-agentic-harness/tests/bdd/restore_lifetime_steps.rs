@@ -9,11 +9,11 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
+use quecto::application::tools::ports::Tool;
 use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::harness_lifetime::{HarnessLifetime, HarnessLifetimeError};
 use quecto::domain::message::Message;
 use quecto::domain::session::{Session, SessionStore};
-use quecto::domain::tool::Tool;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::agent_cmd::{AgentCmdTool, SubagentRegistry};
 use quecto::infrastructure::tools::spawn::SpawnTool;

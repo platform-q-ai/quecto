@@ -3,11 +3,11 @@ use super::tests::*;
 mod policy_cov_tests;
 use super::*;
 use crate::application::agent_turn::ports::AgentLoop;
+use crate::application::tools::ports::{RuntimeToolLifecycleRegistry, ToolRegistry};
 use crate::domain::message::Role;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation,
-    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
-    ToolPolicyRequest, ToolProfileContext, ToolRegistry,
+    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
+    ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
@@ -129,7 +129,7 @@ impl MockRegistry {
         }
     }
 }
-impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
+impl crate::application::tools::ports::ToolPolicyMutator for MockRegistry {
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
@@ -217,7 +217,7 @@ impl ToolExecutor for RestrictedMockRegistry {
 
 impl RuntimeToolLifecycleRegistry for RestrictedMockRegistry {}
 impl SessionAwareTools for RestrictedMockRegistry {}
-impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
+impl crate::application::tools::ports::ToolPolicyMutator for RestrictedMockRegistry {
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
@@ -541,7 +541,7 @@ impl ToolExecutor for CatalogueOnlyRegistry {
 
 impl RuntimeToolLifecycleRegistry for CatalogueOnlyRegistry {}
 impl SessionAwareTools for CatalogueOnlyRegistry {}
-impl crate::domain::tool::ToolPolicyMutator for CatalogueOnlyRegistry {}
+impl crate::application::tools::ports::ToolPolicyMutator for CatalogueOnlyRegistry {}
 impl ToolRegistry for CatalogueOnlyRegistry {}
 
 #[test]

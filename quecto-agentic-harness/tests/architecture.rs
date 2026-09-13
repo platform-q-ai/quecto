@@ -2510,6 +2510,8 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
                     "find",
                     ..,
                 ]
+                // The adapter implements the tool port (#1960).
+                | ["crate", "application", "tools", "ports", ..]
                 | ["crate", "domain", ..] => true,
                 ["crate", ..] => false,
                 _ => true,
@@ -3548,7 +3550,10 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
         let parts: Vec<_> = dep.split("::").collect();
         let allowed = match parts.as_slice() {
-            ["crate", "domain", ..] | ["crate", "application", "subagents", ..] => true,
+            ["crate", "domain", ..]
+            | ["crate", "application", "subagents", ..]
+            // The adapter implements the tool port (#1960).
+            | ["crate", "application", "tools", "ports", ..] => true,
             ["crate", ..] => false,
             ["tokio" | "libc" | "quecto_line_io", ..] => false,
             _ => true,

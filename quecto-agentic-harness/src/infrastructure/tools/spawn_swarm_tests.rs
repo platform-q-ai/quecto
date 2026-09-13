@@ -72,7 +72,7 @@ fn swarm_worker_rejects_every_workflow_activation_form() {
 /// elsewhere cannot slip a workflow into a swarm worker.
 #[tokio::test]
 async fn swarm_worker_launch_revalidates_workflow_before_effects() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let result = swarm_tool(true)
         .execute(r#"{"agent_id":"w","workflow":true}"#)
         .await

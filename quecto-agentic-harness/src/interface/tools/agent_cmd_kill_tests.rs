@@ -122,7 +122,7 @@ async fn the_tool_parses_invokes_and_presents() {
     use crate::application::subagents::use_cases::{
         KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
     };
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let registry = FakeRegistry::new().with_row("A", 1, "alpha");
     let lifecycle = FakeLifecycle::new(root_tree());

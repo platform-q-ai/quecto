@@ -28,7 +28,7 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
 
 #[tokio::test]
 async fn terminal_tool_admission_allows_only_native_read_operations() {
-    use crate::domain::tool::ToolExecutionAdmission;
+    use crate::application::tools::ports::ToolExecutionAdmission;
     let directory = tempfile::tempdir().unwrap();
     let parent = context(&directory);
     create(&parent, 2);

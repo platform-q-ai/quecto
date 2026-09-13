@@ -1,8 +1,7 @@
 use super::*;
+use crate::application::tools::ports::{Tool, ToolCatalog, ToolExecutor, ToolRegistry};
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-use crate::domain::tool::{
-    Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult,
-};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -219,7 +218,7 @@ impl std::fmt::Debug for MockTool {
     }
 }
 
-impl crate::domain::tool::Tool for MockTool {
+impl crate::application::tools::ports::Tool for MockTool {
     fn definition(&self) -> ToolDefinition {
         self.def.clone()
     }
@@ -245,7 +244,7 @@ impl crate::domain::tool::Tool for MockTool {
 /// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
 pub(super) fn test_config(
     provider: Arc<dyn crate::domain::provider::LlmProvider>,
-    tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
+    tool_registry: Box<dyn crate::application::tools::ports::ToolRegistry>,
 ) -> AgentLoopConfig {
     AgentLoopConfig {
         provider,

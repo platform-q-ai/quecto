@@ -63,7 +63,7 @@ async fn request_diagnostics_distinguish_missing_usage_from_zero_and_retain_fail
 }
 
 struct ReportOnlyAdmission;
-impl crate::domain::tool::ToolExecutionAdmission for ReportOnlyAdmission {
+impl crate::application::tools::ports::ToolExecutionAdmission for ReportOnlyAdmission {
     fn check<'a>(
         &'a self,
         _: &'a str,

@@ -10,9 +10,10 @@ use std::time::Duration;
 use quecto::application::subagents::dto::{
     CompensateFailedLaunchRequest, FailedLaunchCompensated, ObservedExit,
 };
+use quecto::application::tools::ports::Tool;
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::subagent_teardown::LaunchGeneration;
-use quecto::domain::tool::{Tool, ToolResult};
+use quecto::domain::tool::ToolResult;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup,
 };

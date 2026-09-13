@@ -1,15 +1,13 @@
-//! Extension trait: a modular unit that contributes tools and optional
-//! system prompt context to the agent.
-
+//! Capability-local ports of the extensions capability (#1960).
+//!
+//! An extension is the composition unit that contributes tools and optional
+//! system-prompt context to the agent. Native (compiled-in) extensions and
+//! UDS-registered extensions both implement [`Extension`].
 use std::sync::Arc;
 
-use super::tool::Tool;
+use crate::application::tools::ports::Tool;
 
 /// An extension contributes tools and optional system prompt context.
-///
-/// Extensions are the composition unit for adding capabilities to the agent.
-/// Native (compiled-in) extensions and UDS-registered extensions both implement
-/// this trait.
 pub trait Extension: Send + Sync {
     /// Unique name for this extension.
     fn name(&self) -> &str;
@@ -30,5 +28,5 @@ pub trait Extension: Send + Sync {
 }
 
 #[cfg(test)]
-#[path = "extension_tests.rs"]
+#[path = "ports_tests.rs"]
 mod tests;

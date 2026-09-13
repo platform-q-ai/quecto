@@ -4,7 +4,8 @@
 //! - `definitions()` lists every registered tool visible to the model.
 //! - `tool_count()` matches `definitions().len()` for the default adapter.
 
-use quecto::domain::tool::{Tool, ToolCatalog, ToolDefinition, ToolResult};
+use quecto::application::tools::ports::{Tool, ToolCatalog};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

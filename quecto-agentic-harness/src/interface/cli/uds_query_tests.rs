@@ -1,7 +1,8 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::tools::ports::Tool;
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };

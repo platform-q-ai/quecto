@@ -102,7 +102,9 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     )]);
     widen_request.persist = true;
     let widen = reg.apply_tool_policy_request(&widen_request, ToolPolicyApplyMode::ImmediateIfIdle);
-    crate::domain::tool::ToolPolicyMutator::record_persisted_tool_policy_results(&mut reg, &widen);
+    crate::application::tools::ports::ToolPolicyMutator::record_persisted_tool_policy_results(
+        &mut reg, &widen,
+    );
     assert!(
         matches!(
             widen.results[0].status,
@@ -171,7 +173,7 @@ fn same_scope_persist_after_live_only_policy_installs_retained_ceiling_for_rereg
     )]);
     request.persist = true;
     let persisted = reg.apply_tool_policy_request(&request, ToolPolicyApplyMode::ImmediateIfIdle);
-    crate::domain::tool::ToolPolicyMutator::record_persisted_tool_policy_results(
+    crate::application::tools::ports::ToolPolicyMutator::record_persisted_tool_policy_results(
         &mut reg, &persisted,
     );
     assert_eq!(
@@ -230,7 +232,7 @@ fn first_time_live_policy_persist_installs_retained_ceiling_for_reregistered_uds
     )]);
     request.persist = true;
     let persisted = reg.apply_tool_policy_request(&request, ToolPolicyApplyMode::ImmediateIfIdle);
-    crate::domain::tool::ToolPolicyMutator::record_persisted_tool_policy_results(
+    crate::application::tools::ports::ToolPolicyMutator::record_persisted_tool_policy_results(
         &mut reg, &persisted,
     );
     assert_eq!(
@@ -381,7 +383,7 @@ fn late_registered_uds_tool_gets_retained_persisted_policy() {
 
 #[test]
 fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
-    use crate::domain::tool::{
+    use crate::application::tools::ports::{
         RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolPolicyMutator,
     };
 

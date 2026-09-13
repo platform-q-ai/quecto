@@ -1,5 +1,5 @@
 //! Product regressions, also runnable as a compiled test binary in a fresh container.
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
 use serde_json::{Value, json};

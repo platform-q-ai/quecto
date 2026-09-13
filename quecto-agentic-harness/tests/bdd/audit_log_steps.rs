@@ -318,13 +318,13 @@ impl quecto::application::audit::ports::AuditSink for LoopRecordingSink {
 }
 
 struct LoopEmptyRegistry;
-impl quecto::domain::tool::ToolCatalog for LoopEmptyRegistry {
+impl quecto::application::tools::ports::ToolCatalog for LoopEmptyRegistry {
     fn definitions(&self) -> &[quecto::domain::tool::ToolDefinition] {
         &[]
     }
 }
 
-impl quecto::domain::tool::ToolExecutor for LoopEmptyRegistry {
+impl quecto::application::tools::ports::ToolExecutor for LoopEmptyRegistry {
     fn execute(
         &self,
         name: &str,
@@ -349,13 +349,13 @@ impl quecto::domain::tool::ToolExecutor for LoopEmptyRegistry {
     }
 }
 
-impl quecto::domain::tool::RuntimeToolLifecycleRegistry for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::RuntimeToolLifecycleRegistry for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::SessionAwareTools for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::SessionAwareTools for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::ToolPolicyMutator for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::ToolPolicyMutator for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::ToolRegistry for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::ToolRegistry for LoopEmptyRegistry {}
 
 #[given(
     expr = r#"a provider that fails terminally with a {int} char body containing secret {string}"#

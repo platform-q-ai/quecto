@@ -14,14 +14,14 @@
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::audit::ports::AuditSink;
+use quecto::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
+};
 use quecto::domain::audit::AuditEvent;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolResult,
-};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -73,9 +73,9 @@ impl RuntimeToolLifecycleRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
-impl quecto::domain::tool::ToolPolicyMutator for EmptyRegistry {}
+impl quecto::application::tools::ports::ToolPolicyMutator for EmptyRegistry {}
 
-impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
+impl quecto::application::tools::ports::ToolRegistry for EmptyRegistry {}
 
 fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
     Box::new(AgentLoopImpl::new(AgentLoopConfig {

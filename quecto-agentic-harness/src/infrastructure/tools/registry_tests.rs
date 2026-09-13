@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool::ToolRegistry;
+use crate::application::tools::ports::ToolRegistry;
 use crate::domain::tool_descriptor::ToolSource;
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::pin::Pin;
@@ -623,7 +623,7 @@ fn disable_or_enable_unknown_tool_returns_false() {
 
 #[test]
 fn trait_paths_expose_descriptors_and_runtime_policy() {
-    use crate::domain::tool::{RuntimeToolLifecycleRegistry, ToolCatalog};
+    use crate::application::tools::ports::{RuntimeToolLifecycleRegistry, ToolCatalog};
 
     let (mut reg, _tmp) = test_registry();
     {

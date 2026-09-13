@@ -664,7 +664,7 @@ pub fn build_official_tool_registry(
 pub fn build_and_register_native_extensions(
     config: &crate::infrastructure::config::Config,
     http_client: &reqwest::Client,
-    web_fetch_tool: Option<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    web_fetch_tool: Option<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
 ) -> crate::infrastructure::extensions::registry::ExtensionRegistry {
     let mut ext_registry = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
     for ext in crate::infrastructure::extensions::native::build_native_extensions(

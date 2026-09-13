@@ -316,7 +316,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
 /// there. The stale socket it named stays untouched.
 #[test]
 fn legacy_rows_are_not_sendable_or_running_after_restore() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 
     let dir = tempfile::tempdir().unwrap();

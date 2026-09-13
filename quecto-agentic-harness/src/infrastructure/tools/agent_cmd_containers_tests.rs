@@ -189,7 +189,7 @@ fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd
 
 #[test]
 fn public_listing_query_only_empty_inventory_is_exact() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let query = Arc::new(ListEnvironmentsQuery::new(EnvironmentRegistry::new()));
     let result = block_on(
         query_only_tool(query.clone()).execute(r#"{"agent_id":"*","command":"get_containers"}"#),
@@ -202,7 +202,7 @@ fn public_listing_query_only_empty_inventory_is_exact() {
 
 #[test]
 fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let registry = EnvironmentRegistry::new();
     let mut expected = Vec::new();
     for (index, (status, label)) in [
@@ -254,7 +254,7 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
 
 #[test]
 fn public_listing_rejection_matrix_never_calls_query() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let query = Arc::new(ListEnvironmentsQuery::new(committed_registry()));
     let tool = query_only_tool(query.clone());
     for args in [

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::tools::subagent_registry::{SubagentRegistry, SubagentStatus};
 use quecto::interface::cli::KillToolWiring;
 

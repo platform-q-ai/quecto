@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 
 #[test]
 fn definition_does_not_expose_await() {

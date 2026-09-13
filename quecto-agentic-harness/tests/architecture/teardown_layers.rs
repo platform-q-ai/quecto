@@ -223,7 +223,31 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait AuditSink",
         "src/application/audit/ports.rs",
     ),
+    ("src/domain/tool.rs", "trait Tool", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolGuard", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolCatalog", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolExecutor", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolPolicyMutator", TOOLS_PORTS),
+    (
+        "src/domain/tool.rs",
+        "trait RuntimeToolLifecycleRegistry",
+        TOOLS_PORTS,
+    ),
+    ("src/domain/tool.rs", "trait SessionAwareTools", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolRegistry", TOOLS_PORTS),
+    (
+        "src/domain/tool.rs",
+        "trait ToolExecutionAdmission",
+        TOOLS_PORTS,
+    ),
+    (
+        "src/domain/extension.rs",
+        "trait Extension",
+        "src/application/extensions/ports.rs",
+    ),
 ];
+
+const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
 
 #[test]
 fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
@@ -238,24 +262,24 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ];
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/extension.rs",           // #1960: Extension
         "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
         "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission
         "src/domain/request_observation.rs", // #1960: RequestAccounting
         "src/domain/session.rs",             // #1960: SessionStore, ContextSpillStore
         "src/domain/subagent_launch.rs",     // #1960: LaunchFuture alias
         "src/domain/swarm.rs",               // #1960: CoordinationPort, SwarmRunControl
-        "src/domain/tool.rs",                // #1960: Tool, ToolGuard, ToolCatalog, …
     ]
     .into_iter()
     .collect();
     // The ports #1940 and #1960 moved out must not come back, and each one
     // is declared in its capability-local ports file and nowhere else.
     for (file, retired_port, new_home) in RETIRED_DOMAIN_PORTS {
+        // A domain file whose only content was the port is deleted outright.
         assert!(
-            !production_code(file)
-                .iter()
-                .any(|(_, l)| declares(l, retired_port)),
+            !Path::new(file).exists()
+                || !production_code(file)
+                    .iter()
+                    .any(|(_, l)| declares(l, retired_port)),
             "{file} re-declares `{retired_port}`, which was moved to the application"
         );
         let declared_in: Vec<String> = production_files()

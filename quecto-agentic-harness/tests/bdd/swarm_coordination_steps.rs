@@ -140,7 +140,7 @@ fn apply_approval(world: &mut QuectoWorld) {
 
 #[when("a swarm participant requests a workflow-enabled worker")]
 async fn reject_workflow(world: &mut QuectoWorld) {
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
         .with_swarm_context(Some(
             quecto::infrastructure::tools::swarm_bridge::SwarmContext {
@@ -161,7 +161,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
 
 #[when("a workflow-enabled ordinary container is requested")]
 async fn ordinary_container_workflow(world: &mut QuectoWorld) {
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     // No container runtime is configured here, so the launch fails later on
     // configuration; the point is that validation no longer refuses workflow.
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
@@ -307,7 +307,7 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
         member: "worker".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
     };
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     let workspace = std::sync::Arc::new(context.checkout.clone());
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
         workspace.clone(),

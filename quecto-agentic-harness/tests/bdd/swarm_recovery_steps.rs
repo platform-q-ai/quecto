@@ -50,7 +50,7 @@ fn context(workspace: &Path, member: &str) -> SwarmContext {
 
 /// Run board Python as `member` through the real swarm tool; the stdout.
 async fn python(workspace: &Path, member: &str, code: &str) -> Result<String, String> {
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     let root = std::sync::Arc::new(workspace.to_path_buf());
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
         root.clone(),

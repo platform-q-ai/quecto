@@ -24,7 +24,7 @@ fn reg(
 ) -> (
     bool,
     AgentEvent,
-    Vec<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    Vec<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
 ) {
     handle_register_tools(RegisterToolsArgs {
         client_id: cid,
@@ -57,7 +57,7 @@ impl RegCtx {
     ) -> (
         bool,
         AgentEvent,
-        Vec<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+        Vec<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
     ) {
         handle_register_tools(RegisterToolsArgs {
             client_id: cid,

@@ -6,11 +6,9 @@ use std::sync::Arc;
 pub(super) fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentLoopImpl {
     let context = context.map(Arc::new);
     agent
-        .with_tool_admission(
-            context
-                .clone()
-                .map(|value| value as Arc<dyn crate::domain::tool::ToolExecutionAdmission>),
-        )
+        .with_tool_admission(context.clone().map(|value| {
+            value as Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>
+        }))
         .with_request_accounting(
             context.clone().map(|value| {
                 value as Arc<dyn crate::domain::request_observation::RequestAccounting>

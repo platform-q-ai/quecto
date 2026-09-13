@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_read_path;
 use crate::infrastructure::tools::truncate::{

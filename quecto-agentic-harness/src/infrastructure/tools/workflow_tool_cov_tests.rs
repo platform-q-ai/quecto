@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool::{Tool, ToolGuard};
+use crate::application::tools::ports::{Tool, ToolGuard};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep,
 };

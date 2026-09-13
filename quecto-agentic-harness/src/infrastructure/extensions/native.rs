@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::extension::Extension;
-use crate::domain::tool::Tool;
+use crate::application::extensions::ports::Extension;
+use crate::application::tools::ports::Tool;
 
 /// A compiled-in extension that wraps a `Tool` implementation.
 ///
@@ -92,7 +92,7 @@ impl Extension for NativeExtension {
 /// consume `Extension` objects and register their tools through the same
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
-    pub find_tool: Arc<dyn crate::domain::tool::Tool>,
+    pub find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
     pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
@@ -324,7 +324,7 @@ pub fn register_bundled_native_tools_with_scope(
 }
 
 pub fn build_official_tool_registry(
-    find_tool: Arc<dyn crate::domain::tool::Tool>,
+    find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -333,7 +333,7 @@ pub fn build_official_tool_registry(
 }
 
 pub fn build_official_tool_registry_with_context(
-    find_tool: Arc<dyn crate::domain::tool::Tool>,
+    find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,

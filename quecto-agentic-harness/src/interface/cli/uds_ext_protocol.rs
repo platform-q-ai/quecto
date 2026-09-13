@@ -173,7 +173,11 @@ pub struct RegisterToolsArgs<'a> {
 /// On success, also returns a list of `Arc<dyn Tool>` to register.
 pub fn handle_register_tools(
     args: RegisterToolsArgs<'_>,
-) -> (bool, AgentEvent, Vec<Arc<dyn crate::domain::tool::Tool>>) {
+) -> (
+    bool,
+    AgentEvent,
+    Vec<Arc<dyn crate::application::tools::ports::Tool>>,
+) {
     let RegisterToolsArgs {
         client_id,
         id,
@@ -209,7 +213,7 @@ pub fn handle_register_tools(
     }
 
     let timeout = std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS);
-    let mut new_tools: Vec<Arc<dyn crate::domain::tool::Tool>> = Vec::new();
+    let mut new_tools: Vec<Arc<dyn crate::application::tools::ports::Tool>> = Vec::new();
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
 
     for tool in tools {

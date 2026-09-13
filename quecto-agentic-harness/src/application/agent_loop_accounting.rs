@@ -68,7 +68,7 @@ impl AgentLoopImpl {
     }
     pub fn with_tool_admission(
         mut self,
-        admission: Option<Arc<dyn crate::domain::tool::ToolExecutionAdmission>>,
+        admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     ) -> Self {
         self.tool_admission = admission;
         self
