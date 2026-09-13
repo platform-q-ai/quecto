@@ -4,10 +4,11 @@ use crate::application::agent_loop_stream::{
 };
 use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
+use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};

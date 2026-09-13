@@ -218,6 +218,11 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait AgentLoop",
         "src/application/agent_turn/ports.rs",
     ),
+    (
+        "src/domain/audit.rs",
+        "trait AuditSink",
+        "src/application/audit/ports.rs",
+    ),
 ];
 
 #[test]
@@ -233,7 +238,6 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ];
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/audit.rs",               // #1960: AuditSink
         "src/domain/extension.rs",           // #1960: Extension
         "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
         "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission

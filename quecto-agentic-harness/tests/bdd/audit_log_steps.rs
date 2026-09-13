@@ -300,7 +300,7 @@ impl quecto::domain::provider::LlmProvider for LoopFailingProvider {
 struct LoopRecordingSink {
     events: std::sync::Mutex<Vec<AuditEvent>>,
 }
-impl quecto::domain::audit::AuditSink for LoopRecordingSink {
+impl quecto::application::audit::ports::AuditSink for LoopRecordingSink {
     fn emit(
         &self,
         _turn: u32,
@@ -392,7 +392,9 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         progress_callback: None,
         streaming: false,
         effort: None,
-        audit_log: Some(sink.clone() as std::sync::Arc<dyn quecto::domain::audit::AuditSink>),
+        audit_log: Some(
+            sink.clone() as std::sync::Arc<dyn quecto::application::audit::ports::AuditSink>
+        ),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,

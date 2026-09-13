@@ -5,6 +5,7 @@ mod agent_loop_stream;
 #[cfg(any(test, feature = "test-support"))]
 pub mod agent_loop_test_support;
 mod agent_usage;
+pub mod audit;
 pub mod catalogue;
 pub mod catalogue_refresh;
 pub mod context;

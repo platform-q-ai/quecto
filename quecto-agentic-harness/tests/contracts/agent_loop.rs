@@ -13,7 +13,8 @@
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
-use quecto::domain::audit::{AuditEvent, AuditSink};
+use quecto::application::audit::ports::AuditSink;
+use quecto::domain::audit::AuditEvent;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
 use quecto::domain::provider::{ChatRequest, LlmProvider};

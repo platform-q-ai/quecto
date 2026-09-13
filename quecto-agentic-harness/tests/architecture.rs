@@ -327,9 +327,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
-                // Subagent teardown ports are capability-local (#1934); the
-                // process adapters implement them (#1935).
-                ["crate", "application", "subagents", "ports", ..] => true,
+                // Ports are capability-local (#1934, #1960): every
+                // `application/<capability>/ports.rs` is a contract this
+                // layer implements. Subagent teardown (#1935) was the first.
+                ["crate", "application", _, "ports", ..] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the
@@ -389,8 +390,7 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // agent-control tools (the precedent of the retired
                 // `EnvironmentControlUseCase`) and by the cleanup path that
                 // finalizes a member.
-                ["crate", "application", "environments", "ports", ..]
-                | [
+                [
                     "crate",
                     "application",
                     "environments",

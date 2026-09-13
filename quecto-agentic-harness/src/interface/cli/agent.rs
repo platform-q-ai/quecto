@@ -643,7 +643,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         ) {
             Ok(log) => {
                 agent.set_audit_log(Some(
-                    Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>
+                    Arc::new(log) as Arc<dyn crate::application::audit::ports::AuditSink>
                 ));
             }
             Err(e) => {

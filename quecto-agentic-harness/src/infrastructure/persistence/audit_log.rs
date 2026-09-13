@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::domain::audit::{AuditEnvelope, AuditEvent, AuditSink};
+use crate::application::audit::ports::AuditSink;
+use crate::domain::audit::{AuditEnvelope, AuditEvent};
 use crate::domain::error::DomainError;
 use crate::infrastructure::persistence::filename::sanitize_session_key;
 

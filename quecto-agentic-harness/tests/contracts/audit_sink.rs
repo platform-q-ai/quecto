@@ -1,6 +1,7 @@
 //! Contract tests for the `AuditSink` port.
 
-use quecto::domain::audit::{AuditEvent, AuditSink};
+use quecto::application::audit::ports::AuditSink;
+use quecto::domain::audit::AuditEvent;
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use std::sync::Arc;
 

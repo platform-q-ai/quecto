@@ -1913,7 +1913,7 @@ struct RecordingAuditSink {
     events: Mutex<Vec<quecto::domain::audit::AuditEvent>>,
 }
 
-impl quecto::domain::audit::AuditSink for RecordingAuditSink {
+impl quecto::application::audit::ports::AuditSink for RecordingAuditSink {
     fn emit(
         &self,
         _turn: u32,
@@ -1954,7 +1954,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         progress_callback: None,
         streaming: false,
         effort: None,
-        audit_log: Some(sink.clone() as Arc<dyn quecto::domain::audit::AuditSink>),
+        audit_log: Some(sink.clone() as Arc<dyn quecto::application::audit::ports::AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,

@@ -7,7 +7,8 @@
 
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry, text_response};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::application::audit::ports::AuditSink;
+use crate::domain::audit::AuditEvent;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use std::future::Future;
