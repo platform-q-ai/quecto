@@ -27,6 +27,22 @@ pub(crate) struct DelegatedSubtreeState {
     /// Registry key and pid of every observed row, by display label.
     observed: std::collections::HashMap<String, (String, u32)>,
     kill_result: Option<serde_json::Value>,
+    /// `RUST_LOG` before the scenario raised it for the launched tree.
+    previous_rust_log: Option<Option<std::ffi::OsString>>,
+}
+
+impl Drop for DelegatedSubtreeState {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_rust_log.take() {
+            // SAFETY: @serial scenario teardown; no concurrent environment readers.
+            unsafe {
+                match previous {
+                    Some(value) => std::env::set_var("RUST_LOG", value),
+                    None => std::env::remove_var("RUST_LOG"),
+                }
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for DelegatedSubtreeState {
@@ -153,10 +169,16 @@ fn given_root(world: &mut QuectoWorld) {
     std::mem::forget(server);
     let sockets = base.join("sockets");
     std::fs::create_dir_all(&sockets).unwrap();
+    // The launched tree logs at `warn` to its launcher's stderr pipe, as a
+    // swarm container's members do: the in-container proof (#1940) found an
+    // orphaned grandchild hanging on its first log line once that pipe had
+    // no reader, so this scenario reproduces that configuration on the host.
+    let previous_rust_log = std::env::var_os("RUST_LOG");
     // SAFETY: @serial scenario; set before any child is launched, inherited by the whole tree.
     unsafe {
         std::env::set_var("QUECTO_CHILD_BINARY", child_binary());
         std::env::set_var("QUECTO_BASE_DIR", &base);
+        std::env::set_var("RUST_LOG", "warn");
     }
     let registry = AgentCmdTool::new_registry();
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<String>(256);
@@ -174,6 +196,7 @@ fn given_root(world: &mut QuectoWorld) {
     s.spawn = Some(spawn);
     s.kill = Some(kill);
     s.config_path = Some(config_path);
+    s.previous_rust_log = Some(previous_rust_log);
 }
 
 #[when(expr = "the root spawns child {string} with task {string}")]
@@ -291,9 +314,18 @@ fn then_gone(world: &mut QuectoWorld, child: String, grandchild: String, seconds
             std::thread::sleep(Duration::from_millis(100));
         }
         if alive(pid) {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+            let status: Vec<&str> = status
+                .lines()
+                .filter(|l| {
+                    l.starts_with("State:") || l.starts_with("PPid:") || l.starts_with("Threads:")
+                })
+                .collect();
+            let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
             // SAFETY: bounded cleanup of the scenario's own process.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-            panic!("{name} ({pid}) did not exit within {seconds}s");
+            panic!("{name} ({pid}) did not exit within {seconds}s; {status:?}; argv: {cmdline}");
         }
     }
 }
