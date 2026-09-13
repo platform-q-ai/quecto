@@ -36,9 +36,9 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::super::dto::{
-    FleetTeardownError, HarnessShutdownError, PersistenceOutcome, PrepareShutdownRequest,
-    PreparedShutdown, ReleaseOutcome, ShutdownOutcome, ShutdownToken, ShutdownTrigger,
-    TerminateAllDelegatedAgentsRequest,
+    FleetTeardownError, FleetTeardownOutcome, HarnessShutdownError, PersistenceOutcome,
+    PrepareShutdownRequest, PreparedShutdown, ReleaseOutcome, ShutdownOutcome, ShutdownToken,
+    ShutdownTrigger, TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
     CompositionExitReadiness, ExitReadiness, ShutdownClock, ShutdownRunSpawner,
@@ -428,15 +428,7 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
         transaction.with_progress(admission_id, |p| p.turn_cancelled = Some(cancelled));
     }
     if !done.children_complete {
-        // The fleet run is detached and joinable: a re-driven shutdown
-        // joins the one in flight, and the claim ladder guarantees no
-        // child is asked twice even when a fresh fleet run starts.
-        let fleet = ports
-            .children
-            .execute(TerminateAllDelegatedAgentsRequest {
-                reason: ShutdownReason::ParentShutdown,
-            })
-            .await;
+        let fleet = settle_fleet(&ports).await;
         transaction.with_progress(admission_id, |p| match fleet {
             Ok(outcome) => {
                 p.children_shut_down = outcome
@@ -497,6 +489,44 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
     });
     complete(&transaction, outcome);
     guard.disarm();
+}
+
+/// The fleet step. The fleet run is detached and joinable: a re-driven
+/// shutdown joins the one in flight, and the claim ladder guarantees no
+/// child is asked twice even when a fresh fleet run starts. A run this
+/// shutdown merely **joined** was started by an operator (delete-all, a
+/// session transition) while the harness was still accepting, and may have
+/// read its lineage before a child that the freeze then closed off was
+/// registered; so after a joined run the fleet is settled once more. The
+/// lineage is closed post-freeze, so that pass is an empty read whenever
+/// nothing slipped in, and its results are merged.
+async fn settle_fleet(
+    ports: &ExecuteHarnessShutdownPorts,
+) -> Result<FleetTeardownOutcome, FleetTeardownError> {
+    let request = || TerminateAllDelegatedAgentsRequest {
+        reason: ShutdownReason::ParentShutdown,
+    };
+    let mut outcome = ports.children.execute(request()).await?;
+    if outcome.joined {
+        let sweep = ports.children.execute(request()).await?;
+        for settled in sweep.settled {
+            if !outcome.settled.contains(&settled) {
+                outcome.settled.push(settled);
+            }
+        }
+        for unsettled in sweep.unsettled {
+            if !outcome.unsettled.contains(&unsettled) {
+                outcome.unsettled.push(unsettled);
+            }
+        }
+        // A child settled by the sweep is no longer unsettled.
+        let settled = outcome.settled.clone();
+        outcome
+            .unsettled
+            .retain(|(uuid, _)| !settled.iter().any(|s| &s.child.uuid == uuid));
+        outcome.pruned.extend(sweep.pruned);
+    }
+    Ok(outcome)
 }
 
 fn complete(transaction: &HarnessShutdownTransaction, outcome: Outcome) {
@@ -578,6 +608,9 @@ impl Future for JoinOutcome<'_> {
     }
 }
 
+#[cfg(test)]
+#[path = "harness_shutdown_sweep_tests.rs"]
+mod sweep_tests;
 #[cfg(test)]
 #[path = "harness_shutdown_tests.rs"]
 mod tests;

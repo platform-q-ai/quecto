@@ -157,7 +157,9 @@ async fn concurrent_triggers_join_one_run_and_no_child_is_asked_twice() {
                 .await
         }
     });
-    tokio::task::yield_now().await;
+    while rig.fleet.fleet.waiting_joiners() < 2 {
+        tokio::task::yield_now().await;
+    }
     rig.routing.gate.notify_one();
     let first = bounded(first).await.unwrap().unwrap();
     let second = bounded(second).await.unwrap().unwrap();
@@ -446,15 +448,16 @@ async fn dropping_the_caller_never_stops_the_detached_run() {
     caller.abort();
     let _ = caller.await;
     assert!(rig.fleet.fleet.in_flight(), "the run is still in flight");
-    rig.routing.gate.notify_one();
     // A later trigger joins the same run and sees it complete.
-    let outcome = bounded(
-        rig.fleet
-            .fleet
-            .execute(request(ShutdownReason::ParentShutdown)),
-    )
-    .await
-    .unwrap();
+    let later = tokio::spawn({
+        let fleet = rig.fleet.fleet.clone();
+        async move { fleet.execute(request(ShutdownReason::ParentShutdown)).await }
+    });
+    while rig.fleet.fleet.waiting_joiners() < 2 {
+        tokio::task::yield_now().await;
+    }
+    rig.routing.gate.notify_one();
+    let outcome = bounded(later).await.unwrap().unwrap();
     assert!(outcome.joined);
     assert_eq!(outcome.settled.len(), 2);
     assert_eq!(rig.routing.calls().len(), 2);

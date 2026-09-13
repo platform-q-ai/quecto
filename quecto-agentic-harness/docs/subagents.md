@@ -765,7 +765,13 @@ session.
 - **Harness exit**: a top-level harness of the default lifetime runs the
   fleet teardown when its last client disconnects and only then persists
   and returns; SIGTERM/SIGINT do the same (exit 0, never the signal's
-  default action). A top-level `--persist` harness ignores its last client
+  default action). A shutdown that joins a fleet run an operator had
+  already started sweeps the fleet once more afterwards, so a child
+  registered between that run's lineage read and the freeze is still
+  settled. A **repeated** SIGTERM/SIGINT while the shutdown is in progress
+  is logged and ignored inside the 45 s teardown budget (a double Ctrl-C
+  never skips the teardown); past it the repeat forces the process exit
+  (status 130). A top-level `--persist` harness ignores its last client
   and its children live on until an explicit shutdown
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined

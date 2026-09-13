@@ -12,18 +12,18 @@ use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::super::teardown_fakes::*;
 
-struct Rig {
-    lifecycle: Arc<FakeLifecycle>,
-    routing: Arc<FakeRouting>,
-    fleet: FakeFleet,
-    cancellation: Arc<FakeCancellation>,
-    persistence: Arc<FakePersistence>,
-    exit: Arc<FakeExit>,
+pub(super) struct Rig {
+    pub(super) lifecycle: Arc<FakeLifecycle>,
+    pub(super) routing: Arc<FakeRouting>,
+    pub(super) fleet: FakeFleet,
+    pub(super) cancellation: Arc<FakeCancellation>,
+    pub(super) persistence: Arc<FakePersistence>,
+    pub(super) exit: Arc<FakeExit>,
     /// Spawner of the harness run; the fleet run has its own so aborting
     /// "the latest" run is unambiguous.
-    spawner: Arc<FakeSpawner>,
-    prepare: PrepareHarnessShutdown,
-    execute: Arc<ExecuteHarnessShutdown>,
+    pub(super) spawner: Arc<FakeSpawner>,
+    pub(super) prepare: PrepareHarnessShutdown,
+    pub(super) execute: Arc<ExecuteHarnessShutdown>,
 }
 
 fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
@@ -58,7 +58,7 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
     }
 }
 
-fn rig() -> Rig {
+pub(super) fn rig() -> Rig {
     rig_with(FakeCancellation::new(true))
 }
 
@@ -77,7 +77,7 @@ fn protocol(reason: ShutdownReason) -> PrepareShutdownRequest {
     }
 }
 
-fn signal() -> PrepareShutdownRequest {
+pub(super) fn signal() -> PrepareShutdownRequest {
     PrepareShutdownRequest {
         reason: ShutdownReason::TerminationSignal,
         trigger: ShutdownTrigger::TerminationSignal,
@@ -622,7 +622,9 @@ async fn a_run_interrupted_mid_children_never_re_sends_to_a_recorded_child() {
         let token = token.clone();
         async move { execute.execute(&token).await }
     });
-    tokio::task::yield_now().await;
+    while rig.fleet.fleet.waiting_joiners() < 2 {
+        tokio::task::yield_now().await;
+    }
     rig.routing.gate.notify_one();
     let outcome = redrive.await.unwrap().unwrap();
     assert_eq!(

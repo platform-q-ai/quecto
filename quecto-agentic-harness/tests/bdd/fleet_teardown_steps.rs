@@ -131,7 +131,12 @@ fn when_fleet_twice(world: &mut QuectoWorld) {
             let fleet = fleet.clone();
             async move { fleet.execute(request()).await }
         });
-        tokio::task::yield_now().await;
+        // Both callers must be parked on the run before it is released,
+        // otherwise the second could arrive after completion and start a
+        // run of its own.
+        while fleet.waiting_joiners() < 2 {
+            tokio::task::yield_now().await;
+        }
         routing.gate.notify_one();
         let first = tokio::time::timeout(Duration::from_secs(10), first)
             .await

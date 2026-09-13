@@ -124,6 +124,16 @@ impl TerminateAllDelegatedAgents {
         lock(&self.inner.in_flight).is_some()
     }
 
+    /// Number of callers parked on the in-flight run. Test probe so a test
+    /// can make a joiner's registration observable before it releases
+    /// whatever the run is waiting on.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn waiting_joiners(&self) -> usize {
+        lock(&self.inner.in_flight)
+            .as_ref()
+            .map_or(0, |run| lock(&run.wakers).len())
+    }
+
     /// Start the fleet teardown, or join the one already running, and wait
     /// for its outcome. The run itself is detached: dropping this future
     /// never stops it.

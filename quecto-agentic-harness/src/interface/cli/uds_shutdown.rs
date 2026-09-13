@@ -14,6 +14,7 @@
 //! on a signal: the turn is cancelled and the loop is told to finish.
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -41,7 +42,12 @@ impl ShutdownRequest {
         cancel_handle: CancelHandle,
     ) -> Self {
         tokio::spawn(shutdown_on(
-            termination_signal(),
+            SignalSource {
+                first: termination_signal(),
+                repeat: termination_signal,
+                force_exit: || std::process::exit(EXIT_FORCED),
+                force_after: FORCE_EXIT_AFTER,
+            },
             controller.clone(),
             busy.clone(),
             cancel_handle,
@@ -80,6 +86,47 @@ impl ShutdownRequest {
             notify,
             controller: None,
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
+/// Join the shutdown run while answering repeated signals: inside the
+/// budget a repeat is acknowledged and ignored, past it the exit is forced
+/// and the run abandoned.
+async fn deliver_with_escalation<Run, Repeat, Next, Force>(
+    run: Run,
+    repeat: Repeat,
+    force_exit: Force,
+    force_after: Duration,
+    repeats: &mut Repeats,
+) -> Option<ControllerOutcome>
+where
+    Run: Future<Output = ControllerOutcome>,
+    Repeat: Fn() -> Next,
+    Next: Future<Output = ()>,
+    Force: Fn(),
+{
+    let started = std::time::Instant::now();
+    tokio::pin!(run);
+    loop {
+        tokio::select! {
+            outcome = &mut run => break Some(outcome),
+            () = repeat() => {
+                if started.elapsed() >= force_after {
+                    tracing::error!(
+                        elapsed_secs = started.elapsed().as_secs(),
+                        "repeated termination signal past the teardown budget; forcing exit"
+                    );
+                    repeats.forced = true;
+                    force_exit();
+                    break None;
+                }
+                repeats.ignored += 1;
+                tracing::warn!(
+                    elapsed_secs = started.elapsed().as_secs(),
+                    "shutdown already in progress; repeated termination signal ignored"
+                );
+            }
         }
     }
 }
@@ -127,22 +174,78 @@ async fn termination_signal() {
     }
 }
 
-/// Await `trigger`, then deliver the termination signal to the controller:
-/// the common shutdown cancels the turn, tears down the fleet, persists and
-/// signals exit readiness, which fires `notify`. The loop is told to finish
+/// Exit status of a forced exit after a repeated termination signal.
+pub const EXIT_FORCED: i32 = 130;
+
+/// How long the common shutdown is given to settle the fleet before a
+/// **repeated** SIGTERM/SIGINT forces the process out: the fleet's worst
+/// case for one batch (5 s protocol ACK + 10 s exit budget + 2 s TERM + 2 s
+/// KILL) plus a non-owned child's 15 s compensation wait, with slack.
+/// A second signal inside the budget is acknowledged and ignored — the
+/// shutdown already in progress is the same one it would start — so a
+/// stray double Ctrl-C never skips the teardown; past the budget it is an
+/// explicit escape hatch out of a teardown that will not settle.
+pub const FORCE_EXIT_AFTER: Duration = Duration::from_secs(45);
+
+/// Where termination signals come from: the first one starts the common
+/// shutdown, later ones are escalations. Production wires the OS signals
+/// and `std::process::exit`; tests wire notifications and a flag.
+pub(super) struct SignalSource<First, Repeat, Next, Force>
+where
+    First: Future<Output = ()>,
+    Repeat: Fn() -> Next,
+    Next: Future<Output = ()>,
+    Force: Fn(),
+{
+    pub(super) first: First,
+    pub(super) repeat: Repeat,
+    pub(super) force_exit: Force,
+    /// Budget after which a repeated signal forces the exit.
+    pub(super) force_after: Duration,
+}
+
+/// What the watcher did about repeated signals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct Repeats {
+    /// Signals acknowledged while the shutdown was inside its budget.
+    pub(super) ignored: u32,
+    /// A signal past the budget forced the process exit.
+    pub(super) forced: bool,
+}
+
+/// Await the first signal, then deliver it to the controller: the common
+/// shutdown cancels the turn, tears down the fleet, persists and signals
+/// exit readiness, which fires `notify`. The loop is told to finish
 /// afterwards in every case, so a signal on an already-terminated harness
-/// still ends the process.
-pub(super) async fn shutdown_on(
-    trigger: impl Future<Output = ()>,
+/// still ends the process. Repeated signals while the shutdown runs are
+/// counted and, past [`FORCE_EXIT_AFTER`], force the exit.
+pub(super) async fn shutdown_on<First, Repeat, Next, Force>(
+    source: SignalSource<First, Repeat, Next, Force>,
     controller: Option<Arc<SubagentTeardownController>>,
     busy: BusyFlag,
     cancel_handle: CancelHandle,
     notify: Arc<Notify>,
-) -> Option<ControllerOutcome> {
-    trigger.await;
+) -> (Option<ControllerOutcome>, Repeats)
+where
+    First: Future<Output = ()>,
+    Repeat: Fn() -> Next,
+    Next: Future<Output = ()>,
+    Force: Fn(),
+{
+    let SignalSource {
+        first,
+        repeat,
+        force_exit,
+        force_after,
+    } = source;
+    first.await;
     tracing::info!("termination signal received; running the common shutdown");
+    let mut repeats = Repeats::default();
     let outcome = match controller {
-        Some(controller) => Some(controller.termination_signal(delivery(&busy)).await),
+        Some(controller) => {
+            let run = controller.termination_signal(delivery(&busy));
+            deliver_with_escalation(run, repeat, force_exit, force_after, &mut repeats).await
+        }
         None => {
             fire_cancel(&cancel_handle);
             None
@@ -152,7 +255,7 @@ pub(super) async fn shutdown_on(
         tracing::info!(outcome = summary(outcome), "termination shutdown settled");
     }
     notify.notify_one();
-    outcome
+    (outcome, repeats)
 }
 
 /// Drives the signal path without signalling the test process.

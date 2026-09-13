@@ -101,6 +101,10 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
     let exit = Arc::new(LoopExitReadiness::new(inputs.exit_notify));
     let persistence = Arc::new(DeferredLoopPersistence::default());
     let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
+    // The fleet's compensations run with the FleetTeardown cause, for which
+    // the compensation emits no passive note (notes are for natural exits
+    // only, like `agent_cmd kill`'s SelectedTermination), so the loop's
+    // notifier is passed through only for the exits it joins.
     let fleet = build_fleet_over(
         lifecycle.clone(),
         registry_for_claims.clone(),

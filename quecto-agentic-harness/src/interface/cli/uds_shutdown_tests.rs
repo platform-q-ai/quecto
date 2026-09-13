@@ -14,6 +14,24 @@ use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
 use crate::interface::cli::uds_teardown_graph::TeardownGraphInputs;
 use crate::interface::uds::subagent_teardown::controller::ControllerOutcome;
 
+/// A first signal that fires at once, repeats that never come, and a
+/// forced exit that would fail the test.
+type Once = super::SignalSource<
+    std::future::Ready<()>,
+    fn() -> std::future::Pending<()>,
+    std::future::Pending<()>,
+    fn(),
+>;
+
+fn once() -> Once {
+    super::SignalSource {
+        first: std::future::ready(()),
+        repeat: std::future::pending::<()>,
+        force_exit: || panic!("no forced exit expected"),
+        force_after: super::FORCE_EXIT_AFTER,
+    }
+}
+
 fn environment_with_kill_script(
     dir: &std::path::Path,
     member: &str,
@@ -107,15 +125,16 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
     let dir = tempfile::tempdir().unwrap();
     let rig = rig(dir.path());
 
-    let outcome = bounded(super::shutdown_on(
-        std::future::ready(()),
+    let (outcome, repeats) = bounded(super::shutdown_on(
+        once(),
         Some(rig.graph.controller.clone()),
         rig.busy.clone(),
         rig.cancel.clone(),
         rig.notify.clone(),
     ))
-    .await
-    .expect("a controller ran the shutdown");
+    .await;
+    let outcome = outcome.expect("a controller ran the shutdown");
+    assert_eq!(repeats, super::Repeats::default());
     let ControllerOutcome::ShutdownExecuted { outcome, .. } = outcome else {
         panic!("unexpected outcome: {outcome:?}");
     };
@@ -157,9 +176,13 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
 async fn no_signal_means_no_teardown() {
     let dir = tempfile::tempdir().unwrap();
     let rig = rig(dir.path());
-    let never = std::future::pending::<()>();
     let watcher = tokio::spawn(super::shutdown_on(
-        never,
+        super::SignalSource {
+            first: std::future::pending::<()>(),
+            repeat: std::future::pending::<()>,
+            force_exit: || panic!("no forced exit expected"),
+            force_after: super::FORCE_EXIT_AFTER,
+        },
         Some(rig.graph.controller.clone()),
         rig.busy.clone(),
         rig.cancel.clone(),
@@ -180,8 +203,8 @@ async fn no_signal_means_no_teardown() {
 async fn without_a_controller_the_signal_cancels_and_requests_exit() {
     let cancel: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
     let notify = Arc::new(tokio::sync::Notify::new());
-    let outcome = super::shutdown_on(
-        std::future::ready(()),
+    let (outcome, _) = super::shutdown_on(
+        once(),
         None,
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel.clone(),
@@ -248,4 +271,102 @@ async fn the_last_client_disconnect_runs_the_common_shutdown_to_completion() {
         !rig.graph.transaction.accepts_new_work(),
         "the harness is terminated: no spawn is admitted"
     );
+}
+
+/// A signal repeated while the shutdown is inside its budget is acknowledged
+/// and ignored: the teardown in progress is the one it would start, so a
+/// double Ctrl-C never skips it. The fleet is held open by a child whose
+/// socket is a listener that never answers, so the shutdown is genuinely in
+/// flight when the repeats arrive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_signal_inside_the_budget_is_ignored_and_the_shutdown_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(dir.path());
+    let socket = dir.path().join("never.sock");
+    let _listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let repeat = Arc::new(tokio::sync::Notify::new());
+    let forced = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watcher = tokio::spawn({
+        let repeat = repeat.clone();
+        let forced = forced.clone();
+        super::shutdown_on(
+            super::SignalSource {
+                first: std::future::ready(()),
+                repeat: move || {
+                    let repeat = repeat.clone();
+                    async move { repeat.notified().await }
+                },
+                force_exit: move || forced.store(true, std::sync::atomic::Ordering::SeqCst),
+                force_after: super::FORCE_EXIT_AFTER,
+            },
+            Some(rig.graph.controller.clone()),
+            rig.busy.clone(),
+            rig.cancel.clone(),
+            rig.notify.clone(),
+        )
+    });
+    // The shutdown is in flight (frozen) while the child's ACK is awaited.
+    while rig.graph.transaction.accepts_new_work() {
+        tokio::task::yield_now().await;
+    }
+    for _ in 0..2 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        repeat.notify_one();
+    }
+    let (outcome, repeats) = bounded(watcher).await.unwrap();
+    assert!(matches!(
+        outcome,
+        Some(ControllerOutcome::ShutdownExecuted { .. })
+    ));
+    assert_eq!(repeats.ignored, 2);
+    assert!(!repeats.forced);
+    assert!(!forced.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(rig.subagents.lock().unwrap().is_empty());
+}
+
+/// Past the budget a repeated signal forces the exit instead of waiting on
+/// a teardown that will not settle. The budget is the source's, so the
+/// test spends it at once; the first repeat is still inside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_signal_past_the_budget_forces_the_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(dir.path());
+    let socket = dir.path().join("never.sock");
+    let _listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let repeat = Arc::new(tokio::sync::Notify::new());
+    let forced = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watcher = tokio::spawn({
+        let repeat = repeat.clone();
+        let forced = forced.clone();
+        super::shutdown_on(
+            super::SignalSource {
+                first: std::future::ready(()),
+                repeat: move || {
+                    let repeat = repeat.clone();
+                    async move { repeat.notified().await }
+                },
+                force_exit: move || forced.store(true, std::sync::atomic::Ordering::SeqCst),
+                force_after: Duration::from_millis(200),
+            },
+            Some(rig.graph.controller.clone()),
+            rig.busy.clone(),
+            rig.cancel.clone(),
+            rig.notify.clone(),
+        )
+    });
+    while rig.graph.transaction.accepts_new_work() {
+        tokio::task::yield_now().await;
+    }
+    // Inside the budget: ignored.
+    repeat.notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!forced.load(std::sync::atomic::Ordering::SeqCst));
+    // Past it: forced.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    repeat.notify_one();
+    let (outcome, repeats) = bounded(watcher).await.unwrap();
+    assert!(outcome.is_none());
+    assert_eq!(repeats.ignored, 1);
+    assert!(repeats.forced);
+    assert!(forced.load(std::sync::atomic::Ordering::SeqCst));
 }

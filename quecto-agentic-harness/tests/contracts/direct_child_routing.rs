@@ -93,7 +93,11 @@ async fn shutdown_child_is_idempotent_per_child_across_a_re_drive() {
         let execute = harness.execute.clone();
         async move { execute.execute(&token).await }
     });
-    tokio::task::yield_now().await;
+    // Current-thread runtime: the spawned re-drive runs until it parks on
+    // the fleet run before this task resumes.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
     harness.routing.gate.notify_one();
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), redrive)
         .await

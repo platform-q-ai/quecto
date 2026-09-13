@@ -105,6 +105,9 @@ pub(crate) enum TransitionRefused {
     /// Live delegated rows exist but this harness has no fleet teardown to
     /// settle them with (a loop built without a teardown graph).
     NoFleetTeardown(usize),
+    /// Live delegated rows remain after the fleet settled (a registration
+    /// the run did not see): the roster is not replaced under them.
+    LiveRowsRemain(usize),
 }
 
 impl std::fmt::Display for TransitionRefused {
@@ -128,6 +131,10 @@ impl std::fmt::Display for TransitionRefused {
             Self::NoFleetTeardown(live) => write!(
                 f,
                 "{live} live subagent(s) but no fleet teardown is available; the current session was kept"
+            ),
+            Self::LiveRowsRemain(live) => write!(
+                f,
+                "{live} live subagent(s) remain after the teardown; the current session was kept"
             ),
         }
     }
@@ -208,7 +215,7 @@ pub(crate) fn reset_subagent_roster(
     };
     let live = live_delegated_rows(&Some(registry.clone()));
     if live > 0 {
-        return Err(TransitionRefused::NoFleetTeardown(live));
+        return Err(TransitionRefused::LiveRowsRemain(live));
     }
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let dropped = entries.len();
@@ -479,6 +486,17 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    // The departing children settled above; what remains are records. The
+    // persisted rows of the resumed session are history, never readopted.
+    // Replaced BEFORE the session key moves: a refusal here keeps the
+    // current session whole and only releases the claim just taken.
+    note_persisted_roster_is_history(&ctx.subagent_registry, &loaded.subagent_roster);
+    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "resume_session") {
+        ctx.session_store.release(&new_key);
+        let ev = AgentEvent::err(id, type_name, refused.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);
@@ -495,15 +513,6 @@ pub(super) async fn handle_resume_session(
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     let workflow_run = loaded.workflow_run;
-    // The departing children settled above; what remains are records. The
-    // persisted rows of the resumed session are history, never readopted.
-    note_persisted_roster_is_history(&ctx.subagent_registry, &loaded.subagent_roster);
-    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "resume_session") {
-        ctx.session_store.release(&new_key);
-        let ev = AgentEvent::err(id, type_name, refused.to_string());
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
     broadcast_roster_reset(ctx);
     *ctx.messages = loaded.messages;
     ctx.last_persisted_message_index = ctx.messages.len();

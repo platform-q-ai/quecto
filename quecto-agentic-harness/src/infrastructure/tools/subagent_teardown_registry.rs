@@ -394,9 +394,12 @@ impl TeardownCompensation for RegistryDelegatedAgents {
         })
     }
 
-    /// A terminal row is one whose ladder reached `Compensated` or that the
-    /// cascade already marked dead: its terminal effects have run, nothing
-    /// is retained for it, and only its record remains. Live and in-flight
+    /// A terminal row is one whose ladder reached `Compensated`: its
+    /// terminal effects have run, nothing is retained for it, and only its
+    /// record remains. Liveness alone is not enough — `compensate` marks a
+    /// row dead while its phase is still `Compensating`, and pruning it
+    /// then would leave the cascade nothing to remove, the monitor running
+    /// and the exit signal unfired (review of #1938). Live and in-flight
     /// rows are untouched, so a teardown still settling a child can never
     /// lose it here. The survivor set does not change (dead rows are not
     /// listed), so nothing is broadcast.
@@ -405,10 +408,7 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             let mut entries = self.lock();
             let mut terminal: Vec<String> = entries
                 .iter()
-                .filter(|(_, entry)| {
-                    entry.teardown_phase() == TeardownPhase::Compensated
-                        || entry.persisted_liveness == SubagentLiveness::Dead
-                })
+                .filter(|(_, entry)| entry.teardown_phase() == TeardownPhase::Compensated)
                 .map(|(key, _)| key.clone())
                 .collect();
             terminal.sort();

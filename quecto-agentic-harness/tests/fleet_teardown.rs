@@ -261,6 +261,30 @@ impl Harness {
     fn still_running(&mut self) -> bool {
         self.child.try_wait().unwrap().is_none()
     }
+
+    /// Observe the child gone **while this harness is still running**: the
+    /// fleet settled it before the exit path. A harness that skipped the
+    /// fleet step would exit first and the child would only die afterwards
+    /// by parent loss, which this ordering refuses. Returns the exit status
+    /// once the harness has returned on its own.
+    fn child_gone_then_exit(&mut self, child: u32) -> std::process::ExitStatus {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            let running = self.still_running();
+            let gone = !alive(child);
+            match (gone, running) {
+                (true, true) => break,
+                (false, false) => panic!("the harness exited while its child was still alive"),
+                (true, false) => panic!(
+                    "the child was only observed gone after the harness had exited; the fleet must settle it first"
+                ),
+                (false, true) => {}
+            }
+            assert!(Instant::now() < deadline, "the child never settled");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.wait_exit()
+    }
 }
 
 impl Drop for Harness {
@@ -378,14 +402,10 @@ fn signal_tears_down_then_exits(signal: &str) {
     assert!(alive(worker));
 
     harness.signal(signal);
-    let status = harness.wait_exit();
+    // The child settles while the harness still runs, then the harness exits.
+    let status = harness.child_gone_then_exit(worker);
     assert_eq!(status.signal(), None, "handled, not killed: {status}");
     assert_eq!(status.code(), Some(0), "{status}");
-    // The harness exited only after its child settled.
-    assert!(
-        !alive(worker),
-        "the child must be gone before the harness exits"
-    );
     assert_no_live_child_persisted(&fixture, "signal");
 }
 
@@ -407,12 +427,8 @@ fn the_last_client_disconnect_of_the_default_lifetime_tears_down_then_exits() {
     let worker = client.spawn_worker(true);
     assert!(alive(worker));
     drop(client);
-    let status = harness.wait_exit();
+    let status = harness.child_gone_then_exit(worker);
     assert_eq!(status.code(), Some(0), "{status}");
-    assert!(
-        !alive(worker),
-        "the child must be gone before the harness exits"
-    );
     assert_no_live_child_persisted(&fixture, "last-client");
 }
 

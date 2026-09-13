@@ -312,6 +312,11 @@ pub struct FakeCompensation {
     pub registry: Mutex<Option<Arc<FakeRegistry>>>,
     /// Descendants reported as removed together with each target.
     pub descendants: Mutex<Vec<AgentUuid>>,
+    /// Hold the prune open (the fleet run is past its last lineage read)
+    /// until `prune_gate` fires; `prunes` counts entries.
+    pub hold_prune: std::sync::atomic::AtomicBool,
+    pub prune_gate: tokio::sync::Notify,
+    pub prunes: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeCompensation {
@@ -320,6 +325,9 @@ impl FakeCompensation {
             calls: Mutex::new(Vec::new()),
             registry: Mutex::new(Some(registry)),
             descendants: Mutex::new(Vec::new()),
+            hold_prune: std::sync::atomic::AtomicBool::new(false),
+            prune_gate: tokio::sync::Notify::new(),
+            prunes: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -348,6 +356,11 @@ impl TeardownCompensation for FakeCompensation {
 
     fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<AgentUuid>> {
         Box::pin(async move {
+            self.prunes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.hold_prune.load(std::sync::atomic::Ordering::SeqCst) {
+                self.prune_gate.notified().await;
+            }
             let Some(registry) = self.registry.lock().unwrap().clone() else {
                 return Vec::new();
             };
