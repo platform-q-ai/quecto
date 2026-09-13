@@ -90,6 +90,12 @@ CLIPPY_ARGS=(--all-targets -- -D warnings
     else
         echo "  No Rust workspace package changed; skipped."
     fi
+    # Standalone shape: `cargo install --path` builds one package with default
+    # features, without the workspace feature unification that enables
+    # quecto-tui's `test-harness` via the harness's dev-dependency.
+    for standalone in quecto-tui quecto-agentic-harness; do
+        cargo clippy -p "$standalone" --lib --bins -- -D warnings
+    done
 ) &
 CLIPPY_PID=$!
 

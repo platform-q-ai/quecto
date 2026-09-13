@@ -322,6 +322,9 @@ impl super::App {
     }
 
     /// Detach every per-tab `ChildWatch` so ordinary-exit cleanup can terminate them (AC3c).
+    /// Production exit goes through the roster-aware variant below; this
+    /// roster-less form serves the headless harness and tests only.
+    #[cfg(any(test, feature = "test-harness"))]
     pub(crate) fn take_all_child_exit_watches(
         &mut self,
     ) -> Vec<crate::shell::child_watch::ChildWatch> {
