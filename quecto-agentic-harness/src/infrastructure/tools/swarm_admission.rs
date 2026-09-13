@@ -1,7 +1,8 @@
-//! Release unlaunched reservations; quarantine launched scopes after rollback.
+//! Release unlaunched reservations; confirm the death of a launched member
+//! whose rollback observed its exit through the owned handle (#1961).
 use super::swarm_bridge::SwarmContext;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{CoordinationPort, ProcessIdentity};
+use crate::domain::swarm::{CoordinationPort, MemberExit, ProcessIdentity};
 
 #[derive(Debug)]
 pub struct LaunchReservation {
@@ -25,6 +26,11 @@ impl LaunchReservation {
         })
     }
 
+    /// The member id this reservation launched under (#1961).
+    pub fn member(&self) -> &str {
+        &self.member
+    }
+
     pub fn configure(&self, command: &mut tokio::process::Command) {
         command
             .env("QUECTO_SWARM_MEMBER", &self.member)
@@ -33,8 +39,15 @@ impl LaunchReservation {
             .env("QUECTO_SWARM_BOOTSTRAP", "0");
     }
 
-    pub fn rolled_back(&mut self) -> Result<(), DomainError> {
-        self.context.quarantine(&self.member)?;
+    /// The launch was rolled back and the owned handle's conclusion observed
+    /// the child's exit (a still-running child never reaches here): that is
+    /// the same authoritative death the reaper reports for a registered
+    /// member, so the member is confirmed dead rather than quarantined, and
+    /// the run keeps going. `exit` says whether the member ended orderly
+    /// (it answered the protocol, or this harness's fallback signal reached
+    /// its whole group) or was already gone before it was asked.
+    pub fn rolled_back(&mut self, exit: MemberExit) -> Result<(), DomainError> {
+        self.context.confirm_dead(&self.member, exit)?;
         self.launched = true;
         Ok(())
     }

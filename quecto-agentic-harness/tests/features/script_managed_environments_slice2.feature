@@ -185,8 +185,9 @@ Feature: Shared script-managed environments
     And read-only subagent "observer-delegated-slice6" has joined existing environment ref "C1" with task "OBSERVER_DELEGATED_MARKER"
     When I kill container "C1"
     Then the container command result should not be an error
-    And the kill result should report member "impl-delegated-slice6" settled "graceful"
+    And the kill result should report member "impl-delegated-slice6" settled gracefully or already gone
     And the kill result should report member "observer-delegated-slice6" settled gracefully or already gone
+    And the kill result should settle exactly the members "impl-delegated-slice6, observer-delegated-slice6" once each
     And the retained kill should have found 0 live members
     And the script-managed runtime should have killed an environment exactly 1 time
     And child "impl-delegated-slice6" should not be reachable
@@ -209,7 +210,8 @@ Feature: Shared script-managed environments
     When the in-flight termination of member "observer-unsettled-slice6" is released
     And I kill container "C1"
     Then the container command result should not be an error
-    And the kill result should report member "observer-unsettled-slice6" settled "graceful"
+    And the kill result should report member "observer-unsettled-slice6" settled gracefully or already gone
+    And the kill result should settle exactly the members "observer-unsettled-slice6" once each
     And the retained kill should have found 0 live members
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members

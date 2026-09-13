@@ -97,14 +97,32 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
   at that revision, with no outstanding work or file reservations.
 - `stop(status, reason)` accepts `blocked`, `failed`, `cancelled`, or
   `budget-exhausted`; use tool `op=cancel_run` for parent cancellation.
-- `recover(id)` requires proof the entire former owner's execution scope stopped.
-  The current adapter cannot establish that from harness death alone: it pauses
-  the run holding `failed` (a verdict already proposed is kept) and retains
-  ownership for the master to close. Do not reassign.
+- `revoke(id, reason)` takes a claim back from a member that will not finish
+  (suspended, hung, silent), alive or not: the task returns to `ready` with no
+  owner, token, blocker or evidence, its file reservations go, the audit records
+  the reason and previous owner, and the previous owner is messaged. Its stale
+  token then fails with `stale or unowned claim`. A repeat on an unowned task is
+  a no-op.
+- `recover(id, release_files=False)` reopens work whose owner's death the
+  harness confirmed: a member you launched that exited (on its own or by your
+  `agent_cmd kill`) is marked dead by your harness, its tasks block with
+  `worker death confirmed; coordinator recovery required`, and the run keeps
+  running. An orderly end (exit code, protocol shutdown, delegated kill)
+  releases its reservations; an abrupt one (a signal nobody here sent, an
+  unobservable exit) retains them because Bash tool children in their own
+  process groups may still be writing those paths — the tasks say
+  `reservations retained`, and only `revoke(id, reason)` or
+  `recover(id, release_files=True)` frees them; both need a running run
+  (resume first). A vanished harness seen by `op=reconcile` is not a confirmed
+  death: only the member's launcher (or anyone, once that launcher is dead)
+  records the loss, after a ten-second grace in which the launcher's reaper
+  normally confirms the death instead; a recorded loss pauses the run holding
+  `failed`, once per member, and ownership is retained until the master
+  resumes and you `revoke`. Other members' reconciles record nothing.
 
 Actually inspect command results and independent review before accepting them.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.
-Only the coordinator may amend, verify, revalidate, complete, stop or recover.
+Only the coordinator may amend, verify, revalidate, complete, stop, revoke or recover.
 Workers may call `evidence`; their proposals never authorize completion.
 
 ## Wakeups, terminal inspection and artifacts
@@ -248,5 +266,9 @@ Paused instructions remain queued; resume restores admission and the deadline.
 A resume also wakes every live member, and a member whose automatic turns were
 suspended by a provider failure re-arms on it and continues its work without a
 prompt or steer. Do not pause a run because one member failed: resume the run
-and, only if the member is still stuck, steer it.
+and, only if the member is still stuck, steer it. For a member that holds a
+claim it will not finish, no process is prescribed: an explicit `agent_cmd`
+`steer`/`follow_up` re-arms a provider-suspended member (#1712), `agent_cmd`
+`set_model` moves it off a failing provider, `revoke(id, reason)` reassigns its
+work, and `recover(id)` applies once its death is confirmed.
 Terminal completion notices do not trigger automatic report turns.

@@ -259,30 +259,6 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
 }
 
 #[tokio::test]
-async fn ready_failure_retains_launched_scope_after_child_rollback() {
-    let directory = tempfile::tempdir().unwrap();
-    let context = context(&directory);
-    create(&context, 2);
-    let mut reservation =
-        super::swarm_admission::LaunchReservation::reserve(context.clone()).unwrap();
-    let mut command = tokio::process::Command::new("sleep");
-    command.arg("30");
-    let mut prepared =
-        super::spawn_container::PreparedChild::new_for_test(Some(command), None, None).await;
-    reservation.launched(prepared.display_pid).unwrap();
-    prepared.swarm_reservation = Some(reservation);
-    assert_eq!(context.summary().unwrap()["usage"], 2);
-    prepared.rollback_once().await;
-    assert_eq!(context.summary().unwrap()["usage"], 2);
-    // A lost harness ends the run as a pause holding `failed` (#1729).
-    let summary = context.summary().unwrap();
-    assert_eq!(
-        (summary["status"].as_str(), summary["outcome"].as_str()),
-        (Some("paused"), Some("failed"))
-    );
-}
-
-#[tokio::test]
 async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
@@ -363,66 +339,6 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
         !directory.path().join("late-write").exists(),
         "background writer survived terminal settlement"
     );
-}
-
-#[test]
-fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
-    use std::io::BufRead;
-    let directory = tempfile::tempdir().unwrap();
-    let parent = context(&directory);
-    create(&parent, 2);
-    let mut harness = std::process::Command::new("python3")
-        .args(["-c", "import subprocess,time; p=subprocess.Popen(['sh','-c','while true; do echo writing >> orphan-write; sleep 0.05; done'], start_new_session=True, stdout=subprocess.DEVNULL); print(p.pid,flush=True); time.sleep(30)"])
-        .current_dir(directory.path()).stdout(std::process::Stdio::piped()).spawn().unwrap();
-    let mut line = String::new();
-    std::io::BufReader::new(harness.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    let writer_pid: u32 = line.trim().parse().unwrap();
-    let writer_start = process_start(writer_pid).unwrap();
-    let worker = SwarmContext {
-        member: "worker".into(),
-        ..parent.clone()
-    };
-    parent.call("_admit", json!(["worker", "r"])).unwrap();
-    parent
-        .call(
-            "_activate",
-            json!([
-                "worker",
-                "r",
-                harness.id(),
-                process_start(harness.id()),
-                null
-            ]),
-        )
-        .unwrap();
-    let task = worker
-        .call("task_create", json!(["t", "write file", ["pass"]]))
-        .unwrap();
-    let claim = worker.call("claim", json!([task["id"]])).unwrap();
-    worker
-        .call(
-            "reserve",
-            json!([task["id"], claim["token"], ["orphan-write"]]),
-        )
-        .unwrap();
-    harness.kill().unwrap();
-    harness.wait().unwrap();
-    let snapshot = super::swarm_lifecycle::reconcile(&parent).unwrap();
-    let surviving = !process_confirmed_dead(writer_pid, &writer_start);
-    super::swarm::cancel_job_process(writer_pid);
-    assert!(surviving);
-    assert_eq!(
-        snapshot["file_count"], 1,
-        "harness death cannot prove its execution scope stopped"
-    );
-    assert_eq!(snapshot["usage"], 2);
-    assert_eq!(
-        (snapshot["status"].as_str(), snapshot["outcome"].as_str()),
-        (Some("paused"), Some("failed"))
-    );
-    assert!(parent.call("recover", json!([task["id"]])).is_err());
 }
 
 #[tokio::test]
@@ -729,3 +645,5 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
 
 #[path = "swarm_bridge_admission_tests.rs"]
 mod admission_tests;
+#[path = "swarm_bridge_loss_tests.rs"]
+mod loss_tests;

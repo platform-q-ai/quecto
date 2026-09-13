@@ -166,14 +166,22 @@ impl PreparedChild {
             // No reaper task ever runs for a launch that never registered:
             // the slot is retired here (or as soon as the reap completes).
             self.supervisor.retire_when_reaped(handle);
-            if !matches!(
-                conclusion,
-                TerminationConclusion::StillRunning(_) | TerminationConclusion::NoRetainedHandle
-            ) {
-                if let Some(reservation) = &mut self.swarm_reservation {
-                    if let Err(error) = reservation.rolled_back() {
-                        tracing::error!(%error, "swarm launch rollback requires reconciliation");
-                    }
+            let exit = match conclusion {
+                TerminationConclusion::StillRunning(_)
+                | TerminationConclusion::NoRetainedHandle => None,
+                // Already gone before it was asked: its tool groups may
+                // have outlived it.
+                TerminationConclusion::AlreadyExited => {
+                    Some(crate::domain::swarm::MemberExit::Abrupt)
+                }
+                TerminationConclusion::ExitedAfterProtocol
+                | TerminationConclusion::ExitedAfterFallback => {
+                    Some(crate::domain::swarm::MemberExit::Orderly)
+                }
+            };
+            if let (Some(exit), Some(reservation)) = (exit, &mut self.swarm_reservation) {
+                if let Err(error) = reservation.rolled_back(exit) {
+                    tracing::error!(%error, "swarm launch rollback requires reconciliation");
                 }
             }
         }

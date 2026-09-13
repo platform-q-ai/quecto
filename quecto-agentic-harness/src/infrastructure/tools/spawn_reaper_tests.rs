@@ -53,7 +53,7 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
             exit_tx,
             child: identity("owned"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     tokio::time::timeout(std::time::Duration::from_secs(5), exit_rx.changed())
@@ -107,7 +107,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
             exit_tx,
             child: identity("gone"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
 
@@ -138,7 +138,7 @@ async fn reaper_reports_the_supervisors_exit_status() {
             exit_tx,
             child: identity("code3"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     exit_rx.changed().await.unwrap();
@@ -151,4 +151,41 @@ async fn reaper_reports_the_supervisors_exit_status() {
     }
     assert!(!supervisor.knows(handle), "the reaper retires the slot");
     assert!(supervisor.signals_sent(handle).is_empty());
+}
+
+/// #1961: an exit code or a signal this harness sent is an orderly end (the
+/// member's teardown ran, or its whole group was signalled); a signal nobody
+/// here sent or an unobservable end is abrupt.
+#[test]
+fn member_exit_kind_separates_orderly_ends_from_abrupt_ones() {
+    use crate::domain::swarm::MemberExit;
+    use crate::infrastructure::processes::owned_child_supervisor::SentSignal;
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Code(0)), &[]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Code(101)), &[]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Signal(15)), &[SentSignal::Term]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(
+            Some(&ChildExit::Signal(9)),
+            &[SentSignal::Term, SentSignal::Kill]
+        ),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Signal(9)), &[]),
+        MemberExit::Abrupt
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Unobservable("wait failed".into())), &[]),
+        MemberExit::Abrupt
+    );
+    assert_eq!(member_exit_kind(None, &[]), MemberExit::Abrupt);
 }

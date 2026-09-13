@@ -2,7 +2,7 @@ use super::{QuectoWorld, result_json};
 use cucumber::{then, when};
 use serde_json::json;
 #[path = "swarm_supervision_fixture.rs"]
-mod fixture;
+pub(super) mod fixture;
 
 #[when("the supervisor pauses active work then delivers approval and exports evidence")]
 fn supervise(world: &mut QuectoWorld) {
