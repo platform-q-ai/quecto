@@ -301,23 +301,20 @@ pub(crate) fn build_tool_runtime(
     });
     // The termination owners — `kill`, the environment member shutdown
     // and the swarm member termination — are composed over the tools' own
-    // registry, channels and lifecycle cell and installed into their slots
-    // (#1936, #1939).
-    if let Some(build_termination_owners) = kill_tool {
-        let installed = crate::infrastructure::extensions::native::install_termination_owners(
-            &agent_control,
-            build_termination_owners(crate::interface::cli::KillToolWiring {
-                owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
-                    "harness".to_string()
-                } else {
-                    session_key.clone()
-                }),
-                registry: agent_control.subagent_registry.clone(),
-                broadcast_tx: workflow.broadcast_tx.clone(),
-                notify_tx: Some(agent_control.notification_tx.clone()),
-                harness_lifecycle: agent_control.harness_lifecycle.clone(),
+    // registry, channels, lifecycle cell and slots (#1936, #1939).
+    if let Some(install_termination_owners) = kill_tool {
+        let installed = install_termination_owners(crate::interface::cli::KillToolWiring {
+            owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+                "harness".to_string()
+            } else {
+                session_key.clone()
             }),
-        );
+            registry: agent_control.subagent_registry.clone(),
+            broadcast_tx: workflow.broadcast_tx.clone(),
+            notify_tx: Some(agent_control.notification_tx.clone()),
+            harness_lifecycle: agent_control.harness_lifecycle.clone(),
+            slots: agent_control.termination_slots.clone(),
+        });
         debug_assert!(
             installed,
             "the termination owners are composed once per runtime"

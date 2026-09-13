@@ -25,7 +25,7 @@ pub(crate) fn agent_cmd_tool_with_kill(
 pub(crate) fn termination_owners(
     registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-) -> quecto::infrastructure::extensions::native::TerminationOwners {
+) -> quecto::composition::subagent_termination::TerminationOwners {
     quecto::composition::subagent_termination::build_termination_owners(
         quecto::interface::cli::KillToolWiring {
             owner: quecto::domain::ids::AgentUuid::new("root"),
@@ -34,6 +34,7 @@ pub(crate) fn termination_owners(
             notify_tx: None,
             harness_lifecycle:
                 quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+            slots: Default::default(),
         },
     )
 }

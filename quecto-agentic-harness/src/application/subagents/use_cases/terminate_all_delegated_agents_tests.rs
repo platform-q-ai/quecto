@@ -389,6 +389,51 @@ async fn a_child_already_ending_is_awaited_like_an_acknowledgement_not_refused()
     );
 }
 
+/// #1953 review (1): a child whose kill failed after effects (claim kept,
+/// owner returned) is not joined forever by the fleet: the teardown
+/// re-takes the claim, re-attempts the protocol and reports the child as
+/// it settled — never `joined` on a path that is no longer executing.
+#[tokio::test]
+async fn a_child_whose_kill_returned_after_effects_is_re_attempted_by_the_fleet() {
+    let rig = rig();
+    rig.fleet.registry.set_phase(
+        "A",
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+    );
+    let outcome = bounded(
+        rig.fleet
+            .fleet
+            .execute(request(ShutdownReason::OperatorRequest)),
+    )
+    .await
+    .unwrap();
+    assert!(outcome.is_settled());
+    assert_eq!(
+        results(&outcome),
+        [
+            ("A", FleetChildResult::Graceful),
+            ("D", FleetChildResult::Graceful)
+        ]
+    );
+    let asked: Vec<String> = rig
+        .routing
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            RoutingCall::Shutdown(child, _) => Some(child.uuid.as_str().to_owned()),
+            RoutingCall::Forward { .. } => None,
+        })
+        .collect();
+    assert_eq!(asked, ["A", "D"], "A was asked again, not joined");
+    assert!(
+        rig.fleet
+            .registry
+            .trace()
+            .contains(&"re-take-stopping A".to_owned())
+    );
+    assert_eq!(rig.fleet.compensation.calls().len(), 2);
+}
+
 #[tokio::test]
 async fn an_unowned_child_whose_reaper_already_claimed_the_end_is_already_exited() {
     let rig = rig();

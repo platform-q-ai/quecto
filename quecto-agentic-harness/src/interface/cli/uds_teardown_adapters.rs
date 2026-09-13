@@ -104,15 +104,30 @@ impl LoopExitReadiness {
 /// Test hook (#1936): when set to `1` in a launched child's environment,
 /// the child records its exit readiness but never leaves — a harness whose
 /// teardown acknowledged and then stalled — so the parent's owned-handle
-/// fallback can be proven against a real process. Never set in production.
+/// fallback can be proven against a real process. Compiled only with
+/// `test-support` (the real-process tests build the binary with it); a
+/// production binary has no such gate.
+#[cfg(any(test, feature = "test-support"))]
 pub const HOLD_EXIT_AFTER_ACK_ENV: &str = "QUECTO_TEST_HOLD_EXIT_AFTER_ACK";
+
+/// Whether the test hook holds this exit. Always `false` in a production
+/// build: the environment is not consulted.
+fn exit_held_by_test_hook() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        if std::env::var(HOLD_EXIT_AFTER_ACK_ENV).as_deref() == Ok("1") {
+            tracing::warn!("exit readiness held by {HOLD_EXIT_AFTER_ACK_ENV}");
+            return true;
+        }
+    }
+    false
+}
 
 impl CompositionExitReadiness for LoopExitReadiness {
     fn signal_exit_ready(&self, readiness: ExitReadiness) -> PortFuture<'_, ()> {
         Box::pin(async move {
             *self.readiness.lock().unwrap_or_else(|e| e.into_inner()) = Some(readiness);
-            if std::env::var(HOLD_EXIT_AFTER_ACK_ENV).as_deref() == Ok("1") {
-                tracing::warn!("exit readiness held by {HOLD_EXIT_AFTER_ACK_ENV}");
+            if exit_held_by_test_hook() {
                 return;
             }
             self.notify.notify_one();

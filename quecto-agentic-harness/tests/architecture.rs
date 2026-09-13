@@ -3403,18 +3403,78 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     assert!(cli.contains("pub type KillToolBuilder =") && cli.contains("fn(KillToolWiring)"));
     assert!(cli.contains("pub struct KillToolWiring {"));
     let native = production_source("src/infrastructure/extensions/native.rs");
+    for forbidden in [
+        "KillToolBuilder",
+        "KillToolWiring",
+        "TerminationOwners",
+        "install_termination_owners",
+        "bind_member_termination",
+        "KillDelegatedAgent",
+    ] {
+        assert!(
+            !native.contains(forbidden),
+            "native.rs names `{forbidden}`: it builds the tools over empty slots and composes no owner"
+        );
+    }
     assert!(
-        !native.contains("KillTool") || native.contains("KillToolSlot"),
-        "native.rs names no kill builder; it only exposes the slot"
+        native.contains("pub termination_slots:")
+            && native.contains("environment_member_shutdown::TerminationSlots,")
+            && native.contains(".with_kill_slot(termination_slots.kill.clone())"),
+        "native.rs hands the tools' slots out for composition to fill"
     );
-    assert!(!native.contains("KillToolBuilder") && !native.contains("KillToolWiring"));
+    // The interface names nothing of the native module beyond its build
+    // entry points and their deps: never an owner, a slot install or a
+    // builder of its own.
+    let allowed_native_names = [
+        "AgentControlToolDeps",
+        "AgentControlToolBuild",
+        "OfficialToolDeps",
+        "SessionToolDeps",
+        "WorkflowToolDeps",
+        "build_agent_control_tool_extensions",
+        "build_official_tool_extensions",
+        "build_official_tool_registry",
+        "build_official_tool_registry_with_context",
+        "build_session_tool_extensions",
+        "build_workflow_tool_extension",
+        "build_native_extensions",
+        "register_bundled_native_tools",
+        "register_bundled_native_tools_with_scope",
+    ];
     let mut interface_files = Vec::new();
     collect_rs_files(Path::new("src/interface"), &mut interface_files);
+    let mut named = std::collections::BTreeSet::new();
     for file in &interface_files {
         let (path, source) = file.split_once(":\n").unwrap();
+        for (index, _) in source.match_indices("extensions::native::") {
+            let rest = &source[index + "extensions::native::".len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                // A `{ ... }` import list: every listed name is checked.
+                let list = rest
+                    .trim_start()
+                    .strip_prefix('{')
+                    .and_then(|list| list.split('}').next())
+                    .unwrap_or_default();
+                for item in list.split(',') {
+                    let item = item.trim();
+                    if !item.is_empty() {
+                        named.insert((path.to_owned(), item.to_owned()));
+                    }
+                }
+            } else {
+                named.insert((path.to_owned(), name));
+            }
+        }
+    }
+    assert!(!named.is_empty(), "the interface builds the native tools");
+    for (path, name) in &named {
         assert!(
-            !source.contains("infrastructure::extensions::native::Kill"),
-            "{path} names an infrastructure kill type"
+            allowed_native_names.contains(&name.as_str()),
+            "{path} names `infrastructure::extensions::native::{name}`, which is not a build entry point"
         );
     }
     // Both routes are composed with the owner conclusion: the direct
@@ -3440,6 +3500,39 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     assert!(
         !dead.contains("Compensated"),
         "mark_entry_dead must not release waiters before the effects ran"
+    );
+    // ...and the one compensation marks rows compensated last: after the
+    // registered cleanup, the exit-status mark, the cascade, the removed
+    // rows' cleanup and the exit signals, in source order.
+    let registry = production_source("src/infrastructure/tools/subagent_teardown_registry.rs");
+    let compensate = registry
+        .split("fn compensate<'a>(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("the compensation function");
+    let position = |needle: &str| {
+        compensate
+            .find(needle)
+            .unwrap_or_else(|| panic!("compensate names `{needle}`"))
+    };
+    let release = position("mark_entry_compensated(");
+    for effect in [
+        "cleanup_registered_once(",
+        "mark_exited",
+        "cascade_remove_and_state_changed(",
+        "cleanup_removed_entries_once(",
+        "send_replace(Some(ExitSignal {",
+        "SubagentNotification::Exited",
+    ] {
+        assert!(
+            position(effect) < release,
+            "`{effect}` must precede mark_entry_compensated in the compensation"
+        );
+    }
+    assert_eq!(
+        compensate.matches("mark_entry_compensated(").count(),
+        1,
+        "one release point, after every effect"
     );
     let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
     for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
@@ -3932,10 +4025,12 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
             "{path} still defines the numeric terminate_member"
         );
     }
-    // Composition binds the delegated termination once, beside the kill tool.
-    let native = production_source("src/infrastructure/extensions/native.rs");
-    assert!(native.contains("bind_member_termination("));
+    // Composition binds the delegated termination once, beside the kill tool
+    // and the member shutdown it installs into the tools' slots.
     let composition = production_source("src/composition/subagent_termination.rs");
+    assert!(composition.contains("bind_member_termination("));
+    assert!(composition.contains("slots.kill.install("));
+    assert!(composition.contains("slots.member_shutdown.install("));
     assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
     assert!(composition.contains("DelegatedMemberShutdown::new("));
 }

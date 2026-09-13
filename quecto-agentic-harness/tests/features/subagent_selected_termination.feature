@@ -77,7 +77,7 @@ Feature: Selected termination of a delegated agent (#1936, #1882)
     Then the kill result is "failed"
     And "E" stays claimed stopping
     And no survivor broadcast went out
-    And the kill of "E" is refused with "already in flight"
+    And a retry of the kill of "E" re-takes the claim and sends a second shutdown
 
   # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
   @serial

@@ -180,7 +180,9 @@ pub const EXIT_FORCED: i32 = 130;
 /// How long the common shutdown is given to settle the fleet before a
 /// **repeated** SIGTERM/SIGINT forces the process out: the fleet's worst
 /// case for one batch (5 s protocol ACK + 10 s exit budget + 2 s TERM + 2 s
-/// KILL) plus a non-owned child's 15 s compensation wait, with slack.
+/// KILL) plus a non-owned child's 25 s compensation wait
+/// (`DEFAULT_COMPENSATION_WAIT`, itself derived from that ladder), with
+/// slack.
 /// A second signal inside the budget is acknowledged and ignored — the
 /// shutdown already in progress is the same one it would start — so a
 /// stray double Ctrl-C never skips the teardown; past the budget it is an

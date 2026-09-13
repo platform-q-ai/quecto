@@ -181,6 +181,7 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        slots: Default::default(),
     });
 
     let args = serde_json::json!({
@@ -328,6 +329,7 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        slots: Default::default(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))
@@ -473,6 +475,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        slots: Default::default(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))

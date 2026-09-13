@@ -755,8 +755,11 @@ session.
   (an acknowledged shutdown whose exit was not observed, a fallback that
   signalled without an observed exit, or such a failure relayed from
   downstream) keeps the row claimed stopping, so the eventual exit is
-  compensated as this kill and a retry is refused as in flight; only a
-  refusal before anything reached the child lifts the claim. No
+  compensated as this kill; the claim is recorded as *returned* (attempt
+  n), so a later trigger — a retried `kill`, `kill_container`, the fleet
+  teardown — is not refused forever but re-takes it and re-attempts the
+  protocol, while a termination still *executing* on the row is joined.
+  Only a refusal before anything reached the child lifts the claim. No
   descendant pid is ever signalled: a child's subtree ends through the
   child's own teardown and the parent-loss binding
 - **Fleet teardown** (`TerminateAllDelegatedAgents`, #1938): the one owner

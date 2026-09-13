@@ -13,10 +13,17 @@
 //!    and commit `stopped` on its success.
 //!
 //! Anything else leaves a truthful, retryable `cleanup-failed` state under
-//! the claim: an unsettled member (its end could not be observed and its
-//! claim was lifted) or a failed kill script. The environment is never
-//! reported stopped while the retained kill has not succeeded, and the
-//! retained kill never runs twice under one claim.
+//! the claim: an unsettled member (a termination still executing on it did
+//! not settle within the bound, or its own fallback could not end it, its
+//! claim lifted) or a failed kill script. A member whose earlier kill
+//! *returned* after effects without observing the end (its claim kept for
+//! the exit, its owner gone) is not unsettled forever: the member shutdown
+//! re-takes that claim, asks again and — for a member this session holds
+//! no handle for — compensates it `unobserved` once the exit does not
+//! arrive within the bound, so the retained kill, the box's real
+//! authority, runs. The environment is never reported stopped while the
+//! retained kill has not succeeded, and the retained kill never runs twice
+//! under one claim.
 use std::fmt;
 use std::sync::Arc;
 

@@ -156,6 +156,29 @@ fn process_is_held_only_while_the_supervisor_retains_the_handle() {
     );
 }
 
+/// Review of #1953: a joiner's bound covers the whole owned-handle ladder
+/// (ACK + exit budget + TERM + KILL grace), never only the exit budget.
+#[test]
+fn the_compensation_wait_exceeds_the_full_owned_handle_ladder() {
+    use crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT;
+    use crate::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+    let ladder = PROTOCOL_ACK_TIMEOUT
+        + TerminationBudget::DEFAULT.exit_after_ack
+        + TerminationBudget::DEFAULT.term_grace
+        + TerminationBudget::DEFAULT.kill_grace;
+    assert_eq!(super::OWNED_HANDLE_LADDER, ladder);
+    assert!(
+        super::DEFAULT_COMPENSATION_WAIT > ladder,
+        "{:?} must exceed the ladder {ladder:?}",
+        super::DEFAULT_COMPENSATION_WAIT
+    );
+    assert!(
+        super::DEFAULT_COMPENSATION_WAIT
+            < crate::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND,
+        "a forwarded hop's bound covers the owner's compensation wait"
+    );
+}
+
 #[tokio::test]
 async fn waiting_for_compensation_observes_the_phase_or_times_out() {
     let registry = tree();
@@ -550,4 +573,86 @@ async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
     port.compensate(&a, TerminationCause::FleetTeardown).await;
     assert_eq!(joiner.await.unwrap(), CompensationObservation::Compensated);
     assert_eq!(port.prune_terminal_rows().await, [AgentUuid::new("a")]);
+}
+
+/// #1953 review (2), order-sensitive: on a multi-thread runtime a joiner
+/// woken on `Compensated` runs concurrently with whatever the compensation
+/// has left to do. The target's retained cleanup (the registered cleanup,
+/// the first effect) and its reported descendant's (run with the removed
+/// rows, the last cleanup) each take 300 ms and leave a marker; at wake
+/// time the joiner records whether both markers exist, whether the exit
+/// signal fired and whether the row is exited. Marking the row compensated
+/// before either cleanup, the signal or the status wakes the joiner with a
+/// marker missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_joiner_woken_on_compensated_finds_the_cleanup_and_exit_signal_already_done() {
+    let marker = std::env::temp_dir().join(format!("q-comp-{}", uuid::Uuid::new_v4().simple()));
+    let descendant_marker =
+        std::env::temp_dir().join(format!("q-comp-{}", uuid::Uuid::new_v4().simple()));
+    let registry = new_registry();
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    {
+        let mut entry = launched("A", "alpha", 1);
+        entry.cleanup_environment_id = Some("env-order".into());
+        entry.cleanup_argv = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("sleep 0.3; echo done > {}", marker.display()),
+        ];
+        entry.exit_signal_tx = Some(exit_tx.clone());
+        registry.lock().unwrap().insert("A".into(), entry);
+        let mut descendant = reported("B", "bravo", "A", 1);
+        descendant.cleanup_environment_id = Some("env-order-b".into());
+        descendant.cleanup_argv = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("sleep 0.3; echo done > {}", descendant_marker.display()),
+        ];
+        registry.lock().unwrap().insert("B".into(), descendant);
+    }
+    let port = Arc::new(
+        RegistryDelegatedAgents::new(registry.clone(), None, None)
+            .with_compensation_wait(Duration::from_secs(10)),
+    );
+    let a = identity("A", 1);
+    port.claim_stopping(&a, TerminationCause::SelectedTermination)
+        .unwrap();
+    assert_eq!(port.claim_terminal(&a), TerminalClaim::Claimed);
+    let joiner = {
+        let port = port.clone();
+        let registry = registry.clone();
+        let marker = marker.clone();
+        let descendant_marker = descendant_marker.clone();
+        let a = a.clone();
+        tokio::spawn(async move {
+            let observed = port.await_compensated(&a).await;
+            // Recorded at wake time, before the compensation task can
+            // progress any further on its own worker.
+            let cleaned = marker.exists() && descendant_marker.exists();
+            let signalled = exit_tx.borrow().is_some();
+            let status = registry.lock().unwrap()["A"].status.clone();
+            (observed, cleaned, signalled, status)
+        })
+    };
+    // Let the joiner subscribe before the compensation starts.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!joiner.is_finished());
+    let started = std::time::Instant::now();
+    port.compensate(&a, TerminationCause::SelectedTermination)
+        .await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(550),
+        "the compensation waited for both retained cleanups"
+    );
+    let (observed, cleaned, signalled, status) =
+        tokio::time::timeout(Duration::from_secs(5), joiner)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(observed, CompensationObservation::Compensated);
+    assert!(cleaned, "both retained cleanups ran before the release");
+    assert!(signalled, "the exit signal fired before the release");
+    assert_eq!(status, SubagentStatus::Exited);
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(&descendant_marker);
 }

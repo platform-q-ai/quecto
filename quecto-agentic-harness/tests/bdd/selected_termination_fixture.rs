@@ -205,6 +205,7 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 notify_tx: None,
                 harness_lifecycle:
                     quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                slots: Default::default(),
             },
         ));
         s.lifecycle = Some(build_lifecycle_use_cases(

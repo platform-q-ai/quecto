@@ -344,7 +344,8 @@ impl fmt::Display for ResolutionError {
 pub enum StoppingClaimError {
     /// No row with that identity (uuid and generation) is known.
     Unknown,
-    /// Another termination already claimed the row and is in flight.
+    /// Another termination claimed the row and is still executing; a claim
+    /// whose owner already returned is re-taken instead.
     AlreadyStopping,
     /// The row is already terminal.
     Exited,
@@ -428,9 +429,17 @@ pub trait DelegatedAgentRegistry: Send + Sync {
         target: &DelegatedAgentIdentity,
         cause: TerminationCause,
     ) -> Result<(), StoppingClaimError>;
-    /// Lift a stopping claim whose effects were refused or failed, so a
-    /// later trigger may try again. Idempotent.
+    /// Lift a stopping claim before anything reached the child, so a later
+    /// trigger may try again. Idempotent.
     fn release_stopping(&self, target: &DelegatedAgentIdentity);
+    /// Keep a stopping claim whose owner returned after effects reached the
+    /// child without observing its end: the eventual exit is compensated
+    /// as that termination (no post-mortem), and the claim is recorded as
+    /// returned so a later trigger is not refused forever but re-takes it
+    /// through `claim_stopping` and re-attempts the protocol. While the
+    /// owner is executing, `claim_stopping` refuses `AlreadyStopping` and
+    /// the later trigger joins. Idempotent.
+    fn retain_stopping(&self, target: &DelegatedAgentIdentity);
     /// Claim the row's terminal effects. Exactly one caller ever gets
     /// `Claimed` for a row.
     fn claim_terminal(&self, target: &DelegatedAgentIdentity) -> TerminalClaim;

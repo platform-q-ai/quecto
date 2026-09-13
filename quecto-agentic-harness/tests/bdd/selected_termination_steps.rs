@@ -130,7 +130,9 @@ fn given_in_flight(world: &mut QuectoWorld, uuid: String) {
     s.registry.as_ref().unwrap().lock().unwrap()[&uuid]
         .teardown
         .send_replace(TeardownPhase::Stopping(
-            quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            quecto::infrastructure::tools::subagent_registry::StoppingClaim::first(
+                quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            ),
         ));
 }
 
@@ -343,6 +345,57 @@ fn then_result(world: &mut QuectoWorld, result: String) {
     assert_eq!(is_error, result == "failed");
 }
 
+/// #1953 review (1): a claim kept after effects is not a dead end. The
+/// retry is not refused as in flight — nothing is executing — but re-takes
+/// the claim (attempt 2) and re-attempts the protocol. The retry's own
+/// wait is not awaited here (it would run the compensation bound again):
+/// the second `shutdown` reaching the child is the observation.
+#[then(expr = "a retry of the kill of {string} re-takes the claim and sends a second shutdown")]
+fn then_retry_re_attempts(world: &mut QuectoWorld, reference: String) {
+    use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
+    let s = state(world);
+    let requests = s
+        .endpoints
+        .iter()
+        .find(|(id, _)| id == &reference)
+        .map(|(_, endpoint)| endpoint.requests.clone())
+        .expect("the child's endpoint");
+    let shutdowns = |requests: &std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>| {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r["type"] == "shutdown")
+            .count()
+    };
+    assert_eq!(shutdowns(&requests), 1, "the failed kill sent one shutdown");
+    let kill = s.kill.clone().unwrap();
+    let arguments = serde_json::json!({"agent_id": reference, "command": "kill"}).to_string();
+    // Detached: the retry waits its own bound; the scenario observes the
+    // re-taken claim and the second command, not its eventual answer.
+    let _retry = s
+        .runtime
+        .as_ref()
+        .unwrap()
+        .spawn(async move { kill.execute(&arguments).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while shutdowns(&requests) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the retry never sent a second shutdown"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    match entries[&reference].teardown_phase() {
+        TeardownPhase::Stopping(claim) => {
+            assert_eq!(claim.attempt, 2, "re-taken, not refused");
+            assert_eq!(claim.owner, ClaimOwner::Executing);
+        }
+        other => panic!("the retry holds the claim: {other:?}"),
+    }
+}
+
 #[then(expr = "the kill of {string} is refused with {string}")]
 fn then_retry_refused(world: &mut QuectoWorld, reference: String, detail: String) {
     run_kill(world, &reference);
@@ -434,10 +487,16 @@ fn then_claimed_stopping(world: &mut QuectoWorld, a: String) {
     let s = state(world);
     let entries = s.registry.as_ref().unwrap().lock().unwrap();
     assert_ne!(entries[&a].status, SubagentStatus::Exited);
+    // Kept for the exit that will follow, and recorded as returned so a
+    // later trigger may re-take it (#1936 review).
     assert_eq!(
         entries[&a].teardown_phase(),
         TeardownPhase::Stopping(
-            quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination
+            quecto::infrastructure::tools::subagent_registry::StoppingClaim {
+                intent: quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+                attempt: 1,
+                owner: quecto::infrastructure::tools::subagent_registry::ClaimOwner::Returned,
+            }
         ),
         "effects reached the child: its eventual exit is this kill's"
     );

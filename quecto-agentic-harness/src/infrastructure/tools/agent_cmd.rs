@@ -98,8 +98,14 @@ impl AgentCmdTool {
         self
     }
 
-    /// The slot the interface installs the composed `kill` owner into once
-    /// this tool is already registered.
+    /// Read `kill` from a slot shared with whoever fills it later
+    /// (composition, once the tool is already registered).
+    pub fn with_kill_slot(mut self, slot: KillToolSlot) -> Self {
+        self.kill = slot;
+        self
+    }
+
+    /// The slot the composed `kill` owner is installed into.
     pub fn kill_slot(&self) -> KillToolSlot {
         self.kill.clone()
     }

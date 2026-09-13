@@ -75,7 +75,10 @@ jobs:
           for target in "${targets[@]}"; do args+=(--test "$target"); done
           # Explicit names are retained as executable documentation and architecture guards.
           cargo test -p quecto-agentic-harness --no-fail-fast --test architecture --test contracts
-          cargo test -p quecto-agentic-harness --no-fail-fast "${args[@]}"
+          # `test-support` is additive test-only surface; the real-process
+          # selected-termination target requires it (its child harness is the
+          # `quecto` binary built with the test-only exit hold, #1936 review).
+          cargo test -p quecto-agentic-harness --no-fail-fast --features test-support "${args[@]}"
           cargo test -p quecto-api --no-fail-fast --all-targets
           cargo test -p quecto-tui --lib
 

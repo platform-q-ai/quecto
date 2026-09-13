@@ -255,10 +255,12 @@ pub type WebFetchToolFactory =
 /// What the parent-hand termination owners are built over (#1936, #1939):
 /// the launcher registry the spawn tool populates, the event stream their
 /// compensation broadcasts on, the notification channel it posts passive
-/// notes to, the lineage owner and the harness lifecycle cell a frozen
-/// harness refuses new control commands from. The interface hands it to
-/// composition's builder once the agent-control tools exist, and installs
-/// the owners into their slots.
+/// notes to, the lineage owner, the harness lifecycle cell a frozen
+/// harness refuses new control commands from, and the slots the built
+/// agent-control tools read the owners from. The interface hands it to
+/// composition's builder once those tools exist; composition builds the
+/// graph and fills the slots.
+#[derive(Clone)]
 pub struct KillToolWiring {
     pub owner: crate::domain::ids::AgentUuid,
     pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
@@ -267,14 +269,16 @@ pub struct KillToolWiring {
     /// The harness lifecycle cell (#1938): a frozen harness refuses new
     /// control commands; shared with the spawn tool and the teardown graph.
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
+    /// Where `agent_cmd kill` and `kill_container` read their owners.
+    pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
 }
 
-/// Composition's builder of the termination owners — the `agent_cmd kill`
-/// tool, the environment member shutdown and the swarm member termination
-/// over one shared graph — injected through the CLI context like the
-/// web-fetch factory and the teardown graph builder.
-pub type KillToolBuilder =
-    fn(KillToolWiring) -> crate::infrastructure::extensions::native::TerminationOwners;
+/// Composition's installer of the termination owners — the `agent_cmd
+/// kill` tool, the environment member shutdown and the swarm member
+/// termination over one shared graph — injected through the CLI context
+/// like the web-fetch factory and the teardown graph builder. `true` when
+/// every slot was empty and took its owner: one set per harness.
+pub type KillToolBuilder = fn(KillToolWiring) -> bool;
 
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {

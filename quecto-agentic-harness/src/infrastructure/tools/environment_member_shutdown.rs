@@ -145,6 +145,16 @@ impl EnvironmentMemberShutdown for MemberShutdownSlot {
     }
 }
 
+/// The slots the agent-control tools read their parent-hand termination
+/// owners from (#1936 review): built empty with the tools, handed to
+/// composition inside the interface's wiring, filled once by composition's
+/// graph. Cloning shares the slots.
+#[derive(Clone, Default)]
+pub struct TerminationSlots {
+    pub kill: super::agent_cmd::KillToolSlot,
+    pub member_shutdown: MemberShutdownSlot,
+}
+
 #[cfg(test)]
 #[path = "environment_member_shutdown_tests.rs"]
 mod tests;

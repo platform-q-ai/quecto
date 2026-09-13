@@ -81,7 +81,11 @@ impl KillDelegatedAgent {
         match self.terminate(&target, &lineage).await {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
-                if !effects_dispatched(&error) {
+                if effects_dispatched(&error) {
+                    // Kept for the exit that will follow, and re-takeable
+                    // by a retry once this kill has returned.
+                    self.ports.registry.retain_stopping(&target);
+                } else {
                     self.ports.registry.release_stopping(&target);
                 }
                 Err(error)
@@ -126,7 +130,7 @@ impl KillDelegatedAgent {
             target: target.clone(),
             remaining_depth: Self::depth_for(lineage, target),
         };
-        match self.route.execute(request).await {
+        match self.route.execute_under_callers_claim(request).await {
             Ok(TerminationRouted::ShutdownRequested { child, result }) => {
                 debug_assert_eq!(&child, target, "self shutdown goes only to the target");
                 self.observed_or_relayed(target, result).await

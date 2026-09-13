@@ -420,10 +420,73 @@ async fn an_acknowledged_child_without_a_handle_whose_exit_is_not_observed_keeps
     ));
     assert_eq!(
         rig.registry.phase("A"),
-        Phase::Stopping(TerminationCause::SelectedTermination),
-        "the child acknowledged: its eventual exit is this kill's"
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        "the child acknowledged: its eventual exit is this kill's, and a retry may re-take it"
     );
     assert!(rig.compensation.calls().is_empty());
+}
+
+/// #1953 review (1): a kill that failed after effects on a child this
+/// harness holds no handle for is not a dead end. The claim is kept for
+/// the exit, but recorded as returned, so the next kill re-takes it and
+/// sends a second `shutdown` — and, once the exit is observed, concludes.
+#[tokio::test]
+async fn a_retry_after_a_failed_kill_re_takes_the_claim_and_sends_a_second_shutdown() {
+    let registry = FakeRegistry::new().with_row("A", 1, "alpha");
+    *registry.time_out_waits.lock().unwrap() = true;
+    let rig = rig(
+        registry,
+        root_tree(),
+        TerminationConclusion::NoRetainedHandle,
+    );
+    let first = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
+    assert!(matches!(
+        first,
+        KillDelegatedAgentError::Failed {
+            effects_dispatched: true,
+            ..
+        }
+    ));
+    assert_eq!(rig.routing.calls().len(), 1);
+    // The retry is not "already in flight": nothing is executing.
+    let second = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
+    assert!(
+        matches!(
+            second,
+            KillDelegatedAgentError::Failed {
+                effects_dispatched: true,
+                ..
+            }
+        ),
+        "{second:?}"
+    );
+    assert_eq!(rig.routing.calls().len(), 2, "a second shutdown was sent");
+    assert_eq!(
+        rig.registry.phase("A"),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        "still this kill's, still re-takeable"
+    );
+    assert_eq!(
+        rig.registry.trace(),
+        [
+            "claim-stopping A",
+            "await-compensated A",
+            "retain-stopping A",
+            "re-take-stopping A",
+            "await-compensated A",
+            "retain-stopping A",
+        ]
+    );
+    // The third attempt observes the exit and concludes as the kill.
+    *rig.registry.time_out_waits.lock().unwrap() = false;
+    let registry = rig.registry.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        registry.set_phase("A", Phase::Compensated);
+    });
+    let outcome = bounded(rig.use_case.execute(kill("A"))).await.unwrap();
+    assert_eq!(outcome.result, TerminationResult::Graceful);
+    assert_eq!(rig.routing.calls().len(), 3);
 }
 
 #[tokio::test]
@@ -443,12 +506,23 @@ async fn a_fallback_that_could_not_end_the_child_fails_and_keeps_the_claim() {
     );
     assert_eq!(
         rig.registry.phase("A"),
-        Phase::Stopping(TerminationCause::SelectedTermination),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
         "TERM and KILL were sent: a later exit is compensated as this kill"
     );
-    // A second kill is refused as in flight rather than re-signalling.
+    // A second kill re-takes the returned claim and re-attempts, rather
+    // than being refused forever as in flight (#1953 review).
     let again = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
-    assert_eq!(again, KillDelegatedAgentError::AlreadyStopping);
+    assert!(
+        matches!(
+            again,
+            KillDelegatedAgentError::Failed {
+                effects_dispatched: true,
+                ..
+            }
+        ),
+        "{again:?}"
+    );
+    assert_eq!(rig.routing.calls().len(), 2);
 }
 
 #[tokio::test]
@@ -580,7 +654,7 @@ async fn downstream_refusals_are_presented_by_kind() {
     );
     assert_eq!(
         rig.registry.phase("B"),
-        Phase::Stopping(TerminationCause::SelectedTermination)
+        Phase::StoppingReturned(TerminationCause::SelectedTermination)
     );
     rig.registry.set_phase("B", Phase::Live);
     *rig.routing.downstream.lock().unwrap() = vec![(a, DownstreamRejection::AlreadyExited)];

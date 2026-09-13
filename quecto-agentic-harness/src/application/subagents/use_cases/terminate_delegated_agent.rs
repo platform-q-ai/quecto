@@ -76,27 +76,63 @@ impl TerminateDelegatedAgent {
         self
     }
 
-    /// Claim the target stopping for this edge. `true` when this call took
-    /// the claim (and must lift it if nothing reaches the target); a claim
-    /// another path already holds is left to that path.
-    fn claim_target(&self, target: &DelegatedAgentIdentity) -> bool {
+    /// Claim the target stopping for this edge, or learn who holds it.
+    fn claim_target(&self, target: &DelegatedAgentIdentity) -> Claim {
         let Some(registry) = &self.registry else {
-            return false;
+            return Claim::Unclaimed;
         };
         match registry.claim_stopping(target, TerminationCause::SelectedTermination) {
-            Ok(()) => true,
-            Err(
-                StoppingClaimError::AlreadyStopping
-                | StoppingClaimError::Exited
-                | StoppingClaimError::Unknown,
-            ) => false,
+            Ok(()) => Claim::Taken,
+            Err(StoppingClaimError::AlreadyStopping) => Claim::InFlight,
+            Err(StoppingClaimError::Exited) => Claim::Exited,
+            Err(StoppingClaimError::Unknown) => Claim::Unclaimed,
         }
     }
 
-    fn release_target(&self, target: &DelegatedAgentIdentity, claimed: bool) {
-        if claimed {
+    /// Nothing reached the target: a claim this edge took is lifted.
+    fn release_target(&self, target: &DelegatedAgentIdentity, claim: Claim) {
+        if claim == Claim::Taken {
             if let Some(registry) = &self.registry {
                 registry.release_stopping(target);
+            }
+        }
+    }
+
+    /// Effects reached the target but its end was not observed: a claim
+    /// this edge took is kept for the exit that will follow, recorded as
+    /// returned so a later trigger may re-take it.
+    fn retain_target(&self, target: &DelegatedAgentIdentity, claim: Claim) {
+        if claim == Claim::Taken {
+            if let Some(registry) = &self.registry {
+                registry.retain_stopping(target);
+            }
+        }
+    }
+
+    /// A termination another path owns and is still executing: join its
+    /// end instead of sending a second command and running a parallel
+    /// conclusion. The joined path's own result is not known here, so the
+    /// answer carries none; the caller observes the row.
+    async fn join_in_flight(
+        &self,
+        target: &DelegatedAgentIdentity,
+        routed: TerminationRouted,
+    ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
+        let registry = self
+            .registry
+            .as_ref()
+            .expect("a claim in flight was observed through the registry");
+        match registry.await_compensated(target).await {
+            CompensationObservation::Compensated => Ok(routed),
+            CompensationObservation::Unknown => Err(TerminateDelegatedAgentError::Rejected(
+                TerminationRouteError::UnknownTarget(target.uuid.clone()),
+            )),
+            CompensationObservation::TimedOut => {
+                Err(TerminateDelegatedAgentError::TerminationFailed {
+                    child: target.uuid.clone(),
+                    detail: "a termination already in flight did not settle within the bound"
+                        .into(),
+                })
             }
         }
     }
@@ -107,9 +143,29 @@ impl TerminateDelegatedAgent {
             .is_some_and(|registry| registry.terminal_claimed(target))
     }
 
+    /// Route one edge, claiming the target here: a claim another path is
+    /// still executing is joined; one whose owner returned is re-taken.
     pub async fn execute(
         &self,
         request: TerminateDelegatedAgentRequest,
+    ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
+        self.route(request, false).await
+    }
+
+    /// Route one edge for a caller that already holds the target's
+    /// stopping claim (the operator kill): no claim is taken, joined,
+    /// lifted or kept here.
+    pub async fn execute_under_callers_claim(
+        &self,
+        request: TerminateDelegatedAgentRequest,
+    ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
+        self.route(request, true).await
+    }
+
+    async fn route(
+        &self,
+        request: TerminateDelegatedAgentRequest,
+        held_by_caller: bool,
     ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
         // A frozen or terminated harness is on its way out; its subtree is
         // already being torn down and must not be re-routed underneath.
@@ -129,12 +185,29 @@ impl TerminateDelegatedAgent {
                 }
                 Err(error) => return Err(TerminateDelegatedAgentError::Rejected(error)),
             };
-        // The route is affirmed: claim the target before the edge.
-        let claimed = self.claim_target(&request.target);
+        // The route is affirmed: claim the target before the edge — or
+        // join the termination that holds it and is still executing.
+        let claim = if held_by_caller {
+            Claim::HeldByCaller
+        } else {
+            self.claim_target(&request.target)
+        };
+        if claim == Claim::Exited {
+            return Err(TerminateDelegatedAgentError::TargetAlreadyExited(
+                request.target.uuid,
+            ));
+        }
         match route {
             TerminationRoute::ShutdownDirectChild(child) => {
                 debug_assert_eq!(child.uuid, request.target.uuid);
-                self.shut_down_owned_child(child, claimed).await
+                if claim == Claim::InFlight {
+                    let routed = TerminationRouted::ShutdownRequested {
+                        child: child.clone(),
+                        result: None,
+                    };
+                    return self.join_in_flight(&child, routed).await;
+                }
+                self.shut_down_owned_child(child, claim).await
             }
             TerminationRoute::ForwardToDirectChild {
                 via,
@@ -142,6 +215,14 @@ impl TerminateDelegatedAgent {
             } => {
                 debug_assert!(remaining_depth < request.remaining_depth);
                 debug_assert_ne!(via.uuid, request.target.uuid);
+                if claim == Claim::InFlight {
+                    let routed = TerminationRouted::Forwarded {
+                        via,
+                        remaining_depth,
+                        result: None,
+                    };
+                    return self.join_in_flight(&request.target, routed).await;
+                }
                 let answer = self
                     .routing
                     .forward_termination(&via, &request.target, remaining_depth)
@@ -150,7 +231,7 @@ impl TerminateDelegatedAgent {
                 // whatever the hop answered — a relayed result, a refusal,
                 // a timeout — its own claim is lifted, and the row ends
                 // through the owner's reported snapshot.
-                self.release_target(&request.target, claimed);
+                self.release_target(&request.target, claim);
                 match answer {
                     Ok(result) => Ok(TerminationRouted::Forwarded {
                         via,
@@ -180,7 +261,7 @@ impl TerminateDelegatedAgent {
     async fn shut_down_owned_child(
         &self,
         child: DelegatedAgentIdentity,
-        claimed: bool,
+        claim: Claim,
     ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
         let attempt = ProtocolAttempt::from_shutdown_answer(
             self.routing
@@ -195,7 +276,7 @@ impl TerminateDelegatedAgent {
                     result: None,
                 }),
                 ProtocolAttempt::Negative(detail) => {
-                    self.release_target(&child, claimed);
+                    self.release_target(&child, claim);
                     Err(TerminateDelegatedAgentError::ChildUnreachable {
                         child: child.uuid,
                         detail,
@@ -206,12 +287,16 @@ impl TerminateDelegatedAgent {
         let result = match self.conclude(owner, &child, attempt).await {
             Ok(result) => result,
             Err(Refusal::NothingDispatched(error)) => {
-                self.release_target(&child, claimed);
+                self.release_target(&child, claim);
                 return Err(error);
             }
             // Effects reached the child: the claim stays so its eventual
-            // exit is compensated as this termination.
-            Err(Refusal::AfterEffects(error)) => return Err(error),
+            // exit is compensated as this termination, and is recorded as
+            // returned so a retry may re-take it.
+            Err(Refusal::AfterEffects(error)) => {
+                self.retain_target(&child, claim);
+                return Err(error);
+            }
         };
         self.compensate(owner, &child).await?;
         Ok(TerminationRouted::ShutdownRequested {
@@ -309,6 +394,21 @@ impl TerminateDelegatedAgent {
             },
         }
     }
+}
+
+/// What this edge holds over the target's stopping claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claim {
+    /// This edge took the claim and lifts or keeps it.
+    Taken,
+    /// The caller above holds it (the operator kill) and lifts or keeps it.
+    HeldByCaller,
+    /// Another termination holds it and is executing: joined.
+    InFlight,
+    /// The row is already terminal.
+    Exited,
+    /// No registry, or no row: nothing to hold.
+    Unclaimed,
 }
 
 /// Why a conclusion did not yield a result, split by whether the claim

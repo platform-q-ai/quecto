@@ -27,9 +27,11 @@ use crate::interface::cli::uds_teardown_adapters::{
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
 pub use crate::interface::cli::uds_parent_control::{ConnectionRole, ConnectionTeardown};
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::interface::cli::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
 pub use crate::interface::cli::uds_teardown_adapters::{
-    DeferredLoopPersistence as LoopPersistenceAdapter, HOLD_EXIT_AFTER_ACK_ENV,
-    LoopExitReadiness as LoopExitAdapter, RegistryLifecycleRepository as LifecycleAdapter,
+    DeferredLoopPersistence as LoopPersistenceAdapter, LoopExitReadiness as LoopExitAdapter,
+    RegistryLifecycleRepository as LifecycleAdapter,
 };
 pub use crate::interface::cli::uds_teardown_graph::{
     ParentControlLaunch, TeardownGraph, TeardownGraphBuilder, TeardownGraphInputs,

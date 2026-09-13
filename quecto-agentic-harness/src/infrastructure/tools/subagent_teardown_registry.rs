@@ -21,17 +21,34 @@ use crate::domain::subagent::DisplayNameResolveError;
 use crate::domain::subagent_teardown::DelegatedAgentIdentity;
 
 use super::subagent_registry::{
-    ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification, SubagentEntry,
-    SubagentNotification, SubagentRegistry, SubagentStatus, TeardownIntent, TeardownPhase,
+    ClaimOwner, ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification,
+    StoppingClaim, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
+    TeardownIntent, TeardownPhase,
 };
 use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
+use crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT;
+use crate::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+
+/// The full owned-handle ladder a directly owned child's conclusion may
+/// take: the protocol ACK bound, the acknowledged child's exit budget, then
+/// TERM and KILL grace (`TerminationBudget::DEFAULT`).
+pub const OWNED_HANDLE_LADDER: Duration = PROTOCOL_ACK_TIMEOUT
+    .saturating_add(TerminationBudget::DEFAULT.exit_after_ack)
+    .saturating_add(TerminationBudget::DEFAULT.term_grace)
+    .saturating_add(TerminationBudget::DEFAULT.kill_grace);
+
+/// Slack a compensation observer allows past the ladder, for the reaper's
+/// own observation and compensation to run.
+const COMPENSATION_WAIT_SLACK: Duration = Duration::from_secs(6);
 
 /// How long a caller waits for a row's compensation before reporting that
-/// the exit was not observed. Sized above the owned-handle exit budget
-/// (`TerminationBudget::DEFAULT`, 10 s after an ACK) so a directly owned
-/// child's fallback always concludes first, and a nested target's exit,
-/// reported through its ancestor's snapshot, has room to arrive.
-pub const DEFAULT_COMPENSATION_WAIT: Duration = Duration::from_secs(15);
+/// the exit was not observed. Derived from the budgets, above the *whole*
+/// owned-handle ladder (not only the exit budget), so a directly owned
+/// child's fallback — including its KILL grace — always concludes before
+/// a joiner gives up, and a nested target's exit, reported through its
+/// ancestor's snapshot, has room to arrive.
+pub const DEFAULT_COMPENSATION_WAIT: Duration =
+    OWNED_HANDLE_LADDER.saturating_add(COMPENSATION_WAIT_SLACK);
 
 pub struct RegistryDelegatedAgents {
     registry: SubagentRegistry,
@@ -135,13 +152,52 @@ impl DelegatedAgentRegistry for RegistryDelegatedAgents {
             TeardownPhase::Live if Self::is_live(entry) => {
                 entry
                     .teardown
-                    .send_replace(TeardownPhase::Stopping(intent_of(cause)));
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim::first(intent_of(
+                        cause,
+                    ))));
                 Ok(())
             }
             TeardownPhase::Live => Err(StoppingClaimError::Exited),
-            TeardownPhase::Stopping(_) => Err(StoppingClaimError::AlreadyStopping),
+            // The earlier owner returned without observing the end: this
+            // trigger re-takes the claim under its own intent and
+            // re-attempts; the row was never released in between, so the
+            // exit is still compensated as a termination, never a
+            // post-mortem.
+            TeardownPhase::Stopping(StoppingClaim {
+                attempt,
+                owner: ClaimOwner::Returned,
+                ..
+            }) => {
+                entry
+                    .teardown
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim {
+                        intent: intent_of(cause),
+                        attempt: attempt.saturating_add(1),
+                        owner: ClaimOwner::Executing,
+                    }));
+                Ok(())
+            }
+            TeardownPhase::Stopping(StoppingClaim {
+                owner: ClaimOwner::Executing,
+                ..
+            }) => Err(StoppingClaimError::AlreadyStopping),
             TeardownPhase::Compensating(_) | TeardownPhase::Compensated => {
                 Err(StoppingClaimError::Exited)
+            }
+        }
+    }
+
+    fn retain_stopping(&self, target: &DelegatedAgentIdentity) {
+        let entries = self.lock();
+        if let Some(entry) = Self::key_for(&entries, &target.uuid).and_then(|key| entries.get(&key))
+        {
+            if let TeardownPhase::Stopping(claim) = entry.teardown_phase() {
+                entry
+                    .teardown
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim {
+                        owner: ClaimOwner::Returned,
+                        ..claim
+                    }));
             }
         }
     }
@@ -169,10 +225,10 @@ impl DelegatedAgentRegistry for RegistryDelegatedAgents {
                     .send_replace(TeardownPhase::Compensating(TeardownIntent::Exit));
                 TerminalClaim::Claimed
             }
-            TeardownPhase::Stopping(intent) => {
+            TeardownPhase::Stopping(claim) => {
                 entry
                     .teardown
-                    .send_replace(TeardownPhase::Compensating(intent));
+                    .send_replace(TeardownPhase::Compensating(claim.intent));
                 TerminalClaim::Claimed
             }
             TeardownPhase::Compensating(_) | TeardownPhase::Compensated => {

@@ -80,6 +80,13 @@ tokio-rustls = "0.26"
 # target can drive the real TUI render/key path without a TTY (#805).
 quecto-tui = { version = "0.77.3", path = "../quecto-tui", features = ["test-harness"] }
 
+# The real-process selected-termination proof launches the `quecto` binary
+# with the `test-support` hold gate (`QUECTO_TEST_HOLD_EXIT_AFTER_ACK`),
+# which a production build does not compile in.
+[[test]]
+name = "selected_termination"
+required-features = ["test-support"]
+
 [[test]]
 name = "bdd"
 harness = false

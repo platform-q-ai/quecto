@@ -264,9 +264,21 @@ async fn the_receiver_claims_the_target_stopping_before_routing_its_edge() {
     use_case.execute(request("A", 1, 1)).await.unwrap_err();
     assert_eq!(registry.phase("A"), Phase::Live);
     assert_eq!(registry.trace(), ["claim-stopping A", "release-stopping A"]);
-    // ...but never a claim another path (an operator kill) already holds.
+    // ...but never a claim another path (an operator kill) already holds:
+    // that path is joined, and a join that does not settle within the
+    // bound leaves the claim exactly as it was, with no second command.
     registry.set_phase("A", Phase::Stopping(TerminationCause::SelectedTermination));
-    use_case.execute(request("A", 1, 1)).await.unwrap_err();
+    *registry.time_out_waits.lock().unwrap() = true;
+    let sent_before = routing.calls().len();
+    let error = use_case.execute(request("A", 1, 1)).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            TerminateDelegatedAgentError::TerminationFailed { .. }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(routing.calls().len(), sent_before, "no second shutdown");
     assert_eq!(
         registry.phase("A"),
         Phase::Stopping(TerminationCause::SelectedTermination)
@@ -381,10 +393,101 @@ mod owner {
         );
         assert_eq!(
             rig.registry.phase("A"),
-            Phase::Stopping(TerminationCause::SelectedTermination),
-            "effects were dispatched: the eventual exit is this kill's"
+            Phase::StoppingReturned(TerminationCause::SelectedTermination),
+            "effects were dispatched: the eventual exit is this kill's, and a retry may re-take it"
         );
         assert!(rig.compensation.calls().is_empty());
+    }
+
+    /// #1953 review (4): a kill of the same target another path is still
+    /// executing is joined — no second `shutdown`, no parallel conclusion —
+    /// and answered once that path's compensation ran; the joined path's
+    /// result is not this hop's to report.
+    #[tokio::test]
+    async fn a_target_another_owner_is_still_ending_is_joined_not_shut_down_twice() {
+        let rig = rig(owned("A"), TerminationConclusion::ExitedAfterProtocol);
+        rig.registry
+            .set_phase("A", Phase::Stopping(TerminationCause::SelectedTermination));
+        let registry = rig.registry.clone();
+        let joiner = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            registry.set_phase("A", Phase::Compensated);
+        });
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        joiner.await.unwrap();
+        assert_eq!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                child: identity("A", 1),
+                result: None,
+            }
+        );
+        assert!(rig.routing.calls().is_empty(), "no second shutdown");
+        assert!(rig.termination.calls().is_empty(), "no parallel conclusion");
+        assert!(rig.compensation.calls().is_empty());
+        assert_eq!(rig.registry.trace(), ["await-compensated A"]);
+    }
+
+    /// #1953 review (1): a claim whose owner returned after effects (a
+    /// kill that failed) is re-taken by the next kill, which re-attempts
+    /// the protocol — a second `shutdown` — instead of being refused or
+    /// joining a path that is no longer executing.
+    #[tokio::test]
+    async fn a_claim_whose_owner_returned_is_re_taken_and_the_protocol_re_attempted() {
+        let rig = rig(owned("A"), TerminationConclusion::ExitedAfterProtocol);
+        rig.registry.set_phase(
+            "A",
+            Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        );
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        assert!(matches!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                result: Some(TerminationResult::Graceful),
+                ..
+            }
+        ));
+        assert_eq!(
+            rig.routing.calls().len(),
+            1,
+            "the protocol was re-attempted"
+        );
+        assert_eq!(
+            rig.registry.trace(),
+            ["re-take-stopping A", "claim-terminal A", "compensated A"]
+        );
+    }
+
+    /// #1953 review (8): a child that answers `shutdown` with an
+    /// `already_exited` refusal is an acknowledged attempt here too: the
+    /// owned handle waits for the exit, no signal is authorised by the
+    /// refusal, and the conclusion is reported as observed.
+    #[tokio::test]
+    async fn a_child_already_ending_is_awaited_as_an_acknowledgement_by_its_owner() {
+        let rig = rig(owned("A"), TerminationConclusion::ExitedAfterProtocol);
+        rig.routing
+            .downstream
+            .lock()
+            .unwrap()
+            .push((AgentUuid::new("A"), DownstreamRejection::AlreadyExited));
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        assert!(matches!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                result: Some(TerminationResult::Graceful),
+                ..
+            }
+        ));
+        let attempts: Vec<_> = rig
+            .termination
+            .calls()
+            .into_iter()
+            .map(|(_, attempt, _)| attempt)
+            .collect();
+        assert_eq!(
+            attempts,
+            [crate::application::subagents::ports::ProtocolAttempt::Acknowledged]
+        );
     }
 
     #[tokio::test]
@@ -421,10 +524,18 @@ mod owner {
             .lock()
             .unwrap()
             .push(AgentUuid::new("A"));
-        // The reaper claimed the terminal effects while the edge was in
-        // flight (the row is already compensated when the answer comes).
-        rig.registry.set_phase("A", Phase::Compensated);
+        // The reaper claims the terminal effects while the edge is in
+        // flight: the row is already compensated when the answer comes.
+        *rig.routing.hold_child.lock().unwrap() = Some(AgentUuid::new("A"));
+        let registry = rig.registry.clone();
+        let routing = rig.routing.clone();
+        let reaper = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            registry.set_phase("A", Phase::Compensated);
+            routing.gate.notify_one();
+        });
         let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        reaper.await.unwrap();
         assert!(matches!(
             routed,
             TerminationRouted::ShutdownRequested {
@@ -433,6 +544,22 @@ mod owner {
             }
         ));
         assert!(rig.compensation.calls().is_empty(), "joined, not repeated");
+        // A row already terminal before the edge is answered without one.
+        let terminal = self::rig(
+            FakeRegistry::new().with_row("A", 1, "alpha"),
+            TerminationConclusion::NoRetainedHandle,
+        );
+        terminal.registry.set_phase("A", Phase::Compensated);
+        let error = terminal
+            .use_case
+            .execute(request("A", 1, 1))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            TerminateDelegatedAgentError::TargetAlreadyExited(AgentUuid::new("A"))
+        );
+        assert!(terminal.routing.calls().is_empty());
     }
 
     #[tokio::test]
@@ -447,7 +574,7 @@ mod owner {
         ));
         assert_eq!(
             rig.registry.phase("A"),
-            Phase::Stopping(TerminationCause::SelectedTermination)
+            Phase::StoppingReturned(TerminationCause::SelectedTermination)
         );
     }
 
