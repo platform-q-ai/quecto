@@ -95,8 +95,9 @@ Important invariants before Phase 4:
 
 ## Persistence and session recovery
 
-**Primary code:** session ports in `src/domain`/`src/application`, persistence
-adapters in `src/infrastructure`, and UDS/session recovery paths in
+**Primary code:** session vocabulary in `src/domain/session.rs`, the
+`SessionStore`/`ContextSpillStore` ports in `src/application/session/ports.rs`,
+persistence adapters in `src/infrastructure`, and UDS/session recovery paths in
 `src/interface/cli`.
 
 Session persistence stores conversation messages, tool-call identity, durable

@@ -278,6 +278,12 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "libc::",
         "async fn",
         "Pin<Box<dyn Future",
+        // A boxed or opaque future without the Pin, and the futures-crate
+        // alias, are async types too.
+        "dyn Future",
+        "impl Future",
+        "impl std::future::Future",
+        "BoxFuture",
     ];
     // (file, what keeps it here — tracked by #1960)
     // Empty since #1960: every legacy port and async alias has left the
@@ -313,9 +319,8 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let mut legacy_seen = BTreeSet::new();
     for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
         let code = production_code(path);
-        let has_trait = code
-            .iter()
-            .any(|(_, l)| l.trim_start().starts_with("pub trait "));
+        // Any visibility: a private or `pub(crate)` trait is a port too.
+        let has_trait = code.iter().any(|(_, l)| declares(l, "trait"));
         let has_impure = code
             .iter()
             .any(|(_, l)| impure.iter().any(|needle| l.contains(needle)));
