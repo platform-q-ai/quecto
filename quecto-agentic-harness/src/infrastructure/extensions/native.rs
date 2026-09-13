@@ -215,7 +215,51 @@ pub struct KillToolWiring {
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
 }
 
-pub type KillToolBuilder = fn(KillToolWiring) -> Arc<dyn Tool>;
+/// The parent-hand termination owners composition builds over one shared
+/// delegated-agent graph (#1936, #1939): the `agent_cmd kill` tool, the
+/// environment member shutdown `kill_container` asks before its retained
+/// kill, and the swarm member termination a settling swarm run uses for
+/// members this harness launched.
+pub struct TerminationOwners {
+    pub kill_tool: Arc<dyn Tool>,
+    pub member_shutdown:
+        Arc<dyn crate::application::environments::ports::EnvironmentMemberShutdown>,
+    pub swarm_member_termination: Arc<
+        crate::infrastructure::tools::swarm_member_termination::DelegatedSwarmMemberTermination,
+    >,
+}
+
+pub type KillToolBuilder = fn(KillToolWiring) -> TerminationOwners;
+
+/// Without composition's graph no member can be asked to shut down: the
+/// explicit kill reports every member unsettled and leaves the environment
+/// retryable rather than running the retained kill under live members.
+struct NoMemberShutdown;
+
+impl crate::application::environments::ports::EnvironmentMemberShutdown for NoMemberShutdown {
+    fn shutdown_members<'a>(
+        &'a self,
+        members: &'a [String],
+    ) -> crate::application::environments::ports::PortFuture<
+        'a,
+        crate::application::environments::ports::MemberShutdownReport,
+    > {
+        Box::pin(async move {
+            crate::application::environments::ports::MemberShutdownReport {
+                settled: Vec::new(),
+                unsettled: members
+                    .iter()
+                    .map(
+                        |member| crate::application::environments::ports::UnsettledMember {
+                            member: member.clone(),
+                            detail: "no member shutdown is composed in this session".into(),
+                        },
+                    )
+                    .collect(),
+            }
+        })
+    }
+}
 
 pub struct AgentControlToolBuild {
     pub extensions: Vec<Arc<dyn Extension>>,
@@ -249,14 +293,36 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_registry(registry.clone())
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
-    let environment_control = std::sync::Arc::new(
-        crate::application::environment_control::EnvironmentControlUseCase::new(
+    // The parent-hand termination owners (#1936, #1939) share one graph:
+    // `kill_container` asks the environment's members through it before the
+    // retained kill, and a settling swarm run ends the members this harness
+    // launched through it.
+    let owners = deps.kill_tool.map(|build| {
+        build(KillToolWiring {
+            owner: deps.owner,
+            registry: registry.clone(),
+            broadcast_tx: deps.broadcast_tx,
+            notify_tx: Some(notification_tx.clone()),
+            harness_lifecycle: harness_lifecycle.clone(),
+        })
+    });
+    let member_shutdown: Arc<
+        dyn crate::application::environments::ports::EnvironmentMemberShutdown,
+    > = match &owners {
+        Some(owners) => owners.member_shutdown.clone(),
+        None => Arc::new(NoMemberShutdown),
+    };
+    if let Some(owners) = &owners {
+        crate::infrastructure::tools::swarm_lifecycle::bind_member_termination(
+            owners.swarm_member_termination.clone(),
+        );
+    }
+    let kill_environment = std::sync::Arc::new(
+        crate::application::environments::use_cases::KillEnvironment::new(
             environment_registry.clone(),
+            member_shutdown,
             std::sync::Arc::new(
-                crate::infrastructure::tools::environment_kill::ScriptEnvironmentKill::new(
-                    registry.clone(),
-                    deps.broadcast_tx.clone(),
-                ),
+                crate::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
             ),
         ),
     );
@@ -267,15 +333,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
                     environment_registry,
                 ),
             ))
-            .with_environment_control(environment_control);
-    if let Some(build_kill_tool) = deps.kill_tool {
-        agent_cmd = agent_cmd.with_kill_tool(build_kill_tool(KillToolWiring {
-            owner: deps.owner,
-            registry: registry.clone(),
-            broadcast_tx: deps.broadcast_tx,
-            notify_tx: Some(notification_tx.clone()),
-            harness_lifecycle: harness_lifecycle.clone(),
-        }));
+            .with_environment_control(kill_environment);
+    if let Some(owners) = owners {
+        agent_cmd = agent_cmd.with_kill_tool(owners.kill_tool);
     }
 
     AgentControlToolBuild {

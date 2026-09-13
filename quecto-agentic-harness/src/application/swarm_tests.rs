@@ -6,6 +6,7 @@ use std::sync::Mutex;
 struct Processes {
     events: Mutex<Vec<String>>,
     accepts: bool,
+    fail_terminate: bool,
 }
 impl ProcessControl for Processes {
     fn suspend_local_executions(&self, _: &Snapshot) {
@@ -26,16 +27,17 @@ impl ProcessControl for Processes {
             self.accepts
         })
     }
-    fn terminate<'a>(
-        &'a self,
-        process: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>> {
+    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             self.events
                 .lock()
                 .unwrap()
-                .push(format!("terminate:{}", process.pid));
-            Ok(())
+                .push(format!("terminate:{}", member.id));
+            if self.fail_terminate {
+                Err(DomainError::Tool(format!("{} unreachable", member.id)))
+            } else {
+                Ok(())
+            }
         })
     }
 }
@@ -73,11 +75,12 @@ async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporti
         let processes = Processes {
             events: Mutex::new(vec![]),
             accepts: true,
+            fail_terminate: false,
         };
         settle(&snapshot(status), "parent", &processes)
             .await
             .unwrap();
-        let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:2"];
+        let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:worker"];
         if status.abort_coordinator() {
             expected.insert(1, "suspend-local");
         }
@@ -89,6 +92,7 @@ async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordina
     let processes = Processes {
         events: Mutex::new(vec![]),
         accepts: false,
+        fail_terminate: false,
     };
     settle(&snapshot(RunStatus::Failed), "parent", &processes)
         .await
@@ -99,7 +103,7 @@ async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordina
             "cancel-jobs",
             "suspend-local",
             "abort:worker",
-            "terminate:2"
+            "terminate:worker"
         ]
     );
 }
@@ -109,6 +113,7 @@ async fn active_runs_have_no_settlement_effects() {
         let processes = Processes {
             events: Mutex::new(vec![]),
             accepts: false,
+            fail_terminate: false,
         };
         settle(&snapshot(status), "parent", &processes)
             .await
@@ -177,6 +182,7 @@ async fn suspension_cancels_only_local_work_without_terminating_members() {
     let processes = Processes {
         events: Mutex::new(vec![]),
         accepts: false,
+        fail_terminate: false,
     };
     settle(&snapshot(RunStatus::Paused), "parent", &processes)
         .await
@@ -193,17 +199,18 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
         let processes = Processes {
             events: Mutex::new(vec![]),
             accepts: false,
+            fail_terminate: false,
         };
         settle(&snapshot(status), "parent", &processes)
             .await
             .unwrap();
         let events = processes.events.lock().unwrap();
         assert!(
-            !events.iter().any(|event| event == "terminate:1"),
+            !events.iter().any(|event| event == "terminate:parent"),
             "coordinator must remain available for reports: {events:?}"
         );
         assert!(
-            events.iter().any(|event| event == "terminate:2"),
+            events.iter().any(|event| event == "terminate:worker"),
             "worker cleanup still required"
         );
     }
@@ -222,6 +229,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
     let coordinator = Processes {
         events: Mutex::new(vec![]),
         accepts: true,
+        fail_terminate: false,
     };
     settle(&ended, "parent", &coordinator).await.unwrap();
     assert_eq!(
@@ -232,6 +240,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
     let worker = Processes {
         events: Mutex::new(vec![]),
         accepts: true,
+        fail_terminate: false,
     };
     settle(&ended, "worker", &worker).await.unwrap();
     assert_eq!(
@@ -244,6 +253,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
     let processes = Processes {
         events: Mutex::new(vec![]),
         accepts: true,
+        fail_terminate: false,
     };
     settle(&plain, "parent", &processes).await.unwrap();
     assert_eq!(
@@ -254,4 +264,40 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
     let mut odd = snapshot(RunStatus::Paused);
     odd.outcome = Some(RunStatus::Cancelled);
     assert!(!odd.ended());
+}
+
+/// #1939: a member that cannot be ended by delegation is reported after
+/// every other member was still asked; the member's process identity is
+/// never what the settlement acts on (the port receives the member).
+#[tokio::test]
+async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
+    let processes = Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+        fail_terminate: true,
+    };
+    let mut snapshot = snapshot(RunStatus::Cancelled);
+    snapshot.members.push(Member {
+        id: "second".into(),
+        status: MemberStatus::Live,
+        process: None,
+        endpoint: None,
+    });
+    let error = settle(&snapshot, "parent", &processes)
+        .await
+        .expect_err("an unreachable member is a truthful failure");
+    let text = error.to_string();
+    assert!(text.contains("worker unreachable"), "{text}");
+    assert!(text.contains("second unreachable"), "{text}");
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        [
+            "cancel-jobs",
+            "abort:worker",
+            "terminate:worker",
+            "abort:second",
+            "terminate:second"
+        ],
+        "a member without a process identity is still asked"
+    );
 }

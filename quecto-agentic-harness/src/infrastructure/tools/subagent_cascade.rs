@@ -38,9 +38,9 @@ pub struct CascadeOutcome {
 /// registry (the lingering-panel bug). Unrelated sibling trees are untouched. A
 /// missing `agent_id` is a no-op and returns an empty Vec.
 ///
-/// The removed entries are returned (not just ids) so callers can terminate the
-/// orphaned OS processes / abort monitor tasks before they fall out of the
-/// registry — see [`terminate_removed_entry`] (#831 security review).
+/// The removed entries are returned (not just ids) so the compensation that
+/// owns them can abort their monitor tasks and bridges before they fall out
+/// of the registry (#831 security review); nothing here signals a process.
 pub fn cascade_remove(registry: &SubagentRegistry, agent_id: &str) -> Vec<(String, SubagentEntry)> {
     let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
     cascade_remove_locked(&mut guard, agent_id)
@@ -113,28 +113,6 @@ pub fn cascade_remove_locked(
         (id, entry)
     }));
     removed
-}
-
-/// Stop observing a cascade-removed entry: abort its monitor task and tear
-/// down its proxy bridge so nothing connects to a dead child's endpoint.
-/// Does NOT touch the registry (the entry has already been removed), does
-/// NOT publish exit signals (the caller owns that), and never signals a
-/// process: a row this harness launched is ended through its owned handle
-/// by the termination that observed its exit, and every other row belongs
-/// to the harness that launched it (#1936). A locally launched child whose
-/// handle is still retained — a member ended by `kill_container` — is asked
-/// through that handle (protocol first, #1935); `true` reports that ask.
-pub fn terminate_removed_entry(entry: &SubagentEntry) -> bool {
-    if let Some(ref handle) = entry.monitor_handle {
-        handle.abort();
-    }
-    super::spawn_proxy_bridge::teardown_entry_bridge(
-        entry.proxy_bridge_handle.as_ref(),
-        entry.proxy_bridge_socket.as_deref(),
-    );
-    entry.request_owned_child_termination(
-        crate::domain::subagent_teardown::ShutdownReason::ParentShutdown,
-    )
 }
 
 /// Cascade-remove `agent_id`'s dead sub-tree from the registry and, if anything

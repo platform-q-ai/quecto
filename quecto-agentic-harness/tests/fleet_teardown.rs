@@ -264,28 +264,33 @@ impl Harness {
         self.child.try_wait().unwrap().is_none()
     }
 
-    /// Observe the child gone **while this harness is still running**: the
-    /// fleet settled it before the exit path. A harness that skipped the
-    /// fleet step would exit first and the child would only die afterwards
-    /// by parent loss, which this ordering refuses. Returns the exit status
-    /// once the harness has returned on its own.
+    /// Observe that the child was gone **before** the harness exited: the
+    /// fleet reaps an owned child before the session is persisted and the
+    /// exit path runs, so at the instant the harness is seen exited the
+    /// child must already be gone. A harness that skipped the fleet step
+    /// would exit with the child still alive (it dies only afterwards, by
+    /// parent loss, far slower than this loop's wake-up), which this check
+    /// refuses. The instant is sampled at 100 µs so the ordering never
+    /// depends on catching a window while the harness still runs; the
+    /// callers' persisted-roster assertion proves the child settled before
+    /// the save. Returns the exit status.
     fn child_gone_then_exit(&mut self, child: u32) -> std::process::ExitStatus {
         let deadline = Instant::now() + BOUND;
-        loop {
-            let running = self.still_running();
-            let gone = !alive(child);
-            match (gone, running) {
-                (true, true) => break,
-                (false, false) => panic!("the harness exited while its child was still alive"),
-                (true, false) => panic!(
-                    "the child was only observed gone after the harness had exited; the fleet must settle it first"
-                ),
-                (false, true) => {}
+        let status = loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                break status;
             }
-            assert!(Instant::now() < deadline, "the child never settled");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        self.wait_exit()
+            if Instant::now() >= deadline {
+                let _ = self.child.kill();
+                panic!("harness did not exit within the bound");
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        };
+        assert!(
+            !alive(child),
+            "the harness exited while its child was still alive; the fleet must settle it first"
+        );
+        status
     }
 }
 

@@ -31,16 +31,16 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
 
 use super::super::dto::{
-    FleetChildResult, FleetTeardownError, FleetTeardownOutcome, SettledChild,
-    TerminateAllDelegatedAgentsRequest,
+    FleetTeardownError, FleetTeardownOutcome, SettledChild, TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
-    CompensationObservation, ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting,
-    OwnedChildTermination, ProtocolAttempt, ShutdownRunSpawner, StoppingClaimError,
-    SubagentLifecycleRepository, TeardownCompensation, TerminalClaim, TerminationCause,
-    TerminationConclusion,
+    DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, ShutdownRunSpawner,
+    SubagentLifecycleRepository, TeardownCompensation, TerminationCause,
 };
 use super::bounded_settlement::{BoundedSettlement, Settlement};
+use super::settle_delegated_child::{
+    ChildSettlement, SettleDelegatedChild, SettleDelegatedChildPorts,
+};
 
 /// Children settled concurrently by default: enough to keep a typical fleet
 /// prompt, small enough that a large one never opens every edge at once.
@@ -67,6 +67,9 @@ pub struct TerminateAllDelegatedAgents {
 
 struct Inner {
     ports: TerminateAllDelegatedAgentsPorts,
+    /// The per-child ladder over the same claim, routing, fallback and
+    /// compensation ports (#1939: shared with the environment kill).
+    settle: SettleDelegatedChild,
     bound: usize,
     in_flight: Mutex<Option<Arc<Run>>>,
 }
@@ -92,14 +95,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// What settling one child established.
-enum ChildSettlement {
-    Done(SettledChild),
-    Unsettled(AgentUuid, String),
-    /// The row was gone (uncommitted or unknown) before anything ran.
-    Gone(AgentUuid),
-}
-
 impl TerminateAllDelegatedAgents {
     pub fn new(ports: TerminateAllDelegatedAgentsPorts) -> Self {
         Self::with_bound(ports, DEFAULT_SETTLEMENT_BOUND)
@@ -110,9 +105,16 @@ impl TerminateAllDelegatedAgents {
             bound >= 1,
             "the settlement bound must admit at least one child"
         );
+        let settle = SettleDelegatedChild::new(SettleDelegatedChildPorts {
+            registry: ports.registry.clone(),
+            routing: ports.routing.clone(),
+            termination: ports.termination.clone(),
+            compensation: ports.compensation.clone(),
+        });
         Self {
             inner: Arc::new(Inner {
                 ports,
+                settle,
                 bound,
                 in_flight: Mutex::new(None),
             }),
@@ -227,110 +229,14 @@ async fn drive(guard: RunGuard, reason: ShutdownReason) {
 }
 
 impl Inner {
-    /// Claim, ask, conclude, compensate — or join whoever already did.
     async fn settle_child(
         &self,
         child: DelegatedAgentIdentity,
         reason: ShutdownReason,
     ) -> ChildSettlement {
-        match self
-            .ports
-            .registry
-            .claim_stopping(&child, TerminationCause::FleetTeardown)
-        {
-            Ok(()) => {}
-            Err(StoppingClaimError::AlreadyStopping) => {
-                // A kill, rollback or another teardown owns this child: its
-                // compensation is the only truthful end to wait for.
-                return self.join_child(child, FleetChildResult::Joined).await;
-            }
-            Err(StoppingClaimError::Unknown | StoppingClaimError::Exited) => {
-                return ChildSettlement::Gone(child.uuid);
-            }
-        }
-        let attempt = match self.ports.routing.shutdown_child(&child, reason).await {
-            Ok(()) => ProtocolAttempt::Acknowledged,
-            Err(error) => ProtocolAttempt::Negative(error.to_string()),
-        };
-        let acknowledged = matches!(attempt, ProtocolAttempt::Acknowledged);
-        let result = match self
-            .ports
-            .termination
-            .conclude(&child, attempt, ConclusionBudget::Standard)
+        self.settle
+            .settle(child, reason, TerminationCause::FleetTeardown)
             .await
-        {
-            TerminationConclusion::ExitedAfterProtocol => FleetChildResult::Graceful,
-            TerminationConclusion::ExitedAfterFallback => FleetChildResult::Fallback,
-            TerminationConclusion::AlreadyExited => FleetChildResult::AlreadyExited,
-            TerminationConclusion::StillRunning(detail) => {
-                // Even the fallback did not end it: the row keeps its record
-                // and the claim is lifted so a later trigger may try again.
-                self.ports.registry.release_stopping(&child);
-                return ChildSettlement::Unsettled(child.uuid, detail);
-            }
-            TerminationConclusion::NoRetainedHandle => {
-                self.conclude_unowned(&child, acknowledged).await
-            }
-        };
-        self.compensate_or_join(child, result).await
-    }
-
-    /// A child this harness holds no process for: its end is observed only
-    /// through its row (monitor EOF, reported prune, reaper of an earlier
-    /// handle). An acknowledged child gets the bound to exit on its own;
-    /// past it — or after a negative attempt — the compensation runs
-    /// without an observed exit, which finalizes its environment.
-    async fn conclude_unowned(
-        &self,
-        child: &DelegatedAgentIdentity,
-        acknowledged: bool,
-    ) -> FleetChildResult {
-        if self.ports.registry.terminal_claimed(child) {
-            return FleetChildResult::AlreadyExited;
-        }
-        if !acknowledged {
-            return FleetChildResult::Unobserved;
-        }
-        match self.ports.registry.await_compensated(child).await {
-            CompensationObservation::Compensated => FleetChildResult::Graceful,
-            CompensationObservation::TimedOut | CompensationObservation::Unknown => {
-                FleetChildResult::Unobserved
-            }
-        }
-    }
-
-    async fn compensate_or_join(
-        &self,
-        child: DelegatedAgentIdentity,
-        result: FleetChildResult,
-    ) -> ChildSettlement {
-        match self.ports.registry.claim_terminal(&child) {
-            TerminalClaim::Claimed => {
-                self.ports
-                    .compensation
-                    .compensate(&child, TerminationCause::FleetTeardown)
-                    .await;
-                ChildSettlement::Done(SettledChild { child, result })
-            }
-            TerminalClaim::AlreadyClaimed => self.join_child(child, result).await,
-        }
-    }
-
-    async fn join_child(
-        &self,
-        child: DelegatedAgentIdentity,
-        result: FleetChildResult,
-    ) -> ChildSettlement {
-        match self.ports.registry.await_compensated(&child).await {
-            CompensationObservation::Compensated => {
-                ChildSettlement::Done(SettledChild { child, result })
-            }
-            CompensationObservation::Unknown => ChildSettlement::Gone(child.uuid),
-            CompensationObservation::TimedOut => ChildSettlement::Unsettled(
-                child.uuid,
-                "a termination already in flight did not settle within the bound".into(),
-            ),
-        }
     }
 }
 

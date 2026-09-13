@@ -48,6 +48,19 @@ if mode == "track":
         temporary = record.with_suffix(f".{os.getpid()}.tmp")
         temporary.write_text(json.dumps([pid, current[0]]))
         temporary.replace(record)
+elif mode == "live":
+    # How many tracked processes of the environment are still alive (not
+    # zombies): evidence of whether members ended before a kill ran.
+    alive = 0
+    for record in root.glob(f"{args[0]}.*.json"):
+        try:
+            pid, start = json.loads(record.read_text())
+        except FileNotFoundError:
+            continue
+        current = identity(pid)
+        if current is not None and current[0] == start and current[1] != "Z":
+            alive += 1
+    print(alive)
 else:
     for record in root.glob(f"{args[0]}.*.json" if args else "*.json"):
         try:

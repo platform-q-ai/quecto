@@ -539,6 +539,8 @@ pub enum TeardownIntent {
     SelectedTermination,
     /// The whole fleet is being torn down (#1938).
     FleetTeardown,
+    /// Its environment is being killed explicitly (#1939).
+    EnvironmentKill,
     /// Its launch failed after registration.
     LaunchRollback { owns_environment: bool },
 }

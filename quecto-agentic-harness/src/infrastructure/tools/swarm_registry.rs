@@ -176,7 +176,7 @@ impl Drop for ForegroundRegistration {
             let mut state = state.lock().unwrap();
             state.cancel_requested = true;
             if let Some(pid) = state.pid {
-                super::terminate_member(pid);
+                super::cancel_job_process(pid);
             }
         }
     }
@@ -198,7 +198,7 @@ fn cancel_jobs_with_admission(jobs: &JobRegistry, close: bool, through_generatio
                 {
                     job.cancel_requested = true;
                     if let Some(pid) = job.pid {
-                        super::terminate_member(pid);
+                        super::cancel_job_process(pid);
                     }
                 }
             }

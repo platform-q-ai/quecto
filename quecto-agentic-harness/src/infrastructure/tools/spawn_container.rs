@@ -416,7 +416,7 @@ async fn spawn_script_managed_child(
     };
     if result
         .metadata
-        .get(super::subagent_cleanup::CHECKOUT_METADATA_KEY)
+        .get(super::environment_commands::CHECKOUT_METADATA_KEY)
         .and_then(serde_json::Value::as_str)
         .is_none_or(str::is_empty)
     {

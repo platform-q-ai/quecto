@@ -249,6 +249,11 @@ pub enum TerminationCause {
     /// delete-all, a session transition, or the harness's own shutdown.
     /// Death by the parent's hand: no post-mortem, environment kill runs.
     FleetTeardown,
+    /// The environment the child is a member of is being killed by an
+    /// explicit `kill_container` (#1939). Death by the parent's hand: no
+    /// post-mortem; the environment's own kill belongs to the caller's
+    /// already-held claim.
+    EnvironmentKill,
     /// A launch failed after registration; `owns_environment` says whether
     /// the launch created the environment it joined.
     LaunchRollback { owns_environment: bool },

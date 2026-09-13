@@ -650,9 +650,18 @@ reason `parent_never_bound`.
 Since #1938 the parent-loss / never-bound shutdown is the same common
 shutdown as every other trigger: its direct-children step is the fleet
 teardown (below), whose compensation finalizes a script-managed member's
-environment through the member's retained `kill`. #1939 moves the
-environment-level `kill_container` finalization into the application-owned
-teardown as well.
+environment through the member's retained `kill`. #1939 moved the
+environment-level `kill_container` into the application-owned teardown as
+well: `KillEnvironment` (`application/environments`) takes the environment's
+exclusive kill claim, asks every member to shut down through the same
+per-child settlement the fleet teardown uses (`SettleDelegatedChild`, under
+the `EnvironmentKill` cause: protocol over the member's edge, the
+owned-handle fallback only for a handle this session owns, compensation
+exactly once, no post-mortem), and only then runs the retained `kill`
+exactly once. An unsettled member withholds the kill and leaves a retryable
+`cleanup-failed` state. Final-member finalization (`FinalizeEnvironmentMember`,
+the #1924 retention and loss recording) lives beside it; the domain keeps
+only the pure retention policy (`domain/environment_retention.rs`).
 
 #### Lifetime and session restore (#1937)
 

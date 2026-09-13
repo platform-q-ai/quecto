@@ -1,12 +1,48 @@
 use std::sync::{Arc, Mutex};
 
-use crate::domain::environment_finalization::{
-    EnvironmentFinalizationPort, EnvironmentFinalizationUseCase, MemberFinalizeMode,
+use crate::application::environments::ports::{
+    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
 };
+use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::subagent_launch::LaunchFuture;
+use crate::domain::environment_retention::{
+    CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
+};
+
+/// An environment that advertises no coordination store: the ordinary
+/// final-member teardown applies.
+pub(super) struct NoHostedStore;
+
+impl HostedSwarmRunObservation for NoHostedStore {
+    fn observe_hosted_swarm_run<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, SwarmRunObservation> {
+        Box::pin(async { SwarmRunObservation::NoStore })
+    }
+
+    fn record_lost_coordinator<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+        hosted: &'a HostedSwarmRun,
+    ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
+        Box::pin(async move {
+            Ok(CoordinatorLoss {
+                run: hosted.clone(),
+                lost: false,
+            })
+        })
+    }
+}
+
+pub(super) fn use_case(
+    registry: &EnvironmentRegistry,
+    commands: Arc<dyn EnvironmentProcessCommands>,
+) -> FinalizeEnvironmentMember {
+    FinalizeEnvironmentMember::new(registry.clone(), commands, Arc::new(NoHostedStore))
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum ScriptEvent {
@@ -49,12 +85,12 @@ impl Default for SpyFinalizationPort {
     }
 }
 
-impl EnvironmentFinalizationPort for SpyFinalizationPort {
+impl EnvironmentProcessCommands for SpyFinalizationPort {
     fn run_retained_inspect<'a>(
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
+    ) -> PortFuture<'a, Result<serde_json::Value, String>> {
         Box::pin(async move {
             self.events.lock().unwrap().push(ScriptEvent::Inspect);
             if let (Some(registry), Some(env_ref)) =
@@ -81,7 +117,7 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> LaunchFuture<'a, Result<(), String>> {
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.events.lock().unwrap().push(ScriptEvent::Kill);
             self.kills.lock().unwrap().push(ScriptCall {
@@ -100,7 +136,7 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> LaunchFuture<'a, ()> {
+    ) -> PortFuture<'a, ()> {
         Box::pin(async move {
             self.events.lock().unwrap().push(ScriptEvent::Cleanup);
             self.cleanups.lock().unwrap().push(ScriptCall {
@@ -160,7 +196,7 @@ fn final_member_kill_is_orchestrated_by_application_use_case_without_cleanup() {
     let env_ref = committed_env(&registry, vec!["agent-a"]);
     let expected_environment_id = registry.get(&env_ref).unwrap().environment_id;
     let port = Arc::new(SpyFinalizationPort::default());
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -182,7 +218,7 @@ fn non_final_member_removal_does_not_finalize_environment() {
     let registry = EnvironmentRegistry::new();
     let env_ref = committed_env(&registry, vec!["agent-a", "agent-b"]);
     let port = Arc::new(SpyFinalizationPort::default());
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -201,7 +237,7 @@ fn failed_final_member_kill_persists_cleanup_failed_state() {
         fail_kill: true,
         ..Default::default()
     });
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -218,7 +254,7 @@ fn final_member_without_retained_kill_uses_retained_cleanup_fallback() {
     let env_ref = committed_env_with_kill(&registry, vec!["agent-a"], vec![]);
     let expected_environment_id = registry.get(&env_ref).unwrap().environment_id;
     let port = Arc::new(SpyFinalizationPort::default());
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -253,7 +289,7 @@ fn exit_finalization_runs_retained_inspect_before_removal_and_merges_metadata() 
         inspect_result: Mutex::new(Ok(serde_json::json!({"postmortem": "captured"}))),
         ..Default::default()
     });
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -292,7 +328,7 @@ fn exit_finalization_persists_inspect_failure_even_after_successful_kill() {
         inspect_result: Mutex::new(Err("inspect failed".to_string())),
         ..Default::default()
     });
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
@@ -328,7 +364,7 @@ fn non_exit_finalization_does_not_run_retained_inspect() {
             vec!["inspect.sh".to_string()],
         );
         let port = Arc::new(SpyFinalizationPort::default());
-        let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+        let use_case = use_case(&registry, port.clone());
 
         block_on(use_case.finalize_member(&env_ref, "agent-a", None, mode));
 
@@ -350,7 +386,7 @@ fn duplicate_exit_finalization_inspects_dead_member_only_once() {
         vec!["inspect.sh".to_string()],
     );
     let port = Arc::new(SpyFinalizationPort::default());
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));

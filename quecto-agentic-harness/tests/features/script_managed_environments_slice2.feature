@@ -171,3 +171,46 @@ Feature: Shared script-managed environments
     And the gated spawn for "env-empty-slice2" completes successfully
     Then the container listing should include "C1" with status "running" and 1 member
     And scenario teardown should leave no fixture processes running
+
+  # #1939: kill_container delegates member teardown. Every member is asked to
+  # shut down over its own edge (protocol; the owned-handle fallback only for
+  # a handle this session owns) and settled before the retained kill runs
+  # exactly once; a member whose end cannot be settled leaves a truthful,
+  # retryable cleanup-failed state and withholds the retained kill.
+
+  @done @container-env
+  Scenario: kill_container asks every member to shut down before the retained kill runs once
+    Given shared script-managed subagent spawning is available
+    And script-managed child "impl-delegated-slice6" is running in a shared environment with task "IMPL_DELEGATED_MARKER"
+    And read-only subagent "observer-delegated-slice6" has joined existing environment ref "C1" with task "OBSERVER_DELEGATED_MARKER"
+    When I kill container "C1"
+    Then the container command result should not be an error
+    And the kill result should report member "impl-delegated-slice6" settled "graceful"
+    And the kill result should report member "observer-delegated-slice6" settled "graceful"
+    And the retained kill should have found 0 live members
+    And the script-managed runtime should have killed an environment exactly 1 time
+    And child "impl-delegated-slice6" should not be reachable
+    And child "observer-delegated-slice6" should not be reachable
+    And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
+
+  @done @container-env @serial
+  Scenario: An unsettled member withholds the retained kill and leaves a retryable state
+    Given shared script-managed subagent spawning is available
+    And script-managed child "impl-unsettled-slice6" is running in a shared environment with task "IMPL_UNSETTLED_MARKER"
+    And read-only subagent "observer-unsettled-slice6" has joined existing environment ref "C1" with task "OBSERVER_UNSETTLED_MARKER"
+    And a termination of member "observer-unsettled-slice6" is already in flight and never settles
+    When I kill container "C1"
+    Then the container command result should be an error mentioning "members not settled"
+    And the script-managed runtime should have killed an environment exactly 0 times
+    And the container listing should include "C1" with status "cleanup-failed" and 1 member
+    And the container listing should include "C1" with a last error mentioning "retry kill_container"
+    And child "impl-unsettled-slice6" should not be reachable
+    When the in-flight termination of member "observer-unsettled-slice6" is released
+    And I kill container "C1"
+    Then the container command result should not be an error
+    And the kill result should report member "observer-unsettled-slice6" settled "graceful"
+    And the retained kill should have found 0 live members
+    And the script-managed runtime should have killed an environment exactly 1 time
+    And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running

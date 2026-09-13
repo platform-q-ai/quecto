@@ -68,7 +68,6 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let removed = subagent_cascade::cascade_remove(&registry, "owned");
-    assert!(!subagent_cascade::terminate_removed_entry(&removed[0].1));
     // A retained clone of the removed row asks the supervisor, which has
     // nothing left to signal.
     assert!(!removed[0].1.clone().request_owned_child_termination(

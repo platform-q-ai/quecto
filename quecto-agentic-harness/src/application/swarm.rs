@@ -49,6 +49,10 @@ pub async fn settle(
     }
     let mut members: Vec<_> = snapshot.members.iter().collect();
     members.sort_by_key(|m| m.id == actor);
+    // Every live member is asked; a member that cannot be ended is reported
+    // after the others were still asked, so one unreachable member never
+    // leaves the rest running.
+    let mut failures = Vec::new();
     for member in members {
         if member.status == MemberStatus::Dead {
             continue;
@@ -58,11 +62,18 @@ pub async fn settle(
             continue;
         }
         processes.abort(member).await;
-        if let Some(process) = &member.process {
-            processes.terminate(process).await?;
+        if let Err(error) = processes.terminate(member).await {
+            failures.push(error.to_string());
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(DomainError::Tool(format!(
+            "swarm settlement could not end every member: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 pub fn observed_outcome(

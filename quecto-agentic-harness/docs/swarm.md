@@ -217,8 +217,11 @@ cancelled). The supervisor then either resumes the same run (`swarm_control
 resume`, which extends the deadline by the paused time, clears the outcome and
 wakes every member) or closes it (`swarm_control close`), which makes the held
 outcome terminal and settles: local Python is cancelled, workers are aborted
-and terminated through the process adapter, and the coordinator harness stays
-for reporting. A run paused for `budget-exhausted` refuses to resume until
+and asked to shut down by delegation (#1939: the `shutdown` protocol over
+the endpoint each member registered, the locally owned handle only for a
+member this harness launched itself; a member reachable neither way is
+reported as a settlement failure, never signalled by pid), and the
+coordinator harness stays for reporting. A run paused for `budget-exhausted` refuses to resume until
 the supervisor grants budget (`swarm_control extend` with `deadline_seconds`,
 or `usage_budget`); the refusal names what to grant. Members, including the
 coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only

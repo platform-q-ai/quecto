@@ -41,8 +41,13 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
     }
 }
 
+/// #1939: a member's `ProcessIdentity` is never an authority to signal. A
+/// live process registered as a member with no endpoint is neither reachable
+/// by protocol nor owned by this harness, so the runtime reports the
+/// termination failed and the process is untouched. Reintroducing a pid
+/// signal on this path kills the sleeper and fails this test.
 #[tokio::test]
-async fn runtime_cleanup_checks_process_identity_even_when_abort_endpoint_is_absent() {
+async fn runtime_never_signals_a_member_by_pid_when_it_is_neither_reachable_nor_owned() {
     use std::os::unix::process::CommandExt;
     let (_directory, context) = crate::swarm_control_fixture::context();
     let processes = RuntimeProcesses(&context);
@@ -62,16 +67,40 @@ async fn runtime_cleanup_checks_process_identity_even_when_abort_endpoint_is_abs
         endpoint: None,
     };
     assert!(!processes.abort(&member).await);
-    processes
-        .terminate(&ProcessIdentity {
-            started: "stale-identity".into(),
-            ..identity.clone()
-        })
+    let error = processes
+        .terminate(&member)
         .await
-        .unwrap();
-    assert!(child.try_wait().unwrap().is_none());
-    processes.terminate(&identity).await.unwrap();
-    assert!(!child.wait().unwrap().success());
+        .expect_err("a member with no endpoint and no owned handle is reported, not signalled");
+    assert!(
+        error.to_string().contains("not owned by this harness"),
+        "{error}"
+    );
+    // A dead endpoint is equally no authority over the pid.
+    let unreachable = Member {
+        endpoint: Some(
+            _directory
+                .path()
+                .join("gone.sock")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..member.clone()
+    };
+    let error = processes.terminate(&unreachable).await.unwrap_err();
+    assert!(
+        error.to_string().contains("did not accept shutdown"),
+        "{error}"
+    );
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the process was never signalled"
+    );
+    assert!(
+        !process_confirmed_dead(identity.pid, &identity.started),
+        "the identity is still the observation of a live process"
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
 }
 
 #[test]

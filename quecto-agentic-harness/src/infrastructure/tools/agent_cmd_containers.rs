@@ -1,13 +1,14 @@
 //! Thin tool adapter for the environment control use case (#1369 slice 2).
 //!
 //! Decode `get_containers` / `kill_container` arguments, delegate to
-//! [`EnvironmentControlUseCase`], and encode the result. No environment
-//! transaction logic lives here.
+//! [`ListEnvironmentsQuery`] / [`KillEnvironment`], and encode the result.
+//! No environment transaction logic lives here.
 
 use std::sync::Arc;
 
-use crate::application::environment_control::EnvironmentControlUseCase;
-use crate::application::environments::use_cases::ListEnvironmentsQuery;
+use crate::application::environments::use_cases::{
+    KillEnvironment, KilledEnvironment, ListEnvironmentsQuery,
+};
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
 use crate::domain::tool::ToolResult;
 
@@ -20,7 +21,7 @@ pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
 
 pub(super) async fn execute_container_command(
     list_environments: Option<&Arc<ListEnvironmentsQuery>>,
-    environment_control: Option<&Arc<EnvironmentControlUseCase>>,
+    environment_control: Option<&Arc<KillEnvironment>>,
     args: &serde_json::Value,
 ) -> ToolResult {
     match args.get("agent_id").and_then(|v| v.as_str()) {
@@ -36,13 +37,13 @@ pub(super) async fn execute_container_command(
             None => error("environment control is not available in this session".to_string()),
             Some(uc) => match decode_target(args) {
                 Ok(target) => match uc.kill_container(&target).await {
-                    Ok(record) => ToolResult {
-                        content: kill_container_result_json(&record).to_string(),
+                    Ok(killed) => ToolResult {
+                        content: kill_container_result_json(&killed).to_string(),
                         is_error: false,
                         image_blocks: vec![],
                         delivery_metadata: None,
                     },
-                    Err(e) => error(e),
+                    Err(e) => error(e.to_string()),
                 },
                 Err(e) => error(e),
             },
@@ -83,9 +84,20 @@ fn capped_agents_json(agent_ids: &[String]) -> serde_json::Value {
     result
 }
 
-fn kill_container_result_json(record: &EnvironmentRecord) -> serde_json::Value {
-    let mut result = capped_agents_json(&record.members);
-    result["killed"] = serde_json::json!(record.environment_ref);
+fn kill_container_result_json(killed: &KilledEnvironment) -> serde_json::Value {
+    let mut result = capped_agents_json(&killed.record.members);
+    result["killed"] = serde_json::json!(killed.record.environment_ref);
+    // How each member was settled before the retained kill ran (#1939).
+    result["settled"] = serde_json::json!(
+        killed
+            .members
+            .settled
+            .iter()
+            .map(|member| {
+                serde_json::json!({"agent": member.member, "result": member.result.as_str()})
+            })
+            .collect::<Vec<_>>()
+    );
     result
 }
 

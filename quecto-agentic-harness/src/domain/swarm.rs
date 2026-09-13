@@ -167,11 +167,12 @@ pub trait ProcessControl: Sync {
     /// Suspend only this process; never signal a future turn or another member.
     fn suspend_local_inference(&self, snapshot: &Snapshot);
     fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
-    /// Adapters must validate the process identity before signalling it.
-    fn terminate<'a>(
-        &'a self,
-        process: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>;
+    /// End the member's harness by delegation (#1939): the shutdown protocol
+    /// over the endpoint it registered, the locally owned handle only when
+    /// this harness launched it. The member's `ProcessIdentity` is an
+    /// observation for liveness, never an authority to signal; a member
+    /// reachable neither way is reported failed, not signalled.
+    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>>;
 }
 
 pub trait Clock {

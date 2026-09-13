@@ -58,12 +58,29 @@ commands expose it (use `agent_id: "*"`):
   container kept alive after its run ended or lost its coordinator, with
   `metadata.retained` explaining which; see "Swarm environments are
   retained"), plus workspace and members.
-- `kill_container` with `ref` or `name` — terminates every member agent,
-  runs the environment's retained `kill` argv exactly once, and commits
-  `stopped` only after the script succeeds. Its JSON result includes the
-  environment ref and up to 20 terminated member agent ids/names, with
-  `omitted_agents` when capped. A failed kill persists a retryable
-  `cleanup-failed` state; run `kill_container` again to retry.
+- `kill_container` with `ref` or `name` — takes the environment's
+  exclusive kill claim, asks every member agent to shut down over its own
+  control edge (the `shutdown` protocol; a container coordinator's harness
+  settles its in-container descendants itself, and the host never signals
+  a pid inside the box), then runs the environment's retained `kill` argv
+  exactly once and commits `stopped` only after the script succeeds. Its
+  JSON result includes the environment ref, up to 20 member agent
+  ids/names (with `omitted_agents` when capped) and `settled`, how each
+  member ended before the kill ran (`graceful`, `fallback`,
+  `already-exited`, `unobserved` — asked, but no exit was observed within
+  the bound, so the retained `kill` is what ends it — or `joined`). A
+  member whose end cannot be settled (a termination another path already
+  owns that never settles, or a locally owned process that survives the
+  fallback) withholds the retained `kill` and persists a retryable
+  `cleanup-failed` state naming the member; a failed `kill` script does the
+  same. Run `kill_container` again to retry: only the members still
+  recorded are asked again, and the retained `kill` never runs twice under
+  one claim. Latency: a member is asked over its edge with a 5 s
+  acknowledgement bound and, once acknowledged, given up to 15 s for its
+  exit to be observed before it is compensated `unobserved`, so a
+  `kill_container` whose members are unreachable or slow to exit can take
+  up to ~20 s per member before the retained `kill` runs; a member that
+  exits promptly settles in milliseconds.
 
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot

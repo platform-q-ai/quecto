@@ -1,5 +1,8 @@
 use super::*;
 
+use quecto::application::subagents::ports::{DelegatedAgentRegistry, TerminationCause};
+use quecto::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+
 // Slice 2 (#1369): join, list, and kill shared script-managed environments.
 // ===========================================================================
 
@@ -129,7 +132,8 @@ exit 1
         format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
-echo "{{\"kind\":\"kill\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\"}}" >> '{log}'
+live="$(python3 '{pid_dir}/../fixture-processes.py' live '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}")"
+echo "{{\"kind\":\"kill\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\",\"live_members\":$live}}" >> '{log}'
 {fail_clause}
 python3 '{pid_dir}/../fixture-processes.py' clean '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}"
 "#,
@@ -203,30 +207,30 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         .as_ref()
         .expect("agent_cmd registry")
         .clone();
-    let kill_port = std::sync::Arc::new(
-        quecto::infrastructure::tools::environment_kill::ScriptEnvironmentKill::new(
-            subagent_registry.clone(),
-            None,
-        ),
-    );
+    // One termination graph (#1939): `kill` and `kill_container` share it,
+    // so an environment's members are asked to shut down through the same
+    // claim ladder an operator kill walks.
+    let owners =
+        crate::agent_cmd_tool_steps::termination_owners(&subagent_registry, Some(broadcast_tx));
     let list_environments = std::sync::Arc::new(
         quecto::application::environments::use_cases::ListEnvironmentsQuery::new(
             environment_registry.clone(),
         ),
     );
-    let environment_control = std::sync::Arc::new(
-        quecto::application::environment_control::EnvironmentControlUseCase::new(
+    let kill_environment = std::sync::Arc::new(
+        quecto::application::environments::use_cases::KillEnvironment::new(
             environment_registry,
-            kill_port,
+            owners.member_shutdown.clone(),
+            std::sync::Arc::new(
+                quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
+            ),
         ),
     );
     world.agent_cmd_tool = Some(
-        crate::agent_cmd_tool_steps::agent_cmd_tool_with_kill(
-            &subagent_registry,
-            Some(broadcast_tx),
-        )
-        .with_list_environments(list_environments)
-        .with_environment_control(environment_control),
+        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry.clone())
+            .with_kill_tool(owners.kill_tool)
+            .with_list_environments(list_environments)
+            .with_environment_control(kill_environment),
     );
 }
 
@@ -978,5 +982,119 @@ fn then_fixture_processes_exit(world: &mut QuectoWorld) {
     assert!(
         survivors.is_empty(),
         "fixture processes survived scenario teardown: {survivors:?}"
+    );
+}
+
+// --- #1939: delegated member shutdown before the retained kill ---
+
+/// The registry as the delegated-agent port, so a scenario can stage a
+/// termination another path owns (a claim that never settles).
+fn delegated_agents(world: &QuectoWorld) -> RegistryDelegatedAgents {
+    RegistryDelegatedAgents::new(
+        world
+            .agent_cmd_registry
+            .as_ref()
+            .expect("agent_cmd registry")
+            .clone(),
+        None,
+        None,
+    )
+}
+
+fn member_identity(
+    world: &QuectoWorld,
+    agent_id: &str,
+) -> quecto::domain::subagent_teardown::DelegatedAgentIdentity {
+    delegated_agents(world)
+        .resolve(agent_id)
+        .unwrap_or_else(|error| panic!("member {agent_id} is not a live delegated agent: {error}"))
+}
+
+#[given(expr = "a termination of member {string} is already in flight and never settles")]
+fn given_member_termination_in_flight(world: &mut QuectoWorld, agent_id: String) {
+    let identity = member_identity(world, &agent_id);
+    world.stalled_member_terminations.push(identity.clone());
+    delegated_agents(world)
+        .claim_stopping(&identity, TerminationCause::SelectedTermination)
+        .expect("the stopping claim is free");
+}
+
+#[when(expr = "the in-flight termination of member {string} is released")]
+fn when_member_termination_released(world: &mut QuectoWorld, agent_id: String) {
+    let identity = world
+        .stalled_member_terminations
+        .iter()
+        .find(|identity| {
+            delegated_agents(world)
+                .resolve(&agent_id)
+                .map(|resolved| &resolved == *identity)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("no stalled termination of {agent_id}"));
+    delegated_agents(world).release_stopping(&identity);
+    world
+        .stalled_member_terminations
+        .retain(|stalled| stalled != &identity);
+}
+
+fn kill_result_json(world: &QuectoWorld) -> serde_json::Value {
+    let r = world
+        .container_cmd_result
+        .as_ref()
+        .expect("no container command result");
+    assert!(!r.is_error, "kill_container failed: {}", r.content);
+    serde_json::from_str(&r.content)
+        .unwrap_or_else(|e| panic!("kill_container result is JSON: {e}: {}", r.content))
+}
+
+#[then(expr = "the kill result should report member {string} settled {string}")]
+fn then_kill_result_member_settled(world: &mut QuectoWorld, agent_id: String, result: String) {
+    let parsed = kill_result_json(world);
+    let uuid = world
+        .agent_cmd_registry
+        .as_ref()
+        .and_then(|registry| {
+            let entries = registry.lock().unwrap();
+            entries
+                .iter()
+                .find(|(_, entry)| entry.display_name == agent_id)
+                .map(|(_, entry)| entry.agent_uuid.as_str().to_owned())
+        })
+        .unwrap_or_else(|| panic!("member {agent_id} has no registry row: {parsed}"));
+    let settled = parsed["settled"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("kill result carries `settled`: {parsed}"));
+    let entry = settled
+        .iter()
+        .find(|entry| entry["agent"] == uuid)
+        .unwrap_or_else(|| panic!("member {agent_id} ({uuid}) is not listed as settled: {parsed}"));
+    assert_eq!(entry["result"], result, "{parsed}");
+}
+
+#[then(expr = "the retained kill should have found {int} live member(s)")]
+fn then_kill_found_live_members(world: &mut QuectoWorld, n: i32) {
+    let inv = shared_invocations(world);
+    let kills: Vec<&serde_json::Value> = inv.iter().filter(|v| v["kind"] == "kill").collect();
+    assert!(!kills.is_empty(), "no kill invocation recorded: {inv:?}");
+    for kill in kills {
+        assert_eq!(
+            kill["live_members"].as_i64(),
+            Some(n as i64),
+            "members must have ended before the retained kill ran: {kill}"
+        );
+    }
+}
+
+#[then(
+    expr = "the container listing should include {string} with a last error mentioning {string}"
+)]
+fn then_listing_last_error_mentioning(world: &mut QuectoWorld, env_ref: String, expected: String) {
+    let entry = container_listing_entry(world, &env_ref);
+    let last_error = entry["last_error"].as_str().unwrap_or_default();
+    assert!(
+        last_error.contains(&expected),
+        "expected last_error mentioning '{expected}': {entry}"
     );
 }
