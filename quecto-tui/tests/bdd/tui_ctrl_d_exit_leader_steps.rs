@@ -63,11 +63,16 @@ fn process_alive(pid: i32) -> bool {
 fn adopt(world: &mut TuiWorld, leader: &str) {
     let dir = tempfile::tempdir().expect("fixture dir");
     let d = dir.path().display().to_string();
+    // A single non-forking child (no `sleep` grandchild), so the leader's
+    // `kill -KILL $kid; wait $kid` reaps the whole child subtree before it
+    // exits and nothing transient can trip the canary.
     let child = format!(
-        "sh -c 'trap \"echo TERM >> {d}/child.signals\" TERM; \
-         trap \"echo INT >> {d}/child.signals\" INT; \
-         trap \"echo HUP >> {d}/child.signals\" HUP; \
-         echo $$ > {d}/child.pid; while :; do sleep 0.05; done' & kid=$!; "
+        "python3 -c 'import os, signal; \
+         h = lambda n: lambda *_: open(\"{d}/child.signals\", \"a\").write(n + chr(10)); \
+         signal.signal(signal.SIGTERM, h(\"TERM\")); signal.signal(signal.SIGINT, h(\"INT\")); \
+         signal.signal(signal.SIGHUP, h(\"HUP\")); \
+         open(\"{d}/child.pid\", \"w\").write(str(os.getpid())); \
+         [signal.pause() for _ in iter(int, 1)]' & kid=$!; "
     );
     let script = format!("{child}{}", leader.replace("{dir}", &d));
     let harness_pid = with_harness(world, |h| h.adopt_owned_harness_script(&script));
@@ -104,12 +109,11 @@ fn fixture(world: &TuiWorld) -> &ExitFixture {
 
 #[given("the TUI owns a stand-in harness that settles its own child on SIGTERM")]
 fn owns_settling_harness(world: &mut TuiWorld) {
-    // On TERM: end the child (the harness's own authority), let the child's
-    // orphaned 50 ms `sleep` run out so the fixture leaves nothing transient
-    // in the group, record the order, mark the TERM handled, exit 0.
+    // On TERM: end and reap the child (the harness's own authority), record
+    // the order, mark the TERM handled, exit 0.
     adopt(
         world,
-        "trap 'kill -KILL $kid; wait $kid; sleep 0.3; echo child-gone > {dir}/order; \
+        "trap 'kill -KILL $kid; wait $kid; echo child-gone > {dir}/order; \
          : > {dir}/term-handled; exit 0' TERM; while :; do sleep 0.05; done",
     );
 }
@@ -156,7 +160,7 @@ fn owns_repeated_term_harness(world: &mut TuiWorld) {
     // the shape of the harness's own force-exit.
     adopt(
         world,
-        "trap 'trap \"kill -KILL $kid; wait $kid; sleep 0.3; : > {dir}/second-term; exit 0\" TERM' TERM; \
+        "trap 'trap \"kill -KILL $kid; wait $kid; : > {dir}/second-term; exit 0\" TERM' TERM; \
          while :; do sleep 0.05; done",
     );
 }

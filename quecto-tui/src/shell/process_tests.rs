@@ -147,6 +147,21 @@ async fn wait_for_file(path: &std::path::Path) -> String {
     }
 }
 
+/// A non-forking child that records every signal it receives to `log` and
+/// its pid to `pid_file`; it never exits on its own.
+fn signal_logging_child(pid_file: &std::path::Path, log: &std::path::Path) -> String {
+    format!(
+        "python3 -c 'import os, signal; \
+         h = lambda n: lambda *_: open(\"{log}\", \"a\").write(n + chr(10)); \
+         signal.signal(signal.SIGTERM, h(\"TERM\")); signal.signal(signal.SIGINT, h(\"INT\")); \
+         signal.signal(signal.SIGHUP, h(\"HUP\")); \
+         open(\"{pid}\", \"w\").write(str(os.getpid())); \
+         [signal.pause() for _ in iter(int, 1)]'",
+        log = log.display(),
+        pid = pid_file.display(),
+    )
+}
+
 fn alive(pid: i32) -> bool {
     // SAFETY: signal 0 only probes liveness of a pid this test spawned.
     let probed = unsafe { libc::kill(pid, 0) == 0 };
@@ -179,11 +194,14 @@ async fn leader_settles_its_child_and_exits_without_the_tui_signalling_the_child
     let child_pid = dir.path().join("child.pid");
     let child_log = dir.path().join("child.signals");
     let order = dir.path().join("order");
+    // The child is a single non-forking process (python, no `sleep`
+    // grandchild), so `kill -KILL $kid; wait $kid` reaps the whole child
+    // subtree deterministically before the leader exits: nothing can
+    // outlive the leader and trip the canary.
     let script = format!(
-        "sh -c 'trap \"echo TERM >> {log}\" TERM; trap \"echo INT >> {log}\" INT; echo $$ > {pid}; while :; do sleep 0.05; done' & kid=$!; \
+        "{child} & kid=$!; \
          trap 'kill -KILL $kid; wait $kid; echo child-gone >> {order}; exit 0' TERM; while :; do sleep 0.05; done",
-        log = child_log.display(),
-        pid = child_pid.display(),
+        child = signal_logging_child(&child_pid, &child_log),
         order = order.display(),
     );
     let mut leader = spawn_group(&script);
