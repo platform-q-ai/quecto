@@ -105,7 +105,51 @@ signal it receives (see the #1940 record below).
 
 #### In-container proof record (#1925 method, #1940 run)
 
-PROOF_RECORD_PLACEHOLDER
+Method (issue #1925): the harness's own full BDD suite runs inside a
+`quecto-box:local` container as the child of a **signal-logging pid 2** — a
+Python wrapper that blocks `SIGTERM`/`SIGINT`/`SIGHUP`, runs the suite as its
+child (with the mask unblocked for the child), and logs every signal it
+receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
+Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
+descendant pid the suite ever targeted would receive the signal there.
+
+- **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
+- **Image:** `quecto-box:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
+- **Command:**
+
+  ```bash
+  podman run --rm --init --name q1940-proof \
+    --userns=keep-id --pids-limit 16384 --user 1000:1000 \
+    -v <worktree>:/src -v q1940-target:/tmp/target \
+    -v /var/tmp/q1940/proof/home:/home/dev -v /var/tmp/q1940/proof/pid2_wrapper.py:/pid2_wrapper.py:ro \
+    -e CARGO_TARGET_DIR=/tmp/target -e HOME=/home/dev -e TMPDIR=/home/dev/tmp \
+    -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log -e RUST_LOG=warn -w /src \
+    quecto-box:local python3 /pid2_wrapper.py \
+    bash -c 'for i in 0 1 2 3; do QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
+      cargo test -p quecto-agentic-harness --features test-support --test bdd || exit 1; done'
+  ```
+
+  The suite runs as four sequential shards (one `bdd` process each) under
+  the same pid 2 because one process running all ~1600 scenarios exhausts the
+  container's 16384-pid cgroup: the BDD steps leak forgotten tokio runtimes
+  (`std::mem::forget(runtime)`, 128 sites), ~19 threads per scenario, and a
+  single-process run stalled at 16378 threads with `Cannot fork`.
+- **Log:** `/var/tmp/q1940/proof/final-run.log` (10 700 lines) and
+  `/var/tmp/q1940/proof/final-pid2-signals.log` on the machine that ran it.
+- **Counts:** 4 shards, **1609 scenarios passed, 0 failed** (393 + 376 + 394
+  + 446), 8021 steps passed; child exit status 0; runtime 15:18:26 →
+  15:26:41 (+ a 4 min cold build).
+- **Signals to pid 2: 0** (`SIGNALS_TO_PID2 0`); the wrapper survived with
+  pid 2 for the whole run.
+
+Found by this proof and fixed in the same PR: a launched child whose launcher
+died and whose stderr pipe therefore had no reader hung on its first log line
+when `RUST_LOG` was set (`tracing-subscriber` reports a failed write with
+`eprintln!`, which panics on a broken stderr inside the task that was about
+to run the parent-loss shutdown). `RedactingWriter` now swallows sink errors
+and the subscriber's internal-error reporting is off; the
+`subagent_delegated_subtree.feature` SIGKILL scenario reproduces the
+configuration on the host and fails without the fix.
 
 ### Swarm environments are retained (#1924)
 
@@ -273,7 +317,7 @@ hold end to end through a proxy, the proxy argv must exit (closing its
 connection into the child) when its stdin reaches EOF — the parent's side of
 that pipe closes whenever the parent dies, SIGKILL included. Every proxy
 process is owned by the parent's child supervisor; when the bridged
-connection ends its stdin is closed first and it is only signalled if it
+connection ends its stdin is closed first and it receives a signal only if it
 does not exit by itself. On death, the environment's
 retained `inspect` runs exactly once for that member (repeated EOF/reset
 signals do not re-run it), the authoritative environment record is
