@@ -40,7 +40,7 @@ pub(crate) struct ParentControlState {
     harness: Option<Harness>,
     pub(crate) supervisor: Option<SupervisorRig>,
     pub(crate) fixture: Option<std::process::Child>,
-    pub(crate) legacy_requests: Vec<bool>,
+    pub(crate) teardown_effects: Vec<bool>,
 }
 
 impl std::fmt::Debug for ParentControlState {

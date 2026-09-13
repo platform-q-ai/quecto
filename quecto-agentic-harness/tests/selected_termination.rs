@@ -105,18 +105,45 @@ struct Row {
     pid: u32,
 }
 
+/// The pid of the `quecto` process serving the socket of registry row
+/// `key`: a test-side `/proc` scan for an argv naming
+/// `quecto-agent-<key>.sock`. A merged descendant row carries neither a
+/// pid nor a reachable socket (#1940), so the test observes the
+/// grandchild's process itself.
+fn pid_serving_row(key: &str) -> Option<u32> {
+    let needle = format!("quecto-agent-{key}.sock");
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let cmdline = std::fs::read(entry.path().join("cmdline")).ok()?;
+            cmdline
+                .split(|b| *b == 0)
+                .any(|arg| arg.ends_with(needle.as_bytes()))
+                .then_some(pid)
+        })
+}
+
 fn row(registry: &SubagentRegistry, display: &str) -> Option<Row> {
     let entries = registry.lock().unwrap();
     entries
         .iter()
         .find(|(key, entry)| {
-            entry.effective_display_name(key) == display
-                && entry.status != SubagentStatus::Exited
-                && entry.pid != 0
+            entry.effective_display_name(key) == display && entry.status != SubagentStatus::Exited
         })
-        .map(|(key, entry)| Row {
-            key: key.clone(),
-            pid: entry.pid,
+        .and_then(|(key, entry)| {
+            let pid = if entry.launch_generation.is_some() {
+                assert_ne!(entry.pid, 0, "a launched row carries its display pid");
+                entry.pid
+            } else {
+                assert_eq!(entry.pid, 0, "a merged row carries no pid (#1940)");
+                pid_serving_row(key)?
+            };
+            Some(Row {
+                key: key.clone(),
+                pid,
+            })
         })
 }
 
@@ -199,7 +226,9 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
     // their launch generations, so they are addressable from here.
     let rows = wait_for_rows(&registry, &["aye", "bee", "cee"]).await;
     let (a, b, c) = (&rows[0], &rows[1], &rows[2]);
-    assert!(alive(a.pid) && alive(b.pid) && alive(c.pid));
+    assert!(alive(a.pid), "A {} dead", a.pid);
+    assert!(alive(b.pid), "B {} dead", b.pid);
+    assert!(alive(c.pid), "C {} dead", c.pid);
     {
         let entries = registry.lock().unwrap();
         assert!(entries[&b.key].delegated_identity().is_some());

@@ -186,7 +186,7 @@ Feature: Shared script-managed environments
     When I kill container "C1"
     Then the container command result should not be an error
     And the kill result should report member "impl-delegated-slice6" settled "graceful"
-    And the kill result should report member "observer-delegated-slice6" settled "graceful"
+    And the kill result should report member "observer-delegated-slice6" settled gracefully or already gone
     And the retained kill should have found 0 live members
     And the script-managed runtime should have killed an environment exactly 1 time
     And child "impl-delegated-slice6" should not be reachable

@@ -224,12 +224,12 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
 
 /// #1935/#1938: the local launch path is the ONLY place a spawned child
 /// becomes owned. Registering a real child must record the supervisor
-/// handle and a launch generation (never a signal lease), and the fleet
+/// handle and a launch generation (no other process authority), and the fleet
 /// teardown must terminate that child through the supervisor: the protocol
 /// attempt against its (never bound) socket is negative, so TERM follows and
 /// the child is reported as a fallback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn register_and_monitor_claims_launched_lease_and_fleet_teardown_terminates_child() {
+async fn register_and_monitor_records_the_owned_handle_and_fleet_teardown_terminates_child() {
     let tool = tool();
     let mut ports = SpawnLaunchPorts::new(&tool);
     let cfg = config();
@@ -262,11 +262,7 @@ async fn register_and_monitor_claims_launched_lease_and_fleet_teardown_terminate
     {
         let entries = tool.registry.lock().unwrap();
         let entry = &entries[&identity.registry_key];
-        assert_eq!(entry.pid, pid);
-        assert!(
-            !entry.process_ownership.is_owned(),
-            "a locally launched child carries no signal lease"
-        );
+        assert_eq!(entry.pid, pid, "the launched pid is display-only");
         assert!(
             entry.holds_owned_child(),
             "the supervisor retains the handle"
@@ -339,7 +335,7 @@ fn poison<T: Send + 'static>(mutex: &std::sync::Arc<std::sync::Mutex<T>>) {
 
 /// Poisoned registry / parent-id locks are recovered on every launch step,
 /// and `uncommit_registered` of a launched child terminates it through the
-/// same lease as a cascade would (#1925).
+/// supervised owned handle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child() {
     let tool = tool();

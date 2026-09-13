@@ -88,7 +88,7 @@ fn nothing_ran(rig: &Rig) {
     assert!(rig.routing.calls().is_empty());
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 0);
     assert!(rig.persistence.calls.lock().unwrap().is_empty());
-    assert!(rig.exit.signalled.lock().unwrap().is_empty());
+    assert!(rig.exit.readiness_signals.lock().unwrap().is_empty());
     assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 0);
 }
 
@@ -96,7 +96,7 @@ fn effects_once(rig: &Rig) {
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
     assert_eq!(rig.routing.calls().len(), 2);
     assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
-    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.readiness_signals.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -148,10 +148,10 @@ async fn execute_detaches_the_run_and_records_the_common_teardown_in_order() {
     );
     assert!(outcome.exit_signalled);
     assert_eq!(
-        rig.exit.signalled(),
+        rig.exit.readiness_signals(),
         [ExitReadiness::Completed(ShutdownReason::OperatorRequest)]
     );
-    // Terminated is set last, after exit readiness was signalled.
+    // Terminated is set last, after exit readiness was readiness_signals.
     assert_eq!(
         *rig.lifecycle.transitions.lock().unwrap(),
         [
@@ -485,8 +485,8 @@ async fn a_repository_that_lost_the_freeze_is_a_lifecycle_violation_shared_by_jo
         HarnessShutdownError::LifecycleViolation("cannot terminate from Accepting".into())
     );
     assert_eq!(rig.execute.execute(&token).await, Err(error));
-    // Exit readiness was signalled before the terminate step failed.
-    assert_eq!(rig.exit.signalled().len(), 1);
+    // Exit readiness was readiness_signals before the terminate step failed.
+    assert_eq!(rig.exit.readiness_signals().len(), 1);
 }
 
 #[test]
@@ -644,7 +644,7 @@ async fn a_run_interrupted_mid_children_never_re_sends_to_a_recorded_child() {
     assert_eq!(rig.fleet.compensation.calls().len(), 2);
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
     assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
-    assert_eq!(rig.exit.signalled().len(), 1);
+    assert_eq!(rig.exit.readiness_signals().len(), 1);
 }
 
 #[tokio::test]
@@ -657,7 +657,7 @@ async fn abandon_signals_exit_readiness_with_the_failure_and_keeps_the_admission
         .token;
     rig.execute.abandon(&token, "runtime gone").await.unwrap();
     assert_eq!(
-        rig.exit.signalled(),
+        rig.exit.readiness_signals(),
         [ExitReadiness::Abandoned {
             reason: ShutdownReason::ParentShutdown,
             detail: "runtime gone".into(),

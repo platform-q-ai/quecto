@@ -436,8 +436,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 process_owner: prepared.process_owner,
             });
             // Only a LOCAL launch holds a process, and only through the one
-            // supervisor's opaque handle (#1935): the registry row carries no
-            // signal lease and no authority over `runtime.pid`.
+            // supervisor's opaque handle (#1935): the registry row's pid is
+            // display-only and carries no authority.
             let parent_control = self.parent_control.take();
             // The generation the launch minted with its credential; a
             // registration driven without `build_cli_args` (test rigs) still

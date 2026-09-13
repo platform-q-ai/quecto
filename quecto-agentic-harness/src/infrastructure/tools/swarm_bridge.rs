@@ -10,14 +10,14 @@ use crate::domain::error::DomainError;
 pub struct SwarmContext {
     pub checkout: PathBuf,
     pub member: String,
-    pub lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
+    pub lifecycle: std::sync::Arc<dyn crate::application::swarm::SwarmLifecycle>,
 }
 
 impl SwarmContext {
     /// Explicit context supplied by the container launch adapter. Host-local
     /// reference scripts deliberately do not set this contract.
     pub fn discover(
-        lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
+        lifecycle: std::sync::Arc<dyn crate::application::swarm::SwarmLifecycle>,
     ) -> Option<Self> {
         let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
         let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;

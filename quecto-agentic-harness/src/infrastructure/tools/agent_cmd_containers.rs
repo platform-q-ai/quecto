@@ -21,7 +21,7 @@ pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
 
 pub(super) async fn execute_container_command(
     list_environments: Option<&Arc<ListEnvironmentsQuery>>,
-    environment_control: Option<&Arc<KillEnvironment>>,
+    kill_environment: Option<&Arc<KillEnvironment>>,
     args: &serde_json::Value,
 ) -> ToolResult {
     match args.get("agent_id").and_then(|v| v.as_str()) {
@@ -33,7 +33,7 @@ pub(super) async fn execute_container_command(
             Some(query) => encode_listing(query.execute()),
             None => error("environment listing is not available in this session".to_string()),
         },
-        Some("kill_container") => match environment_control {
+        Some("kill_container") => match kill_environment {
             None => error("environment control is not available in this session".to_string()),
             Some(uc) => match decode_target(args) {
                 Ok(target) => match uc.kill_container(&target).await {

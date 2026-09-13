@@ -161,7 +161,7 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
         "an in-flight turn must be cancelled so the loop can exit"
     );
     assert!(
-        rig.graph.exit.signalled().is_some(),
+        rig.graph.exit.readiness_signalled().is_some(),
         "composition was told the harness may exit"
     );
     assert_eq!(
@@ -193,7 +193,7 @@ async fn no_signal_means_no_teardown() {
     assert_eq!(rig.subagents.lock().unwrap().len(), 1);
     assert!(!dir.path().join("killed").exists());
     assert!(matches!(*rig.cancel.lock().unwrap(), CancelSlot::Idle));
-    assert!(rig.graph.exit.signalled().is_none());
+    assert!(rig.graph.exit.readiness_signalled().is_none());
     watcher.abort();
 }
 

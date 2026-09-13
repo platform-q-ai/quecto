@@ -96,7 +96,9 @@ quecto-tui --workflow --workflow-guards
 ```bash
 # Terminal 1: start the core agent as a persistent UDS server
 # (--persist is for top-level agents you start yourself; subagents the harness
-#  spawns are lifetime-bound to their launcher and exit with it)
+#  spawns are lifetime-bound to their launcher and exit with it. SIGTERM or a
+#  protocol shutdown tears the whole subagent tree down over the protocol —
+#  the harness never signals a descendant by pid.)
 quecto agent --mode uds --socket /tmp/quecto.sock --persist
 
 # Terminal 2: expose it over HTTP/WebSocket

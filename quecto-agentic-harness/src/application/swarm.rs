@@ -1,8 +1,50 @@
 //! Lifecycle sequencing and fail-closed ownership decisions over effect ports.
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{
-    CoordinationPort, MemberStatus, ProcessControl, ProcessObservation, Snapshot,
-};
+use crate::domain::subagent_launch::LaunchFuture;
+use crate::domain::swarm::ProcessIdentity;
+use crate::domain::swarm::{CoordinationPort, Member, MemberStatus, RunStatus, Snapshot};
+
+// ── Capability-local ports (moved out of the domain by #1940) ────────────
+
+pub trait ProcessObservation {
+    fn harness_dead(&self, process: &ProcessIdentity) -> bool;
+}
+
+pub trait ProcessControl: Sync {
+    /// Cancel this member's detached execution registry independently of turn abort.
+    fn cancel_local_executions(&self);
+    /// Cancel current jobs while retaining admission for a later resume.
+    fn suspend_local_executions(&self, snapshot: &Snapshot);
+    /// Suspend only this process; never signal a future turn or another member.
+    fn suspend_local_inference(&self, snapshot: &Snapshot);
+    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
+    /// End the member's harness by delegation (#1939): the shutdown protocol
+    /// over the endpoint it registered, the locally owned handle only when
+    /// this harness launched it. The member's `ProcessIdentity` is an
+    /// observation for liveness, never an authority to signal; a member
+    /// reachable neither way is reported failed, not signalled.
+    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>>;
+}
+
+pub trait Clock {
+    fn now_seconds(&self) -> f64;
+}
+
+/// Application lifecycle entrypoint, injected by the composition root.
+pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
+    fn reconcile(
+        &self,
+        coordination: &dyn CoordinationPort,
+        processes: &dyn ProcessObservation,
+    ) -> Result<Snapshot, DomainError>;
+    fn settle<'a>(
+        &'a self,
+        snapshot: &'a Snapshot,
+        actor: &'a str,
+        processes: &'a dyn ProcessControl,
+    ) -> LaunchFuture<'a, Result<(), DomainError>>;
+    fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
+}
 
 pub fn reconcile(
     coordination: &(impl CoordinationPort + ?Sized),
@@ -78,7 +120,7 @@ pub async fn settle(
 
 pub fn observed_outcome(
     snapshot: &Snapshot,
-    clock: &(impl crate::domain::swarm::Clock + ?Sized),
+    clock: &(impl Clock + ?Sized),
 ) -> crate::domain::swarm::RunStatus {
     use crate::domain::swarm::RunStatus;
     // A passed deadline ends the run as a resumable pause holding
@@ -90,16 +132,13 @@ pub fn observed_outcome(
     }
 }
 
-pub fn settlement_due(
-    snapshot: &Snapshot,
-    clock: &(impl crate::domain::swarm::Clock + ?Sized),
-) -> bool {
+pub fn settlement_due(snapshot: &Snapshot, clock: &(impl Clock + ?Sized)) -> bool {
     observed_outcome(snapshot, clock).terminal()
 }
 
 #[derive(Debug)]
 pub struct LifecycleService;
-impl crate::domain::swarm::SwarmLifecycle for LifecycleService {
+impl SwarmLifecycle for LifecycleService {
     fn reconcile(
         &self,
         coordination: &dyn CoordinationPort,
@@ -118,7 +157,7 @@ impl crate::domain::swarm::SwarmLifecycle for LifecycleService {
     fn observed_outcome(
         &self,
         snapshot: &Snapshot,
-        clock: &dyn crate::domain::swarm::Clock,
+        clock: &dyn Clock,
     ) -> crate::domain::swarm::RunStatus {
         observed_outcome(snapshot, clock)
     }

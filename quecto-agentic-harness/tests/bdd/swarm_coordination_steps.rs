@@ -385,7 +385,11 @@ fn permit_subprocesses(world: &mut QuectoWorld) {
 #[when(expr = "a {string} swarm interpreter returns before its ordinary child")]
 fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
     assert!(matches!(mode.as_str(), "foreground" | "background"));
-    let child = "import pathlib,time,os; pathlib.Path('child-ready').write_text(str(os.getpid())); time.sleep(10)";
+    // The pid file is published atomically (write to a temp name, then
+    // rename): the interpreter polls for the file's existence and returns
+    // as soon as it appears, so a non-atomic `write_text` let the step
+    // read an empty file under load (CI shard 12 on #1958).
+    let child = "import pathlib,time,os; pathlib.Path('child-ready.tmp').write_text(str(os.getpid())); os.rename('child-ready.tmp','child-ready'); time.sleep(10)";
     let code = format!(
         "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
         json!(child)
@@ -413,10 +417,11 @@ fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
 #[then("the completed swarm invocation has stopped its child")]
 fn invocation_child_stopped(world: &mut QuectoWorld) {
     let workspace = super::ensure_workspace(world);
-    let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
-        .unwrap()
+    let published = std::fs::read_to_string(workspace.join("child-ready")).unwrap();
+    let pid: u32 = published
+        .trim()
         .parse()
-        .unwrap();
+        .unwrap_or_else(|e| panic!("child-ready holds {published:?}: {e}"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let running = std::fs::read_to_string(format!("/proc/{pid}/stat"))

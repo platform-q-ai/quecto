@@ -118,11 +118,14 @@ a launcher-created subagent is **launch-bound**: it is started without
 bound parent connection is lost, so it cannot outlive the harness that
 launched it. The persisted roster is therefore history only: it carries no
 `socketPath` or `pid` (a legacy record's are ignored when read and dropped on
-the next save), and a restarting harness probes nothing and readopts nothing
-— it resets the operational roster to empty and the master re-spawns the
-workers it needs with a fresh identity and launch generation. On a session
-transition the departing session's live children are released through parent
-loss (interim until #1938). The `live | detached | dead` liveness dimension
+the next save), and a restarting harness probes nothing and re-creates no
+child row — it resets the operational roster to empty and the master
+re-spawns the workers it needs with a fresh identity and launch generation.
+On a session transition the departing session's live children are settled
+by the acknowledged fleet teardown before the roster is replaced (#1938).
+Since #1940 a merged descendant row carries no pid at all: a harness holds
+handles only for the children it launched and ends every other row over the
+protocol. The `live | detached | dead` liveness dimension
 survives only for a **top-level** `quecto agent --persist` process, which the
 TUI still multiplexes and reattaches to; it is never re-derived for a
 launcher's children. See ADR-0025's #1937 correction for the roster policy.

@@ -17,6 +17,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
+/// retired-name sweep, single owners and whole-crate layer baselines.
+#[path = "architecture/teardown_authority.rs"]
+mod teardown_authority;
+#[path = "architecture/teardown_layers.rs"]
+mod teardown_layers;
+
 /// Recursively collect all .rs files under a directory.
 fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     if !dir.exists() {
@@ -246,7 +253,7 @@ fn domain_layer_has_no_runtime_io_calls() {
 }
 
 #[test]
-fn environment_control_orchestration_stays_out_of_interface_handlers() {
+fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // Environment listing and kill transactions are separate application owners.
     // UDS handlers and the agent_cmd adapter may only decode arguments, delegate
     // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
@@ -394,6 +401,16 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "KillEnvironmentError"
                     | "FinalizeEnvironmentMember",
                     ..,
+                ] => true,
+                // The launch port and the swarm lifecycle ports moved out of
+                // the domain into their capabilities (#1940); the spawn and
+                // swarm adapters implement them.
+                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"]
+                | [
+                    "crate",
+                    "application",
+                    "swarm",
+                    "ProcessControl" | "ProcessObservation" | "Clock" | "SwarmLifecycle",
                 ] => true,
                 ["crate", "application", ..] => false,
                 _ => true,
@@ -1274,7 +1291,12 @@ fn runtime_manager_domain_is_pure() {
     let src = fs::read_to_string("../quecto-runtime-manager/src/domain.rs")
         .expect("read quecto-runtime-manager/src/domain.rs");
     // Scan production code only — stop at the test module.
-    let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    let prod = teardown_authority::strip_test_items(&src)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prod = prod.as_str();
     for pattern in [
         "crate::infrastructure",
         "crate::application",
@@ -3089,14 +3111,10 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/composition/subagent_teardown.rs",
 ];
 
-/// Only the part of a source file before its `#[cfg(test)]` modules.
+/// A source file with every `#[cfg(test)]`-gated item removed (see
+/// `teardown_authority::strip_test_items`).
 fn production_source(path: &str) -> String {
-    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    source
-        .split("#[cfg(test)]")
-        .next()
-        .unwrap_or_default()
-        .to_string()
+    teardown_authority::production_source(path)
 }
 
 /// The interface receives composition's teardown graph builder through
@@ -3180,25 +3198,11 @@ fn owned_child_supervisor_is_the_one_child_owner_and_signaller() {
     }
 }
 
-/// The retained #1925 scaffolding may still signal *reported* pids until
-/// #1940, but no production path publishes a launched lease any more: the
-/// launched-child authority lives exclusively in the supervisor's handle.
+/// A local launch records the supervisor's opaque handle and a launch
+/// generation: the launched-child authority lives exclusively in the
+/// supervisor's handle (#1935); no lease of any kind exists since #1940.
 #[test]
-fn local_launch_publishes_no_signal_lease() {
-    let mut files = Vec::new();
-    collect_rs_files(Path::new("src"), &mut files);
-    for file in &files {
-        let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/infrastructure/tools/process_ownership.rs" {
-            continue;
-        }
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
-        assert!(
-            !production.contains("ProcessOwnership::launched"),
-            "{path} publishes a launched signal lease; launched children are \
-             owned through the supervisor (#1935)"
-        );
-    }
+fn local_launch_records_the_owned_handle_and_generation() {
     let launch = production_source("src/infrastructure/tools/spawn_launch_ports.rs");
     assert!(launch.contains("entry.owned_child = prepared.owned_child;"));
     assert!(launch.contains("entry.launch_generation ="));
@@ -3270,7 +3274,11 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
     let mut touched = 0;
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if !production.contains("parent_control_path") {
             continue;
         }
@@ -3292,7 +3300,11 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
     // where the bound connection presents it.
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains(".expose()") {
             assert!(
                 matches!(
@@ -3309,12 +3321,10 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
 // ─── Selected termination and lifecycle compensation (#1936) ─────────────────
 
 /// Every termination path converges on the application's claims and the
-/// owned-handle fallback: none of them reads the #1925 reported lease,
-/// signals a pid, or removes a row before the exit was observed. Since
-/// #1938 no termination path reads the lease at all; only the merge
-/// scaffolding writes it until #1940 deletes the module.
+/// owned-handle fallback: none of them names a lease (deleted by #1940),
+/// signals a pid, or removes a row before the exit was observed.
 #[test]
-fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
+fn termination_paths_never_consult_a_lease_or_a_pid() {
     for path in [
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
@@ -3556,7 +3566,11 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains("KillDelegatedAgent::new(") {
             assert_eq!(
                 path, "src/composition/subagent_termination.rs",
@@ -3592,7 +3606,11 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("\"unsignalled\"") && !production.contains("\"signalled\""),
             "{path} still presents the #1928 signalled/unsignalled vocabulary"
@@ -3649,7 +3667,11 @@ fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("shutdown_all(")
                 && !production.contains("shutdown_all_with_count("),
@@ -3676,7 +3698,11 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains("TerminateAllDelegatedAgents::new(") {
             assert_eq!(
                 path, "src/composition/subagent_teardown.rs",
@@ -3950,7 +3976,7 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
 /// termination path reads a pid, and the numeric member termination is gone.
 #[test]
 fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
-    let domain = production_source("src/domain/swarm.rs");
+    let domain = production_source("src/application/swarm.rs");
     assert!(
         domain.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
         "ProcessControl::terminate takes the member"
@@ -4019,7 +4045,11 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("fn terminate_member("),
             "{path} still defines the numeric terminate_member"

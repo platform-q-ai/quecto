@@ -54,7 +54,11 @@ fn outcomes_present_the_result_vocabulary_and_cap_the_list() {
     assert_eq!(body["target"], "A");
     assert_eq!(body["killed"], serde_json::json!(["r0", "r1"]));
     assert!(body.get("omitted_agents").is_none());
-    assert!(body.get("signalled").is_none(), "#1928 vocabulary is gone");
+    assert_eq!(
+        body.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["killed", "result", "target"],
+        "the vocabulary is exactly target/result/killed"
+    );
 
     let capped = present_outcome(&outcome(TerminationResult::Fallback, 23));
     let body: serde_json::Value = serde_json::from_str(&capped.content).unwrap();

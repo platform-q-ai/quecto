@@ -175,6 +175,14 @@ fn extract_prefix<'a>(key: &'a str, default_prefix: &'a str) -> &'a str {
 use std::io::Write;
 
 /// A writer that redacts API keys from each chunk before forwarding to `inner`.
+///
+/// A lost sink is never an error: a launched child's stderr is a pipe to
+/// its launcher, and once the launcher is gone (SIGKILL, OOM) every write
+/// fails with `EPIPE`. `tracing-subscriber` reports a failed write with
+/// `eprintln!`, which *panics* on a broken stderr — inside whichever task
+/// was logging, for example the one about to run the parent-loss shutdown
+/// (#1940 in-container proof: an orphaned grandchild with `RUST_LOG=warn`
+/// never exited). Diagnostics are dropped; the process keeps its contract.
 struct RedactingWriter<W: Write> {
     inner: W,
 }
@@ -187,12 +195,14 @@ impl<W: Write> Write for RedactingWriter<W> {
         // no intermediate allocation.
         let lossy = String::from_utf8_lossy(buf);
         let redacted = redact_api_keys_cow(&lossy);
-        self.inner.write_all(redacted.as_bytes())?;
+        // A failed write is swallowed, never surfaced (see the type docs).
+        let _ = self.inner.write_all(redacted.as_bytes());
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+        let _ = self.inner.flush();
+        Ok(())
     }
 }
 
@@ -224,6 +234,9 @@ pub fn install_redacting_subscriber() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(RedactingMakeWriter)
+        // Never `eprintln!` about a writer failure: on a broken stderr that
+        // panics the logging task (see `RedactingWriter`).
+        .log_internal_errors(false)
         .try_init();
 }
 

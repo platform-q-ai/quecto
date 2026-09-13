@@ -180,7 +180,7 @@ async fn selected_routing_root_a_b_preserves_a_and_its_unrelated_children() {
     // This harness stays alive and accepting; nothing else was touched.
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 0);
-    assert!(rig.exit.signalled.lock().unwrap().is_empty());
+    assert!(rig.exit.readiness_signals.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
