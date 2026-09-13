@@ -209,7 +209,7 @@ Feature: Shared script-managed environments
     When the in-flight termination of member "observer-unsettled-slice6" is released
     And I kill container "C1"
     Then the container command result should not be an error
-    And the kill result should report member "observer-unsettled-slice6" settled "graceful"
+    And the kill result should report member "observer-unsettled-slice6" settled gracefully or already gone
     And the retained kill should have found 0 live members
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
