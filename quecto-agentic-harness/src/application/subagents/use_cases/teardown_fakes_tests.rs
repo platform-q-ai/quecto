@@ -99,7 +99,8 @@ pub struct FakeRouting {
     pub gate: tokio::sync::Notify,
     /// What a forwarded hop relays back (`None`: it only routed the edge).
     pub forward_result: Mutex<Option<TerminationResult>>,
-    /// Refusals scripted per `via` for a forwarded hop.
+    /// Refusals scripted per child: what a forwarded hop through it, or a
+    /// `shutdown` sent to it, answers.
     pub downstream: Mutex<Vec<(AgentUuid, DownstreamRejection)>>,
 }
 
@@ -109,6 +110,15 @@ impl FakeRouting {
     }
 
     fn outcome(&self, child: &AgentUuid) -> Result<(), ChildRoutingError> {
+        if let Some((_, rejection)) = self
+            .downstream
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(uuid, _)| uuid == child)
+        {
+            return Err(ChildRoutingError::Downstream(rejection.clone()));
+        }
         if self.unreachable.lock().unwrap().contains(child) {
             Err(ChildRoutingError::Unreachable("socket closed".into()))
         } else {
@@ -159,12 +169,10 @@ impl DirectChildRouting for FakeRouting {
             .iter()
             .find(|(uuid, _)| uuid == &via.uuid)
             .map(|(_, rejection)| rejection.clone());
-        let outcome = match scripted {
-            Some(rejection) => Err(ChildRoutingError::Downstream(rejection)),
-            None => self
-                .outcome(&via.uuid)
-                .map(|()| *self.forward_result.lock().unwrap()),
-        };
+        let _ = scripted;
+        let outcome = self
+            .outcome(&via.uuid)
+            .map(|()| *self.forward_result.lock().unwrap());
         Box::pin(async move { outcome })
     }
 }

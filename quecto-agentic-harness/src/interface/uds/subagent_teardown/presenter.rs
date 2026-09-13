@@ -45,8 +45,30 @@ pub fn shutdown_ack(id: Option<&str>, prepared: &PreparedShutdown) -> TeardownRe
     )
 }
 
+/// The kind a `shutdown` refusal carries to the parent that asked: a
+/// harness that already terminated is an ending target (`already_exited`,
+/// its exit follows and the parent's ladder awaits it); any other refusal
+/// is a plain rejection.
+pub fn shutdown_rejection_kind(error: &HarnessShutdownError) -> &'static str {
+    match error {
+        HarnessShutdownError::AlreadyTerminated => DownstreamRejection::AlreadyExited.kind(),
+        HarnessShutdownError::NotPrepared
+        | HarnessShutdownError::UnknownToken
+        | HarnessShutdownError::TokenReleased
+        | HarnessShutdownError::LifecycleViolation(_)
+        | HarnessShutdownError::ExecutionInterrupted => {
+            DownstreamRejection::Rejected(String::new()).kind()
+        }
+    }
+}
+
 pub fn shutdown_rejection(id: Option<&str>, error: &HarnessShutdownError) -> TeardownResponse {
-    TeardownResponse::err(id, SHUTDOWN_COMMAND, error.to_string())
+    TeardownResponse::err_of_kind(
+        id,
+        SHUTDOWN_COMMAND,
+        shutdown_rejection_kind(error),
+        error.to_string(),
+    )
 }
 
 pub fn termination_response(id: Option<&str>, routed: &TerminationRouted) -> TeardownResponse {

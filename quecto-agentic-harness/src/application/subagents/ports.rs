@@ -255,6 +255,24 @@ pub enum ProtocolAttempt {
     Negative(String),
 }
 
+impl ProtocolAttempt {
+    /// How a `shutdown` answer reads as an attempt. An acknowledgement, or
+    /// a child that answered that it is already ending (kind
+    /// `already_exited`: its harness already terminated, its exit follows),
+    /// is an acknowledged attempt — the exit is awaited within the budget
+    /// and no signal is authorised before it. Every other answer —
+    /// unreachable, a refusal of another kind, a malformed acknowledgement
+    /// — is negative.
+    pub fn from_shutdown_answer(answer: Result<(), ChildRoutingError>) -> Self {
+        match answer {
+            Ok(()) | Err(ChildRoutingError::Downstream(DownstreamRejection::AlreadyExited)) => {
+                Self::Acknowledged
+            }
+            Err(error) => Self::Negative(error.to_string()),
+        }
+    }
+}
+
 /// How much patience a conclusion gets. A selected termination gives an
 /// acknowledged child its full exit budget; a launch rollback of a child
 /// that was never handed work only needs a short one.

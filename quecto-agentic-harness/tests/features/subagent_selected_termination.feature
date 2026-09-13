@@ -81,6 +81,17 @@ Feature: Selected termination of a delegated agent (#1936, #1882)
 
   # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
   @serial
+  Scenario: The eventual exit of a child whose kill failed after effects is compensated as that kill
+    Given a root harness whose launched child "E" acknowledges commands
+    When the operator kills "E"
+    Then the kill result is "failed"
+    And "E" stays claimed stopping
+    When the monitor of "E" observes its connection closed
+    Then the observation compensated "E" as a selected termination, not a natural exit
+    And exactly one survivor broadcast went out, listing nothing
+
+  # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
+  @serial
   Scenario: A child whose reaper wins during the protocol attempt is already exited
     Given a root harness whose launched child "A" ends its process on shutdown and then refuses and holds a sleeping process
     And the reaper of "A" is running

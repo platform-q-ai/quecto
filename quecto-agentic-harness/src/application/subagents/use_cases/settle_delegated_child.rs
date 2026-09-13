@@ -77,10 +77,9 @@ impl SettleDelegatedChild {
                 return ChildSettlement::Gone(child.uuid);
             }
         }
-        let attempt = match self.ports.routing.shutdown_child(&child, reason).await {
-            Ok(()) => ProtocolAttempt::Acknowledged,
-            Err(error) => ProtocolAttempt::Negative(error.to_string()),
-        };
+        let attempt = ProtocolAttempt::from_shutdown_answer(
+            self.ports.routing.shutdown_child(&child, reason).await,
+        );
         let acknowledged = matches!(attempt, ProtocolAttempt::Acknowledged);
         let result = match self
             .ports

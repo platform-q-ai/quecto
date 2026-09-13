@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::*;
 use crate::application::subagents::dto::FleetChildResult;
 use crate::application::subagents::ports::{
-    ConclusionBudget, ProtocolAttempt, TerminationConclusion,
+    ConclusionBudget, DownstreamRejection, ProtocolAttempt, TerminationConclusion,
 };
 use crate::application::subagents::use_cases::lifecycle_fakes::Phase;
 use crate::application::subagents::use_cases::teardown_fakes::*;
@@ -347,6 +347,45 @@ async fn an_unowned_child_is_compensated_unobserved_when_its_exit_never_arrives(
             .registry
             .trace()
             .contains(&"await-compensated A".to_owned())
+    );
+}
+
+/// #1936 review (e): a child that answers `shutdown` with an
+/// `already_exited` refusal — its harness already terminated, its exit
+/// follows — is an acknowledged attempt: the owned handle waits for the
+/// exit (no signal is authorised by the refusal), an unowned row awaits
+/// its compensation, and a plain refusal stays negative.
+#[tokio::test]
+async fn a_child_already_ending_is_awaited_like_an_acknowledgement_not_refused() {
+    let rig = rig();
+    rig.routing.downstream.lock().unwrap().extend([
+        (AgentUuid::new("A"), DownstreamRejection::AlreadyExited),
+        (AgentUuid::new("D"), DownstreamRejection::NotAccepting),
+    ]);
+    let outcome = bounded(
+        rig.fleet
+            .fleet
+            .execute(request(ShutdownReason::OperatorRequest)),
+    )
+    .await
+    .unwrap();
+    assert!(outcome.is_settled());
+    let attempts: Vec<(String, ProtocolAttempt)> = rig
+        .fleet
+        .termination
+        .calls()
+        .into_iter()
+        .map(|(child, attempt, _)| (child.uuid.as_str().to_owned(), attempt))
+        .collect();
+    assert_eq!(
+        attempts,
+        [
+            ("A".to_owned(), ProtocolAttempt::Acknowledged),
+            (
+                "D".to_owned(),
+                ProtocolAttempt::Negative("downstream harness is not accepting".into())
+            ),
+        ]
     );
 }
 

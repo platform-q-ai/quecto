@@ -182,14 +182,11 @@ impl TerminateDelegatedAgent {
         child: DelegatedAgentIdentity,
         claimed: bool,
     ) -> Result<TerminationRouted, TerminateDelegatedAgentError> {
-        let attempt = match self
-            .routing
-            .shutdown_child(&child, ShutdownReason::SelectedTermination)
-            .await
-        {
-            Ok(()) => ProtocolAttempt::Acknowledged,
-            Err(error) => ProtocolAttempt::Negative(error.to_string()),
-        };
+        let attempt = ProtocolAttempt::from_shutdown_answer(
+            self.routing
+                .shutdown_child(&child, ShutdownReason::SelectedTermination)
+                .await,
+        );
         let Some(owner) = &self.owner else {
             // A bare route observes nothing beyond the acknowledgement.
             return match attempt {

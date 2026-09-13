@@ -38,6 +38,15 @@ fn rejections_carry_the_use_case_vocabulary() {
         shutdown.error.as_deref(),
         Some("harness already terminated")
     );
+    // The kind travels to the parent's ladder: an already-ending child is
+    // awaited, never signalled (#1936 review).
+    assert_eq!(shutdown.error_kind.as_deref(), Some("already_exited"));
+    assert_eq!(
+        shutdown_rejection(None, &HarnessShutdownError::NotPrepared)
+            .error_kind
+            .as_deref(),
+        Some("rejected")
+    );
     let termination = termination_rejection(
         Some("t"),
         &TerminateDelegatedAgentError::Rejected(TerminationRouteError::TargetIsSelf),

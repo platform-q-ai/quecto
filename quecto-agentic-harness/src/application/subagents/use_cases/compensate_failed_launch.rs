@@ -67,15 +67,12 @@ impl CompensateFailedLaunch {
                 };
             }
         }
-        let attempt = match self
-            .ports
-            .routing
-            .shutdown_child(&child, ShutdownReason::OperatorRequest)
-            .await
-        {
-            Ok(()) => ProtocolAttempt::Acknowledged,
-            Err(error) => ProtocolAttempt::Negative(error.to_string()),
-        };
+        let attempt = ProtocolAttempt::from_shutdown_answer(
+            self.ports
+                .routing
+                .shutdown_child(&child, ShutdownReason::OperatorRequest)
+                .await,
+        );
         let conclusion = self
             .ports
             .termination

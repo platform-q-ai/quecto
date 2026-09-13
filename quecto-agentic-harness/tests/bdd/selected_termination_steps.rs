@@ -511,6 +511,37 @@ fn then_compensated_once(world: &mut QuectoWorld, uuid: String) {
     assert_eq!(entries[&uuid].status, SubagentStatus::Exited);
 }
 
+/// The kept claim is honoured: the exit the monitor observed later ran the
+/// row's compensation as the kill (its exit signal is `Terminated`, not
+/// the connection-level `ConnectionClosed` a natural EOF would carry), and
+/// the row is compensated exactly once.
+#[then(expr = "the observation compensated {string} as a selected termination, not a natural exit")]
+fn then_compensated_as_kill(world: &mut QuectoWorld, uuid: String) {
+    let s = state(world);
+    assert!(
+        matches!(s.observed, Some(ObservedExit::Compensated { .. })),
+        "the observation ran the compensation: {:?}",
+        s.observed
+    );
+    wait_compensated(s, &uuid);
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    let entry = &entries[&uuid];
+    assert_eq!(entry.status, SubagentStatus::Exited);
+    assert_eq!(entry.teardown_phase(), TeardownPhase::Compensated);
+    let signal = entry
+        .exit_signal_tx
+        .as_ref()
+        .expect("the launched row carries an exit signal")
+        .borrow()
+        .clone()
+        .expect("the compensation published the exit");
+    assert_eq!(
+        signal.kind,
+        quecto::infrastructure::tools::subagent_registry::ExitSignalKind::Terminated,
+        "a kept claim makes the later exit this kill's, never a post-mortem"
+    );
+}
+
 #[then(expr = "the observation is deferred to the process exit and {string} remains live")]
 fn then_deferred(world: &mut QuectoWorld, uuid: String) {
     {
