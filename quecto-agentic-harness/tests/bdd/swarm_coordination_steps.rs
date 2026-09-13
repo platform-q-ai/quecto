@@ -263,7 +263,10 @@ fn rejected_wake(world: &mut QuectoWorld) {
         .unwrap();
     listener.set_nonblocking(true).unwrap();
     let recipient = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        // The hint is sent by a Python invocation started below; its startup
+        // under a fully loaded coverage run (24 shards) exceeds a few seconds,
+        // so the bound is generous while a missing hint still fails.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut stream = loop {
             match listener.accept() {
                 Ok((stream, _)) => break stream,
@@ -277,7 +280,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
             }
         };
         stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .set_read_timeout(Some(std::time::Duration::from_secs(30)))
             .unwrap();
         let command = quecto::infrastructure::test_support::read_framed_command(&stream).unwrap();
         let command: serde_json::Value = serde_json::from_str(&command).unwrap();
