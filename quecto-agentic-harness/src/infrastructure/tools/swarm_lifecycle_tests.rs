@@ -80,7 +80,8 @@ fn wake_sink(
 /// resume's control generation, so a provider-failure suspension re-arms.
 #[tokio::test]
 async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
-    use crate::domain::swarm::{RunControlAction, SwarmRunControl};
+    use crate::application::swarm::ports::SwarmRunControl;
+    use crate::domain::swarm::RunControlAction;
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = wake_sink(&socket);

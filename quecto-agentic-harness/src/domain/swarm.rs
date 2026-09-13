@@ -1,6 +1,7 @@
-//! Swarm lifecycle vocabulary and effect ports, independent of adapter protocols.
+//! Swarm lifecycle vocabulary, independent of adapter protocols. The effect
+//! ports (`CoordinationPort`, `SwarmRunControl`, `ProcessControl`, …) are the
+//! application's (`application::swarm::ports`, #1940, #1960).
 use super::error::DomainError;
-use super::subagent_launch::LaunchFuture;
 
 /// A swarm owns its coordination lifecycle; workflow engines cannot run alongside it.
 pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), DomainError> {
@@ -139,30 +140,6 @@ impl Snapshot {
     }
 }
 
-/// Implementations atomically enforce membership policy before reserving slots.
-/// Wire names, positional arguments and persistence schemas are private details.
-pub trait CoordinationPort {
-    fn snapshot(&self) -> Result<Snapshot, DomainError>;
-    fn register_endpoint(&self, endpoint: &str) -> Result<(), DomainError>;
-    fn reserve_member(&self, member: &str, token: &str) -> Result<(), DomainError>;
-    fn record_launch(
-        &self,
-        member: &str,
-        token: &str,
-        process: &ProcessIdentity,
-    ) -> Result<(), DomainError>;
-    fn confirm_unlaunched(&self, member: &str) -> Result<(), DomainError>;
-    /// A member's harness vanished without an authoritative exit observation
-    /// (or the coordinator was lost, #1924): ownership is retained and the
-    /// run pauses holding `failed`.
-    fn quarantine(&self, member: &str) -> Result<(), DomainError>;
-    /// The launching harness reaped the member's owned process (#1961): the
-    /// member is dead, its active tasks block for the coordinator's
-    /// `recover`, and the run keeps going. An orderly exit releases the
-    /// member's file reservations; an abrupt one retains them.
-    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError>;
-}
-
 /// How a launched member's process ended, as its launcher observed it
 /// (#1961). Bash tool children run in their own process groups and can
 /// outlive an abruptly ended harness, so only an orderly end (the member's
@@ -222,14 +199,6 @@ pub struct RunControlReceipt {
     /// Why a resume would refuse right now (#1924): a passed deadline, an
     /// exhausted budget or a lost coordinator. Empty for a live run.
     pub resume_blockers: Vec<String>,
-}
-
-/// Supervisor operations remain available without model execution or turn-queue admission.
-pub trait SwarmRunControl: Send + Sync {
-    fn apply(
-        &self,
-        action: RunControlAction,
-    ) -> LaunchFuture<'_, Result<RunControlReceipt, DomainError>>;
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

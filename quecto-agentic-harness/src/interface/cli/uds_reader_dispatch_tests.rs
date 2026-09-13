@@ -101,7 +101,7 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
 }
 
 struct TestSwarmControl;
-impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
+impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,
@@ -275,7 +275,7 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
 
 /// A control port whose receipt carries resume blockers (#1924).
 struct BlockedSwarmControl;
-impl crate::domain::swarm::SwarmRunControl for BlockedSwarmControl {
+impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,

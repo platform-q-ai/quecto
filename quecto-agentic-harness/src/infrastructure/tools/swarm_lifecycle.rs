@@ -1,9 +1,10 @@
 //! Linux process and UDS adapters for the swarm lifecycle use cases.
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
-use crate::application::swarm::{ProcessControl, ProcessObservation};
+use crate::application::swarm::ports::CoordinationPort;
+use crate::application::swarm::ports::{ProcessControl, ProcessObservation};
 use crate::domain::error::DomainError;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::{CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus};
+use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus};
 use serde_json::{Value, json};
 
 /// Join the container's coordination store; returns whether this container
@@ -274,7 +275,7 @@ pub fn supervise(
 }
 
 struct SystemClock;
-impl crate::application::swarm::Clock for SystemClock {
+impl crate::application::swarm::ports::Clock for SystemClock {
     fn now_seconds(&self) -> f64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -312,7 +313,7 @@ pub fn bind_local_suspension(cancel: std::sync::Arc<dyn Fn(RunStatus, u64) + Sen
     let _ = LOCAL_SUSPEND.set(cancel);
 }
 
-impl crate::domain::swarm::SwarmRunControl for SwarmContext {
+impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     fn apply(
         &self,
         action: crate::domain::swarm::RunControlAction,

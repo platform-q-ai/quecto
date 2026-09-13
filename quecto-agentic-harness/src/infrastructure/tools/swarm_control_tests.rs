@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::swarm::CoordinationPort;
+use crate::application::swarm::ports::CoordinationPort;
 use serde_json::json;
 #[tokio::test]
 async fn native_supervisor_validates_budget_and_event_requests_without_mutation() {

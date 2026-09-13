@@ -1,6 +1,7 @@
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
-use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus, SwarmRunControl};
+use crate::application::swarm::ports::SwarmRunControl;
+use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
     fn apply(

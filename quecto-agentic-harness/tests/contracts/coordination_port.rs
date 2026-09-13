@@ -1,4 +1,5 @@
-use quecto::domain::swarm::{CoordinationPort, MemberStatus, ProcessIdentity, RunStatus};
+use quecto::application::swarm::ports::CoordinationPort;
+use quecto::domain::swarm::{MemberStatus, ProcessIdentity, RunStatus};
 use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
 
 #[test]

@@ -163,14 +163,6 @@ fn whole_crate_dependency_direction_holds() {
     );
 }
 
-/// Pure teardown domain: no trait carrying I/O, no async, no process, socket
-/// or runtime types in the lifecycle/teardown domain modules. Whole-crate,
-/// the legacy domain files that still hold ports or tokio types are an exact
-/// baseline that may only shrink. #1940 moved the teardown-related ports out
-/// (`SubagentLaunchPorts` → `application::subagent_launch`; `ProcessControl`,
-/// `ProcessObservation`, `Clock`, `SwarmLifecycle` → `application::swarm`);
-/// what remains is owned by **#1960** (part of the #1666 clean-architecture
-/// epic), one file per row below, and nothing else may join.
 /// Whether `line` declares `item` (`trait Foo` / `type Foo`) at any
 /// visibility, matching the whole identifier.
 fn declares(line: &str, item: &str) -> bool {
@@ -192,26 +184,14 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait SubagentLaunchPorts",
         "src/application/subagent_launch.rs",
     ),
-    (
-        "src/domain/swarm.rs",
-        "trait ProcessControl",
-        "src/application/swarm.rs",
-    ),
+    ("src/domain/swarm.rs", "trait ProcessControl", SWARM_PORTS),
     (
         "src/domain/swarm.rs",
         "trait ProcessObservation",
-        "src/application/swarm.rs",
+        SWARM_PORTS,
     ),
-    (
-        "src/domain/swarm.rs",
-        "trait Clock",
-        "src/application/swarm.rs",
-    ),
-    (
-        "src/domain/swarm.rs",
-        "trait SwarmLifecycle",
-        "src/application/swarm.rs",
-    ),
+    ("src/domain/swarm.rs", "trait Clock", SWARM_PORTS),
+    ("src/domain/swarm.rs", "trait SwarmLifecycle", SWARM_PORTS),
     // #1960
     (
         "src/domain/agent.rs",
@@ -270,10 +250,19 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait RequestAccounting",
         "src/application/providers/ports.rs",
     ),
+    ("src/domain/swarm.rs", "trait CoordinationPort", SWARM_PORTS),
+    ("src/domain/swarm.rs", "trait SwarmRunControl", SWARM_PORTS),
 ];
 
 const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
+const SWARM_PORTS: &str = "src/application/swarm/ports.rs";
 
+/// Pure domain: no trait carrying I/O, no async, no process, socket or
+/// runtime types in any domain module. The legacy domain files that still
+/// hold ports or tokio types are an exact baseline that may only shrink.
+/// #1940 moved the teardown-related ports out and #1960 the rest (see
+/// [`RETIRED_DOMAIN_PORTS`]); what remains is one file per row below, and
+/// nothing else may join.
 #[test]
 fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let impure = [
@@ -288,7 +277,6 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
         "src/domain/subagent_launch.rs", // #1960: LaunchFuture alias
-        "src/domain/swarm.rs",           // #1960: CoordinationPort, SwarmRunControl
     ]
     .into_iter()
     .collect();

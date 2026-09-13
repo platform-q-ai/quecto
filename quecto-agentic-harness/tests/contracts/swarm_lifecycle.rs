@@ -1,12 +1,11 @@
-use quecto::application::swarm::{
-    Clock, LifecycleService, ProcessControl, ProcessObservation, SwarmLifecycle,
+use quecto::application::swarm::LifecycleService;
+use quecto::application::swarm::ports::{
+    Clock, CoordinationPort, PortFuture as LaunchFuture, ProcessControl, ProcessObservation,
+    SwarmLifecycle,
 };
 use quecto::domain::error::DomainError;
-use quecto::domain::subagent_launch::LaunchFuture;
 use quecto::domain::swarm::MemberExit;
-use quecto::domain::swarm::{
-    CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot,
-};
+use quecto::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot};
 use std::sync::Mutex;
 
 pub(super) fn snapshot() -> Snapshot {

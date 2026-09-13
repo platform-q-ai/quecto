@@ -1,58 +1,13 @@
-//! Lifecycle sequencing and fail-closed ownership decisions over effect ports.
+//! Swarm lifecycle capability: sequencing and fail-closed ownership
+//! decisions over the effect ports in [`ports`].
 use crate::domain::error::DomainError;
-use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::{CoordinationPort, Member, MemberStatus, RunStatus, Snapshot};
-use crate::domain::swarm::{MemberExit, ProcessIdentity};
+use crate::domain::swarm::{MemberExit, MemberStatus, Snapshot};
 
-// ── Capability-local ports (moved out of the domain by #1940) ────────────
+pub mod ports;
 
-pub trait ProcessObservation {
-    fn harness_dead(&self, process: &ProcessIdentity) -> bool;
-}
-
-pub trait ProcessControl: Sync {
-    /// Cancel this member's detached execution registry independently of turn abort.
-    fn cancel_local_executions(&self);
-    /// Cancel current jobs while retaining admission for a later resume.
-    fn suspend_local_executions(&self, snapshot: &Snapshot);
-    /// Suspend only this process; never signal a future turn or another member.
-    fn suspend_local_inference(&self, snapshot: &Snapshot);
-    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
-    /// End the member's harness by delegation (#1939): the shutdown protocol
-    /// over the endpoint it registered, the locally owned handle only when
-    /// this harness launched it. The member's `ProcessIdentity` is an
-    /// observation for liveness, never an authority to signal; a member
-    /// reachable neither way is reported failed, not signalled.
-    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>>;
-}
-
-pub trait Clock {
-    fn now_seconds(&self) -> f64;
-}
-
-/// Application lifecycle entrypoint, injected by the composition root.
-pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
-    fn reconcile(
-        &self,
-        coordination: &dyn CoordinationPort,
-        processes: &dyn ProcessObservation,
-    ) -> Result<Snapshot, DomainError>;
-    /// An authoritative exit of a member this harness launched (#1961).
-    fn member_exited(
-        &self,
-        coordination: &dyn CoordinationPort,
-        processes: &dyn ProcessObservation,
-        member: &str,
-        exit: MemberExit,
-    ) -> Result<Snapshot, DomainError>;
-    fn settle<'a>(
-        &'a self,
-        snapshot: &'a Snapshot,
-        actor: &'a str,
-        processes: &'a dyn ProcessControl,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>;
-    fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
-}
+use ports::{
+    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SwarmLifecycle,
+};
 
 pub fn reconcile(
     coordination: &(impl CoordinationPort + ?Sized),
@@ -193,7 +148,7 @@ impl SwarmLifecycle for LifecycleService {
         snapshot: &'a Snapshot,
         actor: &'a str,
         processes: &'a dyn ProcessControl,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> PortFuture<'a, Result<(), DomainError>> {
         Box::pin(settle(snapshot, actor, processes))
     }
     fn observed_outcome(

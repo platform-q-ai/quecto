@@ -1,5 +1,5 @@
+use super::ports::PortFuture as LaunchFuture;
 use super::*;
-use crate::domain::subagent_launch::LaunchFuture;
 use crate::domain::swarm::{Member, MemberExit, ProcessIdentity, RunStatus};
 use std::sync::Mutex;
 
@@ -123,7 +123,7 @@ async fn active_runs_have_no_settlement_effects() {
 }
 
 struct Time(f64);
-impl crate::application::swarm::Clock for Time {
+impl crate::application::swarm::ports::Clock for Time {
     fn now_seconds(&self) -> f64 {
         self.0
     }

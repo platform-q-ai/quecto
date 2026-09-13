@@ -1,10 +1,9 @@
 //! Typed coordination adapter. Python wire details stop at this boundary.
 use super::SwarmContext;
+use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::error::DomainError;
 use crate::domain::swarm::MemberExit;
-use crate::domain::swarm::{
-    CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot,
-};
+use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot};
 use serde::Deserialize;
 use serde_json::{Value, json};
 

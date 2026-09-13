@@ -46,7 +46,7 @@ impl TurnControl {
     }
 
     pub fn with_swarm_control(
-        control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
+        control: Option<Arc<dyn crate::application::swarm::ports::SwarmRunControl>>,
     ) -> Self {
         Self {
             swarm_control: control,

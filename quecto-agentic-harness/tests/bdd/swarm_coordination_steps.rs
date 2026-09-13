@@ -245,7 +245,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     };
     let socket = workspace.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    use quecto::domain::swarm::CoordinationPort;
+    use quecto::application::swarm::ports::CoordinationPort;
     context.reserve_member("worker", "reservation").unwrap();
     let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
         member: "worker".into(),
@@ -444,7 +444,8 @@ fn invocation_child_stopped(world: &mut QuectoWorld) {
 
 #[given("an idle swarm peer with an unavailable endpoint")]
 fn idle_peer(world: &mut QuectoWorld) {
-    use quecto::domain::swarm::{CoordinationPort, ProcessIdentity};
+    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::domain::swarm::ProcessIdentity;
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
@@ -551,7 +552,7 @@ fn supervisor_context(
 /// Apply a supervisor control through the same port the parent's
 /// `swarm_control` command uses, recording the receipt or error as the result.
 fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlAction) {
-    use quecto::domain::swarm::SwarmRunControl;
+    use quecto::application::swarm::ports::SwarmRunControl;
     let context = supervisor_context(world);
     let outcome = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
