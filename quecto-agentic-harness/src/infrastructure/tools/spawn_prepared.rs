@@ -4,13 +4,17 @@
 //! cleanup plan a rollback consumes exactly once.
 use std::sync::Arc;
 
+use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusion};
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 #[cfg(test)]
 use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
 use crate::infrastructure::processes::owned_child_supervisor::{
-    ChildHandleId, OwnedChildSupervisor, ProtocolOutcome, TerminationBudget, TerminationOutcome,
+    ChildHandleId, OwnedChildSupervisor,
+};
+use crate::infrastructure::processes::owned_child_termination::{
+    ROLLBACK_BUDGET, conclude_retained,
 };
 
 use super::cleanup_command;
@@ -131,37 +135,40 @@ impl PreparedChild {
         self.rollback_once_via(None).await;
     }
 
-    /// Roll back a launch. When the child's requested endpoint is known the
-    /// `shutdown` protocol is attempted there first (a child that became
-    /// ready but whose registration failed still answers it); only a
-    /// negative outcome lets the supervisor TERM and, if needed, KILL the
-    /// retained handle.
+    /// Roll back a launch that never registered (#1936: a registered launch
+    /// is compensated through `CompensateFailedLaunch`; this transaction
+    /// still holds the handle of one that failed before that). When the
+    /// child's requested endpoint is known the `shutdown` protocol is
+    /// attempted there first (a child that became ready but whose
+    /// registration failed still answers it); the same owned-handle
+    /// conclusion as every other termination then applies: a signal only
+    /// after a negative outcome or an exit timeout.
     pub async fn rollback_once_via(&mut self, endpoint: Option<&std::path::Path>) {
         if let Some(handle) = self.owned_child.take() {
-            let protocol: std::pin::Pin<Box<dyn std::future::Future<Output = ProtocolOutcome> + Send>> =
-                match endpoint {
-                    Some(endpoint) => Box::pin(
-                        crate::infrastructure::processes::direct_child_routing::shutdown_protocol_attempt(
-                            endpoint.to_path_buf(),
-                            crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
-                            ROLLBACK_PROTOCOL_TIMEOUT,
-                        ),
-                    ),
-                    None => Box::pin(async {
-                        ProtocolOutcome::Negative("launch rolled back before readiness".into())
-                    }),
-                };
-            let outcome = self
-                .supervisor
-                .terminate(handle, protocol, TerminationBudget::DEFAULT)
-                .await;
-            tracing::info!(?outcome, "rolled back launched child");
+            let attempt = match endpoint {
+                Some(endpoint) => {
+                    match crate::infrastructure::processes::direct_child_routing::shutdown_over_socket(
+                        endpoint,
+                        crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                        ROLLBACK_PROTOCOL_TIMEOUT,
+                    )
+                    .await
+                    {
+                        Ok(()) => ProtocolAttempt::Acknowledged,
+                        Err(error) => ProtocolAttempt::Negative(error.to_string()),
+                    }
+                }
+                None => ProtocolAttempt::Negative("launch rolled back before readiness".into()),
+            };
+            let conclusion =
+                conclude_retained(&self.supervisor, handle, attempt, ROLLBACK_BUDGET).await;
+            tracing::info!(?conclusion, "rolled back launched child");
             // No reaper task ever runs for a launch that never registered:
             // the slot is retired here (or as soon as the reap completes).
             self.supervisor.retire_when_reaped(handle);
             if !matches!(
-                outcome,
-                TerminationOutcome::StillRunning { .. } | TerminationOutcome::NoRetainedHandle
+                conclusion,
+                TerminationConclusion::StillRunning(_) | TerminationConclusion::NoRetainedHandle
             ) {
                 if let Some(reservation) = &mut self.swarm_reservation {
                     if let Err(error) = reservation.rolled_back() {

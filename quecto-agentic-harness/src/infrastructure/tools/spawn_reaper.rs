@@ -2,35 +2,40 @@
 //!
 //! Local launches (only) own an OS child process, held by the one
 //! [`OwnedChildSupervisor`] (#1935); this task waits for the supervisor's
-//! exit report, translates it into the shared exit signal, and drives the
-//! same exactly-once cleanup and cascade removal the monitor path uses.
-//! Script-managed children have no local process and rely on the monitor's
-//! socket-EOF death signal instead.
+//! exit report, publishes it on the shared exit signal, and hands the
+//! authoritative process-exit observation to the application's
+//! `ObserveOwnedChildExit` (#1936), which claims and runs — or joins — the
+//! row's exactly-once compensation. Script-managed children have no local
+//! process and rely on the monitor's socket-EOF observation instead.
 
 use std::sync::Arc;
 
-use super::subagent_cleanup;
-use super::subagent_registry::{ExitSignal, ExitSignalTx, SubagentRegistry};
+use crate::application::subagents::dto::{ObserveOwnedChildExitRequest, ObservedExit};
+use crate::application::subagents::ports::ExitObservation;
+use crate::application::subagents::use_cases::ObserveOwnedChildExit;
+use crate::domain::subagent_teardown::DelegatedAgentIdentity;
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor,
 };
 
+use super::subagent_registry::{ExitSignal, ExitSignalTx};
+
 pub(super) struct ReaperContext {
     pub exit_tx: ExitSignalTx,
-    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub child: DelegatedAgentIdentity,
+    pub observer: Arc<ObserveOwnedChildExit>,
     pub swarm_context: Option<super::swarm_bridge::SwarmContext>,
 }
 
 pub(super) fn spawn_reaper_task(
     handle: ChildHandleId,
     supervisor: Arc<OwnedChildSupervisor>,
-    registry: SubagentRegistry,
-    registry_key: String,
     context: ReaperContext,
 ) {
     let ReaperContext {
         exit_tx,
-        broadcast_tx,
+        child,
+        observer,
         swarm_context,
     } = context;
     tokio::spawn(async move {
@@ -38,42 +43,30 @@ pub(super) fn spawn_reaper_task(
         // send_replace: store the real exit status even when no awaiter holds
         // a receiver yet, so late awaits report it instead of a fallback.
         exit_tx.send_replace(Some(exit_signal_from_exit(exit)));
-        subagent_cleanup::cleanup_registered_once(&registry, &registry_key).await;
-        let super::subagent_cascade::CascadeOutcome { removed, event } =
-            super::subagent_cascade::cascade_remove_and_state_changed(&registry, &registry_key);
-        if let Some(event) = event {
-            if let Some(tx) = &broadcast_tx {
-                let _ = tx.send(event);
+        let observed = observer
+            .execute(ObserveOwnedChildExitRequest {
+                child: child.clone(),
+                observation: ExitObservation::ProcessExited,
+            })
+            .await;
+        match &observed {
+            ObservedExit::Compensated { removed } => {
+                tracing::info!(agent = %child.uuid, removed = removed.len(), "reaper: child compensated");
             }
-        }
-        let mut removed = removed;
-        subagent_cleanup::cleanup_removed_entries_once(
-            &mut removed,
-            subagent_cleanup::FinalizeMode::Exit,
-        )
-        .await;
-        for (id, entry) in &removed {
-            if id == &registry_key {
-                if let Some(ref handle) = entry.monitor_handle {
-                    handle.abort();
-                }
-                continue;
+            ObservedExit::Joined(observation) => {
+                tracing::debug!(agent = %child.uuid, ?observation, "reaper: joined the child's compensation");
             }
-            if let Some(ref tx) = entry.exit_signal_tx {
-                let _ = tx.send(Some(ExitSignal {
-                    exit_code: None,
-                    signal: Some(15),
-                    kind: Default::default(),
-                }));
+            ObservedExit::DeferredToProcessExit => {
+                debug_assert!(false, "a process exit is never deferred to itself");
             }
-            super::subagent_cascade::terminate_removed_entry(entry);
         }
         if let Some(context) = swarm_context {
             let _ = tokio::task::spawn_blocking(move || {
                 if let Err(error) = super::swarm_lifecycle::reconcile(&context) {
                     tracing::error!(%error, "swarm reaper reconciliation failed; capacity retained");
                 }
-            }).await;
+            })
+            .await;
         }
         // The exit was published and every cleanup ran: the handle's slot
         // can go; retained registry clones then see "no retained handle".

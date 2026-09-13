@@ -185,6 +185,9 @@ pub struct MonitorSpec {
     /// `Some` only for a child this harness launched; the monitor of any
     /// other connection presents nothing and is an ordinary client.
     pub parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
+    /// Where the connection's end is reported (#1936): the exit observation
+    /// use case that claims or joins the child's exactly-once compensation.
+    pub observer: std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit>,
 }
 
 pub fn spawn_monitor_task(spec: MonitorSpec) -> tokio::task::JoinHandle<()> {
@@ -203,6 +206,12 @@ pub fn spawn_monitor_task_unbound(
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
+    let observer = super::subagent_teardown_wiring::build_lifecycle_use_cases(
+        registry.clone(),
+        broadcast_tx.clone(),
+        notify_tx.clone(),
+    )
+    .observe_exit;
     spawn_monitor_task(MonitorSpec {
         agent_id,
         socket_path,
@@ -211,12 +220,14 @@ pub fn spawn_monitor_task_unbound(
         broadcast_tx,
         parent_id,
         parent_control: None,
+        observer,
     })
 }
 
 #[path = "subagent_monitor_exit.rs"]
 mod exit;
-use exit::{notification_agent_uuid, notification_display_label, notify_child_exited};
+use exit::notify_child_exited;
+pub use exit::{notification_agent_uuid, notification_display_label};
 
 /// Internal monitor loop: connect → read lines → apply events → detect close.
 async fn monitor_loop(spec: MonitorSpec) {
@@ -229,6 +240,7 @@ async fn monitor_loop(spec: MonitorSpec) {
         broadcast_tx,
         parent_id,
         parent_control,
+        observer,
     } = spec;
     let (agent_id, socket_path, registry) = (agent_id.as_str(), socket_path.as_path(), &registry);
     let (notify_tx, broadcast_tx, parent_id) = (
@@ -260,9 +272,8 @@ async fn monitor_loop(spec: MonitorSpec) {
             notify_child_exited(
                 registry,
                 agent_id,
-                notify_tx,
-                broadcast_tx,
-                super::subagent_registry::ExitSignalKind::NeverReachable,
+                &observer,
+                crate::application::subagents::ports::ExitObservation::NeverReachable,
             )
             .await;
             return;
@@ -320,9 +331,8 @@ async fn monitor_loop(spec: MonitorSpec) {
                 notify_child_exited(
                     registry,
                     agent_id,
-                    notify_tx,
-                    broadcast_tx,
-                    super::subagent_registry::ExitSignalKind::ConnectionClosed,
+                    &observer,
+                    crate::application::subagents::ports::ExitObservation::ConnectionClosed,
                 )
                 .await;
                 return;

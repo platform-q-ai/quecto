@@ -247,6 +247,11 @@ pub struct SubagentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment:
         Option<crate::infrastructure::tools::subagent_environment_wire::SubagentEnvironmentWire>,
+    /// The generation a selected termination addresses this agent by
+    /// (#1936): minted by the harness that launched it. Absent for rows
+    /// that are not delegated agents. Additive versioned field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_generation: Option<u64>,
 }
 
 fn default_execution_backend() -> String {
@@ -485,6 +490,10 @@ fn build_subagent_info_list_filtered(
                     read_only: entry.read_only,
                     execution_backend,
                     environment,
+                    launch_generation: entry
+                        .launch_generation
+                        .or(entry.reported_generation)
+                        .map(|generation| generation.get()),
                 })
             })
             .collect()

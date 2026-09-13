@@ -286,6 +286,7 @@ fn base_subagent_info(agent_id: &str, status: &str) -> SubagentInfo {
         read_only: false,
         execution_backend: "local".to_string(),
         environment: None,
+        launch_generation: None,
     }
 }
 

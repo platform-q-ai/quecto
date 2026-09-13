@@ -1,8 +1,10 @@
 use super::*;
+use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
-use crate::infrastructure::tools::subagent_registry::new_exit_signal_channel;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::infrastructure::tools::subagent_registry::{
+    SubagentEntry, SubagentRegistry, TeardownPhase, new_exit_signal_channel, new_registry,
+};
+use std::sync::Arc;
 
 async fn adopt(supervisor: &Arc<OwnedChildSupervisor>, program: &str) -> ChildHandleId {
     supervisor
@@ -15,38 +17,57 @@ async fn adopt(supervisor: &Arc<OwnedChildSupervisor>, program: &str) -> ChildHa
         .handle
 }
 
+fn observer(registry: &SubagentRegistry) -> Arc<ObserveOwnedChildExit> {
+    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(registry.clone(), None, None)
+        .observe_exit
+}
+
+fn identity(uuid: &str) -> DelegatedAgentIdentity {
+    DelegatedAgentIdentity::new(uuid, LaunchGeneration::new(1))
+}
+
 /// A reaped child's registry clones can never signal it: the supervisor
 /// refuses without a retained handle, and no reported lease exists for a
 /// locally launched child.
 #[tokio::test]
 async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
-    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
     use crate::infrastructure::tools::{process_tree::SIGNAL_LOG, subagent_cascade};
     let registry = new_registry();
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let handle = adopt(&supervisor, "true").await;
-    let mut entry = SubagentEntry::new("/tmp/owned.sock".into(), 4242);
+    let mut entry = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::new("owned"),
+        "owned".into(),
+        "/tmp/owned.sock".into(),
+        4242,
+    );
+    entry.launch_generation = Some(LaunchGeneration::new(1));
     entry.owned_child = Some(handle);
     entry.owned_child_supervisor = Some(supervisor.clone());
     registry.lock().unwrap().insert("owned".into(), entry);
     spawn_reaper_task(
         handle,
         supervisor.clone(),
-        registry.clone(),
-        "owned".into(),
         ReaperContext {
             exit_tx,
-            broadcast_tx: None,
+            child: identity("owned"),
+            observer: observer(&registry),
             swarm_context: None,
         },
     );
-    // Explicit cleanup may retain this clone while an asynchronous cleanup runs.
-    let removed = subagent_cascade::cascade_remove(&registry, "owned");
     tokio::time::timeout(std::time::Duration::from_secs(5), exit_rx.changed())
         .await
         .unwrap()
         .unwrap();
+    // The reaper compensates the row: it stands as exited and compensated.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while registry.lock().unwrap()["owned"].teardown_phase() != TeardownPhase::Compensated
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let removed = subagent_cascade::cascade_remove(&registry, "owned");
     SIGNAL_LOG.with(|log| *log.borrow_mut() = Some(Vec::new()));
     assert!(!subagent_cascade::terminate_removed_entry(&removed[0].1));
     // A shutdown drain can likewise retain a clone after registry removal.
@@ -82,7 +103,7 @@ fn exit_signal_from_exit_maps_code_signal_and_unobservable() {
 
 #[tokio::test]
 async fn reaper_task_forwards_exit_signal_for_untracked_child() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let registry = new_registry();
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let handle = adopt(&supervisor, "true").await;
@@ -90,11 +111,10 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
     spawn_reaper_task(
         handle,
         supervisor,
-        registry.clone(),
-        "gone".into(),
         ReaperContext {
             exit_tx,
-            broadcast_tx: None,
+            child: identity("gone"),
+            observer: observer(&registry),
             swarm_context: None,
         },
     );
@@ -109,7 +129,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
 /// second wait on the process.
 #[tokio::test]
 async fn reaper_reports_the_supervisors_exit_status() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let registry = new_registry();
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let mut command = tokio::process::Command::new("sh");
@@ -122,11 +142,10 @@ async fn reaper_reports_the_supervisors_exit_status() {
     spawn_reaper_task(
         handle,
         supervisor.clone(),
-        registry,
-        "code3".into(),
         ReaperContext {
             exit_tx,
-            broadcast_tx: None,
+            child: identity("code3"),
+            observer: observer(&registry),
             swarm_context: None,
         },
     );

@@ -388,6 +388,7 @@ fn subagent_info_camel_case_serialization() {
         read_only: false,
         execution_backend: "local".to_string(),
         environment: None,
+        launch_generation: None,
     };
     let j = round_trip(&info);
     assert_eq!(j["agentId"], "test-agent");
@@ -416,6 +417,7 @@ fn subagent_info_null_fields_omitted() {
         read_only: false,
         execution_backend: "local".to_string(),
         environment: None,
+        launch_generation: None,
     };
     let j = round_trip(&info);
     assert!(j.get("lastTool").is_none());
@@ -439,6 +441,7 @@ fn subagent_info_with_error_field() {
         read_only: false,
         execution_backend: "local".to_string(),
         environment: None,
+        launch_generation: None,
     };
     let j = round_trip(&info);
     assert_eq!(j["lastError"], "tool 'bash' returned error");
@@ -463,6 +466,7 @@ fn subagent_state_changed_event_matches_spec() {
                 read_only: false,
                 execution_backend: "local".to_string(),
                 environment: None,
+                launch_generation: None,
             },
             SubagentInfo {
                 agent_uuid: None,
@@ -479,6 +483,7 @@ fn subagent_state_changed_event_matches_spec() {
                 read_only: false,
                 execution_backend: "local".to_string(),
                 environment: None,
+                launch_generation: None,
             },
         ],
     };
@@ -513,6 +518,7 @@ fn subagent_state_changed_event_roundtrip() {
             read_only: false,
             execution_backend: "local".to_string(),
             environment: None,
+            launch_generation: None,
         }],
     };
     let json = ev.to_json_line();

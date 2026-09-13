@@ -206,3 +206,62 @@ async fn an_unreachable_child_is_reported_in_capability_vocabulary() {
         "termination rejected: target is the receiving harness; use shutdown"
     );
 }
+
+/// The receiver of a selected termination claims the target stopping with
+/// that intent before its edge (#1936 review): its own reaper then runs the
+/// kill's compensation — no post-mortem, no "exited unexpectedly" note —
+/// and a delivery failure lifts only the claim this edge took.
+#[tokio::test]
+async fn the_receiver_claims_the_target_stopping_before_routing_its_edge() {
+    use super::super::lifecycle_fakes::{FakeRegistry, Phase};
+    use crate::application::subagents::ports::TerminationCause;
+    let registry = FakeRegistry::new()
+        .with_row("A", 1, "alpha")
+        .with_row("B", 1, "bravo")
+        .with_row("D", 1, "delta");
+    let lifecycle = FakeLifecycle::new(root_tree());
+    let routing = FakeRouting::new();
+    let use_case = TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone())
+        .with_registry(registry.clone());
+    // A direct child: claimed, then shut down.
+    use_case.execute(request("D", 1, 1)).await.unwrap();
+    assert_eq!(
+        registry.phase("D"),
+        Phase::Stopping(TerminationCause::SelectedTermination)
+    );
+    assert_eq!(
+        registry.trace().last().map(String::as_str),
+        Some("claim-stopping D")
+    );
+    // A nested target: its reported row is claimed too, the ancestor's is not.
+    use_case.execute(request("B", 1, 3)).await.unwrap();
+    assert_eq!(
+        registry.phase("B"),
+        Phase::Stopping(TerminationCause::SelectedTermination)
+    );
+    assert_eq!(registry.phase("A"), Phase::Live);
+    // An edge that cannot be delivered lifts the claim this edge took...
+    let registry = FakeRegistry::new().with_row("A", 1, "alpha");
+    let use_case = TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone())
+        .with_registry(registry.clone());
+    routing
+        .unreachable
+        .lock()
+        .unwrap()
+        .push(AgentUuid::new("A"));
+    use_case.execute(request("A", 1, 1)).await.unwrap_err();
+    assert_eq!(registry.phase("A"), Phase::Live);
+    assert_eq!(registry.trace(), ["claim-stopping A", "release-stopping A"]);
+    // ...but never a claim another path (an operator kill) already holds.
+    registry.set_phase("A", Phase::Stopping(TerminationCause::SelectedTermination));
+    use_case.execute(request("A", 1, 1)).await.unwrap_err();
+    assert_eq!(
+        registry.phase("A"),
+        Phase::Stopping(TerminationCause::SelectedTermination)
+    );
+    // A refused route claims nothing.
+    let registry = FakeRegistry::new().with_row("A", 9, "alpha");
+    let use_case = TerminateDelegatedAgent::new(lifecycle, routing).with_registry(registry.clone());
+    use_case.execute(request("A", 9, 1)).await.unwrap_err();
+    assert!(registry.trace().is_empty());
+}

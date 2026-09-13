@@ -287,6 +287,9 @@ pub struct QuectoWorld {
     pub parent_control: parent_control_steps::ParentControlState,
     /// #1937 launcher lifetime and restore-without-readoption state.
     pub restore_lifetime: restore_lifetime_steps::RestoreLifetimeState,
+    /// #1936 operator-selected termination state (root registry, fake
+    /// direct-child endpoints, owned fixture processes, composed kill).
+    pub selected_termination: selected_termination_steps::SelectedTerminationState,
     /// Runtimes that spawned real children through the SpawnTool: their
     /// monitor tasks are the children's bound parent connections, so they
     /// live for the scenario and drop with the world.
@@ -1425,6 +1428,7 @@ mod repo_docs_steps;
 mod restore_lifetime_steps;
 mod sandbox_steps;
 mod security_steps;
+mod selected_termination_steps;
 mod session_steps;
 mod shared_state_hardening_steps;
 mod spawn_env_steps;

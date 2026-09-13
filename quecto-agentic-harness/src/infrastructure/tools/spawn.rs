@@ -250,6 +250,19 @@ impl SpawnTool {
         self
     }
 
+    /// The lifecycle use cases (#1936) the reaper, monitor and rollback of
+    /// every child this tool launches report to, over this tool's registry,
+    /// event stream and notification channel.
+    pub(super) fn lifecycle_use_cases(
+        &self,
+    ) -> super::subagent_teardown_wiring::SubagentLifecycleUseCases {
+        super::subagent_teardown_wiring::build_lifecycle_use_cases(
+            self.registry.clone(),
+            self.broadcast_tx.clone(),
+            self.notify_tx.clone(),
+        )
+    }
+
     /// The supervisor holding every child this tool launched.
     pub fn owned_child_supervisor(
         &self,

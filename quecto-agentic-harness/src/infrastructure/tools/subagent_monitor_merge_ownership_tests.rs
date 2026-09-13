@@ -62,14 +62,23 @@ async fn launch_a_merge_b_and_let_a_die(
     assert!(merge_and_forward_state_changed(&snapshot, &registry, "a-uuid").is_some());
 
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
+    let observer =
+        crate::infrastructure::tools::subagent_teardown_wiring::build_lifecycle_use_cases(
+            registry.clone(),
+            None,
+            None,
+        )
+        .observe_exit;
     spawn_reaper_task(
         handle,
         supervisor,
-        registry.clone(),
-        "a-uuid".into(),
         ReaperContext {
             exit_tx,
-            broadcast_tx: None,
+            child: crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
+                "a-uuid",
+                crate::domain::subagent_teardown::LaunchGeneration::new(1),
+            ),
+            observer,
             swarm_context: None,
         },
     );
@@ -166,51 +175,32 @@ fn descendants_without_a_same_namespace_proof_stay_unsignallable() {
     );
 }
 
+/// #1936: the cascade never signals a reported descendant's pid, whatever
+/// namespace it reports from. A grandchild ends because its own parent's
+/// bound control connection is lost (#1935), never by a signal from here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn host_local_grandchild_is_terminated_when_its_parent_dies_without_sigterm() {
-    let mut b_proc = spawn_sleep();
-    let a = SubagentEntry::new("/tmp/a.sock".into(), 0);
-    let _registry =
-        launch_a_merge_b_and_let_a_die(a, snapshot_from_a(b_proc.id(), Some(BACKEND_LOCAL))).await;
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        if let Ok(Some(status)) = b_proc.try_wait() {
-            break Some(status);
-        }
-        if std::time::Instant::now() > deadline {
-            break None;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
-    let Some(status) = status else {
+async fn no_reported_descendant_pid_is_ever_signalled_by_the_cascade() {
+    for environment_ref in [None, Some("env-1")] {
+        let mut b_proc = spawn_sleep();
+        let mut a = SubagentEntry::new("/tmp/a.sock".into(), 0);
+        a.environment_ref = environment_ref.map(str::to_string);
+        let registry =
+            launch_a_merge_b_and_let_a_die(a, snapshot_from_a(b_proc.id(), Some(BACKEND_LOCAL)))
+                .await;
+        assert_eq!(
+            registry.lock().unwrap()["b-uuid"].status,
+            SubagentStatus::Exited,
+            "B's row falls with A's subtree"
+        );
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let still_running = matches!(b_proc.try_wait(), Ok(None));
         let _ = b_proc.kill();
         let _ = b_proc.wait();
-        panic!("host-local grandchild must be SIGTERMed by the reaper cascade");
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        assert!(
+            still_running,
+            "a reported pid (environment {environment_ref:?}) must never be signalled"
+        );
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn container_reported_grandchild_is_never_signalled_by_the_cascade() {
-    let mut b_proc = spawn_sleep();
-    let mut a = SubagentEntry::new("/tmp/a.sock".into(), 0);
-    a.environment_ref = Some("env-1".into());
-    let _registry =
-        launch_a_merge_b_and_let_a_die(a, snapshot_from_a(b_proc.id(), Some(BACKEND_LOCAL))).await;
-
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let still_running = matches!(b_proc.try_wait(), Ok(None));
-    let _ = b_proc.kill();
-    let _ = b_proc.wait();
-    assert!(
-        still_running,
-        "a pid reported from another namespace must not be signalled"
-    );
 }
 
 #[test]

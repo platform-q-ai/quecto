@@ -433,6 +433,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };
@@ -469,6 +470,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };

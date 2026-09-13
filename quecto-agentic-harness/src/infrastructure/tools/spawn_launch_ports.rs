@@ -5,7 +5,7 @@ use super::spawn_entry::{
 };
 use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
-use super::subagent_registry::{ExitSignal, new_exit_signal_channel};
+use super::subagent_registry::new_exit_signal_channel;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::SubagentConfig;
@@ -358,41 +358,43 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
 
     fn uncommit_registered<'b>(&'b mut self, registry_key: &'b str) -> LaunchFuture<'b, ()> {
         Box::pin(async move {
-            // Abort the monitor inside the same critical section that removes
-            // the entry, so a monitor cannot claim the cleanup plan after this
-            // uncommit has decided to own it.
-            let mut removed = {
-                let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(entry) = entries.get(registry_key) {
-                    if let Some(ref handle) = entry.monitor_handle {
-                        handle.abort();
-                    }
-                }
+            // The registered child is ended like any other direct child
+            // (#1936): claimed stopping, asked over its edge, concluded
+            // through its owned handle, then compensated exactly once with
+            // the launch-rollback cleanup contract (retained `cleanup`, not
+            // `kill`; a creator's environment record is discarded). A
+            // monitor or reaper observing the same end joins it.
+            let child = {
+                let entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
                 entries
-                    .remove(registry_key)
-                    .map(|entry| vec![(registry_key.to_string(), entry)])
-                    .unwrap_or_default()
+                    .get(registry_key)
+                    .and_then(super::subagent_registry::SubagentEntry::delegated_identity)
             };
-            for (_id, entry) in &removed {
-                if let Some(ref tx) = entry.exit_signal_tx {
-                    let _ = tx.send(Some(ExitSignal {
-                        exit_code: None,
-                        signal: Some(15),
-                        kind: Default::default(),
-                    }));
-                }
-                crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
-            }
-            // Launch rollback: the environment's retained cleanup (not kill)
-            // runs when the launch fails after creation (#1369 slice 2). A
-            // creator's rollback also discards the record — the environment
-            // never became usable, so it must not be listed as stopped.
-            let mode = if self.owns_environment {
-                super::subagent_cleanup::FinalizeMode::LaunchRollbackOwned
-            } else {
-                super::subagent_cleanup::FinalizeMode::LaunchRollback
+            let Some(child) = child else {
+                return;
             };
-            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
+            let compensated = self
+                .tool
+                .lifecycle_use_cases()
+                .compensate_launch
+                .execute(
+                    crate::application::subagents::dto::CompensateFailedLaunchRequest {
+                        child,
+                        owns_environment: self.owns_environment,
+                    },
+                )
+                .await;
+            tracing::info!(
+                agent = %registry_key,
+                conclusion = ?compensated.conclusion,
+                removed = compensated.removed.len(),
+                "rolled back registered launch"
+            );
+            // The compensated row is dropped outright: the launch that
+            // failed never returns it to the caller, and no tombstone is
+            // listed for a child that never became usable.
+            let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries.remove(registry_key);
         })
     }
 
@@ -412,7 +414,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             let (cleanup_environment_id, cleanup_argv) = prepared.cleanup_plan();
             let (exit_tx, _exit_rx) = new_exit_signal_channel();
             let mut entry = initial_registry_entry(InitialRegistryEntrySpec {
-                agent_uuid,
+                agent_uuid: agent_uuid.clone(),
                 display_name: identity.session_name.clone(),
                 socket_path: runtime.socket_path.clone(),
                 pid: runtime.pid,
@@ -437,9 +439,17 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // supervisor's opaque handle (#1935): the registry row carries no
             // signal lease and no authority over `runtime.pid`.
             let parent_control = self.parent_control.take();
-            entry.launch_generation = parent_control
+            // The generation the launch minted with its credential; a
+            // registration driven without `build_cli_args` (test rigs) still
+            // gets a fresh one so its row is addressable for termination.
+            let launch_generation = parent_control
                 .as_ref()
-                .map(|credential| credential.generation);
+                .map(|credential| credential.generation)
+                .unwrap_or_else(
+                    crate::infrastructure::processes::parent_control::next_launch_generation,
+                );
+            entry.launch_generation = Some(launch_generation);
+            let lifecycle = self.tool.lifecycle_use_cases();
             entry.owned_child = prepared.owned_child;
             entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));
             register_and_broadcast(
@@ -496,6 +506,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         .unwrap_or_else(|e| e.into_inner())
                         .clone(),
                     parent_control,
+                    observer: lifecycle.observe_exit.clone(),
                 });
             let proxy_bridge = prepared.proxy_bridge.take().map(|bridge| {
                 let (socket, handle) = bridge.into_parts();
@@ -515,11 +526,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 super::spawn_reaper::spawn_reaper_task(
                     handle,
                     std::sync::Arc::clone(&prepared.supervisor),
-                    self.tool.registry.clone(),
-                    identity.registry_key.clone(),
                     super::spawn_reaper::ReaperContext {
                         exit_tx,
-                        broadcast_tx: self.tool.broadcast_tx.clone(),
+                        child: crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
+                            agent_uuid,
+                            launch_generation,
+                        ),
+                        observer: lifecycle.observe_exit,
                         swarm_context: self.tool.swarm_context.clone(),
                     },
                 );

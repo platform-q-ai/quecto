@@ -20,14 +20,14 @@ pub use super::subagent_registry::{
 /// Looks up the socket path from a shared [`SubagentRegistry`], connects,
 /// sends the framed JSON command, reads the response, and returns it as a
 /// structured [`ToolResult`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentCmdTool {
     /// Shared registry populated by [`super::spawn::SpawnTool`].
     registry: SubagentRegistry,
-    /// Broadcast channel used to announce a `subagent_state_changed` survivor set
-    /// when `kill` cascade-removes an agent's sub-tree, so connected clients (the
-    /// TUI panel) drop the dead agents promptly (#831).
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// The owner of the `kill` command (#1936): the composed selected
+    /// termination tool. Without one, `kill` is refused: this tool never
+    /// decides a lifecycle itself.
+    kill: Option<std::sync::Arc<dyn Tool>>,
     /// Side-effect-free environment inventory query and kill owner.
     list_environments:
         Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
@@ -35,12 +35,20 @@ pub struct AgentCmdTool {
         Option<std::sync::Arc<crate::application::environment_control::EnvironmentControlUseCase>>,
 }
 
+impl std::fmt::Debug for AgentCmdTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentCmdTool")
+            .field("kill", &self.kill.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl AgentCmdTool {
     /// Create a new `AgentCmdTool` backed by the given registry.
     pub fn new(registry: SubagentRegistry) -> Self {
         Self {
             registry,
-            broadcast_tx: None,
+            kill: None,
             list_environments: None,
             environment_control: None,
         }
@@ -66,13 +74,10 @@ impl AgentCmdTool {
         self
     }
 
-    /// Attach the broadcast channel so `kill` can announce the survivor set after
-    /// a cascade-remove (#831). Best-effort: a send with no subscribers is fine.
-    pub fn with_broadcast(
-        mut self,
-        broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    ) -> Self {
-        self.broadcast_tx = broadcast_tx;
+    /// Attach the composed selected-termination tool that owns `kill`
+    /// (built by composition, injected through the agent-control deps).
+    pub fn with_kill_tool(mut self, kill: std::sync::Arc<dyn Tool>) -> Self {
+        self.kill = Some(kill);
         self
     }
 
@@ -110,33 +115,36 @@ impl AgentCmdTool {
         None
     }
 
-    /// Handle the `kill` command (async: container teardown scripts run on a
-    /// blocking worker and are awaited).
-    async fn try_kill_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
+    /// Delegate the `kill` command to its owner (#1936): the composed
+    /// selected-termination tool parses, invokes and presents; this tool
+    /// only routes the command there.
+    async fn try_kill_command(
+        &self,
+        arguments: &str,
+        args: &serde_json::Value,
+    ) -> Option<ToolResult> {
         let command = args.get("command").and_then(|v| v.as_str())?;
         if command != "kill" {
             return None;
         }
-        let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
-            Some(id) => id,
-            None => {
-                return Some(ToolResult {
-                    content: "agent_cmd error: missing required field: agent_id".into(),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
-        };
-        if let Err(e) = validate_agent_id_format(agent_id) {
+        let Some(kill) = self.kill.as_ref() else {
             return Some(ToolResult {
-                content: format!("agent_cmd error: {e}"),
+                content: "agent_cmd error: kill is not available in this composition".into(),
                 is_error: true,
                 image_blocks: vec![],
                 delivery_metadata: None,
             });
-        }
-        Some(self.kill_agent(agent_id).await)
+        };
+        Some(
+            kill.execute(arguments)
+                .await
+                .unwrap_or_else(|e| ToolResult {
+                    content: format!("agent_cmd error: {e}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                }),
+        )
     }
 
     /// Queueable forwarded commands carry `"ack":"accept"` — the child acks
@@ -195,163 +203,10 @@ impl AgentCmdTool {
         }
     }
 
-    /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
-    /// the registry, then broadcast the survivor set (#559, #831).
-    async fn kill_agent(&self, agent_id: &str) -> ToolResult {
-        let registry_key = {
-            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries
-                .iter()
-                .find(|(key, entry)| {
-                    let command_targetable = entry.persisted_liveness
-                        == crate::domain::session::SubagentLiveness::Live
-                        && entry.status != super::subagent_registry::SubagentStatus::Exited;
-                    command_targetable
-                        && (key.as_str() == agent_id || entry.display_name == agent_id)
-                })
-                .map(|(key, _)| key.clone())
-        };
-        let Some(registry_key) = registry_key else {
-            return ToolResult {
-                content: format!(
-                    "agent_cmd error: subagent '{}' not found in registry",
-                    agent_id
-                ),
-                is_error: true,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            };
-        };
-
-        // Cascade-remove the agent AND every descendant in one shot, getting back
-        // the removed entries (for process cleanup) and a survivor-only
-        // `subagent_state_changed` event (#831).
-        let super::subagent_cascade::CascadeOutcome { removed, event } =
-            super::subagent_cascade::cascade_remove_and_state_changed(
-                &self.registry,
-                &registry_key,
-            );
-
-        if removed.is_empty() {
-            return ToolResult {
-                content: format!(
-                    "agent_cmd error: subagent '{}' not found in registry",
-                    agent_id
-                ),
-                is_error: true,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            };
-        }
-
-        let mut removed: Vec<_> = removed.into_iter().collect();
-        // Parent-initiated kill is not a post-mortem: skip inspect, same as
-        // kill_container's member teardown.
-        super::subagent_cleanup::cleanup_removed_entries_once(
-            &mut removed,
-            super::subagent_cleanup::FinalizeMode::ParentKill,
-        )
-        .await;
-
-        // Broadcast the survivor set so the TUI panel drops the whole dead
-        // sub-tree promptly (#831). Best-effort send: no subscribers is fine.
-        if let Some(event) = event {
-            if let Some(tx) = &self.broadcast_tx {
-                if let Err(e) = tx.send(event) {
-                    tracing::debug!(
-                        agent = %agent_id,
-                        error = %e,
-                        "kill: no subscribers for cascade state_changed broadcast"
-                    );
-                }
-            }
-        }
-
-        // Terminate EVERY removed agent's process + monitor, not just the named
-        // one (#831 security review): otherwise killing a parent would drop its
-        // descendants from the registry while leaving their OS processes running
-        // as untracked orphans that `shutdown_all` can no longer reach.
-        let killed_agents: Vec<String> = removed
-            .iter()
-            .map(|(id, entry)| entry.effective_display_name(id).to_string())
-            .collect();
-        let mut signalled_agents: Vec<String> = Vec::new();
-        let mut unsignalled_agents: Vec<String> = Vec::new();
-        for (id, entry) in &removed {
-            let mut lifecycle = entry.lifecycle;
-            let killed_status = super::subagent_lifecycle::apply_lifecycle_event(
-                &mut lifecycle,
-                super::subagent_lifecycle::SubagentLifecycleEvent::KillRequested,
-            );
-            debug_assert_eq!(
-                killed_status,
-                super::subagent_registry::SubagentStatus::Exited,
-                "kill must project to the existing exited status"
-            );
-            // Signal any lifecycle observers that the process exited.
-            if let Some(ref tx) = entry.exit_signal_tx {
-                let _ = tx.send(Some(super::subagent_registry::ExitSignal {
-                    exit_code: None,
-                    signal: Some(15), // SIGTERM
-                    kind: Default::default(),
-                }));
-            }
-            // Abort the monitor task and SIGTERM the child process when its
-            // lease allows it (#1925). The reaper task spawned by SpawnTool
-            // will wait() each launched child. An entry with a pid but no
-            // lease (container-reported, unconfirmed restore) is dropped from
-            // the registry WITHOUT a signal and reported as such.
-            let signalled = super::subagent_cascade::terminate_removed_entry(entry);
-            let name = entry.effective_display_name(id).to_string();
-            if signalled {
-                signalled_agents.push(name);
-            } else if entry.pid != 0 {
-                unsignalled_agents.push(name);
-            }
-        }
-
-        ToolResult {
-            content: killed_agents_result_json(KilledAgents {
-                killed: &killed_agents,
-                signalled: &signalled_agents,
-                unsignalled: &unsignalled_agents,
-            })
-            .to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        }
-    }
-
     /// Look up the socket path for an agent ID.
     fn lookup_socket(&self, agent_id: &str) -> Result<std::path::PathBuf, String> {
         super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)
     }
-}
-
-struct KilledAgents<'a> {
-    /// Every agent removed from the registry (display names).
-    killed: &'a [String],
-    /// Subset whose OS process this harness actually signalled.
-    signalled: &'a [String],
-    /// Subset with a pid that the harness had no lease to signal (#1925):
-    /// dropped from tracking, process left to its own harness.
-    unsignalled: &'a [String],
-}
-
-fn killed_agents_result_json(agents: KilledAgents<'_>) -> serde_json::Value {
-    const MAX_REPORTED_AGENTS: usize = 20;
-    let capped =
-        |ids: &[String]| -> Vec<String> { ids.iter().take(MAX_REPORTED_AGENTS).cloned().collect() };
-    let mut result = serde_json::json!({
-        "killed": capped(agents.killed),
-        "signalled": capped(agents.signalled),
-        "unsignalled": capped(agents.unsignalled),
-    });
-    if agents.killed.len() > MAX_REPORTED_AGENTS {
-        result["omitted_agents"] = serde_json::json!(agents.killed.len() - MAX_REPORTED_AGENTS);
-    }
-    result
 }
 
 #[cfg(test)]
@@ -554,7 +409,7 @@ impl Tool for AgentCmdTool {
                 }
                 // kill is local but async: environment teardown scripts must
                 // run off the runtime thread and be awaited (#1369 slice 2).
-                if let Some(result) = self.try_kill_command(value).await {
+                if let Some(result) = self.try_kill_command(&args, value).await {
                     return Ok(result);
                 }
             }
