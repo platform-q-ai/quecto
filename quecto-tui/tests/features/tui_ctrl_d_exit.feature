@@ -58,10 +58,18 @@ Feature: TUI Ctrl+D exits the app unconditionally
   @leader-exit
   Scenario: A harness ignoring SIGTERM is SIGKILLed only after the budget
     Given the TUI owns a stand-in harness that ignores SIGTERM
-    And the leader exit budget is 300 milliseconds
+    And the leader budget is 300 milliseconds to settle and 200 milliseconds after a repeated SIGTERM
     When the TUI finalizes ordinary exit
     Then the harness should have been SIGKILLed after the budget
     And the exit report should name the SIGKILLed harness pid
+
+  @leader-exit
+  Scenario: A harness that settles only on the repeated SIGTERM is never SIGKILLed
+    Given the TUI owns a stand-in harness that exits only on a repeated SIGTERM
+    And the leader budget is 300 milliseconds to settle and 10000 milliseconds after a repeated SIGTERM
+    When the TUI finalizes ordinary exit
+    Then the harness should have exited on the repeated SIGTERM without SIGKILL
+    And the harness child should have received no signal from the TUI
 
   @leader-exit
   Scenario: The post-exit canary names a stray process without signalling it

@@ -98,6 +98,13 @@ fn parse_parent_and_group_reads_fields_after_the_comm() {
     assert_eq!(parse_parent_and_group("1 (a) S"), None);
 }
 
+#[test]
+fn parse_start_time_reads_field_22() {
+    let stat = "1234 (sleep (x) y) S 77 88 99 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 5 0 0";
+    assert_eq!(parse_start_time(stat), Some(5));
+    assert_eq!(parse_start_time("garbage"), None);
+}
+
 // --- terminate_leader ---
 
 fn spawn_group(script: &str) -> tokio::process::Child {
@@ -109,6 +116,19 @@ fn spawn_group(script: &str) -> tokio::process::Child {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn test child")
+}
+
+/// Short two-stage budget for fakes that ignore or delay TERM.
+fn short(settle_ms: u64, force_ms: u64) -> LeaderBudget {
+    LeaderBudget {
+        settle: std::time::Duration::from_millis(settle_ms),
+        force: std::time::Duration::from_millis(force_ms),
+    }
+}
+
+async fn terminate(child: &mut tokio::process::Child, budget: LeaderBudget) -> LeaderTermination {
+    let identity = LeaderIdentity::capture(child.id());
+    terminate_leader(child, budget, identity).await
 }
 
 async fn wait_for_file(path: &std::path::Path) -> String {
@@ -137,6 +157,19 @@ fn alive(pid: i32) -> bool {
             .is_some_and(|state| state != 'Z' && state != 'X')
 }
 
+/// Poll until `pid` is gone (bounded): a `Killed` label without a dead
+/// process would mean the SIGKILL was never sent.
+async fn assert_gone(pid: i32) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while alive(pid) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "pid {pid} still alive after termination"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// A leader that settles its own child on SIGTERM, then exits: the child
 /// is gone before the leader exits, the leader ends 0 after TERM, and the
 /// TUI never signals the child (the child logs every signal it receives).
@@ -157,7 +190,7 @@ async fn leader_settles_its_child_and_exits_without_the_tui_signalling_the_child
     let kid: i32 = wait_for_file(&child_pid).await.parse().unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let outcome = terminate_leader(&mut leader, std::time::Duration::from_secs(10)).await;
+    let outcome = terminate(&mut leader, short(10_000, 10_000)).await;
 
     assert_eq!(outcome.end, LeaderEnd::ExitedAfterTerm);
     assert_eq!(wait_for_file(&order).await, "child-gone");
@@ -170,36 +203,72 @@ async fn leader_settles_its_child_and_exits_without_the_tui_signalling_the_child
     assert!(outcome.strays.is_empty(), "{:?}", outcome.strays);
 }
 
-/// A leader that ignores SIGTERM is SIGKILLed — that one pid — only after
-/// the (injected, short) budget.
+/// A leader that ignores SIGTERM twice is SIGKILLed — that one pid — only
+/// after BOTH waits, is really dead afterwards, and the wait is bounded.
 #[tokio::test]
-async fn leader_ignoring_sigterm_is_killed_after_the_budget() {
+async fn leader_ignoring_sigterm_is_killed_after_both_waits() {
     let mut leader = spawn_group("trap '' TERM; while :; do sleep 0.05; done");
+    let pid = checked_pid(leader.id().unwrap()).unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let started = std::time::Instant::now();
-    let budget = std::time::Duration::from_millis(300);
+    let budget = short(300, 200);
 
-    let outcome = terminate_leader(&mut leader, budget).await;
+    let outcome = terminate(&mut leader, budget).await;
 
+    let elapsed = started.elapsed();
     assert_eq!(outcome.end, LeaderEnd::Killed);
-    assert!(started.elapsed() >= budget, "KILL only after the budget");
-    assert!(outcome.waited >= budget);
+    assert!(
+        elapsed >= budget.settle + budget.force,
+        "KILL only after both waits: {elapsed:?}"
+    );
+    assert!(
+        elapsed < budget.total(),
+        "wait must end promptly once killed: {elapsed:?}"
+    );
+    assert_gone(pid).await;
 }
 
-/// A slow-settling leader (3 s after TERM) exits inside the budget with no
-/// SIGKILL, and the wait ends as soon as it exits.
+/// A leader that ignores the first SIGTERM but exits on the repeated one
+/// (the harness's force-exit shape) ends `ExitedAfterRepeatedTerm`, no KILL.
+#[tokio::test]
+async fn leader_exiting_on_the_repeated_sigterm_is_not_killed() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("second-term");
+    let script = format!(
+        "trap 'trap \": > {m}; exit 0\" TERM' TERM; while :; do sleep 0.05; done",
+        m = marker.display()
+    );
+    let mut leader = spawn_group(&script);
+    let pid = checked_pid(leader.id().unwrap()).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let started = std::time::Instant::now();
+
+    let outcome = terminate(&mut leader, short(300, 5_000)).await;
+
+    assert_eq!(outcome.end, LeaderEnd::ExitedAfterRepeatedTerm);
+    assert!(
+        marker.exists(),
+        "the second TERM's handler ran to completion"
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_millis(300));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_gone(pid).await;
+}
+
+/// A slow-settling leader (3 s after TERM) exits inside the settle budget
+/// with no second signal and no SIGKILL, and the wait ends as soon as it exits.
 #[tokio::test]
 async fn slow_settling_leader_exits_inside_the_budget_without_sigkill() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("finished");
     let script = format!(
-        "trap 'sleep 3; : > {}; exit 0' TERM; while :; do sleep 0.05; done",
+        "trap 'trap \"exit 99\" TERM; sleep 3; : > {}; exit 0' TERM; while :; do sleep 0.05; done",
         marker.display()
     );
     let mut leader = spawn_group(&script);
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let outcome = terminate_leader(&mut leader, LEADER_EXIT_BUDGET).await;
+    let outcome = terminate(&mut leader, LeaderBudget::for_children(Some(0))).await;
 
     assert_eq!(outcome.end, LeaderEnd::ExitedAfterTerm);
     assert!(
@@ -215,7 +284,7 @@ async fn slow_settling_leader_exits_inside_the_budget_without_sigkill() {
 async fn already_exited_leader_reports_without_signalling() {
     let mut leader = spawn_group("exit 0");
     let _ = leader.wait().await;
-    let outcome = terminate_leader(&mut leader, LEADER_EXIT_BUDGET).await;
+    let outcome = terminate(&mut leader, LeaderBudget::WORST_CASE).await;
     assert_eq!(
         outcome.end,
         LeaderEnd::NoPid,
@@ -223,7 +292,7 @@ async fn already_exited_leader_reports_without_signalling() {
     );
     let mut leader = spawn_group("exit 0");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let outcome = terminate_leader(&mut leader, LEADER_EXIT_BUDGET).await;
+    let outcome = terminate(&mut leader, LeaderBudget::WORST_CASE).await;
     assert!(
         matches!(
             outcome.end,
@@ -250,7 +319,7 @@ async fn canary_names_a_stray_without_signalling_it() {
     let stray: i32 = wait_for_file(&stray_pid).await.parse().unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let outcome = terminate_leader(&mut leader, std::time::Duration::from_secs(10)).await;
+    let outcome = terminate(&mut leader, short(10_000, 10_000)).await;
 
     assert_eq!(outcome.end, LeaderEnd::ExitedAfterTerm);
     // The stray's own `sleep` grandchild shares the group, so it is named too.
@@ -267,8 +336,39 @@ async fn canary_names_a_stray_without_signalling_it() {
     }
 }
 
+/// A recycled pid (a live process with the same pid but another start time)
+/// disables the canary: its ppid/pgrp matches would belong to a stranger.
+#[tokio::test]
+async fn canary_is_skipped_when_the_leader_pid_was_recycled() {
+    // Model recycling with a live process whose identity was captured with
+    // a wrong start time: the pid exists, the start differs.
+    let mut stranger =
+        spawn_group("sh -c 'while :; do sleep 0.05; done' & while :; do sleep 0.05; done");
+    let pid = stranger.id().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let genuine = LeaderIdentity::capture(Some(pid));
+    assert!(genuine.start.is_some(), "start time captured from /proc");
+    let stale = LeaderIdentity {
+        pid: Some(pid),
+        start: genuine.start.map(|s| s + 1),
+    };
+    assert!(
+        !already_exited(genuine).strays.is_empty(),
+        "the genuine identity sees the group's child"
+    );
+    assert!(
+        already_exited(stale).strays.is_empty(),
+        "a recycled pid runs no canary"
+    );
+    stranger.start_kill().unwrap();
+    let _ = stranger.wait().await;
+}
+
 #[test]
 fn canary_of_a_nonexistent_leader_is_empty() {
     assert!(stray_processes_of(999_999_997).is_empty());
-    assert_eq!(already_exited(None).end, LeaderEnd::NoPid);
+    assert_eq!(
+        already_exited(LeaderIdentity::capture(None)).end,
+        LeaderEnd::NoPid
+    );
 }

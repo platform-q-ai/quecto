@@ -195,7 +195,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
             if let Some(watch) = &child_watch {
-                watch.terminate().await;
+                terminate_watched_at_startup(watch).await;
             }
             return 1;
         }
@@ -337,7 +337,7 @@ pub(crate) async fn spawn_agent_program_watched_for_tab(
 
         match result {
             Ok(Ok(0)) => {
-                watch.terminate().await;
+                terminate_watched_at_startup(&watch).await;
                 return Err(format_agent_startup_failure(
                     "agent exited before announcing socket",
                     &stderr_context.lines(),
@@ -354,7 +354,7 @@ pub(crate) async fn spawn_agent_program_watched_for_tab(
                 if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
                     let path = PathBuf::from(path_str.trim());
                     if let Err(e) = validate_socket_path(&path) {
-                        watch.terminate().await;
+                        terminate_watched_at_startup(&watch).await;
                         return Err(e);
                     }
                     spawn_stderr_drain(reader, stderr_context.clone());
@@ -362,14 +362,14 @@ pub(crate) async fn spawn_agent_program_watched_for_tab(
                 }
             }
             Ok(Err(e)) => {
-                watch.terminate().await;
+                terminate_watched_at_startup(&watch).await;
                 return Err(format_agent_startup_failure(
                     &format!("error reading agent stderr: {e}"),
                     &stderr_context.lines(),
                 ));
             }
             Err(_) => {
-                watch.terminate().await;
+                terminate_watched_at_startup(&watch).await;
                 return Err(format_agent_startup_failure(
                     &agent_socket_timeout_message(),
                     &stderr_context.lines(),
@@ -495,11 +495,9 @@ async fn spawn_agent_program(
     }
 }
 
-async fn terminate_spawned_agent(child: &mut tokio::process::Child) {
-    let _ =
-        crate::shell::process::terminate_leader(child, crate::shell::process::LEADER_EXIT_BUDGET)
-            .await;
-}
+#[path = "cli_startup_exit.rs"]
+mod startup_exit;
+use startup_exit::{terminate_spawned_agent, terminate_watched_at_startup};
 
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
 

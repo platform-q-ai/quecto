@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-pub use crate::shell::process::{LeaderEnd, LeaderTermination};
+pub use crate::shell::process::{LeaderBudget, LeaderEnd, LeaderIdentity, LeaderTermination};
 
 pub(crate) type ChildWatchRegistry = std::sync::Arc<std::sync::Mutex<Vec<ChildWatch>>>;
 
@@ -93,7 +93,7 @@ impl StderrTail {
 }
 
 /// A termination request: the leader-exit budget and where to report.
-type TerminationRequest = (Duration, oneshot::Sender<LeaderTermination>);
+type TerminationRequest = (LeaderBudget, oneshot::Sender<LeaderTermination>);
 
 /// Cloneable handle to the background watcher owning a spawned agent child.
 #[derive(Debug, Clone)]
@@ -115,6 +115,7 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
     let (exit_tx, exit_rx) = watch::channel(None);
     let (term_tx, mut term_rx) = mpsc::channel::<TerminationRequest>(1);
     let pid = child.id();
+    let identity = LeaderIdentity::capture(pid);
     tokio::spawn(async move {
         let mut exited = false;
         loop {
@@ -130,9 +131,9 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
                 request = term_rx.recv() => {
                     let Some((budget, done)) = request else { break; };
                     let outcome = if exited {
-                        crate::shell::process::already_exited(pid)
+                        crate::shell::process::already_exited(identity)
                     } else {
-                        crate::shell::process::terminate_leader(&mut child, budget).await
+                        crate::shell::process::terminate_leader(&mut child, budget, identity).await
                     };
                     let _ = done.send(outcome);
                     break;
@@ -217,22 +218,19 @@ impl ChildWatch {
         }
     }
 
-    /// Terminate the leader with the default [`LEADER_EXIT_BUDGET`]
-    /// (`crate::shell::process`) and wait for the watcher's report.
+    /// Terminate the leader with [`LeaderBudget::WORST_CASE`] (the roster is
+    /// unknown to this caller) and wait for the watcher's report.
     pub async fn terminate(&self) -> Option<LeaderTermination> {
-        self.terminate_with_budget(crate::shell::process::LEADER_EXIT_BUDGET)
-            .await
+        self.terminate_with_budget(LeaderBudget::WORST_CASE).await
     }
 
-    /// SIGTERM the leader, wait up to `budget` for its exit, SIGKILL that
-    /// one pid past the budget, run the canary and report. `None` when the
-    /// watcher is gone (the request cannot be delivered) or it never
-    /// answers inside the budget plus the KILL grace — the caller is never
-    /// held longer than that.
-    pub async fn terminate_with_budget(&self, budget: Duration) -> Option<LeaderTermination> {
-        let outer = budget
-            .saturating_add(crate::shell::process::HARNESS_KILL_GRACE)
-            .saturating_add(Duration::from_secs(1));
+    /// SIGTERM the leader, wait `budget.settle`, SIGTERM again and wait
+    /// `budget.force`, SIGKILL that one pid past both, run the canary and
+    /// report. `None` when the watcher is gone (the request cannot be
+    /// delivered) or it never answers inside `budget.total()` plus a second
+    /// — the caller is never held longer than that.
+    pub async fn terminate_with_budget(&self, budget: LeaderBudget) -> Option<LeaderTermination> {
+        let outer = budget.total().saturating_add(Duration::from_secs(1));
         tokio::time::timeout(outer, async {
             let (done_tx, done_rx) = oneshot::channel();
             self.term_tx.send((budget, done_tx)).await.ok()?;

@@ -37,22 +37,6 @@ fn switch_tab_next_prev_wraps() {
 }
 
 #[test]
-fn close_tab_detaches_and_refocuses() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    let watch = a.close_tab(t1, false).unwrap();
-    assert!(watch.is_none());
-    assert_eq!(a.tabs.len(), 1);
-    assert_eq!(a.active_tab, TabId::MASTER);
-}
-
-#[test]
-fn close_last_tab_refused() {
-    let mut a = app();
-    assert!(a.close_tab(TabId::MASTER, false).is_err());
-}
-
-#[test]
 fn new_command_resets_workspace_not_just_active_session() {
     let mut a = app();
     let old_workspace_id = a.workspace_id.clone();
@@ -100,16 +84,6 @@ fn reset_workspace_returns_stale_tab_child_watches_for_termination() {
     );
     assert_eq!(a.tabs.len(), 1);
     assert!(a.tabs.contains_key(&TabId::MASTER));
-}
-
-#[test]
-fn close_active_prefers_previous_id() {
-    let mut a = app();
-    let _t1 = a.open_placeholder_tab(None);
-    let t2 = a.open_placeholder_tab(None);
-    assert_eq!(a.active_tab, t2);
-    a.close_tab(t2, false).unwrap();
-    assert_eq!(a.active_tab, TabId(1));
 }
 
 #[test]
@@ -174,20 +148,6 @@ fn registry_snapshot_includes_live_socket_pid_and_session_key() {
     let man = a.workspace_manifest_snapshot("ws");
     let entry = man.tabs.iter().find(|t| t.tab_id == tab.0).unwrap();
     assert_eq!(entry.session_key.as_deref(), Some("cli:worker-1"));
-}
-
-#[test]
-fn close_tab_with_kill_returns_child_watch_for_terminate() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    a.conn_mut(t1).unwrap().child_exit_watch =
-        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(99)));
-    let returned = a.close_tab(t1, true).expect("close ok");
-    assert!(
-        returned.is_some(),
-        "AC3a: close must hand back the tab ChildWatch so the agent can be terminated"
-    );
-    assert_eq!(returned.unwrap().pid(), Some(99));
 }
 
 #[test]
@@ -266,8 +226,10 @@ fn stale_attach_outcome_is_rejected_after_close() {
     a.mark_tab_pending_attach(tab);
     let generation = a.bump_attach_generation(tab);
     assert_ne!(generation, 0);
-    a.close_tab(tab, false).unwrap();
-    // Recycle the same numeric id with a fresh generation.
+    // The tab goes away (its connection dropped) and the id is recycled
+    // with a fresh generation.
+    a.tabs.remove(&tab);
+    a.active_tab = TabId::MASTER;
     let tab2 = a.open_placeholder_tab(None);
     assert_eq!(tab2, tab, "allocator reuses lowest free id");
     a.mark_tab_pending_attach(tab2);
@@ -683,4 +645,75 @@ fn ordinary_exit_persistence_distinguishes_owned_killing_from_detach_and_externa
             );
         }
     }
+}
+
+/// #1956 review: `/new` terminates only the non-master tabs' watches — the
+/// master's own watch stays with the surviving master tab.
+#[test]
+fn reset_workspace_leaves_the_master_watch_and_takes_only_other_tabs() {
+    let mut a = app();
+    a.conn_mut(TabId::MASTER).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(1)));
+    let t1 = a.open_placeholder_tab(Some("one".into()));
+    let t2 = a.open_placeholder_tab(Some("two".into()));
+    a.conn_mut(t1).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(2)));
+    a.conn_mut(t2).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(3)));
+
+    let mut taken: Vec<_> = a.reset_workspace().iter().map(|w| w.pid()).collect();
+    taken.sort();
+
+    assert_eq!(taken, vec![Some(2), Some(3)]);
+    assert_eq!(
+        a.conn_for(TabId::MASTER)
+            .unwrap()
+            .child_exit_watch
+            .as_ref()
+            .and_then(|w| w.pid()),
+        Some(1),
+        "the master's watch is not handed out for termination"
+    );
+}
+
+/// #1956 review: a stale spawn outcome (its tab closed or recycled while
+/// spawning) hands back only that outcome's watch; every other tab's watch
+/// stays attached.
+#[tokio::test]
+async fn stale_attach_outcome_terminates_only_its_own_watch() {
+    let mut a = app();
+    let keep = a.open_placeholder_tab(Some("keep".into()));
+    a.conn_mut(keep).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(11)));
+    let gone = a.open_placeholder_tab(Some("gone".into()));
+    a.mark_tab_pending_attach(gone);
+    let generation = a.bump_attach_generation(gone);
+    a.tabs.remove(&gone);
+    a.active_tab = TabId::MASTER;
+    let (stale, mut probe) =
+        crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(12));
+
+    a.apply_tab_attach_outcome(super::TabAttachOutcome {
+        tab: gone,
+        generation,
+        child_watch: Some(stale),
+        result: Err("stale".into()),
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), probe.recv())
+            .await
+            .expect("the stale outcome's watch is asked to terminate")
+            .is_some()
+    );
+    assert_eq!(
+        a.conn_for(keep)
+            .unwrap()
+            .child_exit_watch
+            .as_ref()
+            .and_then(|w| w.pid()),
+        Some(11),
+        "the other tab's watch is untouched"
+    );
+    assert_eq!(a.take_all_child_exit_watches().len(), 1);
 }

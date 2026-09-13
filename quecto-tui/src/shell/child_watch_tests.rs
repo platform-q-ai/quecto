@@ -185,24 +185,39 @@ fn proc_state(pid: i32) -> Option<char> {
     stat.get(close + 2..)?.chars().next()
 }
 
-/// #1956: a TERM-ignoring leader is SIGKILLed — only that pid — after the
-/// injected budget, and an unrelated process in its own group is untouched.
+/// #1956: a TERM-ignoring leader is SIGKILLed — only that pid — after both
+/// injected waits and is really dead; an unrelated process in its own group
+/// is untouched; the caller's wait is bounded.
 #[tokio::test]
 async fn term_ignoring_leader_is_killed_after_budget_without_touching_unrelated_group() {
     let mut unrelated = spawn("exec sleep 30");
-    let watch = watch_child(
-        spawn("trap '' TERM; while :; do sleep 0.05; done"),
-        StderrTail::default(),
-    );
+    let leader = spawn("trap '' TERM; while :; do sleep 0.05; done");
+    let pid = leader.id().unwrap() as i32;
+    let watch = watch_child(leader, StderrTail::default());
     tokio::time::sleep(Duration::from_millis(100)).await;
+    let budget = LeaderBudget {
+        settle: Duration::from_millis(300),
+        force: Duration::from_millis(200),
+    };
+    let started = std::time::Instant::now();
     let outcome = watch
-        .terminate_with_budget(Duration::from_millis(300))
+        .terminate_with_budget(budget)
         .await
         .expect("watcher reports");
+    let elapsed = started.elapsed();
     let unrelated_survived = unrelated.try_wait().unwrap().is_none();
     unrelated.kill().await.unwrap();
     assert_eq!(outcome.end, LeaderEnd::Killed);
-    assert!(outcome.waited >= Duration::from_millis(300));
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+    assert!(elapsed < budget.total(), "bounded: {elapsed:?}");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while process_alive(pid) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "leader {pid} must be dead"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(unrelated_survived, "unrelated group must receive no signal");
 }
 

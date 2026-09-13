@@ -6,7 +6,7 @@
 
 use super::TuiHarness;
 use crate::shell::child_watch::{StderrTail, watch_child};
-use crate::shell::process::{LeaderEnd, LeaderTermination};
+use crate::shell::process::{LeaderBudget, LeaderEnd, LeaderTermination};
 use std::time::Duration;
 
 impl TuiHarness {
@@ -33,9 +33,9 @@ impl TuiHarness {
         pid
     }
 
-    /// Override the per-leader exit budget for the scenario.
-    pub fn set_leader_exit_budget(&mut self, budget: Duration) {
-        self.app.set_leader_exit_budget(budget);
+    /// Override the per-leader budget for the scenario (settle, force).
+    pub fn set_leader_budget(&mut self, settle: Duration, force: Duration) {
+        self.app.set_leader_budget(LeaderBudget { settle, force });
     }
 
     /// Kill-on-exit (default) or detach-on-exit policy.
@@ -93,8 +93,12 @@ impl TuiHarness {
     /// `budget` (the same helper tab close and `/new` use) and report.
     pub async fn terminate_adopted_harness(
         &mut self,
-        budget: Duration,
+        settle: Duration,
     ) -> Option<LeaderTermination> {
+        let budget = LeaderBudget {
+            settle,
+            force: settle,
+        };
         let watch = self
             .app
             .pending_tab_child_watches
@@ -109,6 +113,7 @@ impl TuiHarness {
         match end {
             LeaderEnd::AlreadyExited => "already-exited",
             LeaderEnd::ExitedAfterTerm => "exited-after-term",
+            LeaderEnd::ExitedAfterRepeatedTerm => "exited-after-repeated-term",
             LeaderEnd::Killed => "killed",
             LeaderEnd::NoPid => "no-pid",
         }

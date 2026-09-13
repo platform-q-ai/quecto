@@ -360,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
 | `shell/connection_state.rs` | `shell` per-connection state bundle behind the `active_conn()` seam (#1463) |
 | `shell/atomic_file.rs` | `shell` atomic temp+rename durability helper (#1465 AC4) |

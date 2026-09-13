@@ -104,11 +104,12 @@ fn fixture(world: &TuiWorld) -> &ExitFixture {
 
 #[given("the TUI owns a stand-in harness that settles its own child on SIGTERM")]
 fn owns_settling_harness(world: &mut TuiWorld) {
-    // On TERM: end the child (the harness's own authority), record the
-    // order, mark the TERM handled, exit 0.
+    // On TERM: end the child (the harness's own authority), let the child's
+    // orphaned 50 ms `sleep` run out so the fixture leaves nothing transient
+    // in the group, record the order, mark the TERM handled, exit 0.
     adopt(
         world,
-        "trap 'kill -KILL $kid; wait $kid; echo child-gone > {dir}/order; \
+        "trap 'kill -KILL $kid; wait $kid; sleep 0.3; echo child-gone > {dir}/order; \
          : > {dir}/term-handled; exit 0' TERM; while :; do sleep 0.05; done",
     );
 }
@@ -137,11 +138,27 @@ fn owns_harness_with_outliving_child(world: &mut TuiWorld) {
     );
 }
 
-#[given(regex = r"^the leader exit budget is (\d+) milliseconds$")]
-fn leader_exit_budget(world: &mut TuiWorld, ms: u64) {
+#[given(
+    regex = r"^the leader budget is (\d+) milliseconds to settle and (\d+) milliseconds after a repeated SIGTERM$"
+)]
+fn leader_budget(world: &mut TuiWorld, settle_ms: u64, force_ms: u64) {
     with_harness(world, |h| {
-        h.set_leader_exit_budget(std::time::Duration::from_millis(ms));
+        h.set_leader_budget(
+            std::time::Duration::from_millis(settle_ms),
+            std::time::Duration::from_millis(force_ms),
+        );
     });
+}
+
+#[given("the TUI owns a stand-in harness that exits only on a repeated SIGTERM")]
+fn owns_repeated_term_harness(world: &mut TuiWorld) {
+    // First TERM: re-arm the trap; second TERM: settle the child and exit —
+    // the shape of the harness's own force-exit.
+    adopt(
+        world,
+        "trap 'trap \"kill -KILL $kid; wait $kid; sleep 0.3; : > {dir}/second-term; exit 0\" TERM' TERM; \
+         while :; do sleep 0.05; done",
+    );
 }
 
 #[given("the exit policy is detach-on-exit")]
@@ -256,9 +273,28 @@ fn harness_killed_after_budget(world: &mut TuiWorld) {
         !f.path("term-handled").exists(),
         "a TERM-ignoring harness has no handled marker"
     );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while process_alive(f.harness_pid as i32) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the leader must really be dead after SIGKILL"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[then("the harness should have exited on the repeated SIGTERM without SIGKILL")]
+fn harness_exited_on_repeated_term(world: &mut TuiWorld) {
+    let f = fixture(world);
     assert!(
-        !process_alive(f.harness_pid as i32),
-        "the leader was SIGKILLed"
+        f.path("second-term").exists(),
+        "the second TERM's handler ran to completion"
+    );
+    assert!(!process_alive(f.harness_pid as i32));
+    assert!(
+        !f.report.iter().any(|m| m.contains("SIGKILL")),
+        "no SIGKILL: {:?}",
+        f.report
     );
 }
 
@@ -266,7 +302,7 @@ fn harness_killed_after_budget(world: &mut TuiWorld) {
 fn report_names_killed_pid(world: &mut TuiWorld) {
     let f = fixture(world);
     let expected = format!(
-        "harness pid {} did not exit within 300ms of SIGTERM; sent SIGKILL to that process only",
+        "harness pid {} did not exit within 300ms of SIGTERM nor 200ms of a repeated SIGTERM; sent SIGKILL to that process only",
         f.harness_pid
     );
     assert!(

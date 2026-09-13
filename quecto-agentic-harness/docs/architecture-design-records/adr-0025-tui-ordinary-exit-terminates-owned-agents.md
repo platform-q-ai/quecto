@@ -182,14 +182,22 @@ The epic closes with one teardown model, ratcheted by
 `/exit`) and its other owned-harness ends (tab close, `/new` workspace reset,
 startup-failure cleanup) signal the harness **leader only**: after the
 snapshots are persisted, SIGTERM to that one pid (`kill(pid)`, never
-`kill(-pgid)`, never a descendant), a wait for that process to exit within a
-30 s budget (the fleet's 25 s per-child worst case plus 5 s persist-and-exit
-slack, under the harness's own 45 s force-exit), a "waiting for the agent to
-settle its subagents…" notice past ~1 s, and SIGKILL of only that pid past
-the budget. The former process-group SIGTERM, `/proc` descendant sweep, 1.5 s
-grace and "leader exit is not proof of cleanup" verifier are gone; in their
-place a read-only post-exit canary reads `/proc` once and reports — never
-signals — any process still naming the old leader as parent or process group.
-Under the lifetime binding that report is always empty; a non-empty one is
-the evidence. The harness's fleet teardown on SIGTERM is thus the only
-subagent-ending authority, with the TUI a plain SIGTERM sender.
+`kill(-pgid)`, never a descendant); a wait for that process to exit within a
+*settle* budget derived from the fleet teardown above — `ceil(n / 8)` batches
+(`DEFAULT_SETTLEMENT_BOUND`) × 25 s (`DEFAULT_COMPENSATION_WAIT`) + 5 s
+persist slack for the `n` subagents the tab's roster last showed, capped at
+the 3-pass (`MAX_PASSES`) worst case of 80 s and used in full when the roster
+is unknown; then a **second** SIGTERM — a repeated signal is what arms the
+harness's own 45 s `FORCE_EXIT_AFTER`, a single one never does — and a wait of
+those 45 s; and only then SIGKILL of that one pid. A "waiting for the agent to
+settle its subagents…" notice appears past ~1 s. The former process-group
+SIGTERM, `/proc` descendant sweep, 1.5 s grace and "leader exit is not proof
+of cleanup" verifier are gone; in their place a read-only post-exit canary
+reads `/proc` once and reports — never signals — any process still naming the
+old leader as parent or process group, skipped when the pid's kernel start
+time shows it has been recycled. Under the lifetime binding that report is
+always empty; a non-empty one is the evidence. Swarm members and bash tool
+children in their own process group are outside its view by design. The
+harness's fleet teardown on SIGTERM is thus the only subagent-ending
+authority, with the TUI a plain SIGTERM sender whose waits are the harness's
+own numbers.

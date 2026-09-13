@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::{App, NotifyLevel};
 use crate::components::notification::Notification;
-use crate::shell::process::{LeaderEnd, LeaderTermination, SETTLING_NOTICE_AFTER};
+use crate::shell::process::{LeaderBudget, LeaderEnd, LeaderTermination, SETTLING_NOTICE_AFTER};
 
 const ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -25,8 +25,9 @@ fn ordinary_exit_finalization_errors_for_tests() -> &'static Mutex<Vec<String>> 
 pub(crate) struct OrdinaryExitPolicy {
     /// `--kill-on-exit` (default) terminates owned leaders; `--detach-on-exit` leaves them.
     pub(crate) kill_owned: bool,
-    /// Per-leader SIGTERM-to-SIGKILL wait; injectable for tests.
-    pub(crate) leader_exit_budget: Duration,
+    /// Test override of the per-leader budget (production derives it from
+    /// each tab's roster, see [`LeaderBudget::for_children`]).
+    pub(crate) leader_budget_override: Option<LeaderBudget>,
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) settling_notices_shown: Vec<String>,
@@ -36,7 +37,7 @@ impl Default for OrdinaryExitPolicy {
     fn default() -> Self {
         Self {
             kill_owned: true,
-            leader_exit_budget: crate::shell::process::LEADER_EXIT_BUDGET,
+            leader_budget_override: None,
             #[cfg(any(test, feature = "test-harness"))]
             settling_notices_shown: Vec::new(),
         }
@@ -74,11 +75,20 @@ impl App {
         errors
     }
 
-    /// Override the per-leader exit budget (tests: a short budget so a
-    /// SIGTERM-ignoring fake is SIGKILLed without waiting 30 s).
+    /// Override the per-leader budget (tests: short waits so a
+    /// SIGTERM-ignoring fake is SIGKILLed without waiting minutes).
     #[cfg(any(test, feature = "test-harness"))]
-    pub(crate) fn set_leader_exit_budget(&mut self, budget: Duration) {
-        self.exit_policy.leader_exit_budget = budget;
+    pub(crate) fn set_leader_budget(&mut self, budget: LeaderBudget) {
+        self.exit_policy.leader_budget_override = Some(budget);
+    }
+
+    /// The budget for one owned leader: the fleet-derived wait for the
+    /// direct children its tab's roster last showed (unknown for a spawn
+    /// still in flight), unless a test overrides it.
+    fn leader_budget(&self, children: Option<usize>) -> LeaderBudget {
+        self.exit_policy
+            .leader_budget_override
+            .unwrap_or_else(|| LeaderBudget::for_children(children))
     }
 
     /// Ordinary exit with the kill-on-exit policy: SIGTERM every TUI-owned
@@ -90,14 +100,16 @@ impl App {
         if !self.exit_policy.kill_owned {
             return Vec::new();
         }
-        let watches = self.take_all_child_exit_watches();
+        let watches = self.take_all_child_exit_watches_with_rosters();
         if watches.is_empty() {
             return Vec::new();
         }
-        let budget = self.exit_policy.leader_exit_budget;
         let mut pending = tokio::task::JoinSet::new();
-        for watch in watches {
-            pending.spawn(async move { watch.terminate_with_budget(budget).await });
+        let mut longest = Duration::ZERO;
+        for (watch, children) in watches {
+            let budget = self.leader_budget(children);
+            longest = longest.max(budget.total());
+            pending.spawn(async move { (watch.terminate_with_budget(budget).await, budget) });
         }
         let started = tokio::time::Instant::now();
         let mut next_notice = started + SETTLING_NOTICE_AFTER;
@@ -105,12 +117,12 @@ impl App {
         while !pending.is_empty() {
             tokio::select! {
                 joined = pending.join_next() => {
-                    if let Some(Ok(Some(outcome))) = joined {
-                        outcomes.push(outcome);
+                    if let Some(Ok((Some(outcome), budget))) = joined {
+                        outcomes.push((outcome, budget));
                     }
                 }
                 _ = tokio::time::sleep_until(next_notice) => {
-                    self.show_settling_notice(started.elapsed(), budget);
+                    self.show_settling_notice(started.elapsed(), longest);
                     self.render();
                     next_notice += Duration::from_secs(1);
                 }
@@ -119,11 +131,11 @@ impl App {
         self.notifications.dismiss_prefixed(SETTLING_NOTICE_PREFIX);
         outcomes
             .iter()
-            .filter_map(|outcome| Self::describe_leader_termination(outcome, budget))
+            .filter_map(|(outcome, budget)| Self::describe_leader_termination(outcome, *budget))
             .collect()
     }
 
-    fn show_settling_notice(&mut self, elapsed: Duration, budget: Duration) {
+    fn show_settling_notice(&mut self, elapsed: Duration, longest: Duration) {
         let message = format!("{SETTLING_NOTICE_PREFIX} ({}s)", elapsed.as_secs());
         #[cfg(any(test, feature = "test-harness"))]
         self.exit_policy
@@ -132,7 +144,7 @@ impl App {
         self.notifications.replace_prefixed(
             SETTLING_NOTICE_PREFIX,
             Notification::new(&message, NotifyLevel::Info)
-                .with_duration(budget.saturating_add(Duration::from_secs(5))),
+                .with_duration(longest.saturating_add(Duration::from_secs(5))),
         );
     }
 
@@ -140,14 +152,15 @@ impl App {
     /// that had to be SIGKILLed, or strays the canary found (not signalled).
     pub(crate) fn describe_leader_termination(
         outcome: &LeaderTermination,
-        budget: Duration,
+        budget: LeaderBudget,
     ) -> Option<String> {
         let pid = outcome.pid?;
         let mut notes = Vec::new();
         if outcome.end == LeaderEnd::Killed {
             notes.push(format!(
-                "harness pid {pid} did not exit within {} of SIGTERM; sent SIGKILL to that process only",
-                format_budget(budget)
+                "harness pid {pid} did not exit within {} of SIGTERM nor {} of a repeated SIGTERM; sent SIGKILL to that process only",
+                format_budget(budget.settle),
+                format_budget(budget.force)
             ));
         }
         if !outcome.strays.is_empty() {
@@ -245,6 +258,9 @@ fn format_budget(budget: Duration) -> String {
     }
 }
 
+#[cfg(test)]
+#[path = "app_ordinary_exit_leader_tests.rs"]
+mod leader_tests;
 #[cfg(test)]
 #[path = "app_ordinary_exit_tests.rs"]
 mod tests;
