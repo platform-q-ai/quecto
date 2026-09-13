@@ -1,6 +1,7 @@
 //! Typed coordination adapter. Python wire details stop at this boundary.
 use super::SwarmContext;
 use crate::domain::error::DomainError;
+use crate::domain::swarm::MemberExit;
 use crate::domain::swarm::{
     CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot,
 };
@@ -110,6 +111,10 @@ impl CoordinationPort for SwarmContext {
     }
     fn quarantine(&self, member: &str) -> Result<(), DomainError> {
         self.rpc("_quarantine", json!([member])).map(|_| ())
+    }
+    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError> {
+        self.rpc("_confirmed_dead", json!([member, exit.as_str()]))
+            .map(|_| ())
     }
 }
 impl SwarmContext {

@@ -3,6 +3,7 @@ use quecto::application::swarm::{
 };
 use quecto::domain::error::DomainError;
 use quecto::domain::subagent_launch::LaunchFuture;
+use quecto::domain::swarm::MemberExit;
 use quecto::domain::swarm::{
     CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot,
 };
@@ -79,6 +80,10 @@ impl CoordinationPort for Board {
     }
     fn quarantine(&self, member: &str) -> Result<(), DomainError> {
         self.0.lock().unwrap().push(member.into());
+        Ok(())
+    }
+    fn confirm_dead(&self, member: &str, _: MemberExit) -> Result<(), DomainError> {
+        self.0.lock().unwrap().push(format!("dead:{member}"));
         Ok(())
     }
 }

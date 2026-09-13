@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from swarm_repository import lost_after_activation
 from swarm_store import Store, SwarmError, bounded, encode
 from swarm_tasks import Tasks
 from swarm_use_cases import Coordination
@@ -15,7 +16,9 @@ from swarm_use_cases import Coordination
 
 class Workbench(Tasks):
     def __init__(self, path, checkout, member):
-        self.store = Store(path, member)
+        # One injectable clock: event timestamps, expiry and the loss grace
+        # all read `self.coordination.clock` (tests rebind it).
+        self.store = Store(path, member, lambda: self.coordination.clock())
         self.checkout, self.member = checkout, member
         self.coordination = Coordination(self.store, member, time.time)
 
@@ -58,7 +61,7 @@ class Workbench(Tasks):
                 db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, goal, encode(constraints), encode(criteria), self.member,
                             self.member, member_limit, deadline, 'running'))
-                db.execute("INSERT INTO members VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
+                db.execute("INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
             self.store.event(db, 'created', {'goal': goal, 'deadline': deadline, 'contract': {'goal': goal, 'constraints': constraints, 'criteria': criteria}})
         return self.summary()
 
@@ -174,7 +177,7 @@ class Workbench(Tasks):
             if not db.execute('SELECT 1 FROM run').fetchone():
                 db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, '', '[]', '[]', self.member, self.member, 10, 0, 'setup'))
-                db.execute("INSERT INTO members VALUES(?,?,'live',?,?,?)",
+                db.execute("INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',?,?,?)",
                            (self.member, uuid.uuid4().hex, pid, started, socket))
                 self.store.event(db, 'container_setup', {'member': self.member})
         return self._join(reservation, pid, started, socket)
@@ -220,18 +223,40 @@ class Workbench(Tasks):
             db.execute("UPDATE members SET status='dead' WHERE id=?", (member,))
             self.store.event(db, 'launch_abandoned', {'member': member})
 
-    def _confirmed_dead(self, member):
-        # Reserved for a lifecycle adapter that can prove the entire execution
-        # scope stopped. The current adapter quarantines harness-only death
-        # instead; idle, timeout and self-report never confer this authority.
+    ABRUPT_BLOCKER = 'worker death confirmed (abrupt exit; reservations retained); coordinator recovery required'
+    ORDERLY_BLOCKER = 'worker death confirmed; coordinator recovery required'
+
+    def _confirmed_dead(self, member, exit='orderly'):
+        """Harness-only (#1961): the harness that launched `member` reaped its
+        owned process. The member is dead and its active tasks block for
+        `recover`; idle time, a lost socket, a timeout or a self-report never
+        confer this authority (those stay `_quarantine`).
+
+        `exit` says how it ended. `orderly` (a delegated kill, a protocol
+        shutdown, an exit the harness chose): the member's own teardown ended
+        its tool process groups, so its file reservations are released.
+        `abrupt` (a signal nobody here sent, or an unobservable end): Bash
+        tool children run in their own process groups and may outlive the
+        harness, still writing to the reserved paths, so the reservations are
+        retained and the tasks say so; only the coordinator frees them, with
+        `revoke(id, reason)` or `recover(id, release_files=True)`."""
+        if exit not in ('orderly', 'abrupt'):
+            raise SwarmError('exit kind must be orderly or abrupt')
         with self.store.operation(active=False) as (db, run):
             current = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
             if not current or current['status'] == 'dead':
                 return
             db.execute("UPDATE members SET status='dead' WHERE id=?", (member,))
-            db.execute("UPDATE tasks SET status='blocked',blocker='worker death confirmed; coordinator recovery required' WHERE owner=? AND status IN ('claimed','blocked','submitted')", (member,))
-            db.execute('DELETE FROM files WHERE owner=?', (member,))
-            self.store.event(db, 'death_confirmed', {'member': member})
+            blocker = self.ORDERLY_BLOCKER if exit == 'orderly' else self.ABRUPT_BLOCKER
+            db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE owner=? AND status IN ('claimed','blocked','submitted')", (blocker, member))
+            retained = db.execute('SELECT count(*) FROM files WHERE owner=?', (member,)).fetchone()[0]
+            if exit == 'orderly':
+                db.execute('DELETE FROM files WHERE owner=?', (member,))
+                retained = 0
+            detail = {'member': member, 'exit': exit, 'reservations_retained': retained}
+            if retained:
+                detail['reason'] = 'abrupt harness exit; orphaned tool processes may still write reserved paths'
+            self.store.event(db, 'death_confirmed', detail)
             if member == run['coordinator']:
                 self._end_by_loss(db, run, 'coordinator death confirmed')
 
@@ -344,13 +369,64 @@ class Workbench(Tasks):
         bounded(encode(evidence), 'evidence references')
         return self.coordination.revalidate_task(task_id, revision, evidence)
 
+    LOSS_GRACE = 10.0
+
     def _quarantine(self, member):
-        # A missing harness is not proof that its independent execution groups
-        # stopped. Keep all ownership until the environment is discarded.
+        """Harness-only: this member's harness observed `member`'s pid gone.
+
+        A missing harness is not proof that its independent execution groups
+        stopped, so ownership is kept until the environment is discarded.
+        Observer authority (#1961): only the harness that launched `member`
+        (its reservation's actor) may record its loss, and it does so only
+        after a grace, because its owned-handle reaper normally confirms the
+        death first (`_confirmed_dead`) and a confirmed death never pauses
+        the run. Another member's reconcile observes but records nothing while
+        the launcher lives; once the launcher is itself dead or lost, any
+        member may record the loss after the same grace so the store never
+        stalls. A member without a launcher (the bootstrapped coordinator)
+        is recorded at once, as before (#1924 records the coordinator from
+        outside). Idempotent per member: a member already recorded lost or
+        confirmed dead never pauses the run again."""
         with self.store.operation(active=False) as (db, run):
+            if self._lost(db, member):
+                return
+            row = db.execute('SELECT launcher FROM members WHERE id=?', (member,)).fetchone()
+            launcher = row['launcher'] if row else None
+            if launcher is not None:
+                if self.member != launcher and not self._lost(db, launcher):
+                    return
+                if not self._grace_elapsed(db, member):
+                    return
             self.store.event(db, 'scope_unknown', {'member': member,
                 'reason': 'harness exited; execution scope unconfirmed; discard environment'})
             self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+
+    def _grace_elapsed(self, db, member):
+        """Record the first observation of `member`'s vanished harness (one
+        `scope_observed` event per observer and member); True once the
+        earliest observation is `LOSS_GRACE` seconds old."""
+        now = self.coordination.clock()
+        first = None
+        for event in db.execute("SELECT actor, time, detail FROM events WHERE action='scope_observed' ORDER BY id"):
+            if json.loads(event['detail']).get('member') != member:
+                continue
+            if first is None:
+                first = event['time']
+            if event['actor'] == self.member:
+                break
+        else:
+            self.store.event(db, 'scope_observed', {'member': member})
+            if first is None:
+                first = now
+        return now - first >= self.LOSS_GRACE
+
+    @staticmethod
+    def _lost(db, member):
+        """Whether `member` is dead, or was quarantined after its latest activation."""
+        row = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
+        if row is None or row['status'] == 'dead':
+            return True
+        return lost_after_activation(db, member)
 
     def _lose_coordinator(self):
         """Harness-only (#1924): the supervising session outside the container

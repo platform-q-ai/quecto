@@ -1,8 +1,8 @@
 //! Lifecycle sequencing and fail-closed ownership decisions over effect ports.
 use crate::domain::error::DomainError;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::ProcessIdentity;
 use crate::domain::swarm::{CoordinationPort, Member, MemberStatus, RunStatus, Snapshot};
+use crate::domain::swarm::{MemberExit, ProcessIdentity};
 
 // ── Capability-local ports (moved out of the domain by #1940) ────────────
 
@@ -37,6 +37,14 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         coordination: &dyn CoordinationPort,
         processes: &dyn ProcessObservation,
     ) -> Result<Snapshot, DomainError>;
+    /// An authoritative exit of a member this harness launched (#1961).
+    fn member_exited(
+        &self,
+        coordination: &dyn CoordinationPort,
+        processes: &dyn ProcessObservation,
+        member: &str,
+        exit: MemberExit,
+    ) -> Result<Snapshot, DomainError>;
     fn settle<'a>(
         &'a self,
         snapshot: &'a Snapshot,
@@ -64,6 +72,31 @@ pub fn reconcile(
         }
     }
     coordination.snapshot()
+}
+
+/// The launching harness reaped `member`'s owned process (#1961): the exit is
+/// authoritative for the member's harness, so the member is confirmed dead
+/// (its active tasks block for `recover`) before the ordinary reconcile
+/// runs, which then finds nothing to quarantine for it. `exit` says whether
+/// the member's own teardown ran (its file reservations are released) or it
+/// ended abruptly (they are retained for the coordinator to free). A socket
+/// loss never reaches here; only the reaper's process-exit observation does.
+/// A member already dead (or unknown to the store) is left as it is.
+pub fn member_exited(
+    coordination: &(impl CoordinationPort + ?Sized),
+    processes: &(impl ProcessObservation + ?Sized),
+    member: &str,
+    exit: MemberExit,
+) -> Result<Snapshot, DomainError> {
+    let snapshot = coordination.snapshot()?;
+    if snapshot
+        .members
+        .iter()
+        .any(|m| m.id == member && m.status != MemberStatus::Dead)
+    {
+        coordination.confirm_dead(member, exit)?;
+    }
+    reconcile(coordination, processes)
 }
 
 pub async fn settle(
@@ -145,6 +178,15 @@ impl SwarmLifecycle for LifecycleService {
         processes: &dyn ProcessObservation,
     ) -> Result<Snapshot, DomainError> {
         reconcile(coordination, processes)
+    }
+    fn member_exited(
+        &self,
+        coordination: &dyn CoordinationPort,
+        processes: &dyn ProcessObservation,
+        member: &str,
+        exit: MemberExit,
+    ) -> Result<Snapshot, DomainError> {
+        member_exited(coordination, processes, member, exit)
     }
     fn settle<'a>(
         &'a self,

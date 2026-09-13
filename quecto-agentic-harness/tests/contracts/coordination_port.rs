@@ -38,6 +38,11 @@ fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scop
     )
     .unwrap();
     assert!(port.confirm_unlaunched("replacement").is_err());
+    // The launcher's first observation of a vanished harness starts the
+    // loss grace (#1961): nothing is recorded, the run keeps running.
+    port.quarantine("replacement").unwrap();
+    assert_eq!(port.snapshot().unwrap().status, RunStatus::Running);
+    backdate_observations(&context);
     port.quarantine("replacement").unwrap();
     let snapshot = port.snapshot().unwrap();
     // A lost harness ends the run as a pause holding `failed` (#1729).
@@ -50,4 +55,17 @@ fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scop
     );
     assert_eq!(snapshot.members[2].status, MemberStatus::Reserved);
     assert!(port.reserve_member("unsafe", "unsafe-token").is_err());
+}
+
+/// Move every `scope_observed` event past the loss grace.
+fn backdate_observations(context: &SwarmContext) {
+    let status = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"UPDATE events SET time=time-60 WHERE action='scope_observed'\"); db.commit()",
+        ])
+        .arg(context.database())
+        .status()
+        .unwrap();
+    assert!(status.success());
 }

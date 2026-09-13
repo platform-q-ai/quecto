@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::{Member, ProcessIdentity, RunStatus};
+use crate::domain::swarm::{Member, MemberExit, ProcessIdentity, RunStatus};
 use std::sync::Mutex;
 
 struct Processes {
@@ -163,6 +163,10 @@ impl CoordinationPort for CoordinationFake {
         self.0.lock().unwrap().push(member.into());
         Ok(())
     }
+    fn confirm_dead(&self, member: &str, _: MemberExit) -> Result<(), DomainError> {
+        self.0.lock().unwrap().push(format!("dead:{member}"));
+        Ok(())
+    }
 }
 struct Observations;
 impl ProcessObservation for Observations {
@@ -300,4 +304,95 @@ async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
         ],
         "a member without a process identity is still asked"
     );
+}
+
+/// A board whose members die when their death is confirmed, so the
+/// reconcile that follows a confirmed exit sees them already dead.
+struct ExitBoard {
+    log: Mutex<Vec<String>>,
+    dead: Mutex<Vec<String>>,
+}
+impl CoordinationPort for ExitBoard {
+    fn snapshot(&self) -> Result<Snapshot, DomainError> {
+        let mut snapshot = snapshot(RunStatus::Running);
+        let dead = self.dead.lock().unwrap();
+        for member in &mut snapshot.members {
+            if dead.contains(&member.id) {
+                member.status = MemberStatus::Dead;
+            }
+        }
+        Ok(snapshot)
+    }
+    fn register_endpoint(&self, _: &str) -> Result<(), DomainError> {
+        unreachable!()
+    }
+    fn reserve_member(&self, _: &str, _: &str) -> Result<(), DomainError> {
+        unreachable!()
+    }
+    fn record_launch(&self, _: &str, _: &str, _: &ProcessIdentity) -> Result<(), DomainError> {
+        unreachable!()
+    }
+    fn confirm_unlaunched(&self, _: &str) -> Result<(), DomainError> {
+        panic!("an exit never releases an unlaunched reservation")
+    }
+    fn quarantine(&self, member: &str) -> Result<(), DomainError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("quarantine:{member}"));
+        Ok(())
+    }
+    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("dead:{member}:{}", exit.as_str()));
+        self.dead.lock().unwrap().push(member.into());
+        Ok(())
+    }
+}
+struct AllAlive;
+impl ProcessObservation for AllAlive {
+    fn harness_dead(&self, _: &ProcessIdentity) -> bool {
+        false
+    }
+}
+
+#[test]
+fn an_observed_member_exit_confirms_death_instead_of_quarantining_the_run() {
+    let board = ExitBoard {
+        log: Mutex::new(vec![]),
+        dead: Mutex::new(vec![]),
+    };
+    // The worker's process (pid 2) is gone by the time the reaper runs.
+    let snapshot = member_exited(&board, &Observations, "worker", MemberExit::Abrupt).unwrap();
+    assert_eq!(*board.log.lock().unwrap(), ["dead:worker:abrupt"]);
+    assert_eq!(
+        snapshot
+            .members
+            .iter()
+            .find(|m| m.id == "worker")
+            .unwrap()
+            .status,
+        MemberStatus::Dead
+    );
+    // A second observation of the same exit changes nothing.
+    member_exited(&board, &Observations, "worker", MemberExit::Orderly).unwrap();
+    assert_eq!(*board.log.lock().unwrap(), ["dead:worker:abrupt"]);
+}
+
+#[test]
+fn a_socket_loss_without_an_observed_exit_never_confirms_death() {
+    let board = ExitBoard {
+        log: Mutex::new(vec![]),
+        dead: Mutex::new(vec![]),
+    };
+    // The monitor's connection-level observation reaches only `reconcile`,
+    // and a member whose harness is still alive is left exactly as it is.
+    reconcile(&board, &AllAlive).unwrap();
+    assert!(board.log.lock().unwrap().is_empty());
+    // A vanished harness that nobody reaped is still a quarantine, never a
+    // confirmed death.
+    reconcile(&board, &Observations).unwrap();
+    assert_eq!(*board.log.lock().unwrap(), ["quarantine:worker"]);
 }

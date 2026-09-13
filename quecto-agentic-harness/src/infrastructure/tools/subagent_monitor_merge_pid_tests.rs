@@ -79,7 +79,7 @@ async fn launch_a_merge_b_and_let_a_die(
                 crate::domain::subagent_teardown::LaunchGeneration::new(1),
             ),
             observer,
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())

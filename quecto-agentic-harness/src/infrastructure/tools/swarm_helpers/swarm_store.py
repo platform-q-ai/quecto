@@ -30,9 +30,14 @@ CREATE TABLE IF NOT EXISTS notification_cursors (actor TEXT PRIMARY KEY, event I
 # Columns added after the first release, migrated in place on every open:
 # #1729 a paused run may hold the outcome the coordinator proposed; #1837 a
 # message may name a revision and supersede an earlier one.
+# #1961 a member records the harness that reserved (launched) it: only that
+# launcher may record its loss. A legacy store's members default to a NULL
+# launcher: any member may record their loss without a grace (the old
+# behaviour), and the once-per-member rule still prevents a re-pause.
 ADDED_COLUMNS = {
     'run': (('outcome', 'TEXT'), ('outcome_reason', 'TEXT')),
     'messages': (('revision', 'TEXT'), ('supersedes', 'INTEGER'), ('superseded_by', 'INTEGER')),
+    'members': (('launcher', 'TEXT'),),
 }
 
 
@@ -55,8 +60,8 @@ def bounded(value, label, maximum=8192):
 
 
 class Store:
-    def __init__(self, path, actor):
-        self.path, self.actor = path, actor
+    def __init__(self, path, actor, clock=time.time):
+        self.path, self.actor, self.clock = path, actor, clock
 
     @contextlib.contextmanager
     def transaction(self, create=False):
@@ -90,7 +95,7 @@ class Store:
 
     def event(self, db, action, detail):
         db.execute('INSERT INTO events(actor,time,action,detail) VALUES(?,?,?,?)',
-                   (self.actor, time.time(), action, encode(detail)))
+                   (self.actor, self.clock(), action, encode(detail)))
 
     @contextlib.contextmanager
     def atomic(self):
@@ -101,7 +106,7 @@ class Store:
     def operation(self, active=True, coordinator=False, read_only=False):
         # Compatibility for the SQL-facing dispatch adapters. Policy and atomic
         # use cases see only CoordinationTransaction, never this connection.
-        with Coordination(self, self.actor, time.time).operation(active, coordinator, read_only) as tx:
+        with Coordination(self, self.actor, self.clock).operation(active, coordinator, read_only) as tx:
             yield tx.connection, tx.run()
 
     def retry(self, db, request, payload, action):
