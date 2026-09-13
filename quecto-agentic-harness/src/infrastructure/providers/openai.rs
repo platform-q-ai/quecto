@@ -5,9 +5,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::StreamEvent;
 use crate::domain::visible_thinking::append_visible_thinking;
 
 struct AbortOnDrop<T> {

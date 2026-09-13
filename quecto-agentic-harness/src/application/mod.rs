@@ -14,6 +14,7 @@ pub mod environments;
 pub mod extensions;
 pub mod ports;
 pub mod provider_runtime;
+pub mod providers;
 mod request_observation;
 pub mod session;
 pub mod subagent;

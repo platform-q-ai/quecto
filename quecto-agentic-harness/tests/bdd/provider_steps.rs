@@ -209,7 +209,7 @@ impl LlmProvider for BddTestProvider {
 
     fn chat(
         &self,
-        _request: quecto::domain::provider::ChatRequest<'_>,
+        _request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let result = self.result.lock().unwrap().clone();
         Box::pin(async move {
@@ -240,7 +240,7 @@ fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
         .as_ref()
         .expect("provider router not set");
     let messages = vec![Message::user("test")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -293,7 +293,7 @@ impl LlmProvider for BddCountingProvider {
 
     fn chat(
         &self,
-        _request: quecto::domain::provider::ChatRequest<'_>,
+        _request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         use std::sync::atomic::Ordering;
         let n = self.call_count.fetch_add(1, Ordering::SeqCst);
@@ -350,7 +350,7 @@ fn when_send_through_retrying_provider(world: &mut QuectoWorld) {
     let provider = RetryingProvider::new(inner, RetryConfig::no_delay(attempts));
 
     let messages = vec![Message::user("test")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -522,7 +522,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         description: "Execute a command".into(),
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -683,7 +683,7 @@ fn given_anthropic_streaming_response(world: &mut QuectoWorld, content: String) 
 fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user(message)];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -757,7 +757,7 @@ impl LlmProvider for RoutingTracker {
 
     fn chat(
         &self,
-        request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.received_model.lock().unwrap() = Some(request.model.to_string());
         let result = self.response.lock().unwrap().clone();
@@ -809,7 +809,7 @@ impl LlmProvider for SlicePtrBddProvider {
     }
     fn chat(
         &self,
-        request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.captured_ptr.lock().unwrap() = Some(request.messages.as_ptr() as usize);
         Box::pin(async move {
@@ -849,21 +849,23 @@ fn when_send_and_track_ptr(world: &mut QuectoWorld) {
 
     let _response = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(router.chat(quecto::domain::provider::ChatRequest {
-            trace: None,
-            admission: None,
-            messages: &messages,
-            tools: &[],
-            model: "test-model",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-            tool_choice: None,
-            metadata: None,
-            thinking_level: None,
-            cancel_flag: None,
-            effort: None,
-        }))
+        .block_on(
+            router.chat(quecto::application::providers::ports::ChatRequest {
+                trace: None,
+                admission: None,
+                messages: &messages,
+                tools: &[],
+                model: "test-model",
+                max_tokens: 1024,
+                temperature: 0.7,
+                session_id: None,
+                tool_choice: None,
+                metadata: None,
+                thinking_level: None,
+                cancel_flag: None,
+                effort: None,
+            }),
+        )
         .expect("router chat should succeed in zero-copy test");
 }
 
@@ -884,7 +886,7 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         .as_ref()
         .expect("fallback provider not set");
     let messages = vec![Message::user("test message")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -1070,7 +1072,7 @@ fn given_anthropic_api_key_mock(world: &mut QuectoWorld) {
 fn when_send_anthropic_chat(world: &mut QuectoWorld) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user("Hi")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -1198,7 +1200,7 @@ fn given_anthropic_mock_sse_stop_reason(world: &mut QuectoWorld, stop_reason: St
 fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user("Hi")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -1373,7 +1375,7 @@ fn given_anthropic_request_multiple_user_msgs(world: &mut QuectoWorld) {
 #[when("I build the Anthropic request body")]
 fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
     let msgs = world.context_messages.as_ref().expect("no messages set");
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: msgs,
@@ -1553,7 +1555,7 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         description: "Execute".into(),
         parameters_schema: "{}".into(),
     }];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: msgs,
@@ -1622,7 +1624,7 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
             user_id: Some(uid.clone()),
         }
     });
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: msgs,
@@ -1729,7 +1731,7 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
     };
 
     let messages = vec![quecto::domain::message::Message::user("Think hard")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -1992,8 +1994,10 @@ fn then_cost_none(world: &mut QuectoWorld) {
 // ===========================================================================
 
 /// Helper: build a default ChatRequest for incremental streaming tests.
-fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::ChatRequest<'_> {
-    quecto::domain::provider::ChatRequest {
+fn make_incremental_request(
+    messages: &[Message],
+) -> quecto::application::providers::ports::ChatRequest<'_> {
+    quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages,
@@ -3144,7 +3148,7 @@ fn given_cancel_flag_not_set(world: &mut QuectoWorld) {
 
 #[when("I send a chat request with the cancel flag")]
 fn when_chat_with_cancel_flag(world: &mut QuectoWorld) {
-    use quecto::domain::provider::ChatRequest;
+    use quecto::application::providers::ports::ChatRequest;
     let provider = world.provider.as_ref().expect("no provider").clone();
     let cancel = world.cancel_flag.clone();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3172,7 +3176,7 @@ fn when_chat_with_cancel_flag(world: &mut QuectoWorld) {
 
 #[when("I send a streaming chat request with the cancel flag")]
 fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
-    use quecto::domain::provider::ChatRequest;
+    use quecto::application::providers::ports::ChatRequest;
     let provider = world.provider.as_ref().expect("no provider").clone();
     let cancel = world.cancel_flag.clone();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3200,7 +3204,8 @@ fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
 
 #[when("I send an incremental streaming chat request with the cancel flag")]
 fn when_incremental_chat_with_cancel_flag(world: &mut QuectoWorld) {
-    use quecto::domain::provider::{ChatRequest, StreamEvent};
+    use quecto::application::providers::ports::ChatRequest;
+    use quecto::domain::provider::StreamEvent;
     let provider = world.provider.as_ref().expect("no provider").clone();
     let cancel = world.cancel_flag.clone();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3460,7 +3465,7 @@ fn when_build_request_body_with_effort(world: &mut QuectoWorld) {
         });
 
     let messages = vec![quecto::domain::message::Message::user("test")];
-    let req = quecto::domain::provider::ChatRequest {
+    let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,

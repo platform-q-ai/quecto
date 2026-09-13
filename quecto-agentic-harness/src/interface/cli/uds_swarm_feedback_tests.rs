@@ -12,13 +12,13 @@ use std::sync::Arc;
 struct ApprovalProvider {
     started: Arc<tokio::sync::Notify>,
 }
-impl crate::domain::provider::LlmProvider for ApprovalProvider {
+impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
     fn name(&self) -> &str {
         "approval-test"
     }
     fn chat(
         &self,
-        request: crate::domain::provider::ChatRequest<'_>,
+        request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>

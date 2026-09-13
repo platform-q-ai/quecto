@@ -3,13 +3,13 @@
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::session::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::session::Session;
 use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
@@ -94,7 +94,7 @@ impl LlmProvider for MockLlmProvider {
 
     fn chat(
         &self,
-        request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
         *self.last_max_tokens.lock().unwrap() = Some(request.max_tokens);

@@ -272,13 +272,13 @@ fn given_provider_error_redacting(
 struct LoopFailingProvider {
     body: String,
 }
-impl quecto::domain::provider::LlmProvider for LoopFailingProvider {
+impl quecto::application::providers::ports::LlmProvider for LoopFailingProvider {
     fn name(&self) -> &str {
         "failprov"
     }
     fn chat<'a>(
         &'a self,
-        _req: quecto::domain::provider::ChatRequest<'a>,
+        _req: quecto::application::providers::ports::ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<

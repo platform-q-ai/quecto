@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::application::ports::ProviderRuntimeFactory;
 use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
 
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
@@ -78,7 +78,8 @@ pub(crate) fn compose_agent_provider_inner(
     let http_client = &inputs.http_client;
     let store = CredentialStore::new(base_dir);
 
-    let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
+    let mut provider_list: Vec<Arc<dyn crate::application::providers::ports::LlmProvider>> =
+        Vec::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = inputs.refresh_fn.clone();
 

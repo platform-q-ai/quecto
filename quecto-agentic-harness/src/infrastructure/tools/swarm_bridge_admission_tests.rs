@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
-    use crate::domain::provider::RequestAdmission;
+    use crate::application::providers::ports::RequestAdmission;
     for status in ["failed", "blocked", "cancelled"] {
         let directory = tempfile::tempdir().unwrap();
         let parent = context(&directory);

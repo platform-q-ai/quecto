@@ -7,6 +7,7 @@ pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::session::ports::ContextSpillStore;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
@@ -15,7 +16,7 @@ use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressC
 use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
+use crate::domain::provider::{EffortLevel, StreamEvent};
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::tool::ToolProfileContext;
 use std::pin::Pin;
@@ -95,7 +96,7 @@ pub struct AgentLoopImpl {
     accounting_outbox:
         std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
     request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
-    request_admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
+    request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     request_accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     request_prefix: std::sync::Mutex<Option<String>>,

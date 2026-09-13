@@ -9,8 +9,8 @@ use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner};
 use super::providers::{AttemptTransportBinding, SingleAttemptClient};
 use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;
+use crate::application::providers::ports::LlmProvider;
 use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
-use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
 
 #[derive(Debug, Clone)]

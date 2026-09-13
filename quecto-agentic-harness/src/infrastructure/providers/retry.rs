@@ -22,9 +22,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::domain::provider_error::classify_provider_error;
 
 /// Async sleep seam. Defaults to `tokio::time::sleep`; tests inject a recorder

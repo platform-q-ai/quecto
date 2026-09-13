@@ -3,13 +3,13 @@
 
 use super::*;
 use crate::application::catalogue::{CatalogueSnapshotStore, SourceEntries};
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::catalogue::{
     AuthIdentity, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef,
     ProviderDescriptor, SourceLayer, TransportKind,
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::ChatRequest;
 use std::sync::Mutex;
 
 #[derive(Debug)]

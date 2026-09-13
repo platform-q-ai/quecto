@@ -70,7 +70,7 @@ pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
 /// The canonical agent-loop config for dispatch tests, parameterised by
 /// provider so scripted providers slot in without copying the literal.
 pub(super) fn make_dispatch_test_agent(
-    provider: std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
+    provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> crate::application::agent_loop::AgentLoopImpl {
     crate::application::agent_loop::AgentLoopImpl::new(
         crate::application::agent_loop::AgentLoopConfig {
@@ -123,7 +123,7 @@ impl DispatchTestEnv {
     /// Build an env around the given workflow handle and provider.
     pub(super) fn new(
         workflow: WorkflowStateHandle,
-        provider: std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
+        provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
     ) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
         let store =

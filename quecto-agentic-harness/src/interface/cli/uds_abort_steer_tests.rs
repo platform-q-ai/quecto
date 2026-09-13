@@ -6,7 +6,7 @@
 //! post-turn idle drain (`drain_pending_and_nudge`) must honour them.
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 use crate::interface::cli::protocol::{AgentCommand, StreamingBehavior};
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
@@ -276,7 +276,7 @@ impl std::fmt::Debug for AdvanceThenAbortProvider {
     }
 }
 
-impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
+impl crate::application::providers::ports::LlmProvider for AdvanceThenAbortProvider {
     fn name(&self) -> &str {
         "advance-then-abort"
     }
@@ -287,7 +287,7 @@ impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
 
     fn chat(
         &self,
-        _request: crate::domain::provider::ChatRequest<'_>,
+        _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -321,8 +321,8 @@ impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
     }
 }
 
-fn empty_advance_request<'a>() -> crate::domain::provider::ChatRequest<'a> {
-    crate::domain::provider::ChatRequest {
+fn empty_advance_request<'a>() -> crate::application::providers::ports::ChatRequest<'a> {
+    crate::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &[],
@@ -441,7 +441,7 @@ impl LlmProvider for SteerDuringPendingTurn {
     }
     fn chat(
         &self,
-        _request: crate::domain::provider::ChatRequest<'_>,
+        _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -568,7 +568,7 @@ impl LlmProvider for QuotaExhausted {
     }
     fn chat(
         &self,
-        _: crate::domain::provider::ChatRequest<'_>,
+        _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<

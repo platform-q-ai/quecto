@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 
 #[derive(Debug)]
 struct CovProvider;

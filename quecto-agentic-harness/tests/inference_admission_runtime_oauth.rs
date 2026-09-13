@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use base64::Engine;
 use quecto::application::ports::{AttemptAdmission, AttemptPermit, ProviderRuntimeFactory};
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::error::DomainError;
 use quecto::domain::inference_admission::*;
-use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::model_registry::ModelRegistry;

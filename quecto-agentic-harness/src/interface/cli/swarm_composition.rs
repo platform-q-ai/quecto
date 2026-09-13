@@ -15,7 +15,9 @@ pub(super) fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) ->
             }),
         )
         .with_request_admission(
-            context.map(|value| value as Arc<dyn crate::domain::provider::RequestAdmission>),
+            context.map(|value| {
+                value as Arc<dyn crate::application::providers::ports::RequestAdmission>
+            }),
         )
 }
 

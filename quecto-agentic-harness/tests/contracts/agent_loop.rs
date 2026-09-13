@@ -14,13 +14,13 @@
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::audit::ports::AuditSink;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
 };
 use quecto::domain::audit::AuditEvent;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;

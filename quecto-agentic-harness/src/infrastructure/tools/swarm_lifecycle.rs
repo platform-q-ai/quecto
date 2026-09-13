@@ -283,7 +283,7 @@ impl crate::application::swarm::Clock for SystemClock {
     }
 }
 
-impl crate::domain::provider::RequestAdmission for SwarmContext {
+impl crate::application::providers::ports::RequestAdmission for SwarmContext {
     fn check(&self) -> LaunchFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();

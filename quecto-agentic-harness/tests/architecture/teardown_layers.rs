@@ -255,6 +255,16 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait ContextSpillStore",
         "src/application/session/ports.rs",
     ),
+    (
+        "src/domain/provider.rs",
+        "trait LlmProvider",
+        "src/application/providers/ports.rs",
+    ),
+    (
+        "src/domain/provider.rs",
+        "trait RequestAdmission",
+        "src/application/providers/ports.rs",
+    ),
 ];
 
 const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
@@ -272,7 +282,6 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ];
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission
         "src/domain/request_observation.rs", // #1960: RequestAccounting
         "src/domain/subagent_launch.rs",     // #1960: LaunchFuture alias
         "src/domain/swarm.rs",               // #1960: CoordinationPort, SwarmRunControl

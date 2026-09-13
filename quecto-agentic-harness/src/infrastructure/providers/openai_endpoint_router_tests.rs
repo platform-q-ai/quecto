@@ -3,9 +3,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::openai_endpoint_router::OpenAiEndpointRouter;
 
 #[derive(Debug)]

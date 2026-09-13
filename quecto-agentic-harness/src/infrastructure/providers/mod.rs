@@ -24,7 +24,7 @@ mod providers_cov2_tests;
 
 use std::sync::Arc;
 
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 
 /// Cohesive leaf capability: a gate never arrives without a single-send transport.
 #[derive(Clone)]

@@ -8,9 +8,9 @@
 //! Provider-specific behaviour (error classification, SSE parsing, retry
 //! policy) lives in each adapter's own unit tests.
 
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, StopReason};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

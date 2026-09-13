@@ -4,9 +4,10 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::ports::{AttemptAdmission, AttemptPermit};
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::error::DomainError;
 use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use quecto::domain::provider::StreamEvent;
 use quecto::infrastructure::providers::{
     SingleAttemptClient, anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };

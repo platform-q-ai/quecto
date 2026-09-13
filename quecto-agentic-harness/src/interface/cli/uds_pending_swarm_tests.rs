@@ -380,7 +380,7 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
 /// A provider that always fails terminally.
 #[derive(Debug)]
 struct FailingProvider;
-impl crate::domain::provider::LlmProvider for FailingProvider {
+impl crate::application::providers::ports::LlmProvider for FailingProvider {
     fn name(&self) -> &str {
         "failing"
     }
@@ -389,7 +389,7 @@ impl crate::domain::provider::LlmProvider for FailingProvider {
     }
     fn chat(
         &self,
-        _: crate::domain::provider::ChatRequest<'_>,
+        _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn Future<
@@ -607,7 +607,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
 /// A provider that succeeds and counts its requests.
 #[derive(Debug)]
 struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-impl crate::domain::provider::LlmProvider for CountingProvider {
+impl crate::application::providers::ports::LlmProvider for CountingProvider {
     fn name(&self) -> &str {
         "counting"
     }
@@ -616,7 +616,7 @@ impl crate::domain::provider::LlmProvider for CountingProvider {
     }
     fn chat(
         &self,
-        _: crate::domain::provider::ChatRequest<'_>,
+        _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn Future<

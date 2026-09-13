@@ -83,7 +83,7 @@ impl AgentLoopImpl {
 
     pub fn with_request_admission(
         mut self,
-        admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
+        admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     ) -> Self {
         self.request_admission = admission;
         self

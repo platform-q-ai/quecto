@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tempfile::TempDir;
 
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 use crate::interface::cli::provider_reload::{
     ProviderReloadInputs, force_provider_reload, poll_provider_reload, seeded_provider_reload,
 };

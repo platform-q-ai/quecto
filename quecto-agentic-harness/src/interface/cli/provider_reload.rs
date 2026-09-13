@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 

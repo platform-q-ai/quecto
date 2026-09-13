@@ -243,7 +243,7 @@ impl crate::application::tools::ports::Tool for MockTool {
 /// Baseline test config; override individual fields with functional-update
 /// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
 pub(super) fn test_config(
-    provider: Arc<dyn crate::domain::provider::LlmProvider>,
+    provider: Arc<dyn crate::application::providers::ports::LlmProvider>,
     tool_registry: Box<dyn crate::application::tools::ports::ToolRegistry>,
 ) -> AgentLoopConfig {
     AgentLoopConfig {

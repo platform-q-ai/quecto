@@ -18,9 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::error::DomainError;
 use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use quecto::domain::provider::StreamEvent;
 use quecto::infrastructure::providers::{
     anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };

@@ -110,13 +110,13 @@ impl MockProvider {
     }
 }
 
-impl quecto::domain::provider::LlmProvider for MockProvider {
+impl quecto::application::providers::ports::LlmProvider for MockProvider {
     fn name(&self) -> &str {
         "swarm-fake"
     }
     fn chat(
         &self,
-        _: quecto::domain::provider::ChatRequest<'_>,
+        _: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<

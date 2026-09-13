@@ -543,7 +543,7 @@ pub fn make_provider_factory(
     let name = provider_name.to_string();
     let base = api_base;
     Arc::new(
-        move |new_token: &str| -> Arc<dyn crate::domain::provider::LlmProvider> {
+        move |new_token: &str| -> Arc<dyn crate::application::providers::ports::LlmProvider> {
             if name == "openai" {
                 let account_id =
                     crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
