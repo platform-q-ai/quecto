@@ -2,22 +2,23 @@ use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
+use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
+use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
-use crate::domain::agent::{
-    AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::session::ports::ContextSpillStore;
+use crate::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
+use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
+use crate::domain::provider::{EffortLevel, StreamEvent};
 use crate::domain::provider_error::classify_provider_error;
-use crate::domain::session::ContextSpillStore;
-use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolProfileContext,
-    ToolRegistry,
-};
+use crate::domain::tool::ToolProfileContext;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -95,9 +96,9 @@ pub struct AgentLoopImpl {
     accounting_outbox:
         std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
     request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
-    request_admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
-    request_accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
-    tool_admission: Option<Arc<dyn crate::domain::tool::ToolExecutionAdmission>>,
+    request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
+    request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
+    tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     request_prefix: std::sync::Mutex<Option<String>>,
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
@@ -305,7 +306,7 @@ impl AgentLoopImpl {
 
     pub fn register_runtime_tool(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
     ) -> bool {
         self.extension_tool_registry_mut()
             .register_runtime_tool(tool)
@@ -313,7 +314,7 @@ impl AgentLoopImpl {
     /// Register a single UDS-delivered extension tool.
     pub fn register_uds_tool(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
     ) -> bool {
         self.extension_tool_registry_mut().register_uds_tool(tool)
     }
@@ -326,7 +327,7 @@ impl AgentLoopImpl {
 
     pub fn register_uds_tool_for_owner(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
         self.extension_tool_registry_mut()

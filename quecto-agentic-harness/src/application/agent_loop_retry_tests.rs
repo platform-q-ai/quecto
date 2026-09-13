@@ -324,7 +324,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
 
 #[derive(Debug)]
 struct PausedAdmission;
-impl crate::domain::provider::RequestAdmission for PausedAdmission {
+impl crate::application::providers::ports::RequestAdmission for PausedAdmission {
     fn check(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>

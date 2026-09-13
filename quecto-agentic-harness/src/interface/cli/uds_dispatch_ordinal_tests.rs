@@ -1,7 +1,7 @@
 use super::cov_tests::Fixture;
 use super::persist_current_session;
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::SessionStore;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 
 #[tokio::test]

@@ -1,5 +1,5 @@
+use super::ports::PortFuture;
 use super::*;
-use crate::domain::subagent_launch::LaunchFuture;
 use crate::domain::swarm::{Member, MemberExit, ProcessIdentity, RunStatus};
 use std::sync::Mutex;
 
@@ -18,7 +18,7 @@ impl ProcessControl for Processes {
     fn cancel_local_executions(&self) {
         self.events.lock().unwrap().push("cancel-jobs".into());
     }
-    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool> {
+    fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async move {
             self.events
                 .lock()
@@ -27,7 +27,7 @@ impl ProcessControl for Processes {
             self.accepts
         })
     }
-    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
+    fn terminate<'a>(&'a self, member: &'a Member) -> PortFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             self.events
                 .lock()
@@ -123,7 +123,7 @@ async fn active_runs_have_no_settlement_effects() {
 }
 
 struct Time(f64);
-impl crate::application::swarm::Clock for Time {
+impl crate::application::swarm::ports::Clock for Time {
     fn now_seconds(&self) -> f64 {
         self.0
     }

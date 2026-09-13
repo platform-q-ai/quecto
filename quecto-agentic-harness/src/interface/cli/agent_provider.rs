@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::domain::provider::LlmProvider;
+use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::config::Config;
 
 /// Compose and publish the provider runtime for this base directory, then

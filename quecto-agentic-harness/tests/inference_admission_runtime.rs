@@ -15,10 +15,10 @@ use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, Admission
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,
 };
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::catalogue::{CatalogueEntry, SourceLayer};
 use quecto::domain::error::DomainError;
 use quecto::domain::inference_admission::*;
-use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
 use quecto::infrastructure::model_registry::ModelRegistry;
 use quecto::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};

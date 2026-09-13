@@ -45,7 +45,7 @@ async fn test_execute_returns_result_from_extension() {
     // Simulate extension responding.
     let handle = tokio::spawn(async move {
         let req = rx.recv().await.unwrap();
-        assert_eq!(req.tool_name, "weather");
+        assert_eq!(req.invocation.tool_name, "weather");
         let _ = req.reply.send(ToolResult {
             content: "22°C, sunny".into(),
             is_error: false,

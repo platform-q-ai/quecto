@@ -1,7 +1,8 @@
 use super::*;
 use crate::application::context_pruning;
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::Message;
-use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
+use crate::domain::session::{SpillEntry, SpillIndex};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,10 @@ impl ContextSpillStore for MemSpillStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> crate::application::session::ports::SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()

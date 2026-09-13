@@ -9,10 +9,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::application::session::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
 use crate::domain::error::DomainError;
-use crate::domain::session::{
-    ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList, SpillPresence,
-};
+use crate::domain::session::{SpillEntry, SpillIndex};
 
 /// JSONL-based spill store for context pruning.
 ///

@@ -272,13 +272,13 @@ fn given_provider_error_redacting(
 struct LoopFailingProvider {
     body: String,
 }
-impl quecto::domain::provider::LlmProvider for LoopFailingProvider {
+impl quecto::application::providers::ports::LlmProvider for LoopFailingProvider {
     fn name(&self) -> &str {
         "failprov"
     }
     fn chat<'a>(
         &'a self,
-        _req: quecto::domain::provider::ChatRequest<'a>,
+        _req: quecto::application::providers::ports::ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -300,7 +300,7 @@ impl quecto::domain::provider::LlmProvider for LoopFailingProvider {
 struct LoopRecordingSink {
     events: std::sync::Mutex<Vec<AuditEvent>>,
 }
-impl quecto::domain::audit::AuditSink for LoopRecordingSink {
+impl quecto::application::audit::ports::AuditSink for LoopRecordingSink {
     fn emit(
         &self,
         _turn: u32,
@@ -318,13 +318,13 @@ impl quecto::domain::audit::AuditSink for LoopRecordingSink {
 }
 
 struct LoopEmptyRegistry;
-impl quecto::domain::tool::ToolCatalog for LoopEmptyRegistry {
+impl quecto::application::tools::ports::ToolCatalog for LoopEmptyRegistry {
     fn definitions(&self) -> &[quecto::domain::tool::ToolDefinition] {
         &[]
     }
 }
 
-impl quecto::domain::tool::ToolExecutor for LoopEmptyRegistry {
+impl quecto::application::tools::ports::ToolExecutor for LoopEmptyRegistry {
     fn execute(
         &self,
         name: &str,
@@ -349,13 +349,13 @@ impl quecto::domain::tool::ToolExecutor for LoopEmptyRegistry {
     }
 }
 
-impl quecto::domain::tool::RuntimeToolLifecycleRegistry for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::RuntimeToolLifecycleRegistry for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::SessionAwareTools for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::SessionAwareTools for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::ToolPolicyMutator for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::ToolPolicyMutator for LoopEmptyRegistry {}
 
-impl quecto::domain::tool::ToolRegistry for LoopEmptyRegistry {}
+impl quecto::application::tools::ports::ToolRegistry for LoopEmptyRegistry {}
 
 #[given(
     expr = r#"a provider that fails terminally with a {int} char body containing secret {string}"#
@@ -375,7 +375,7 @@ fn given_loop_failing_provider(world: &mut QuectoWorld, body_len: usize, secret:
 #[when("the agent processes a turn against that provider")]
 fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let body = world.audit_json.take().expect("no provider body");
     let sink = std::sync::Arc::new(LoopRecordingSink::default());
@@ -392,7 +392,9 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         progress_callback: None,
         streaming: false,
         effort: None,
-        audit_log: Some(sink.clone() as std::sync::Arc<dyn quecto::domain::audit::AuditSink>),
+        audit_log: Some(
+            sink.clone() as std::sync::Arc<dyn quecto::application::audit::ports::AuditSink>
+        ),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,

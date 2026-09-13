@@ -1,9 +1,7 @@
 use super::cov_tests::Fixture;
 use super::*;
-use crate::domain::{
-    message::Message,
-    session::{Session, SessionStore},
-};
+use crate::application::session::ports::SessionStore;
+use crate::domain::{message::Message, session::Session};
 
 /// Unit test of `persist_current_session`'s CONSUMER branch only: the dirty
 /// flag is hand-set here, so this cannot detect a deleted producer. The
@@ -52,9 +50,9 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
 // `drain_and_run_pending` discarding the drained run's outcome.
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::interface::cli::uds_cancel::fire_cancel;
 use std::future::Future;
 use std::pin::Pin;

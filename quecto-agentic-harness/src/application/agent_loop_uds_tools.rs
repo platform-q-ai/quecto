@@ -13,7 +13,7 @@ impl AgentLoopImpl {
 
     pub fn register_uds_tool_for_owner_with_stable_id(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
         owner: std::borrow::Cow<'static, str>,
         stable_id: Option<String>,
     ) -> bool {

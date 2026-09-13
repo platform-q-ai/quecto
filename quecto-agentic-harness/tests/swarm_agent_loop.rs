@@ -1,9 +1,7 @@
 //! Fake-provider end-to-end run through the real agent loop and swarm tool.
 use quecto::application::agent_loop::AgentLoopImpl;
-use quecto::domain::{
-    agent::AgentLoop,
-    message::{LlmResponse, Message, ToolCall},
-};
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
     registry::ToolRegistryImpl,
@@ -112,13 +110,13 @@ impl MockProvider {
     }
 }
 
-impl quecto::domain::provider::LlmProvider for MockProvider {
+impl quecto::application::providers::ports::LlmProvider for MockProvider {
     fn name(&self) -> &str {
         "swarm-fake"
     }
     fn chat(
         &self,
-        _: quecto::domain::provider::ChatRequest<'_>,
+        _: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<

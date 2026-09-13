@@ -4,8 +4,9 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 
 const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;
 const MAX_WEB_SEARCH_RESULT_TEXT_CHARS: usize = 500;

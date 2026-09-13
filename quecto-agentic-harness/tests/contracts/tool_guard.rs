@@ -6,7 +6,7 @@
 //! - Guards are pure w.r.t. their internal state: no side effects on tool
 //!   execution (they only observe).
 
-use quecto::domain::tool::ToolGuard;
+use quecto::application::tools::ports::ToolGuard;
 use quecto::domain::workflow::{WorkflowConfig, WorkflowEngine, WorkflowTemplate};
 use quecto::infrastructure::tools::workflow_tool::WorkflowGuard;
 use std::sync::{Arc, Mutex};

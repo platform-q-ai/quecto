@@ -8,7 +8,6 @@ pub mod environment_retention;
 #[path = "environment_retention_tests.rs"]
 mod environment_retention_tests;
 pub mod error;
-pub mod extension;
 pub mod extension_tool;
 pub mod harness_lifetime;
 pub mod ids;

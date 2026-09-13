@@ -1,6 +1,6 @@
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::grep::GrepTool;
 use std::path::PathBuf;

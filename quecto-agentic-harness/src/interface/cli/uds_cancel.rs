@@ -8,7 +8,8 @@ use super::uds_snapshots::user_visible_messages;
 use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::{AgentLoop, AgentProgressEvent};
+use crate::application::agent_turn::ports::AgentLoop;
+use crate::domain::agent::AgentProgressEvent;
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
@@ -48,7 +49,7 @@ pub struct TurnControl {
     pending_swarm_wake: std::sync::Mutex<Option<u64>>,
     /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
     deferred_swarm_wake: std::sync::atomic::AtomicU64,
-    pub(crate) swarm_control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
+    pub(crate) swarm_control: Option<Arc<dyn crate::application::swarm::ports::SwarmRunControl>>,
     abort_requested: std::sync::atomic::AtomicBool,
     pending_steers: std::sync::atomic::AtomicUsize,
     /// Latest swarm control generation this process has seen from any

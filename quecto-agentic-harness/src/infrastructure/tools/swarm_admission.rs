@@ -1,8 +1,9 @@
 //! Release unlaunched reservations; confirm the death of a launched member
 //! whose rollback observed its exit through the owned handle (#1961).
 use super::swarm_bridge::SwarmContext;
+use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{CoordinationPort, MemberExit, ProcessIdentity};
+use crate::domain::swarm::{MemberExit, ProcessIdentity};
 
 #[derive(Debug)]
 pub struct LaunchReservation {

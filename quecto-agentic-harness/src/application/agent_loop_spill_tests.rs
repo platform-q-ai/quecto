@@ -4,8 +4,9 @@
 /// Uses shared mock infrastructure from `super::tests`.
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};

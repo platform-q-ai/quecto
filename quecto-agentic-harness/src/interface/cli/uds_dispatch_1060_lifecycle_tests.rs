@@ -2,8 +2,9 @@
 
 use super::cov_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 
 #[tokio::test]
 async fn clear_history_clears_message_ref_lookup_ledger() {

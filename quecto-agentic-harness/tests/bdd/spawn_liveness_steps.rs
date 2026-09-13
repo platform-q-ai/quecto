@@ -663,7 +663,7 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
         quecto::infrastructure::tools::swarm::SwarmConfig::default(),
     );
     if let Some(outcome) = ended_holding {
-        use quecto::domain::tool::Tool;
+        use quecto::application::tools::ports::Tool;
         let args = serde_json::json!({"op":"run","code":format!(
             "from swarm import board; board.stop({outcome:?}, 'ended by the coordinator')"
         )})

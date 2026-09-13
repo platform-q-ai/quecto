@@ -14,8 +14,9 @@ use super::{
     COLLAPSE_DISABLED, collapse_message, drop_until_under_budget, estimate_message_tokens,
     estimate_tokens, estimate_total_tokens, truncate_utf8_safe,
 };
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]

@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::domain::session::SessionStore;
+use quecto::application::session::ports::SessionStore;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
 

@@ -3,10 +3,18 @@ use crate::domain::subagent::SubagentConfig;
 use crate::domain::tool::ToolResult;
 
 pub use crate::domain::subagent_launch::{
-    LaunchFuture, LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
+    LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
 use std::ffi::OsString;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+
+/// Boxed future returned by the launch port. Deliberately the launch
+/// capability's own alias, like `swarm::ports::PortFuture` and
+/// `subagents::ports::PortFuture`: each capability names its port futures
+/// without depending on a sibling capability for the spelling.
+pub type LaunchFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// The launch port: every side effect of a subagent launch transaction,
 /// owned by this capability (moved out of the domain by #1940).

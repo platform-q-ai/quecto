@@ -141,10 +141,9 @@ fn persist_refused_launcher(base: &Path) {
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // A launch failure is the tool's `Err`; a refusal is never a success.
-    let (is_error, content) = match runtime.block_on(quecto::domain::tool::Tool::execute(
-        &tool,
-        &args.to_string(),
-    )) {
+    let (is_error, content) = match runtime.block_on(
+        quecto::application::tools::ports::Tool::execute(&tool, &args.to_string()),
+    ) {
         Ok(result) => (result.is_error, result.content),
         Err(error) => (true, error.to_string()),
     };
@@ -187,7 +186,7 @@ fn launcher_role() {
         "container": transport == "proxy",
     });
     let result = runtime
-        .block_on(quecto::domain::tool::Tool::execute(
+        .block_on(quecto::application::tools::ports::Tool::execute(
             &tool,
             &args.to_string(),
         ))

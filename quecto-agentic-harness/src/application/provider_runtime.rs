@@ -15,8 +15,8 @@ use crate::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
     ResolvedCatalogue,
 };
+use crate::application::providers::ports::LlmProvider;
 use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason};
-use crate::domain::provider::LlmProvider;
 
 /// Port for constructing the concrete execution runtime (providers, OAuth
 /// wrapping, retry decoration, router composition) from resolved provider

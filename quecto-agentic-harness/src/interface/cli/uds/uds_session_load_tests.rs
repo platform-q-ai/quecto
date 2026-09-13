@@ -1,7 +1,8 @@
 use super::*;
+use crate::application::session::ports::SessionStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::{SessionStore, SessionSummary};
+use crate::domain::session::SessionSummary;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;

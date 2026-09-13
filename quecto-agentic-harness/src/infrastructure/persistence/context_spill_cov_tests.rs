@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::session::ContextSpillStore;
+use crate::application::session::ports::ContextSpillStore;
 use tempfile::TempDir;
 
 fn entry(id: &str) -> SpillEntry {

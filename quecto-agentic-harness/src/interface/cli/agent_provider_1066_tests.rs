@@ -6,8 +6,8 @@
 // openai-completions models stay on Chat Completions unchanged.
 
 use super::*;
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::message::Message;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::domain::tool::ToolDefinition;
 use crate::infrastructure::config::Config;
 use wiremock::matchers::{method, path_regex};

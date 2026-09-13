@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::registry::ToolRegistryImpl;
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 
 impl ToolRegistryImpl {
     /// Compatibility name for the legacy extension lifecycle API.

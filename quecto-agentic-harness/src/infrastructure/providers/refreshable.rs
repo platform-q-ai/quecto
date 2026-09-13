@@ -16,9 +16,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
 
@@ -216,7 +216,7 @@ impl LlmProvider for RefreshableProvider {
 /// `Arc` has a different lifetime than the original borrow.
 struct OwnedRequest {
     trace: Option<Arc<crate::domain::request_observation::RequestTrace>>,
-    admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
+    admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     messages: Vec<crate::domain::message::Message>,
     tools: Vec<crate::domain::tool::ToolDefinition>,
     model: String,

@@ -14,7 +14,7 @@ use crate::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, SettleDelegatedChild,
     SettleDelegatedChildPorts, TerminateDelegatedAgent,
 };
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;

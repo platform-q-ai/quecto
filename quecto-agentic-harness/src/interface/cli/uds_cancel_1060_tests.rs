@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex};
 
 use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::provider::StreamEvent;
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
 use crate::interface::cli::uds_session::AgentSession;
 

@@ -329,9 +329,10 @@ checks and reservation writes share the same immediate transaction. SQL-facing
 workbench/task adapters retain dispatch and the existing task implementation; this
 is an incremental extraction, not a second implementation of the policy in Rust.
 
-Rust domain ports expose typed membership, process identity, outcomes, coordination,
-process control and clock contracts. `src/application/swarm.rs` owns reconciliation
-and settlement sequencing. Infrastructure handles Python wire decoding, Linux
+The Rust domain (`src/domain/swarm.rs`) holds the typed membership, process
+identity and outcome vocabulary; the coordination, run-control, process control
+and clock ports are the swarm capability's (`src/application/swarm/ports.rs`),
+and `src/application/swarm/mod.rs` owns reconciliation and settlement sequencing. Infrastructure handles Python wire decoding, Linux
 identity checks, UDS commands, cancellation registries and timer scheduling. Pure
 policy/fake-port tests supplement the real SQLite and process integration tests.
 

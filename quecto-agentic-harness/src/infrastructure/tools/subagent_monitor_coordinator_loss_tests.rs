@@ -388,7 +388,8 @@ async fn checkout_under_the_workspace_is_opened() {
 
 #[tokio::test]
 async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
-    use crate::domain::swarm::{RunControlAction, RunStatus, SwarmRunControl};
+    use crate::application::swarm::ports::SwarmRunControl;
+    use crate::domain::swarm::{RunControlAction, RunStatus};
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);

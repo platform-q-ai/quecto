@@ -1,7 +1,9 @@
 //! Audit event domain types.
 //!
 //! Pure domain types for the append-only audit log. No I/O — serialisation
-//! and file writing live in `infrastructure::persistence::audit_log`.
+//! and file writing live in `infrastructure::persistence::audit_log`, and the
+//! sink port the agent loop emits through is
+//! `application::audit::ports::AuditSink` (#1960).
 
 use serde::{Deserialize, Serialize};
 
@@ -113,26 +115,6 @@ pub struct AuditEnvelope {
     pub turn: u32,
     #[serde(flatten)]
     pub event: AuditEvent,
-}
-
-/// Trait for audit event sinks. Implemented by AuditLog in infrastructure.
-///
-/// This trait lives in the domain layer so the application layer (agent_loop)
-/// can depend on it without importing infrastructure types.
-///
-/// Uses boxed futures instead of `async fn` for dyn-compatibility.
-pub trait AuditSink: Send + Sync {
-    fn emit(
-        &self,
-        turn: u32,
-        event: AuditEvent,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
-                + Send
-                + '_,
-        >,
-    >;
 }
 
 impl AuditEvent {

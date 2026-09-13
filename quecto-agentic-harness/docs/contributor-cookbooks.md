@@ -32,11 +32,12 @@ Do not run live provider lanes unless the task explicitly requires them.
 
 ## Add a built-in tool
 
-**Start in:** `domain::tool` contracts and infrastructure tool adapters.
+**Start in:** the `application::tools::ports` contracts and infrastructure tool adapters.
 
 **Production files usually involved:**
 
-- `src/domain/tool.rs` for trait or schema vocabulary changes, if needed.
+- `src/application/tools/ports.rs` for port changes and `src/domain/tool.rs` for
+  schema vocabulary changes, if needed.
 - `src/infrastructure/tools/<tool>.rs` or `src/infrastructure/tools/<tool>/` for
   the concrete tool.
 - `src/infrastructure/tools/mod.rs` and `src/infrastructure/tools/registry.rs`
@@ -124,7 +125,8 @@ that owns the command.
 - `src/infrastructure/providers/*` for provider-specific request/response
   handling.
 - `src/domain/provider.rs` only for provider-agnostic vocabulary that the
-  application genuinely needs.
+  application genuinely needs; `src/application/providers/ports.rs` for the
+  `LlmProvider` contract itself.
 - `src/interface/cli/models.rs`, `agent_provider.rs`, or UDS runtime/model
   dispatch modules for user-facing selection/reload behaviour.
 
@@ -191,7 +193,8 @@ paths.
 
 **Production files usually involved:**
 
-- `src/domain/session.rs` and `src/domain/message.rs` for persisted concepts.
+- `src/domain/session.rs` and `src/domain/message.rs` for persisted concepts;
+  `src/application/session/ports.rs` for the `SessionStore` contract.
 - `src/infrastructure/persistence/*` for JSON file serialization.
 - `src/application/reload.rs`, context modules, or agent loop finalization when
   persistence state is updated.

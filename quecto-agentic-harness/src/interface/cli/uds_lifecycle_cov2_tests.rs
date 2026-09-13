@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::future::Future;

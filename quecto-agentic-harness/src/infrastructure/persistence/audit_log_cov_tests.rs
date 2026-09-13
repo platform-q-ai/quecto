@@ -1,5 +1,6 @@
 use super::*;
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::application::audit::ports::AuditSink;
+use crate::domain::audit::AuditEvent;
 use tempfile::TempDir;
 
 #[tokio::test]

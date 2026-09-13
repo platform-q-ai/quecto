@@ -3,7 +3,8 @@ use std::sync::Arc;
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
 use quecto::application::context_pruning;
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use quecto::application::session::ports::{ContextSpillStore, SessionStore};
+use quecto::domain::session::{Session, SpillEntry, SpillIndex};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 
 // ===========================================================================
@@ -1470,7 +1471,7 @@ use quecto::application::context_pruning::messages as msg_pruning;
 /// in-flight prompt) into the world's spill store.
 fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let mock = ensure_mock_llm(world);
@@ -1913,7 +1914,7 @@ struct RecordingAuditSink {
     events: Mutex<Vec<quecto::domain::audit::AuditEvent>>,
 }
 
-impl quecto::domain::audit::AuditSink for RecordingAuditSink {
+impl quecto::application::audit::ports::AuditSink for RecordingAuditSink {
     fn emit(
         &self,
         _turn: u32,
@@ -1927,7 +1928,7 @@ impl quecto::domain::audit::AuditSink for RecordingAuditSink {
 #[when("the agent completes a prompt exceeding the budget")]
 fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let max_context_tokens = world
         .context_max_tokens
@@ -1954,7 +1955,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         progress_callback: None,
         streaming: false,
         effort: None,
-        audit_log: Some(sink.clone() as Arc<dyn quecto::domain::audit::AuditSink>),
+        audit_log: Some(sink.clone() as Arc<dyn quecto::application::audit::ports::AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
@@ -2067,7 +2068,7 @@ fn run_prompt_through_loop(
     responses: Vec<quecto::domain::message::LlmResponse>,
 ) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let session_key = session_key_under_test(world);

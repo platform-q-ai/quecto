@@ -9,9 +9,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::application::session::ports::ContextSpillStore;
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::session::ContextSpillStore;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 
 /// Tool that retrieves previously collapsed tool outputs by their spill ID.
 pub struct RecallTool {

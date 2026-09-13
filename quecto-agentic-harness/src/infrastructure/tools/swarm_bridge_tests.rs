@@ -1,6 +1,6 @@
 use super::swarm::{SwarmConfig, SwarmTool};
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 use serde_json::json;
 use std::sync::Arc;
@@ -302,7 +302,7 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
     );
-    use crate::domain::swarm::CoordinationPort;
+    use crate::application::swarm::ports::CoordinationPort;
     let socket = directory.path().join("accept.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let coordinator = SwarmContext {
@@ -494,7 +494,7 @@ async fn foreground_terminal_watcher(outcome: &str) {
         );
         return;
     }
-    use crate::domain::swarm::CoordinationPort;
+    use crate::application::swarm::ports::CoordinationPort;
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);

@@ -1,7 +1,8 @@
 use cucumber::{given, then, when};
+use quecto::application::extensions::ports::Extension;
+use quecto::application::tools::ports::Tool;
 use quecto::domain::error::DomainError;
-use quecto::domain::extension::Extension;
-use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::extensions::native::{NativeExtension, build_native_extensions};
 use quecto::infrastructure::extensions::registry::ExtensionRegistry;

@@ -2,13 +2,16 @@
 
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::session::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
-use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+use quecto::application::tools::ports::Tool;
+use quecto::domain::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
-use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
+use quecto::domain::session::Session;
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
 };
@@ -91,7 +94,7 @@ impl LlmProvider for MockLlmProvider {
 
     fn chat(
         &self,
-        request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
         *self.last_max_tokens.lock().unwrap() = Some(request.max_tokens);
@@ -150,7 +153,7 @@ impl std::fmt::Debug for MockBddTool {
     }
 }
 
-impl quecto::domain::tool::Tool for MockBddTool {
+impl quecto::application::tools::ports::Tool for MockBddTool {
     fn definition(&self) -> ToolDefinition {
         self.def.clone()
     }
@@ -173,7 +176,9 @@ impl quecto::domain::tool::Tool for MockBddTool {
 }
 
 // Wrapper for Arc<dyn Extension> that implements Debug (opaque).
-pub struct DebugExtension(pub std::sync::Arc<dyn quecto::domain::extension::Extension>);
+pub struct DebugExtension(
+    pub std::sync::Arc<dyn quecto::application::extensions::ports::Extension>,
+);
 
 impl std::fmt::Debug for DebugExtension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -184,11 +189,11 @@ impl std::fmt::Debug for DebugExtension {
 impl Default for DebugExtension {
     fn default() -> Self {
         struct NullExt;
-        impl quecto::domain::extension::Extension for NullExt {
+        impl quecto::application::extensions::ports::Extension for NullExt {
             fn name(&self) -> &str {
                 ""
             }
-            fn tools(&self) -> Vec<std::sync::Arc<dyn quecto::domain::tool::Tool>> {
+            fn tools(&self) -> Vec<std::sync::Arc<dyn quecto::application::tools::ports::Tool>> {
                 vec![]
             }
         }
@@ -197,7 +202,7 @@ impl Default for DebugExtension {
 }
 
 impl std::ops::Deref for DebugExtension {
-    type Target = std::sync::Arc<dyn quecto::domain::extension::Extension>;
+    type Target = std::sync::Arc<dyn quecto::application::extensions::ports::Extension>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

@@ -1,5 +1,5 @@
 use super::*;
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::tools::docs::DocsTool;
 
 async fn run_docs(world: &mut QuectoWorld, args: &str) {

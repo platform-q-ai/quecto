@@ -366,7 +366,8 @@ fn test_rewind_keeps_collapsed_conversation_messages_non_empty() {
 
 #[tokio::test]
 async fn test_spill_store_clear_removes_entries_and_recall() {
-    use crate::domain::session::{ContextSpillStore, SpillEntry};
+    use crate::application::session::ports::ContextSpillStore;
+    use crate::domain::session::SpillEntry;
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
     let tmp = tempfile::tempdir().unwrap();
     let store = std::sync::Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf()));

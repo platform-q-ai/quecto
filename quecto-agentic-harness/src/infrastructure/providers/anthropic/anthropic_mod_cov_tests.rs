@@ -7,8 +7,9 @@
 // All inputs are in-memory; cancellation tests short-circuit before any I/O.
 
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::message::{LlmResponse, Message, UsageInfo};
-use crate::domain::provider::{CancelFlag, ChatRequest, RequestMetadata, StreamEvent, ToolChoice};
+use crate::domain::provider::{CancelFlag, RequestMetadata, StreamEvent, ToolChoice};
 use crate::domain::tool::{ImageBlock, ToolDefinition};
 
 fn base_req<'a>(

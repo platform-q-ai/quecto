@@ -128,7 +128,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub config: &'a crate::infrastructure::config::Config,
     pub http_client: &'a reqwest::Client,
     /// Completed web-fetch graph, assembled by the outer composition boundary.
-    pub web_fetch_tool: Option<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    pub web_fetch_tool: Option<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
     pub workspace: std::path::PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,

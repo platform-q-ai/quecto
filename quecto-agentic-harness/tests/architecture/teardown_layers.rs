@@ -163,14 +163,111 @@ fn whole_crate_dependency_direction_holds() {
     );
 }
 
-/// Pure teardown domain: no trait carrying I/O, no async, no process, socket
-/// or runtime types in the lifecycle/teardown domain modules. Whole-crate,
-/// the legacy domain files that still hold ports or tokio types are an exact
-/// baseline that may only shrink. #1940 moved the teardown-related ports out
-/// (`SubagentLaunchPorts` → `application::subagent_launch`; `ProcessControl`,
-/// `ProcessObservation`, `Clock`, `SwarmLifecycle` → `application::swarm`);
-/// what remains is owned by **#1960** (part of the #1666 clean-architecture
-/// epic), one file per row below, and nothing else may join.
+/// Whether `line` declares `item` (`trait Foo` / `type Foo`) at any
+/// visibility, matching the whole identifier.
+fn declares(line: &str, item: &str) -> bool {
+    let trimmed = line.trim_start();
+    let body = trimmed
+        .strip_prefix("pub(crate) ")
+        .or_else(|| trimmed.strip_prefix("pub(super) "))
+        .or_else(|| trimmed.strip_prefix("pub "))
+        .unwrap_or(trimmed);
+    body.strip_prefix(item)
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+}
+
+/// (domain file, retired declaration, capability-local ports file it moved to)
+const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
+    // #1940
+    (
+        "src/domain/subagent_launch.rs",
+        "trait SubagentLaunchPorts",
+        "src/application/subagent_launch.rs",
+    ),
+    ("src/domain/swarm.rs", "trait ProcessControl", SWARM_PORTS),
+    (
+        "src/domain/swarm.rs",
+        "trait ProcessObservation",
+        SWARM_PORTS,
+    ),
+    ("src/domain/swarm.rs", "trait Clock", SWARM_PORTS),
+    ("src/domain/swarm.rs", "trait SwarmLifecycle", SWARM_PORTS),
+    // #1960
+    (
+        "src/domain/agent.rs",
+        "trait AgentLoop",
+        "src/application/agent_turn/ports.rs",
+    ),
+    (
+        "src/domain/audit.rs",
+        "trait AuditSink",
+        "src/application/audit/ports.rs",
+    ),
+    ("src/domain/tool.rs", "trait Tool", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolGuard", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolCatalog", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolExecutor", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolPolicyMutator", TOOLS_PORTS),
+    (
+        "src/domain/tool.rs",
+        "trait RuntimeToolLifecycleRegistry",
+        TOOLS_PORTS,
+    ),
+    ("src/domain/tool.rs", "trait SessionAwareTools", TOOLS_PORTS),
+    ("src/domain/tool.rs", "trait ToolRegistry", TOOLS_PORTS),
+    (
+        "src/domain/tool.rs",
+        "trait ToolExecutionAdmission",
+        TOOLS_PORTS,
+    ),
+    (
+        "src/domain/extension.rs",
+        "trait Extension",
+        "src/application/extensions/ports.rs",
+    ),
+    (
+        "src/domain/session.rs",
+        "trait SessionStore",
+        "src/application/session/ports.rs",
+    ),
+    (
+        "src/domain/session.rs",
+        "trait ContextSpillStore",
+        "src/application/session/ports.rs",
+    ),
+    (
+        "src/domain/provider.rs",
+        "trait LlmProvider",
+        "src/application/providers/ports.rs",
+    ),
+    (
+        "src/domain/provider.rs",
+        "trait RequestAdmission",
+        "src/application/providers/ports.rs",
+    ),
+    (
+        "src/domain/request_observation.rs",
+        "trait RequestAccounting",
+        "src/application/providers/ports.rs",
+    ),
+    ("src/domain/swarm.rs", "trait CoordinationPort", SWARM_PORTS),
+    ("src/domain/swarm.rs", "trait SwarmRunControl", SWARM_PORTS),
+    (
+        "src/domain/subagent_launch.rs",
+        "type LaunchFuture",
+        "src/application/subagent_launch.rs",
+    ),
+];
+
+const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
+const SWARM_PORTS: &str = "src/application/swarm/ports.rs";
+
+/// Pure domain: no trait carrying I/O, no async, no process, socket or
+/// runtime types in any domain module. The legacy domain files that still
+/// hold ports or tokio types are an exact baseline that may only shrink.
+/// #1940 moved the teardown-related ports out and #1960 the rest (see
+/// [`RETIRED_DOMAIN_PORTS`]); what remains is one file per row below, and
+/// nothing else may join.
 #[test]
 fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let impure = [
@@ -181,35 +278,40 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "libc::",
         "async fn",
         "Pin<Box<dyn Future",
+        // A boxed or opaque future without the Pin, and the futures-crate
+        // alias, are async types too.
+        "dyn Future",
+        "impl Future",
+        "impl std::future::Future",
+        "BoxFuture",
     ];
     // (file, what keeps it here — tracked by #1960)
-    let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/agent.rs",               // #1960: AgentLoop
-        "src/domain/audit.rs",               // #1960: AuditSink
-        "src/domain/extension.rs",           // #1960: Extension
-        "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
-        "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission
-        "src/domain/request_observation.rs", // #1960: RequestAccounting
-        "src/domain/session.rs",             // #1960: SessionStore, ContextSpillStore
-        "src/domain/subagent_launch.rs",     // #1960: LaunchFuture alias
-        "src/domain/swarm.rs",               // #1960: CoordinationPort, SwarmRunControl
-        "src/domain/tool.rs",                // #1960: Tool, ToolGuard, ToolCatalog, …
-    ]
-    .into_iter()
-    .collect();
-    // The ports #1940 moved out must not come back.
-    for (file, retired_port) in [
-        ("src/domain/subagent_launch.rs", "trait SubagentLaunchPorts"),
-        ("src/domain/swarm.rs", "trait ProcessControl"),
-        ("src/domain/swarm.rs", "trait ProcessObservation"),
-        ("src/domain/swarm.rs", "trait Clock"),
-        ("src/domain/swarm.rs", "trait SwarmLifecycle"),
-    ] {
+    // Empty since #1960: every legacy port and async alias has left the
+    // domain. A file may only be added here by widening the epic's scope.
+    let legacy_baseline: BTreeSet<&str> = BTreeSet::new();
+    // The ports #1940 and #1960 moved out must not come back, and each one
+    // is declared in its capability-local ports file and nowhere else.
+    for (file, retired_port, new_home) in RETIRED_DOMAIN_PORTS {
+        // A domain file whose only content was the port is deleted outright.
         assert!(
-            !production_code(file)
-                .iter()
-                .any(|(_, l)| l.contains(retired_port)),
-            "{file} re-declares `{retired_port}`, which #1940 moved to the application"
+            !Path::new(file).exists()
+                || !production_code(file)
+                    .iter()
+                    .any(|(_, l)| declares(l, retired_port)),
+            "{file} re-declares `{retired_port}`, which was moved to the application"
+        );
+        let declared_in: Vec<String> = production_files()
+            .into_iter()
+            .filter(|path| {
+                production_code(path)
+                    .iter()
+                    .any(|(_, l)| declares(l, retired_port))
+            })
+            .collect();
+        assert_eq!(
+            declared_in,
+            vec![new_home.to_string()],
+            "`{retired_port}` must be declared in {new_home} and nowhere else"
         );
     }
     let mut files = Vec::new();
@@ -217,9 +319,8 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let mut legacy_seen = BTreeSet::new();
     for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
         let code = production_code(path);
-        let has_trait = code
-            .iter()
-            .any(|(_, l)| l.trim_start().starts_with("pub trait "));
+        // Any visibility: a private or `pub(crate)` trait is a port too.
+        let has_trait = code.iter().any(|(_, l)| declares(l, "trait"));
         let has_impure = code
             .iter()
             .any(|(_, l)| impure.iter().any(|needle| l.contains(needle)));

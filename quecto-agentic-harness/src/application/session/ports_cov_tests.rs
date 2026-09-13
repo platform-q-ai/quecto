@@ -1,5 +1,7 @@
 use super::*;
 use crate::domain::message::Role;
+use crate::domain::session::SpillIndex;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 #[derive(Default)]

@@ -183,7 +183,8 @@ fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
 
 #[test]
 fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
-    use crate::domain::swarm::{CoordinationPort, ProcessIdentity};
+    use crate::application::swarm::ports::CoordinationPort;
+    use crate::domain::swarm::ProcessIdentity;
     let tmp = tempfile::tempdir().unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
         checkout: tmp.path().into(),

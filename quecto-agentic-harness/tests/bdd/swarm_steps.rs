@@ -1,6 +1,7 @@
 use crate::{DebugSwarm, QuectoWorld};
 use cucumber::{given, then, when};
-use quecto::domain::tool::{Tool, ToolResult};
+use quecto::application::tools::ports::Tool;
+use quecto::domain::tool::ToolResult;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
 use std::path::PathBuf;

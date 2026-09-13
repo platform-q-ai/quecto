@@ -327,9 +327,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
-                // Subagent teardown ports are capability-local (#1934); the
-                // process adapters implement them (#1935).
-                ["crate", "application", "subagents", "ports", ..] => true,
+                // Ports are capability-local (#1934, #1960): every
+                // `application/<capability>/ports.rs` is a contract this
+                // layer implements. Subagent teardown (#1935) was the first.
+                ["crate", "application", _, "ports", ..] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the
@@ -389,8 +390,7 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // agent-control tools (the precedent of the retired
                 // `EnvironmentControlUseCase`) and by the cleanup path that
                 // finalizes a member.
-                ["crate", "application", "environments", "ports", ..]
-                | [
+                [
                     "crate",
                     "application",
                     "environments",
@@ -402,16 +402,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "FinalizeEnvironmentMember",
                     ..,
                 ] => true,
-                // The launch port and the swarm lifecycle ports moved out of
-                // the domain into their capabilities (#1940); the spawn and
-                // swarm adapters implement them.
-                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"]
-                | [
-                    "crate",
-                    "application",
-                    "swarm",
-                    "ProcessControl" | "ProcessObservation" | "Clock" | "SwarmLifecycle",
-                ] => true,
+                // The launch port moved out of the domain into its capability
+                // (#1940); the spawn adapter implements it. The swarm ports
+                // live in `application::swarm::ports` (#1960), covered above.
+                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"] => true,
                 ["crate", "application", ..] => false,
                 _ => true,
             }
@@ -2510,6 +2504,8 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
                     "find",
                     ..,
                 ]
+                // The adapter implements the tool port (#1960).
+                | ["crate", "application", "tools", "ports", ..]
                 | ["crate", "domain", ..] => true,
                 ["crate", ..] => false,
                 _ => true,
@@ -3358,7 +3354,8 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/tools/subagent_cleanup.rs",
         "src/infrastructure/tools/swarm_member_termination.rs",
         "src/infrastructure/tools/swarm_lifecycle.rs",
-        "src/application/swarm.rs",
+        "src/application/swarm/mod.rs",
+        "src/application/swarm/ports.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -3548,7 +3545,10 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
         let parts: Vec<_> = dep.split("::").collect();
         let allowed = match parts.as_slice() {
-            ["crate", "domain", ..] | ["crate", "application", "subagents", ..] => true,
+            ["crate", "domain", ..]
+            | ["crate", "application", "subagents", ..]
+            // The adapter implements the tool port (#1960).
+            | ["crate", "application", "tools", "ports", ..] => true,
             ["crate", ..] => false,
             ["tokio" | "libc" | "quecto_line_io", ..] => false,
             _ => true,
@@ -3970,25 +3970,25 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
     assert!(registry.contains("TeardownIntent::EnvironmentKill"));
 }
 
-/// Swarm member termination is delegated (#1939): the domain port hands the
+/// Swarm member termination is delegated (#1939): the port hands the
 /// adapter the member, never a process identity; the adapter reaches the
 /// member's harness by protocol or through the delegated-agent graph; no
 /// termination path reads a pid, and the numeric member termination is gone.
 #[test]
 fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
-    let domain = production_source("src/application/swarm.rs");
+    let ports = production_source("src/application/swarm/ports.rs");
     assert!(
-        domain.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
+        ports.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
         "ProcessControl::terminate takes the member"
     );
     assert!(
-        !domain.contains(
+        !ports.contains(
             "process: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>"
+    ) -> PortFuture<'a, Result<(), DomainError>>"
         ),
         "ProcessControl::terminate no longer takes a process identity"
     );
-    let application = production_source("src/application/swarm.rs");
+    let application = production_source("src/application/swarm/mod.rs");
     assert!(application.contains("processes.terminate(member)"));
     assert!(
         !application.contains("processes.terminate(process)"),

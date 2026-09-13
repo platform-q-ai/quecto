@@ -1,8 +1,8 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::agent::AgentLoop;
+use crate::application::{agent_turn::ports::AgentLoop, session::ports::SessionStore};
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -643,7 +643,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         ) {
             Ok(log) => {
                 agent.set_audit_log(Some(
-                    Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>
+                    Arc::new(log) as Arc<dyn crate::application::audit::ports::AuditSink>
                 ));
             }
             Err(e) => {

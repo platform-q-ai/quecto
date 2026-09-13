@@ -66,22 +66,6 @@ fn request<'a>(messages: &'a [Message], tools: &'a [ToolDefinition]) -> ChatRequ
     }
 }
 
-#[test]
-fn effort_levels_for_model_selects_anthropic_or_openai_scale() {
-    assert_eq!(
-        EffortLevel::levels_for_model("anthropic-api/claude-sonnet-4.6"),
-        EffortLevel::ANTHROPIC_LEVELS
-    );
-    assert_eq!(
-        EffortLevel::levels_for_model("claude-opus-4.6"),
-        EffortLevel::ANTHROPIC_LEVELS
-    );
-    assert_eq!(
-        EffortLevel::levels_for_model("openai-api/gpt-5.6"),
-        EffortLevel::OPENAI_LEVELS
-    );
-}
-
 #[tokio::test]
 async fn dummy_provider_trait_surface_uses_name_chat_and_default_streams() {
     let provider = DummyProvider;
@@ -134,4 +118,66 @@ async fn default_incremental_stream_emits_done_for_successful_chat_stream() {
         other => panic!("unexpected event: {other:?}"),
     }
     assert!(rx.recv().await.is_none());
+}
+
+#[derive(Debug)]
+struct DefaultProvider;
+
+impl LlmProvider for DefaultProvider {
+    fn name(&self) -> &str {
+        "default-provider"
+    }
+    fn chat<'a>(
+        &'a self,
+        _request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
+        Box::pin(async {
+            Ok(LlmResponse {
+                content: Some("ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}
+
+fn req<'a>() -> ChatRequest<'a> {
+    ChatRequest {
+        trace: None,
+        admission: None,
+        messages: &[],
+        tools: &[],
+        model: "m",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn default_provider_methods_execute_for_concrete_impl() {
+    let provider = DefaultProvider;
+    assert_eq!(provider.name(), "default-provider");
+    assert!(provider.as_any().downcast_ref::<()>().is_some());
+    assert_eq!(
+        provider
+            .chat_stream(req())
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("ok")
+    );
+    let mut rx = provider.chat_stream_incremental(req()).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(resp) => assert_eq!(resp.content.as_deref(), Some("ok")),
+        other => panic!("unexpected stream event: {other:?}"),
+    }
 }

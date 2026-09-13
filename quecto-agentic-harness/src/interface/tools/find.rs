@@ -2,8 +2,9 @@
 use crate::application::agent_turn::use_cases::find::{
     FindError, FindRequest, FindResult, FindUseCase,
 };
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 

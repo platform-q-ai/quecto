@@ -9,7 +9,7 @@
 //! Adapter-specific behaviour (encoding edge cases, path normalisation, etc.)
 //! lives in the adapter's own unit tests.
 
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::filesystem::ReadTool;
 use std::path::PathBuf;

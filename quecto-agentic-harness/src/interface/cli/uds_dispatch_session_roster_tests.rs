@@ -204,7 +204,7 @@ async fn legacy_session_on_disk(
     key: &str,
     rows: serde_json::Value,
 ) -> crate::domain::session::Session {
-    use crate::domain::session::SessionStore;
+    use crate::application::session::ports::SessionStore;
     let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(dir);
     let path = dir.join("sessions").join(format!(
         "{}.json",
@@ -316,7 +316,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
 /// there. The stale socket it named stays untouched.
 #[test]
 fn legacy_rows_are_not_sendable_or_running_after_restore() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 
     let dir = tempfile::tempdir().unwrap();

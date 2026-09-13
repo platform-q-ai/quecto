@@ -7,9 +7,11 @@
 
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry, text_response};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::application::audit::ports::AuditSink;
+use crate::application::session::ports::ContextSpillStore;
+use crate::domain::audit::AuditEvent;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -51,7 +53,10 @@ impl ContextSpillStore for MemSpillStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> crate::application::session::ports::SpillIndexList<'_> {
         let index: Vec<crate::domain::session::SpillIndex> = self
             .entries
             .lock()

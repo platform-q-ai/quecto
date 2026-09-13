@@ -7,8 +7,9 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 
 use super::protocol::AgentEvent;
 use super::uds::uds_dispatch_session;
@@ -266,7 +267,8 @@ pub(super) async fn multi_client_loop(
     // has settled and the session is ready to persist.
     let exit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
-        std::sync::Arc::new(context) as std::sync::Arc<dyn crate::domain::swarm::SwarmRunControl>
+        std::sync::Arc::new(context)
+            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
     });
     let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control),

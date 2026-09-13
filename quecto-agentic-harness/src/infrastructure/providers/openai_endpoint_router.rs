@@ -13,9 +13,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::StreamEvent;
 
 /// Routes each request to Chat Completions or the Responses API per
 /// OpenAI's documented endpoint rules (#1066).

@@ -1,5 +1,5 @@
 //! Actual OpenAI SSE through the existing agent-loop initiation retry owner.
-use quecto::domain::agent::AgentLoop;
+use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::{
     application::{
         agent_loop::{AgentLoopConfig, AgentLoopImpl},

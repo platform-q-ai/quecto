@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 use quecto::infrastructure::tools::spawn::SpawnTool;
 use quecto::infrastructure::tools::subagent_monitor_merge::REPORTED_DESCENDANT_PID;
@@ -22,7 +22,7 @@ pub(crate) struct DelegatedSubtreeState {
     runtime: Option<tokio::runtime::Runtime>,
     registry: Option<SubagentRegistry>,
     spawn: Option<SpawnTool>,
-    kill: Option<std::sync::Arc<dyn quecto::domain::tool::Tool>>,
+    kill: Option<std::sync::Arc<dyn quecto::application::tools::ports::Tool>>,
     config_path: Option<PathBuf>,
     /// Registry key and pid of every observed row, by display label.
     observed: std::collections::HashMap<String, (String, u32)>,

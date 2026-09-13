@@ -139,8 +139,10 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
 /// messages and ToolFinished progress (not only `Err(DomainError)`).
 #[tokio::test]
 async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
-    use crate::domain::audit::{AuditEvent, AuditSink};
-    use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+    use crate::application::audit::ports::AuditSink;
+    use crate::application::tools::ports::Tool;
+    use crate::domain::audit::AuditEvent;
+    use crate::domain::tool::{ToolDefinition, ToolResult};
     use std::pin::Pin;
 
     #[derive(Debug)]

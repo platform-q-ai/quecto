@@ -52,7 +52,8 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
 
 #[tokio::test]
 async fn persist_session_unknown_restore_reason_matches_omitted_legacy_behavior() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
 
     async fn saved_reason(reason: SubagentRestoreReason) -> SubagentRestoreReason {
         let mut fx = Fixture::new();
@@ -94,7 +95,8 @@ async fn persist_session_unknown_restore_reason_matches_omitted_legacy_behavior(
 
 #[tokio::test]
 async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
 
     let mut fx = Fixture::new();
     let registry = new_registry();
@@ -132,9 +134,9 @@ async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
 
 #[tokio::test]
 async fn persist_session_empty_roster_replaces_stale_same_session_only() {
+    use crate::application::session::ports::SessionStore;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
 
     let mut fx = Fixture::new();
@@ -197,9 +199,9 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
 
 #[tokio::test]
 async fn killing_exit_preserves_transcript_without_operational_roster() {
+    use crate::application::session::ports::SessionStore;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
 
     let mut fx = Fixture::new();
@@ -257,7 +259,7 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
 
 #[tokio::test]
 async fn persist_session_dispatch_success_emits_correlated_ok_event() {
-    use crate::domain::session::SessionStore;
+    use crate::application::session::ports::SessionStore;
 
     let mut fx = Fixture::new();
     fx.messages = vec![Message::user("persist me")];
@@ -320,7 +322,8 @@ async fn persist_session_dispatch_failure_emits_correlated_err_event() {
 
 #[tokio::test]
 async fn killing_barrier_survives_routine_saves_without_clearing_live_registry() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
     let mut fx = Fixture::new();
     let registry = new_registry();
     registry.lock().unwrap().insert(
@@ -358,7 +361,8 @@ async fn killing_barrier_survives_routine_saves_without_clearing_live_registry()
 
 #[tokio::test]
 async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
     let mut fx = Fixture::new();
     let registry = new_registry();
     registry.lock().unwrap().insert(

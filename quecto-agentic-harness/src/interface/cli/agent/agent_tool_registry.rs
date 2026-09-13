@@ -28,7 +28,7 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) config_path: &'a std::path::Path,
     pub(super) config: &'a Config,
     pub(super) http_client: &'a reqwest::Client,
-    pub(super) web_fetch_tool: Option<Arc<dyn crate::domain::tool::Tool>>,
+    pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
     /// Broadcast channel sender for workflow_state events (#598).

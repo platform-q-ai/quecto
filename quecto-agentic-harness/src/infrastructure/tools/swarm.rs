@@ -13,8 +13,9 @@ mod swarm_result;
 use swarm_process::{interpreter_version, kill_pid, kill_pid_tree_best_effort, run_child};
 use swarm_result::{ResultContext, artifacts_diverged, build_result, file_len};
 
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
 pub use super::swarm_config::{SwarmConfig, SwarmToolConfig};

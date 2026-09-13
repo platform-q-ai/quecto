@@ -1,16 +1,16 @@
 use super::ToolRegistryImpl;
 use super::tests::{DummyTestTool, test_registry};
+use crate::application::tools::ports::{Tool, ToolPolicyMutator};
 use crate::domain::tool::{
-    Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyMutator,
-    ToolPolicyRequest, ToolProfileContext,
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
+    ToolProfileContext,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
 use std::sync::Arc;
 #[test]
 fn policy_mutation_reports_deterministic_outcomes_and_snapshots() {
     let (mut reg, _tmp) = test_registry();
-    let restricted = vec!["bash".to_string()];
-    reg.apply_spawn_tool_restrictions(&restricted);
+    reg.apply_spawn_tool_restrictions(&["bash".to_string()]);
 
     let reconciliation = reg.apply_tool_policy_mutations(
         &[

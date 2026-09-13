@@ -8,12 +8,14 @@ use super::cov_tests::Fixture;
 use super::{dispatch_command, handle_resume_session, persist_current_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::session::ports::SessionStore;
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::domain::session::{Session, SessionStore, SubagentLiveness};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::session::{Session, SubagentLiveness};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
@@ -704,9 +706,8 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
 
 #[tokio::test]
 async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
-    use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-    };
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentLiveness};
 
     let mut fx = Fixture::new();
     fx.store

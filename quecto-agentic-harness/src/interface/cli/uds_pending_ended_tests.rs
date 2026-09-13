@@ -8,7 +8,7 @@ impl SwarmRunControl for Ended {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {

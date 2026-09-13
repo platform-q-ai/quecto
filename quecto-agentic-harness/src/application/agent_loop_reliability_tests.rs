@@ -63,7 +63,7 @@ async fn request_diagnostics_distinguish_missing_usage_from_zero_and_retain_fail
 }
 
 struct ReportOnlyAdmission;
-impl crate::domain::tool::ToolExecutionAdmission for ReportOnlyAdmission {
+impl crate::application::tools::ports::ToolExecutionAdmission for ReportOnlyAdmission {
     fn check<'a>(
         &'a self,
         _: &'a str,
@@ -98,11 +98,11 @@ async fn terminal_report_cannot_execute_mutating_tools() {
 struct RetryAccounting {
     records: Mutex<Vec<String>>,
 }
-impl crate::domain::request_observation::RequestAccounting for RetryAccounting {
+impl crate::application::providers::ports::RequestAccounting for RetryAccounting {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             let mut records = self.records.lock().unwrap();
             records.push(observation.request_id.clone());
@@ -140,11 +140,11 @@ async fn failed_accounting_is_retried_with_original_observation_id() {
 struct RejectingAccounting {
     records: Mutex<Vec<String>>,
 }
-impl crate::domain::request_observation::RequestAccounting for RejectingAccounting {
+impl crate::application::providers::ports::RequestAccounting for RejectingAccounting {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             self.records
                 .lock()

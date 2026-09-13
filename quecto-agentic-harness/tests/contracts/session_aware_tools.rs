@@ -3,7 +3,8 @@
 //! Contract:
 //! - session-key changes are propagated to every registered tool.
 
-use quecto::domain::tool::{SessionAwareTools, Tool, ToolDefinition, ToolResult};
+use quecto::application::tools::ports::{SessionAwareTools, Tool};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

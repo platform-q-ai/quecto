@@ -9,9 +9,10 @@
 
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -46,7 +47,10 @@ impl ContextSpillStore for MemSpillStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> crate::application::session::ports::SpillIndexList<'_> {
         let index: Vec<crate::domain::session::SpillIndex> = self
             .entries
             .lock()
@@ -432,7 +436,7 @@ async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
 /// `save_clean_delta` would be defeated on virtually every turn.
 #[tokio::test]
 async fn unchanged_static_manifest_does_not_latch_dirty() {
-    let store: Arc<dyn crate::domain::session::ContextSpillStore> =
+    let store: Arc<dyn crate::application::session::ports::ContextSpillStore> =
         Arc::new(MemSpillStore::default());
     let mut agent = agent_with(
         MockProvider::new(vec![text_response("first"), text_response("second")]),

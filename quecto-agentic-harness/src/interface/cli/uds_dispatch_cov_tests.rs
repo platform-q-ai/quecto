@@ -4,9 +4,11 @@ use super::{
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::session::ports::{ContextSpillStore, SessionStore};
+use crate::application::tools::ports::Tool;
 use crate::domain::message::Message;
-use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::session::{Session, SpillEntry, SpillIndex};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
 use crate::interface::cli::uds::DispatchCtx;
@@ -130,7 +132,7 @@ fn make_agent() -> AgentLoopImpl {
 }
 
 pub(super) fn make_agent_with(
-    tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
+    tool_registry: Box<dyn crate::application::tools::ports::ToolRegistry>,
     spill_store: Option<std::sync::Arc<dyn ContextSpillStore>>,
 ) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {

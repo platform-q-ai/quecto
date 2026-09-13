@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::swarm::{SwarmConfig, SwarmTool};

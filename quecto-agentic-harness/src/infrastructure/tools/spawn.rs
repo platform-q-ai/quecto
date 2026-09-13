@@ -6,6 +6,7 @@ use super::spawn_input::parse_container_selection;
 #[cfg(test)]
 use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::application::tools::ports::Tool;
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
@@ -13,7 +14,7 @@ use crate::domain::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use crate::subagent_launch_app::SubagentLaunchUseCase;
 use std::collections::{BTreeMap, HashMap};
