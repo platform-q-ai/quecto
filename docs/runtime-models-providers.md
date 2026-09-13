@@ -23,6 +23,16 @@ Queries are derived views over that one snapshot, narrowing in order: `Known` (e
 
 Two definitions of one route are a configuration error, not a precedence question: an `openai_compatible` endpoint pointing at a different base URL than the `models.json` entry of the same prefix is reported as a duplicate prefix rather than one silently winning.
 
+## Global default model (`config.json`)
+
+Set the global model default in `~/.quecto/config.json` at `agents.defaults.model`. Use a qualified `provider/model` id from the effective catalogue:
+
+```json
+{"agents": {"defaults": {"model": "openai-oauth/gpt-5.6-sol"}}}
+```
+
+This setting selects the default for agents; `~/.quecto/models.json` remains the extension surface for provider and model catalogue entries.
+
 ## User extension surface (`models.json`)
 
 The user-owned `~/.quecto/models.json` (the harness base directory) is the extension surface. It supports three data-only operations, none of which require recompiling or restarting Quecto:
