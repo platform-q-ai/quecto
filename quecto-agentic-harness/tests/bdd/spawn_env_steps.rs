@@ -1048,6 +1048,60 @@ fn kill_result_json(world: &QuectoWorld) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("kill_container result is JSON: {e}: {}", r.content))
 }
 
+/// A member asked AFTER its sibling settled may truthfully have ended
+/// already — under a loaded runner the sibling's settlement takes seconds
+/// and the member's own turn or lifetime can end meanwhile — so the kill
+/// reports it `already-exited` rather than `graceful`. Either is a settled
+/// end; the property under test (every member settled before the retained
+/// kill runs exactly once, with no live member) is asserted by the steps
+/// that follow. An `already-exited` member must really be an exited row.
+#[then(expr = "the kill result should report member {string} settled gracefully or already gone")]
+fn then_kill_result_member_settled_or_gone(world: &mut QuectoWorld, agent_id: String) {
+    let parsed = kill_result_json(world);
+    let row = world.agent_cmd_registry.as_ref().and_then(|registry| {
+        let entries = registry.lock().unwrap();
+        entries
+            .values()
+            .find(|entry| entry.display_name == agent_id)
+            .map(|entry| {
+                (
+                    entry.agent_uuid.as_str().to_owned(),
+                    entry.status.clone(),
+                    entry
+                        .exit_signal_tx
+                        .as_ref()
+                        .and_then(|tx| tx.borrow().clone()),
+                )
+            })
+    });
+    let (uuid, status, exit) =
+        row.unwrap_or_else(|| panic!("member {agent_id} has no row: {parsed}"));
+    let settled = parsed["settled"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("kill result carries `settled`: {parsed}"));
+    let entry = settled
+        .iter()
+        .find(|entry| entry["agent"] == uuid)
+        .unwrap_or_else(|| panic!("member {agent_id} ({uuid}) is not listed as settled: {parsed}"));
+    match entry["result"].as_str() {
+        Some("graceful") => {}
+        Some("already-exited") => {
+            eprintln!(
+                "member {agent_id} had already ended when it was asked (status {status:?}, exit {exit:?})"
+            );
+            assert_eq!(
+                status,
+                quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited,
+                "an already-exited member is an exited row: {parsed}"
+            );
+        }
+        other => {
+            panic!("member {agent_id} settled {other:?}, not graceful/already-exited: {parsed}")
+        }
+    }
+}
+
 #[then(expr = "the kill result should report member {string} settled {string}")]
 fn then_kill_result_member_settled(world: &mut QuectoWorld, agent_id: String, result: String) {
     let parsed = kill_result_json(world);

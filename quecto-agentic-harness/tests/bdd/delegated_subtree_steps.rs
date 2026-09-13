@@ -29,18 +29,21 @@ pub(crate) struct DelegatedSubtreeState {
     /// The `--socket` path each observed process really serves.
     sockets: std::collections::HashMap<String, PathBuf>,
     kill_result: Option<serde_json::Value>,
-    /// `RUST_LOG` before the scenario raised it for the launched tree.
-    previous_rust_log: Option<Option<std::ffi::OsString>>,
+    /// Process environment the scenario overrode for the launched tree
+    /// (`RUST_LOG`, `QUECTO_BASE_DIR`, `QUECTO_CHILD_BINARY`), restored at
+    /// teardown so later scenarios in the same process are not pointed at
+    /// this scenario's deleted temp dir.
+    previous_env: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
 impl Drop for DelegatedSubtreeState {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous_rust_log.take() {
+        for (name, previous) in self.previous_env.drain(..) {
             // SAFETY: @serial scenario teardown; no concurrent environment readers.
             unsafe {
                 match previous {
-                    Some(value) => std::env::set_var("RUST_LOG", value),
-                    None => std::env::remove_var("RUST_LOG"),
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
                 }
             }
         }
@@ -175,7 +178,10 @@ fn given_root(world: &mut QuectoWorld) {
     // swarm container's members do: the in-container proof (#1940) found an
     // orphaned grandchild hanging on its first log line once that pipe had
     // no reader, so this scenario reproduces that configuration on the host.
-    let previous_rust_log = std::env::var_os("RUST_LOG");
+    let previous_env = ["RUST_LOG", "QUECTO_BASE_DIR", "QUECTO_CHILD_BINARY"]
+        .into_iter()
+        .map(|name| (name, std::env::var_os(name)))
+        .collect();
     // SAFETY: @serial scenario; set before any child is launched, inherited by the whole tree.
     unsafe {
         std::env::set_var("QUECTO_CHILD_BINARY", child_binary());
@@ -198,7 +204,7 @@ fn given_root(world: &mut QuectoWorld) {
     s.spawn = Some(spawn);
     s.kill = Some(kill);
     s.config_path = Some(config_path);
-    s.previous_rust_log = Some(previous_rust_log);
+    s.previous_env = previous_env;
 }
 
 #[when(expr = "the root spawns child {string} with task {string}")]
