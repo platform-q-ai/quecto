@@ -262,9 +262,11 @@ fn environment_control_orchestration_stays_out_of_interface_handlers() {
         "fail_kill",
         "remove_member",
         "add_member",
-        "kill_environment",
+        "run_retained_kill",
+        "shutdown_members",
         "EnvironmentRegistry",
-        "EnvironmentKillPort",
+        "EnvironmentMemberShutdown",
+        "EnvironmentProcessCommands",
     ];
     for path in handler_files {
         let content =
@@ -272,7 +274,7 @@ fn environment_control_orchestration_stays_out_of_interface_handlers() {
         for token in forbidden {
             assert!(
                 !content.contains(token),
-                "{path} must delegate environment control to EnvironmentControlUseCase; \
+                "{path} must delegate environment control to KillEnvironment; \
                  found forbidden token '{token}'"
             );
         }
@@ -333,7 +335,14 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "use_cases",
                     "ObserveOwnedChildExit"
                     | "CompensateFailedLaunch"
-                    | "CompensateFailedLaunchPorts",
+                    | "CompensateFailedLaunchPorts"
+                    // The environment member shutdown and the swarm member
+                    // termination (#1939) delegate to the per-child
+                    // settlement and the operator kill; both are built in
+                    // composition and only invoked here.
+                    | "SettleDelegatedChild"
+                    | "ChildSettlement"
+                    | "KillDelegatedAgent",
                     ..,
                 ]
                 | [
@@ -343,7 +352,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "dto",
                     "ObserveOwnedChildExitRequest"
                     | "ObservedExit"
-                    | "CompensateFailedLaunchRequest",
+                    | "CompensateFailedLaunchRequest"
+                    | "FleetChildResult"
+                    | "KillDelegatedAgentError"
+                    | "KillDelegatedAgentRequest",
                     ..,
                 ] => true,
                 [
@@ -365,19 +377,22 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "HttpStatus",
                     ..,
                 ] => true,
-                [
-                    "crate",
-                    "application",
-                    "environment_control",
-                    "EnvironmentControlUseCase" | "EnvironmentKillPort",
-                    ..,
-                ]
+                // The environments capability (#1939): its ports are
+                // implemented here, and its use cases are built beside the
+                // agent-control tools (the `EnvironmentControlUseCase`
+                // precedent) and by the cleanup path that finalizes a
+                // member.
+                ["crate", "application", "environments", "ports", ..]
                 | [
                     "crate",
                     "application",
                     "environments",
                     "use_cases",
-                    "ListEnvironmentsQuery",
+                    "ListEnvironmentsQuery"
+                    | "KillEnvironment"
+                    | "KilledEnvironment"
+                    | "KillEnvironmentError"
+                    | "FinalizeEnvironmentMember",
                     ..,
                 ] => true,
                 ["crate", "application", ..] => false,
@@ -3324,6 +3339,16 @@ fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
         "src/infrastructure/processes/owned_child_termination.rs",
         "src/interface/tools/agent_cmd_kill.rs",
         "src/composition/subagent_termination.rs",
+        // Environment and swarm member termination (#1939).
+        "src/application/environments/use_cases/kill_environment.rs",
+        "src/application/environments/use_cases/finalize_environment_member.rs",
+        "src/application/subagents/use_cases/settle_delegated_child.rs",
+        "src/infrastructure/tools/environment_member_shutdown.rs",
+        "src/infrastructure/tools/environment_commands.rs",
+        "src/infrastructure/tools/subagent_cleanup.rs",
+        "src/infrastructure/tools/swarm_member_termination.rs",
+        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/application/swarm.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -3550,4 +3575,323 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     assert!(spawn.contains("harness_lifecycle::admit_spawn(&self.harness_lifecycle)"));
     let native = production_source("src/infrastructure/extensions/native.rs");
     assert!(native.contains(".with_harness_lifecycle(harness_lifecycle.clone())"));
+}
+
+// ─── Environments capability (#1939, epic #1929) ─────────────────────────────
+
+/// The ports the environments capability declares, and nothing else.
+const ENVIRONMENT_PORTS: &[&str] = &[
+    "EnvironmentProcessCommands",
+    "HostedSwarmRunObservation",
+    "EnvironmentMemberShutdown",
+];
+
+/// Application environment code may name the domain, its own capability,
+/// pure `std` and the JSON value type the domain record already carries:
+/// no other application capability, no adapters, no runtime, socket,
+/// process or persistence vocabulary.
+fn environments_application_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..] | ["crate", "application", "environments", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["serde_json", "Value"] => true,
+        [
+            "tokio" | "serde" | "serde_json" | "quecto_line_io" | "reqwest" | "futures" | "libc",
+            ..,
+        ] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn environments_application_depends_only_inward() {
+    assert_dependencies(
+        "src/application/environments",
+        environments_application_dependency_allowed,
+    );
+    for dep in [
+        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
+        "crate::interface::cli::uds_query::respond",
+        "crate::application::subagents::ports::DirectChildRouting",
+        "tokio::process::Command",
+        "std::process::Command",
+        "libc::kill",
+    ] {
+        assert!(
+            !environments_application_dependency_allowed(dep),
+            "environments guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::domain::environment_registry::EnvironmentRegistry",
+        "crate::application::environments::ports::EnvironmentMemberShutdown",
+        "serde_json::Value",
+        "std::sync::Arc",
+    ] {
+        assert!(
+            environments_application_dependency_allowed(dep),
+            "environments guard must accept {dep}"
+        );
+    }
+}
+
+/// The domain keeps only pure environment entities, transitions and
+/// retention decisions (#1939): no use case, no effect port, no async, no
+/// I/O vocabulary. The orchestration that used to live in
+/// `domain/environment_finalization.rs` is the application's.
+#[test]
+fn domain_holds_no_environment_use_case_or_effect_port() {
+    assert!(
+        !Path::new("src/domain/environment_finalization.rs").exists(),
+        "domain/environment_finalization.rs was retired; orchestration lives in application/environments"
+    );
+    for path in [
+        "src/domain/environment_registry.rs",
+        "src/domain/environment_retention.rs",
+    ] {
+        let source = production_source(path);
+        for forbidden in [
+            "pub trait ",
+            "UseCase",
+            "Port",
+            "LaunchFuture",
+            "async ",
+            "Box::pin",
+            "std::process",
+            "Command::new",
+            "tokio",
+            "run_retained",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} names `{forbidden}`: the domain holds no environment use case or effect port"
+            );
+        }
+        let paths = dependency_paths(&source).unwrap_or_else(|| panic!("parse {path}"));
+        for dep in paths {
+            let parts: Vec<_> = dep.split("::").collect();
+            let allowed = match parts.as_slice() {
+                ["crate", "domain", ..] | ["super", ..] => true,
+                ["crate", ..] => false,
+                ["tokio" | "futures" | "reqwest" | "quecto_line_io", ..] => false,
+                [
+                    "std",
+                    "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+                    ..,
+                ] => false,
+                _ => true,
+            };
+            assert!(allowed, "{path} names {dep}");
+        }
+    }
+    // No application code depends on a domain "use case".
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/application"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        assert!(
+            !source.contains("crate::domain::environment_finalization"),
+            "{path} still depends on the retired domain use case"
+        );
+    }
+}
+
+#[test]
+fn environment_ports_are_capability_local_and_contracted() {
+    let declared = declared_pub_traits("src/application/environments/ports.rs");
+    let mut expected: Vec<String> = ENVIRONMENT_PORTS.iter().map(|p| p.to_string()).collect();
+    let mut actual = declared.clone();
+    expected.sort();
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "application/environments/ports.rs must declare exactly ENVIRONMENT_PORTS"
+    );
+    let use_cases =
+        declared_pub_traits("src/application/environments/use_cases/kill_environment.rs");
+    assert!(use_cases.is_empty(), "use cases declare no ports");
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        if path == "src/application/environments/ports.rs" {
+            continue;
+        }
+        for port in ENVIRONMENT_PORTS {
+            assert!(
+                !source.contains(&format!("trait {port}")),
+                "{path} redeclares environment port {port}"
+            );
+        }
+    }
+    let contracts = active_contract_modules();
+    for port in ENVIRONMENT_PORTS {
+        assert!(
+            contracts.contains(&to_snake_case(port)),
+            "{port} has no contract suite proven on the production adapter"
+        );
+    }
+    // The retired kill port and finalization port are gone with their
+    // suites.
+    for retired in ["EnvironmentKillPort", "EnvironmentFinalizationPort"] {
+        for file in &files {
+            let (path, source) = file.split_once(":\n").unwrap();
+            assert!(
+                !source.contains(retired),
+                "{path} still names the retired {retired}"
+            );
+        }
+    }
+}
+
+/// `kill_container` is one use case over the exclusive claim: members are
+/// asked through the member-shutdown port before the retained kill runs,
+/// and the retained kill runs at most once per claim. The infrastructure
+/// kill adapter that owned member lifecycle policy is retired.
+#[test]
+fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
+    assert!(
+        !Path::new("src/infrastructure/tools/environment_kill.rs").exists(),
+        "ScriptEnvironmentKill was retired: member lifecycle policy is the application's"
+    );
+    assert!(
+        !Path::new("src/application/environment_control.rs").exists(),
+        "environment_control.rs was folded into application/environments"
+    );
+    let kill = production_source("src/application/environments/use_cases/kill_environment.rs");
+    let claim = kill
+        .find(".begin_kill(")
+        .expect("the exclusive claim is taken");
+    let members = kill
+        .find(".shutdown_members(")
+        .expect("members are asked through the port");
+    let command = kill
+        .find(".run_retained_kill(")
+        .expect("the retained kill runs through the port");
+    assert!(claim < members, "the claim precedes the member shutdown");
+    assert!(
+        members < command,
+        "members are asked before the retained kill"
+    );
+    assert_eq!(
+        kill.matches(".run_retained_kill(").count(),
+        1,
+        "exactly one retained-kill call site"
+    );
+    assert!(
+        kill.contains("complete_kill(claim)") && kill.contains("fail_kill(claim"),
+        "the claim is settled on both sides"
+    );
+    // The member-shutdown adapter delegates to the subagent capability's
+    // per-child settlement under the environment-kill cause; it never
+    // runs a script or signals anything.
+    let adapter = production_source("src/infrastructure/tools/environment_member_shutdown.rs");
+    assert!(adapter.contains("TerminationCause::EnvironmentKill"));
+    assert!(adapter.contains("SettleDelegatedChild"));
+    for forbidden in ["Command::new", "run_retained", "libc::", "kill_pid", ".pid"] {
+        assert!(
+            !adapter.contains(forbidden),
+            "environment_member_shutdown.rs names `{forbidden}`"
+        );
+    }
+    // The compensation honours the intent: a monitor EOF for a row the
+    // environment kill claimed is not a post-mortem.
+    let registry = production_source("src/infrastructure/tools/subagent_teardown_registry.rs");
+    assert!(registry.contains("TeardownIntent::EnvironmentKill"));
+}
+
+/// Swarm member termination is delegated (#1939): the domain port hands the
+/// adapter the member, never a process identity; the adapter reaches the
+/// member's harness by protocol or through the delegated-agent graph; no
+/// termination path reads a pid, and the numeric member termination is gone.
+#[test]
+fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
+    let domain = production_source("src/domain/swarm.rs");
+    assert!(
+        domain.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
+        "ProcessControl::terminate takes the member"
+    );
+    assert!(
+        !domain.contains(
+            "process: &'a ProcessIdentity,
+    ) -> LaunchFuture<'a, Result<(), DomainError>>"
+        ),
+        "ProcessControl::terminate no longer takes a process identity"
+    );
+    let application = production_source("src/application/swarm.rs");
+    assert!(application.contains("processes.terminate(member)"));
+    assert!(
+        !application.contains("processes.terminate(process)"),
+        "settlement never hands a process identity to the adapter"
+    );
+    // The lifecycle adapter keeps `harness_dead` (signal-0 observation of a
+    // process identity, allowed); its termination path is checked alone.
+    let lifecycle = production_source("src/infrastructure/tools/swarm_lifecycle.rs");
+    let terminate_start = lifecycle
+        .find("fn terminate<'a>(&'a self, member: &'a Member)")
+        .expect("the runtime adapter terminates a member");
+    let terminate_end = lifecycle[terminate_start..]
+        .find("pub fn bind_member_termination")
+        .map(|offset| terminate_start + offset)
+        .expect("the delegated termination binding follows");
+    let termination_path = &lifecycle[terminate_start..terminate_end];
+    for (path, source) in [
+        (
+            "src/infrastructure/tools/swarm_lifecycle.rs (terminate)",
+            termination_path.to_string(),
+        ),
+        (
+            "src/infrastructure/tools/swarm_member_termination.rs",
+            production_source("src/infrastructure/tools/swarm_member_termination.rs"),
+        ),
+    ] {
+        for forbidden in [
+            "terminate_member(",
+            "cancel_job_process(",
+            "kill_pid",
+            "libc::kill",
+            "process_start(process",
+            ".pid)",
+            "process.pid",
+            "member.process",
+            "ProcessIdentity.pid",
+            "spawn_blocking",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} names `{forbidden}`: a swarm member is ended by protocol or an owned handle, never a pid"
+            );
+        }
+    }
+    assert!(lifecycle.contains("shutdown_member_over_endpoint(member)"));
+    assert!(lifecycle.contains("MEMBER_TERMINATION"));
+    let adapter = production_source("src/infrastructure/tools/swarm_member_termination.rs");
+    assert!(adapter.contains("KillDelegatedAgentRequest"));
+    assert!(adapter.contains("shutdown_over_socket("));
+    // The only pid-signalling helper left in the swarm tool is execution
+    // containment for the jobs it spawned itself, and nothing named
+    // `terminate_member` survives.
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(
+            !production.contains("fn terminate_member("),
+            "{path} still defines the numeric terminate_member"
+        );
+    }
+    // Composition binds the delegated termination once, beside the kill tool.
+    let native = production_source("src/infrastructure/extensions/native.rs");
+    assert!(native.contains("bind_member_termination("));
+    let composition = production_source("src/composition/subagent_termination.rs");
+    assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
+    assert!(composition.contains("DelegatedMemberShutdown::new("));
 }

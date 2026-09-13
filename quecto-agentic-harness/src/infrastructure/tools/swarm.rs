@@ -738,9 +738,11 @@ pub(crate) use swarm_support::*;
 mod swarm_registry;
 pub(crate) use swarm_registry::*;
 
-pub(crate) fn terminate_member(pid: u32) {
-    // Snapshot/terminate descendants while the parent is still present, then
-    // use the existing group-or-PID fallback for both local and script-managed joins.
+/// End a locally owned execution job (a Python `ExecutionScope` process this
+/// tool spawned): its descendants are snapshotted while the parent is still
+/// present, then the group-or-pid containment applies. Execution containment
+/// only; a swarm member's harness is never ended this way (#1939).
+pub(crate) fn cancel_job_process(pid: u32) {
     kill_pid_tree_best_effort(pid);
     kill_pid(pid);
 }

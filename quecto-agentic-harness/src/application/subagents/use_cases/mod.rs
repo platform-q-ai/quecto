@@ -5,6 +5,7 @@ pub mod compensate_failed_launch;
 pub mod harness_shutdown;
 pub mod kill_delegated_agent;
 pub mod observe_owned_child_exit;
+pub mod settle_delegated_child;
 pub mod terminate_all_delegated_agents;
 pub mod terminate_delegated_agent;
 
@@ -15,6 +16,9 @@ pub use harness_shutdown::{
 };
 pub use kill_delegated_agent::{KillDelegatedAgent, KillDelegatedAgentPorts};
 pub use observe_owned_child_exit::ObserveOwnedChildExit;
+pub use settle_delegated_child::{
+    ChildSettlement, SettleDelegatedChild, SettleDelegatedChildPorts,
+};
 pub use terminate_all_delegated_agents::{
     TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
 };

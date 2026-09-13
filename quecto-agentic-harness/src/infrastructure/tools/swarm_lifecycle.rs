@@ -148,21 +148,33 @@ impl ProcessControl for RuntimeProcesses<'_> {
             .is_ok()
         })
     }
-    fn terminate<'a>(
-        &'a self,
-        process: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>> {
+    /// Delegated (#1939): the member's own harness ends it, through the
+    /// delegated-agent graph bound by composition when this harness
+    /// launched the member, over its registered endpoint otherwise. Never
+    /// a pid.
+    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
-            let process = process.clone();
-            tokio::task::spawn_blocking(move || {
-                if process_start(process.pid).as_deref() == Some(&process.started) {
-                    super::swarm::terminate_member(process.pid);
+            match MEMBER_TERMINATION.get() {
+                Some(termination) => termination.terminate(member).await,
+                None => {
+                    super::swarm_member_termination::shutdown_member_over_endpoint(member).await
                 }
-            })
-            .await
-            .map_err(|e| DomainError::Tool(e.to_string()))
+            }
         })
     }
+}
+
+static MEMBER_TERMINATION: std::sync::OnceLock<
+    std::sync::Arc<super::swarm_member_termination::DelegatedSwarmMemberTermination>,
+> = std::sync::OnceLock::new();
+
+/// The composition root supplies the delegated-agent termination of swarm
+/// members this harness launched (#1939); without it a member is only
+/// reachable over its endpoint.
+pub fn bind_member_termination(
+    termination: std::sync::Arc<super::swarm_member_termination::DelegatedSwarmMemberTermination>,
+) {
+    let _ = MEMBER_TERMINATION.set(termination);
 }
 
 pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {

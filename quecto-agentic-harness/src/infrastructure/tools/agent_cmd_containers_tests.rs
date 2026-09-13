@@ -1,18 +1,45 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::application::environment_control::EnvironmentControlUseCase;
-use crate::application::environments::use_cases::ListEnvironmentsQuery;
+use crate::application::environments::ports::{
+    EnvironmentMemberShutdown, MemberShutdownReport, MemberShutdownResult, PortFuture,
+    SettledMember,
+};
+use crate::application::environments::use_cases::{KillEnvironment, ListEnvironmentsQuery};
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 
-fn use_case(registry: EnvironmentRegistry) -> Arc<EnvironmentControlUseCase> {
-    let kill_port = Arc::new(super::super::environment_kill::ScriptEnvironmentKill::new(
-        super::super::subagent_registry::new_registry(),
-        None,
-    ));
-    Arc::new(EnvironmentControlUseCase::new(registry, kill_port))
+/// Settles every member gracefully without asking anyone: the adapter's
+/// presentation is what these tests pin.
+struct SettleAll;
+
+impl EnvironmentMemberShutdown for SettleAll {
+    fn shutdown_members<'a>(
+        &'a self,
+        members: &'a [String],
+    ) -> PortFuture<'a, MemberShutdownReport> {
+        Box::pin(async move {
+            MemberShutdownReport {
+                settled: members
+                    .iter()
+                    .map(|member| SettledMember {
+                        member: member.clone(),
+                        result: MemberShutdownResult::Graceful,
+                    })
+                    .collect(),
+                unsettled: Vec::new(),
+            }
+        })
+    }
+}
+
+fn use_case(registry: EnvironmentRegistry) -> Arc<KillEnvironment> {
+    Arc::new(KillEnvironment::new(
+        registry,
+        Arc::new(SettleAll),
+        Arc::new(super::super::environment_commands::ScriptEnvironmentCommands::default()),
+    ))
 }
 
 fn committed_registry() -> EnvironmentRegistry {
@@ -116,7 +143,14 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let parsed: serde_json::Value = serde_json::from_str(&killed.content).unwrap();
     assert_eq!(
         parsed,
-        serde_json::json!({"killed":"C1","agents":["impl-1517","rev-a"]})
+        serde_json::json!({
+            "killed":"C1",
+            "agents":["impl-1517","rev-a"],
+            "settled":[
+                {"agent":"impl-1517","result":"graceful"},
+                {"agent":"rev-a","result":"graceful"}
+            ]
+        })
     );
 
     let unknown = block_on(execute_container_command(
@@ -131,7 +165,12 @@ fn listing_and_kill_round_trip_through_the_use_case() {
 fn kill_container_json_caps_long_member_lists() {
     let mut record = committed_registry().get("C1").unwrap();
     record.members = (1..=25).map(|n| format!("a{n}")).collect();
-    let parsed = kill_container_result_json(&record);
+    let parsed = kill_container_result_json(
+        &crate::application::environments::use_cases::KilledEnvironment {
+            record,
+            members: MemberShutdownReport::default(),
+        },
+    );
     assert_eq!(parsed["killed"], "C1");
     assert_eq!(parsed["agents"].as_array().unwrap().len(), 20);
     assert_eq!(parsed["omitted_agents"], 5);
@@ -140,7 +179,7 @@ fn kill_container_json_caps_long_member_lists() {
 #[test]
 fn use_case_debug_is_redacted_but_present() {
     let uc = use_case(EnvironmentRegistry::new());
-    assert!(format!("{uc:?}").contains("EnvironmentControlUseCase"));
+    assert!(format!("{uc:?}").contains("KillEnvironment"));
 }
 
 fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd::AgentCmdTool {

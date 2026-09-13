@@ -40,10 +40,7 @@ impl ProcessControl for Effects {
             false
         })
     }
-    fn terminate<'a>(
-        &'a self,
-        _: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>> {
+    fn terminate<'a>(&'a self, _: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async {
             self.0.lock().unwrap().push("terminate");
             Ok(())

@@ -2,13 +2,10 @@ pub mod agent;
 pub mod audit;
 pub mod catalogue;
 pub mod constants;
-pub mod environment_finalization;
-#[cfg(test)]
-#[path = "../application/environment_finalization_tests.rs"]
-mod environment_finalization_tests;
 pub mod environment_registry;
+pub mod environment_retention;
 #[cfg(test)]
-#[path = "../application/environment_retention_tests.rs"]
+#[path = "environment_retention_tests.rs"]
 mod environment_retention_tests;
 pub mod error;
 pub mod extension;

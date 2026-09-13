@@ -217,7 +217,7 @@ impl HostedStore {
     /// environment rather than guessing.
     pub fn hosted_run(
         &self,
-    ) -> Result<Option<crate::domain::environment_finalization::HostedSwarmRun>, DomainError> {
+    ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
         if !store_database(&self.checkout).is_file() {
             return Ok(None);
         }
@@ -233,9 +233,9 @@ impl HostedStore {
     pub fn record_lost_coordinator(
         &self,
         coordinator: &str,
-    ) -> Result<crate::domain::environment_finalization::CoordinatorLoss, DomainError> {
+    ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
         let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
-        Ok(crate::domain::environment_finalization::CoordinatorLoss {
+        Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
             lost: value["lost"]
                 .as_bool()
@@ -246,7 +246,7 @@ impl HostedStore {
 
 fn decode_hosted_run(
     status: &Value,
-) -> Result<crate::domain::environment_finalization::HostedSwarmRun, DomainError> {
+) -> Result<crate::domain::environment_retention::HostedSwarmRun, DomainError> {
     let deadline = status["deadline"]
         .as_f64()
         .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
@@ -260,7 +260,7 @@ fn decode_hosted_run(
         .as_str()
         .map(coordination::decode_status)
         .transpose()?;
-    Ok(crate::domain::environment_finalization::HostedSwarmRun {
+    Ok(crate::domain::environment_retention::HostedSwarmRun {
         status: coordination::decode_status(run_status)?,
         outcome,
         coordinator: coordinator.to_owned(),

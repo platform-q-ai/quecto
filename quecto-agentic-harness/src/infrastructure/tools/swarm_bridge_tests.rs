@@ -411,7 +411,7 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
     harness.wait().unwrap();
     let snapshot = super::swarm_lifecycle::reconcile(&parent).unwrap();
     let surviving = !process_confirmed_dead(writer_pid, &writer_start);
-    super::swarm::terminate_member(writer_pid);
+    super::swarm::cancel_job_process(writer_pid);
     assert!(surviving);
     assert_eq!(
         snapshot["file_count"], 1,

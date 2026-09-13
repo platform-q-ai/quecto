@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::subagent_cleanup::{
-    FinalizeMode, cleanup_registered_once, cleanup_removed_entries_once, output_with_timeout,
-};
+use super::subagent_cleanup::{cleanup_registered_once, cleanup_removed_entries_once};
 use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
 
 fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     let script = log.parent().unwrap().join("cleanup.sh");
@@ -302,7 +301,7 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     let mut removed = vec![("creator".to_string(), entry)];
     super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
-        super::subagent_cleanup::FinalizeMode::LaunchRollback,
+        FinalizeMode::LaunchRollback,
     )
     .await;
 
@@ -312,26 +311,6 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
         environments.get(&env_ref).unwrap().status,
         crate::domain::environment_registry::EnvironmentStatus::Stopped
     );
-}
-
-#[test]
-fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
-    assert!(
-        super::subagent_cleanup::run_kill_sync("env-x", &[])
-            .unwrap_err()
-            .contains("no retained kill argv")
-    );
-    assert!(
-        super::subagent_cleanup::run_kill_sync("env-x", &["false".to_string()])
-            .unwrap_err()
-            .contains("retained kill exited")
-    );
-    assert!(
-        super::subagent_cleanup::run_kill_sync("env-x", &["/definitely/not/a/kill".to_string()])
-            .unwrap_err()
-            .contains("failed to invoke"),
-    );
-    assert!(super::subagent_cleanup::run_kill_sync("env-x", &["true".to_string()]).is_ok());
 }
 
 #[tokio::test]
@@ -355,7 +334,7 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     let mut removed = vec![("creator".to_string(), entry)];
     super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
-        super::subagent_cleanup::FinalizeMode::LaunchRollbackOwned,
+        FinalizeMode::LaunchRollbackOwned,
     )
     .await;
 
@@ -427,24 +406,4 @@ async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
     assert_eq!(record.status, EnvironmentStatus::Stopped);
     assert!(record.members.is_empty());
     assert!(record.last_error.is_none());
-}
-
-/// #1391 review: the inspect subprocess is bounded — a hung script is killed
-/// and reported as a timeout instead of stalling the death pipeline.
-#[test]
-fn output_with_timeout_kills_hung_commands_and_passes_fast_ones() {
-    let mut hung = std::process::Command::new("sleep");
-    hung.arg("30");
-    let started = std::time::Instant::now();
-    let err = output_with_timeout(hung, std::time::Duration::from_millis(200)).unwrap_err();
-    assert!(err.contains("timed out"), "{err}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
-
-    let mut fast = std::process::Command::new("echo");
-    fast.arg("ok");
-    fast.stdout(std::process::Stdio::piped());
-    fast.stderr(std::process::Stdio::piped());
-    let output = output_with_timeout(fast, std::time::Duration::from_secs(5)).unwrap();
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
 }

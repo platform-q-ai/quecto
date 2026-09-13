@@ -20,11 +20,11 @@ use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::DisplayNameResolveError;
 use crate::domain::subagent_teardown::DelegatedAgentIdentity;
 
-use super::subagent_cleanup::FinalizeMode;
 use super::subagent_registry::{
     ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification, SubagentEntry,
     SubagentNotification, SubagentRegistry, SubagentStatus, TeardownIntent, TeardownPhase,
 };
+use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
 
 /// How long a caller waits for a row's compensation before reporting that
 /// the exit was not observed. Sized above the owned-handle exit budget
@@ -225,6 +225,7 @@ fn intent_of(cause: TerminationCause) -> TeardownIntent {
         TerminationCause::Exit(_) => TeardownIntent::Exit,
         TerminationCause::SelectedTermination => TeardownIntent::SelectedTermination,
         TerminationCause::FleetTeardown => TeardownIntent::FleetTeardown,
+        TerminationCause::EnvironmentKill => TeardownIntent::EnvironmentKill,
         TerminationCause::LaunchRollback { owns_environment } => {
             TeardownIntent::LaunchRollback { owns_environment }
         }
@@ -244,6 +245,10 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
             TerminationCause::FleetTeardown
         }
         (
+            TeardownPhase::Compensating(TeardownIntent::EnvironmentKill),
+            TerminationCause::Exit(_),
+        ) => TerminationCause::EnvironmentKill,
+        (
             TeardownPhase::Compensating(TeardownIntent::LaunchRollback { owns_environment }),
             TerminationCause::Exit(_),
         ) => TerminationCause::LaunchRollback { owns_environment },
@@ -257,9 +262,9 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
 fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
     match cause {
         TerminationCause::Exit(_) => FinalizeMode::Exit,
-        TerminationCause::SelectedTermination | TerminationCause::FleetTeardown => {
-            FinalizeMode::ParentKill
-        }
+        TerminationCause::SelectedTermination
+        | TerminationCause::FleetTeardown
+        | TerminationCause::EnvironmentKill => FinalizeMode::ParentKill,
         TerminationCause::LaunchRollback {
             owns_environment: true,
         } => FinalizeMode::LaunchRollbackOwned,
@@ -278,6 +283,7 @@ fn exit_kind(cause: TerminationCause) -> ExitSignalKind {
         TerminationCause::Exit(ExitObservation::NeverReachable) => ExitSignalKind::NeverReachable,
         TerminationCause::SelectedTermination
         | TerminationCause::FleetTeardown
+        | TerminationCause::EnvironmentKill
         | TerminationCause::LaunchRollback { .. } => ExitSignalKind::Terminated,
     }
 }

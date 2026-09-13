@@ -5,7 +5,8 @@ mod agent_cmd_report;
 pub mod bash;
 pub mod command_match;
 pub mod docs;
-pub mod environment_kill;
+pub mod environment_commands;
+pub mod environment_member_shutdown;
 pub mod filesystem;
 pub mod find_fd;
 pub mod grep;
@@ -68,6 +69,7 @@ pub mod swarm_control;
 #[cfg(test)]
 mod swarm_job_tests;
 pub mod swarm_lifecycle;
+pub mod swarm_member_termination;
 mod swarm_output;
 #[cfg(any(test, feature = "test-support"))]
 pub mod swarm_test_support;

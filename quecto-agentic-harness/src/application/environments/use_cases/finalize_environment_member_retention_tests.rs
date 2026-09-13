@@ -4,16 +4,27 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::environment_finalization_tests::{ScriptCall, block_on, committed_env};
-use crate::domain::environment_finalization::{
-    CoordinatorLoss, EnvironmentFinalizationPort, EnvironmentFinalizationUseCase, HostedSwarmRun,
-    MemberFinalizeMode, SwarmRunObservation, retains_environment, retention_reason,
+use super::finalize_environment_member_tests::{ScriptCall, block_on, committed_env};
+use crate::application::environments::ports::{
+    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
 };
+use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::subagent_launch::LaunchFuture;
+use crate::domain::environment_retention::{
+    CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
+};
 use crate::domain::swarm::RunStatus;
+
+/// One fake standing in for both ports: the hosted run it observes and the
+/// scripts it records.
+fn use_case<P: HostedSwarmRunObservation + EnvironmentProcessCommands + 'static>(
+    registry: &EnvironmentRegistry,
+    port: Arc<P>,
+) -> FinalizeEnvironmentMember {
+    FinalizeEnvironmentMember::new(registry.clone(), port.clone(), port)
+}
 
 /// A port whose environment hosts the configured swarm run (or none) and
 /// records every lost-coordinator record it is asked to make, answering
@@ -43,11 +54,11 @@ impl HostedRunPort {
     }
 }
 
-impl EnvironmentFinalizationPort for HostedRunPort {
+impl HostedSwarmRunObservation for HostedRunPort {
     fn observe_hosted_swarm_run<'a>(
         &'a self,
         _record: &'a EnvironmentRecord,
-    ) -> LaunchFuture<'a, SwarmRunObservation> {
+    ) -> PortFuture<'a, SwarmRunObservation> {
         Box::pin(async move { self.observed.clone() })
     }
 
@@ -55,7 +66,7 @@ impl EnvironmentFinalizationPort for HostedRunPort {
         &'a self,
         _record: &'a EnvironmentRecord,
         hosted: &'a HostedSwarmRun,
-    ) -> LaunchFuture<'a, Result<CoordinatorLoss, String>> {
+    ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
         Box::pin(async move {
             if let Some(error) = &self.loss_error {
                 return Err(error.clone());
@@ -77,12 +88,14 @@ impl EnvironmentFinalizationPort for HostedRunPort {
             })
         })
     }
+}
 
+impl EnvironmentProcessCommands for HostedRunPort {
     fn run_retained_inspect<'a>(
         &'a self,
         _environment_id: &'a str,
         _argv: &'a [String],
-    ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
+    ) -> PortFuture<'a, Result<serde_json::Value, String>> {
         Box::pin(async { Ok(serde_json::json!({})) })
     }
 
@@ -90,7 +103,7 @@ impl EnvironmentFinalizationPort for HostedRunPort {
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> LaunchFuture<'a, Result<(), String>> {
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.kills.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
@@ -104,7 +117,7 @@ impl EnvironmentFinalizationPort for HostedRunPort {
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> LaunchFuture<'a, ()> {
+    ) -> PortFuture<'a, ()> {
         Box::pin(async move {
             self.cleanups.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
@@ -134,7 +147,7 @@ fn with_status(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun 
 fn finalize(port: Arc<HostedRunPort>, mode: MemberFinalizeMode) -> (EnvironmentRegistry, String) {
     let registry = EnvironmentRegistry::new();
     let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port);
+    let use_case = use_case(&registry, port);
     block_on(use_case.finalize_member(&env_ref, "coordinator-uuid", None, mode));
     (registry, env_ref)
 }
@@ -144,91 +157,6 @@ fn reason(registry: &EnvironmentRegistry, env_ref: &str) -> String {
         .as_str()
         .unwrap_or_default()
         .to_string()
-}
-
-#[test]
-fn retention_policy_holds_for_every_created_run_on_exit_and_parent_kill() {
-    let run = SwarmRunObservation::Run;
-    let unreadable = SwarmRunObservation::Unreadable("locked".to_string());
-    let placeholder = HostedSwarmRun {
-        status: RunStatus::Setup,
-        deadline: 0.0,
-        ..running_swarm()
-    };
-    for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
-        for status in [
-            RunStatus::Running,
-            RunStatus::Paused,
-            RunStatus::Succeeded,
-            RunStatus::Blocked,
-            RunStatus::Failed,
-            RunStatus::Cancelled,
-            RunStatus::BudgetExhausted,
-        ] {
-            assert!(
-                retains_environment(mode, &run(with_status(status, None))),
-                "{mode:?} on a created {status:?} run retains"
-            );
-        }
-        assert!(
-            !retains_environment(mode, &run(placeholder.clone())),
-            "{mode:?}: the bootstrap placeholder is no swarm"
-        );
-        assert!(!retains_environment(mode, &SwarmRunObservation::NoStore));
-        assert!(
-            retains_environment(mode, &unreadable),
-            "{mode:?}: a store that exists but cannot be read is never proof of no run"
-        );
-    }
-    for mode in [
-        MemberFinalizeMode::LaunchRollback,
-        MemberFinalizeMode::LaunchRollbackOwned,
-    ] {
-        assert!(
-            !retains_environment(mode, &run(running_swarm())),
-            "{mode:?} has nothing to inspect and keeps its cleanup"
-        );
-        assert!(!retains_environment(mode, &unreadable));
-    }
-}
-
-#[test]
-fn retention_reasons_name_how_the_run_ended() {
-    let exit = MemberFinalizeMode::Exit;
-    let text = |run| retention_reason(exit, &SwarmRunObservation::Run(run));
-    assert!(text(with_status(RunStatus::Succeeded, None)).starts_with("run closed: succeeded;"));
-    assert!(text(with_status(RunStatus::Failed, None)).starts_with("run closed: failed;"));
-    assert!(text(with_status(RunStatus::Cancelled, None)).starts_with("run ended: cancelled;"));
-    assert!(
-        text(with_status(
-            RunStatus::Paused,
-            Some(RunStatus::BudgetExhausted)
-        ))
-        .starts_with("run ended: budget-exhausted;")
-    );
-    let killed = retention_reason(
-        MemberFinalizeMode::ParentKill,
-        &SwarmRunObservation::Run(with_status(RunStatus::Paused, Some(RunStatus::Succeeded))),
-    );
-    assert!(
-        killed.starts_with("coordinator killed by supervisor; run paused holding succeeded;"),
-        "{killed}"
-    );
-    let killed_running = retention_reason(
-        MemberFinalizeMode::ParentKill,
-        &SwarmRunObservation::Run(running_swarm()),
-    );
-    assert!(
-        killed_running.starts_with("coordinator killed by supervisor; run running;"),
-        "{killed_running}"
-    );
-    for reason in [
-        text(running_swarm()),
-        killed,
-        retention_reason(exit, &SwarmRunObservation::Unreadable("x".into())),
-    ] {
-        assert!(reason.ends_with("kill_container to remove"), "{reason}");
-    }
 }
 
 #[test]
@@ -334,18 +262,18 @@ fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly()
     // running had expired (budget-exhausted) by the time the loss was
     // recorded, so nothing is quarantined and the reason says so.
     struct ExpiringPort(HostedRunPort);
-    impl EnvironmentFinalizationPort for ExpiringPort {
+    impl HostedSwarmRunObservation for ExpiringPort {
         fn observe_hosted_swarm_run<'a>(
             &'a self,
             record: &'a EnvironmentRecord,
-        ) -> LaunchFuture<'a, SwarmRunObservation> {
+        ) -> PortFuture<'a, SwarmRunObservation> {
             self.0.observe_hosted_swarm_run(record)
         }
         fn record_lost_coordinator<'a>(
             &'a self,
             _record: &'a EnvironmentRecord,
             hosted: &'a HostedSwarmRun,
-        ) -> LaunchFuture<'a, Result<CoordinatorLoss, String>> {
+        ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
             assert_eq!(hosted.status, RunStatus::Running, "observed as running");
             Box::pin(async move {
                 Ok(CoordinatorLoss {
@@ -354,32 +282,35 @@ fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly()
                 })
             })
         }
+    }
+
+    impl EnvironmentProcessCommands for ExpiringPort {
         fn run_retained_inspect<'a>(
             &'a self,
             environment_id: &'a str,
             argv: &'a [String],
-        ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
+        ) -> PortFuture<'a, Result<serde_json::Value, String>> {
             self.0.run_retained_inspect(environment_id, argv)
         }
         fn run_retained_kill<'a>(
             &'a self,
             environment_id: &'a str,
             argv: &'a [String],
-        ) -> LaunchFuture<'a, Result<(), String>> {
+        ) -> PortFuture<'a, Result<(), String>> {
             self.0.run_retained_kill(environment_id, argv)
         }
         fn run_retained_cleanup<'a>(
             &'a self,
             environment_id: &'a str,
             argv: &'a [String],
-        ) -> LaunchFuture<'a, ()> {
+        ) -> PortFuture<'a, ()> {
             self.0.run_retained_cleanup(environment_id, argv)
         }
     }
     let port = Arc::new(ExpiringPort(HostedRunPort::hosting(Some(running_swarm()))));
     let registry = EnvironmentRegistry::new();
     let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
     block_on(use_case.finalize_member(
         &env_ref,
         "coordinator-uuid",
@@ -471,7 +402,7 @@ fn launch_rollback_with_a_running_swarm_keeps_the_retained_cleanup() {
     let registry = EnvironmentRegistry::new();
     let env_ref = committed_env(&registry, vec!["agent-a"]);
     let port = Arc::new(HostedRunPort::hosting(Some(running_swarm())));
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
     block_on(use_case.finalize_member(
         &env_ref,
         "agent-a",
@@ -494,7 +425,7 @@ fn a_rolled_back_join_into_a_retained_environment_leaves_it_retained() {
     // kill nor "complete" one, or the container leaks behind a Stopped record.
     let port = Arc::new(HostedRunPort::hosting(Some(running_swarm())));
     let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
 
     registry.add_member(&env_ref, "joiner-uuid").unwrap();
     assert_eq!(
@@ -524,7 +455,7 @@ fn a_rolled_back_join_into_a_retained_environment_leaves_it_retained() {
 fn a_joiner_exit_from_a_retained_environment_leaves_it_retained() {
     let port = Arc::new(HostedRunPort::hosting(Some(running_swarm())));
     let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    let use_case = use_case(&registry, port.clone());
     registry.add_member(&env_ref, "joiner-uuid").unwrap();
     block_on(use_case.finalize_member(&env_ref, "joiner-uuid", None, MemberFinalizeMode::Exit));
     assert_eq!(

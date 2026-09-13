@@ -43,12 +43,14 @@ mod catalogue_source;
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
-#[path = "contracts/environment_finalization_port.rs"]
-mod environment_finalization_port;
-#[path = "contracts/environment_kill_port.rs"]
-mod environment_kill_port;
+#[path = "contracts/environment_member_shutdown.rs"]
+mod environment_member_shutdown;
+#[path = "contracts/environment_process_commands.rs"]
+mod environment_process_commands;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/hosted_swarm_run_observation.rs"]
+mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/provider_runtime_factory.rs"]

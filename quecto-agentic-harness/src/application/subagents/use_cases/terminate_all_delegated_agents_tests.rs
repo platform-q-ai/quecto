@@ -3,6 +3,10 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::*;
+use crate::application::subagents::dto::FleetChildResult;
+use crate::application::subagents::ports::{
+    ConclusionBudget, ProtocolAttempt, TerminationConclusion,
+};
 use crate::application::subagents::use_cases::lifecycle_fakes::Phase;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::subagent_teardown::LineageSnapshot;

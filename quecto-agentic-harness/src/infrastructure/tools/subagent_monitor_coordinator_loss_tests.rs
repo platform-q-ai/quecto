@@ -554,7 +554,7 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
     let mut removed = removed;
     super::super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
-        super::super::subagent_cleanup::FinalizeMode::ParentKill,
+        crate::domain::environment_retention::MemberFinalizeMode::ParentKill,
     )
     .await;
 

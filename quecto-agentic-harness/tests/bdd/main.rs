@@ -884,6 +884,9 @@ pub struct QuectoWorld {
     pub agent_workspaces: std::collections::HashMap<String, String>,
     /// Result of the last get_containers/kill_container command (#1369 slice 2)
     pub container_cmd_result: Option<ToolResult>,
+    /// Members whose termination a scenario staged as owned by another
+    /// path that never settles (#1939); released explicitly by a step.
+    pub stalled_member_terminations: Vec<quecto::domain::subagent_teardown::DelegatedAgentIdentity>,
     /// Scenario-scoped runtime for script-managed environment steps (#1369
     /// slice 3): keeps monitor/liveness/bridge tasks alive ACROSS steps so
     /// EOF-pushed death can actually be observed (a per-step runtime would

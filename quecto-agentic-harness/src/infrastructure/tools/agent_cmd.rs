@@ -32,7 +32,7 @@ pub struct AgentCmdTool {
     list_environments:
         Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
     environment_control:
-        Option<std::sync::Arc<crate::application::environment_control::EnvironmentControlUseCase>>,
+        Option<std::sync::Arc<crate::application::environments::use_cases::KillEnvironment>>,
 }
 
 impl std::fmt::Debug for AgentCmdTool {
@@ -67,7 +67,7 @@ impl AgentCmdTool {
     pub fn with_environment_control(
         mut self,
         environment_control: std::sync::Arc<
-            crate::application::environment_control::EnvironmentControlUseCase,
+            crate::application::environments::use_cases::KillEnvironment,
         >,
     ) -> Self {
         self.environment_control = Some(environment_control);

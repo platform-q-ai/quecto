@@ -15,16 +15,26 @@ pub(crate) fn agent_cmd_tool_with_kill(
     registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> AgentCmdTool {
-    AgentCmdTool::new(registry.clone()).with_kill_tool(
-        quecto::composition::subagent_termination::build_kill_tool(
-            quecto::infrastructure::extensions::native::KillToolWiring {
-                owner: quecto::domain::ids::AgentUuid::new("root"),
-                registry: registry.clone(),
-                broadcast_tx,
-                notify_tx: None,
-                harness_lifecycle: quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-            },
-        ),
+    AgentCmdTool::new(registry.clone())
+        .with_kill_tool(termination_owners(registry, broadcast_tx).kill_tool)
+}
+
+/// Every parent-hand termination owner composition builds over one graph
+/// (#1939): the kill tool, the environment member shutdown and the swarm
+/// member termination.
+pub(crate) fn termination_owners(
+    registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> quecto::infrastructure::extensions::native::TerminationOwners {
+    quecto::composition::subagent_termination::build_termination_owners(
+        quecto::infrastructure::extensions::native::KillToolWiring {
+            owner: quecto::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx,
+            notify_tx: None,
+            harness_lifecycle:
+                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
     )
 }
 
