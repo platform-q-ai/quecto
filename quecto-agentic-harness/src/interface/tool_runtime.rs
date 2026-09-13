@@ -140,7 +140,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub parent_config_path: Option<std::path::PathBuf>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
-    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -298,13 +298,31 @@ pub(crate) fn build_tool_runtime(
         parent_config_path,
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
-        owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
-            "harness".to_string()
-        } else {
-            session_key.clone()
-        }),
-        kill_tool,
     });
+    // The termination owners — `kill`, the environment member shutdown
+    // and the swarm member termination — are composed over the tools' own
+    // registry, channels and lifecycle cell and installed into their slots
+    // (#1936, #1939).
+    if let Some(build_termination_owners) = kill_tool {
+        let installed = crate::infrastructure::extensions::native::install_termination_owners(
+            &agent_control,
+            build_termination_owners(crate::interface::cli::KillToolWiring {
+                owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+                    "harness".to_string()
+                } else {
+                    session_key.clone()
+                }),
+                registry: agent_control.subagent_registry.clone(),
+                broadcast_tx: workflow.broadcast_tx.clone(),
+                notify_tx: Some(agent_control.notification_tx.clone()),
+                harness_lifecycle: agent_control.harness_lifecycle.clone(),
+            }),
+        );
+        debug_assert!(
+            installed,
+            "the termination owners are composed once per runtime"
+        );
+    }
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;

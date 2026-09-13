@@ -101,10 +101,20 @@ impl LoopExitReadiness {
     }
 }
 
+/// Test hook (#1936): when set to `1` in a launched child's environment,
+/// the child records its exit readiness but never leaves — a harness whose
+/// teardown acknowledged and then stalled — so the parent's owned-handle
+/// fallback can be proven against a real process. Never set in production.
+pub const HOLD_EXIT_AFTER_ACK_ENV: &str = "QUECTO_TEST_HOLD_EXIT_AFTER_ACK";
+
 impl CompositionExitReadiness for LoopExitReadiness {
     fn signal_exit_ready(&self, readiness: ExitReadiness) -> PortFuture<'_, ()> {
         Box::pin(async move {
             *self.readiness.lock().unwrap_or_else(|e| e.into_inner()) = Some(readiness);
+            if std::env::var(HOLD_EXIT_AFTER_ACK_ENV).as_deref() == Ok("1") {
+                tracing::warn!("exit readiness held by {HOLD_EXIT_AFTER_ACK_ENV}");
+                return;
+            }
             self.notify.notify_one();
         })
     }

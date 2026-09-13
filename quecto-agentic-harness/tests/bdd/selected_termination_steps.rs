@@ -21,7 +21,7 @@ use quecto::infrastructure::tools::subagent_registry::{
 use crate::QuectoWorld;
 
 #[path = "selected_termination_fixture.rs"]
-mod fixture;
+pub(crate) mod fixture;
 pub(crate) use fixture::SelectedTerminationState;
 use fixture::{
     Behaviour, Process, add_launched, add_reported, behaviour_of, body, broadcasts, label, listed,
@@ -153,30 +153,19 @@ fn given_reaper(world: &mut QuectoWorld, uuid: String) {
         .exit_signal_tx
         .clone()
         .unwrap();
-    s.runtime.as_ref().unwrap().spawn(async move {
-        let exit = supervisor.wait_exit(handle).await;
-        exit_tx.send_replace(Some(
-            quecto::infrastructure::tools::subagent_registry::ExitSignal {
-                exit_code: match &exit {
-                    Some(
-                        quecto::infrastructure::processes::owned_child_supervisor::ChildExit::Code(
-                            c,
-                        ),
-                    ) => Some(*c),
-                    _ => None,
-                },
-                signal: None,
-                kind: Default::default(),
-            },
-        ));
-        let _ = observer
-            .execute(ObserveOwnedChildExitRequest {
-                child,
-                observation: ExitObservation::ProcessExited,
-            })
-            .await;
-        supervisor.retire(handle);
-    });
+    // The production reaper: it publishes the exit, hands it to the
+    // observation use case and retires the handle.
+    let _guard = s.runtime.as_ref().unwrap().enter();
+    quecto::infrastructure::tools::spawn_reaper::spawn_reaper_task(
+        handle,
+        supervisor,
+        quecto::infrastructure::tools::spawn_reaper::ReaperContext {
+            exit_tx,
+            child,
+            observer,
+            swarm_context: None,
+        },
+    );
 }
 
 #[given("an AgentCmdTool over the root registry with the composed kill owner")]
@@ -354,6 +343,19 @@ fn then_result(world: &mut QuectoWorld, result: String) {
     assert_eq!(is_error, result == "failed");
 }
 
+#[then(expr = "the kill of {string} is refused with {string}")]
+fn then_retry_refused(world: &mut QuectoWorld, reference: String, detail: String) {
+    run_kill(world, &reference);
+    let s = state(world);
+    let result = s.result.as_ref().unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains(&detail),
+        "{:?} lacks {detail:?}",
+        result.content
+    );
+}
+
 #[then(expr = "the kill is refused with {string}")]
 fn then_refused(world: &mut QuectoWorld, detail: String) {
     let s = state(world);
@@ -425,6 +427,20 @@ fn then_two_live(world: &mut QuectoWorld, a: String, b: String) {
 fn then_one_live(world: &mut QuectoWorld, a: String) {
     let gone = not_live(world, &[&a]);
     assert!(gone.is_empty(), "not live: {gone:?}");
+}
+
+#[then(expr = "{string} stays claimed stopping")]
+fn then_claimed_stopping(world: &mut QuectoWorld, a: String) {
+    let s = state(world);
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    assert_ne!(entries[&a].status, SubagentStatus::Exited);
+    assert_eq!(
+        entries[&a].teardown_phase(),
+        TeardownPhase::Stopping(
+            quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination
+        ),
+        "effects reached the child: its eventual exit is this kill's"
+    );
 }
 
 #[then(expr = "{string} is not exited")]
@@ -576,10 +592,9 @@ fn then_kill_forwarded(world: &mut QuectoWorld, child: String, via: String, gene
             let mut guard = entries.lock().unwrap();
             let next =
                 quecto::infrastructure::tools::subagent_cascade::next_roster_sequence(&guard);
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(
-                guard.get_mut(&child).unwrap(),
-                next,
-            );
+            let row = guard.get_mut(&child).unwrap();
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(row, next);
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_compensated(row);
         })
     };
     run_kill(world, &child);
@@ -625,7 +640,10 @@ fn then_vocabulary(_world: &mut QuectoWorld) {
             "route via A unreachable",
         ),
         (
-            KillDelegatedAgentError::Failed { detail: "x".into() },
+            KillDelegatedAgentError::Failed {
+                detail: "x".into(),
+                effects_dispatched: false,
+            },
             "termination failed",
         ),
     ] {

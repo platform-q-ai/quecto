@@ -175,20 +175,20 @@ impl DelegatedAgentRegistry for FakeRegistry {
         }
     }
 
-    fn holds_process(&self, target: &DelegatedAgentIdentity) -> bool {
-        self.rows
-            .lock()
-            .unwrap()
-            .get(target.uuid.as_str())
-            .is_some_and(|row| row.holds_process)
-    }
-
     fn terminal_claimed(&self, target: &DelegatedAgentIdentity) -> bool {
         self.rows
             .lock()
             .unwrap()
             .get(target.uuid.as_str())
             .is_some_and(|row| matches!(row.phase, Phase::Compensating | Phase::Compensated))
+    }
+
+    fn holds_process(&self, target: &DelegatedAgentIdentity) -> bool {
+        self.rows
+            .lock()
+            .unwrap()
+            .get(target.uuid.as_str())
+            .is_some_and(|row| row.holds_process)
     }
 
     fn await_compensated<'a>(

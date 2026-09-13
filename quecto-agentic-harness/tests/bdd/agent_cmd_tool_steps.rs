@@ -27,7 +27,7 @@ pub(crate) fn termination_owners(
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> quecto::infrastructure::extensions::native::TerminationOwners {
     quecto::composition::subagent_termination::build_termination_owners(
-        quecto::infrastructure::extensions::native::KillToolWiring {
+        quecto::interface::cli::KillToolWiring {
             owner: quecto::domain::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx,

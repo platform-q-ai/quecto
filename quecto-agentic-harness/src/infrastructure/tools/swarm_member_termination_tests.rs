@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::{DelegatedSwarmMemberTermination, shutdown_member_over_endpoint};
 use crate::application::subagents::use_cases::{
-    KillDelegatedAgent, KillDelegatedAgentPorts, TerminateDelegatedAgent,
+    KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
 };
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::LaunchGeneration;
@@ -93,16 +93,21 @@ fn graph(registry: &SubagentRegistry) -> DelegatedSwarmMemberTermination {
         UdsDirectChildRouting::new(registry.clone()).with_timeout(Duration::from_millis(500)),
     );
     let route = Arc::new(
-        TerminateDelegatedAgent::new(lifecycle.clone(), routing).with_registry(agents.clone()),
+        TerminateDelegatedAgent::new(lifecycle.clone(), routing).with_owner_conclusion(
+            OwnerConclusionPorts {
+                registry: agents.clone(),
+                termination: Arc::new(
+                    SupervisedChildTermination::new(registry.clone()).with_budgets(FAST, FAST),
+                ),
+                compensation: agents.clone(),
+            },
+        ),
     );
     let kill = Arc::new(KillDelegatedAgent::new(
         route,
         KillDelegatedAgentPorts {
             registry: agents.clone(),
             lifecycle,
-            termination: Arc::new(
-                SupervisedChildTermination::new(registry.clone()).with_budgets(FAST, FAST),
-            ),
             compensation: agents,
         },
     ));

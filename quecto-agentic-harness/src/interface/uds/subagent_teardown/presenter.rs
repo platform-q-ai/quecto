@@ -5,8 +5,11 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::subagents::dto::{
-    HarnessShutdownError, PreparedShutdown, TerminateDelegatedAgentError, TerminationRouted,
+    HarnessShutdownError, PreparedShutdown, TerminateDelegatedAgentError, TerminationResult,
+    TerminationRouted,
 };
+use crate::application::subagents::ports::DownstreamRejection;
+use crate::domain::subagent_teardown::TerminationRouteError;
 
 use super::wire::{
     SHUTDOWN_COMMAND, TERMINATE_DELEGATED_AGENT_COMMAND, TeardownResponse, TeardownResponseData,
@@ -47,26 +50,64 @@ pub fn shutdown_rejection(id: Option<&str>, error: &HarnessShutdownError) -> Tea
 }
 
 pub fn termination_response(id: Option<&str>, routed: &TerminationRouted) -> TeardownResponse {
+    let result = |result: &Option<TerminationResult>| result.map(|r| r.as_str().to_owned());
     let data = match routed {
-        TerminationRouted::ShutdownRequested { child } => TeardownResponseData::ShutdownRequested {
-            child_uuid: child.uuid.as_str().to_owned(),
-        },
+        TerminationRouted::ShutdownRequested { child, result: r } => {
+            TeardownResponseData::ShutdownRequested {
+                child_uuid: child.uuid.as_str().to_owned(),
+                result: result(r),
+            }
+        }
         TerminationRouted::Forwarded {
             via,
             remaining_depth,
+            result: r,
         } => TeardownResponseData::Forwarded {
             via_uuid: via.uuid.as_str().to_owned(),
             remaining_depth: remaining_depth.hops(),
+            result: result(r),
         },
     };
     TeardownResponse::ok(id, TERMINATE_DELEGATED_AGENT_COMMAND, data)
+}
+
+/// The kind the hop above relays: a downstream refusal keeps the kind it
+/// arrived with, so the root sees the owner's answer, not the relay's.
+pub fn rejection_kind(error: &TerminateDelegatedAgentError) -> &'static str {
+    match error {
+        TerminateDelegatedAgentError::Rejected(TerminationRouteError::UnknownTarget(_)) => {
+            DownstreamRejection::UnknownTarget.kind()
+        }
+        TerminateDelegatedAgentError::Rejected(TerminationRouteError::StaleGeneration {
+            ..
+        }) => DownstreamRejection::StaleGeneration.kind(),
+        TerminateDelegatedAgentError::Rejected(_) => {
+            DownstreamRejection::Rejected(String::new()).kind()
+        }
+        TerminateDelegatedAgentError::ChildUnreachable { .. } => {
+            DownstreamRejection::Unreachable(String::new()).kind()
+        }
+        TerminateDelegatedAgentError::NotAccepting => DownstreamRejection::NotAccepting.kind(),
+        TerminateDelegatedAgentError::TargetAlreadyExited(_) => {
+            DownstreamRejection::AlreadyExited.kind()
+        }
+        TerminateDelegatedAgentError::TerminationFailed { .. } => {
+            DownstreamRejection::Failed(String::new()).kind()
+        }
+        TerminateDelegatedAgentError::Downstream { rejection, .. } => rejection.kind(),
+    }
 }
 
 pub fn termination_rejection(
     id: Option<&str>,
     error: &TerminateDelegatedAgentError,
 ) -> TeardownResponse {
-    TeardownResponse::err(id, TERMINATE_DELEGATED_AGENT_COMMAND, error.to_string())
+    TeardownResponse::err_of_kind(
+        id,
+        TERMINATE_DELEGATED_AGENT_COMMAND,
+        rejection_kind(error),
+        error.to_string(),
+    )
 }
 
 /// Generic rejection for a line that never reached a use case (framing,

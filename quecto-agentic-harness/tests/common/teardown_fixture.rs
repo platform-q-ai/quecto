@@ -151,13 +151,16 @@ impl DirectChildRouting for Routing {
         via: &'a DelegatedAgentIdentity,
         target: &'a DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
-    ) -> PortFuture<'a, Result<(), ChildRoutingError>> {
+    ) -> PortFuture<
+        'a,
+        Result<Option<quecto::application::subagents::dto::TerminationResult>, ChildRoutingError>,
+    > {
         self.calls.lock().unwrap().push(Call::Forward {
             via: via.clone(),
             target: target.clone(),
             remaining_depth,
         });
-        let outcome = self.outcome(&via.uuid);
+        let outcome = self.outcome(&via.uuid).map(|()| None);
         Box::pin(async move { outcome })
     }
 }

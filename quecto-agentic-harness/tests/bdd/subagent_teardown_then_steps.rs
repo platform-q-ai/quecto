@@ -97,6 +97,7 @@ fn then_forwarded(world: &mut QuectoWorld, via: String, depth: u32) {
             Ok(TerminationRouted::Forwarded {
                 via: routed_via,
                 remaining_depth,
+                ..
             }),
         written: Ok(()),
         ..
@@ -117,7 +118,7 @@ fn then_forwarded(world: &mut QuectoWorld, via: String, depth: u32) {
 #[then(expr = "child {string} is asked to shut down for {string}")]
 fn then_child_shutdown(world: &mut QuectoWorld, child: String, reason: String) {
     let Some(ControllerOutcome::TerminationRouted {
-        outcome: Ok(TerminationRouted::ShutdownRequested { child: routed }),
+        outcome: Ok(TerminationRouted::ShutdownRequested { child: routed, .. }),
         written: Ok(()),
         ..
     }) = world.teardown.controller_outcome.clone()

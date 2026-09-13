@@ -252,6 +252,30 @@ pub struct CliOutput {
 pub type WebFetchToolFactory =
     fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::domain::tool::Tool>;
 
+/// What the parent-hand termination owners are built over (#1936, #1939):
+/// the launcher registry the spawn tool populates, the event stream their
+/// compensation broadcasts on, the notification channel it posts passive
+/// notes to, the lineage owner and the harness lifecycle cell a frozen
+/// harness refuses new control commands from. The interface hands it to
+/// composition's builder once the agent-control tools exist, and installs
+/// the owners into their slots.
+pub struct KillToolWiring {
+    pub owner: crate::domain::ids::AgentUuid,
+    pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
+    /// The harness lifecycle cell (#1938): a frozen harness refuses new
+    /// control commands; shared with the spawn tool and the teardown graph.
+    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
+}
+
+/// Composition's builder of the termination owners — the `agent_cmd kill`
+/// tool, the environment member shutdown and the swarm member termination
+/// over one shared graph — injected through the CLI context like the
+/// web-fetch factory and the teardown graph builder.
+pub type KillToolBuilder =
+    fn(KillToolWiring) -> crate::infrastructure::extensions::native::TerminationOwners;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -276,7 +300,7 @@ pub struct CliContext {
     pub teardown_graph: Option<uds_teardown_graph::TeardownGraphBuilder>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936). Without
     /// it `kill` is unavailable: the interface never composes a lifecycle.
-    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
 }
 
 impl CliContext {
@@ -371,7 +395,7 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
 pub struct CliComposition {
     pub web_fetch_tool_factory: WebFetchToolFactory,
     pub teardown_graph: uds_teardown_graph::TeardownGraphBuilder,
-    pub kill_tool: crate::infrastructure::extensions::native::KillToolBuilder,
+    pub kill_tool: crate::interface::cli::KillToolBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,

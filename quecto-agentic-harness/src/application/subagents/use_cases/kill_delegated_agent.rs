@@ -5,25 +5,25 @@
 //! 1. resolve the reference to one live identity (uuid *and* generation);
 //! 2. claim the row as stopping — before any effect, so a concurrent kill,
 //!    exit observation or rollback sees the claim and converges;
-//! 3. route exactly one edge through [`TerminateDelegatedAgent`]: a direct
-//!    child gets self shutdown, a deeper target is forwarded through its
-//!    direct ancestor, which stays alive (an intermediate is never sent self
-//!    shutdown for a deeper target);
-//! 4. observe the end: for a directly owned child the owned-handle fallback
-//!    concludes it (protocol first; a signal only after a negative outcome
-//!    or an exit timeout); for anything this harness does not own the only
-//!    observation is the row's compensation, reported truthfully when it
-//!    does not arrive;
-//! 5. only then claim and run the terminal compensation (cleanup,
+//! 3. route exactly one edge through [`TerminateDelegatedAgent`], with the
+//!    depth the lineage says the route needs: a direct child is concluded
+//!    there as this harness's own (protocol, observed exit, owned-handle
+//!    fallback only when the protocol did not suffice); a deeper target is
+//!    forwarded through its direct ancestor, which stays alive, and the
+//!    owner's result comes back with the hop's answer;
+//! 4. only then claim and run the terminal compensation (cleanup,
 //!    membership, subtree removal, one broadcast) — or join the path that
 //!    already ran it.
 //!
-//! Every refusal or failure lifts the stopping claim: the registry is left
-//! as it was, and a later trigger may try again.
+//! A refusal before anything reached the agent lifts the stopping claim
+//! and leaves the registry as it was. A failure after effects were
+//! dispatched keeps the claim, so the eventual exit is compensated as this
+//! kill rather than post-mortemed as a natural one.
 use std::sync::Arc;
 
+use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{
-    DelegatedAgentIdentity, LineageSnapshot, RoutingDepth, TerminationRouteError,
+    DelegatedAgentIdentity, LineageSnapshot, RoutingDepth, TerminationRouteError, route_length,
 };
 
 use super::super::dto::{
@@ -32,31 +32,21 @@ use super::super::dto::{
     TerminationRouted,
 };
 use super::super::ports::{
-    CompensationObservation, ConclusionBudget, DelegatedAgentRegistry, OwnedChildTermination,
-    ProtocolAttempt, ResolutionError, StoppingClaimError, SubagentLifecycleRepository,
-    TeardownCompensation, TerminalClaim, TerminationCause, TerminationConclusion,
+    CompensationObservation, DelegatedAgentRegistry, DownstreamRejection, ResolutionError,
+    StoppingClaimError, SubagentLifecycleRepository, TeardownCompensation, TerminalClaim,
+    TerminationCause,
 };
 use super::terminate_delegated_agent::TerminateDelegatedAgent;
 
 pub struct KillDelegatedAgentPorts {
     pub registry: Arc<dyn DelegatedAgentRegistry>,
     pub lifecycle: Arc<dyn SubagentLifecycleRepository>,
-    pub termination: Arc<dyn OwnedChildTermination>,
     pub compensation: Arc<dyn TeardownCompensation>,
 }
 
 pub struct KillDelegatedAgent {
     route: Arc<TerminateDelegatedAgent>,
     ports: KillDelegatedAgentPorts,
-}
-
-/// What the routed edge established about the target's end before the
-/// fallback or the compensation observation was consulted.
-enum Edge {
-    /// The target is a direct child and the protocol attempt concluded.
-    Direct(ProtocolAttempt),
-    /// The target lives deeper; its direct ancestor accepted the route.
-    Forwarded,
 }
 
 impl KillDelegatedAgent {
@@ -88,10 +78,12 @@ impl KillDelegatedAgent {
         // The lineage the route is resolved against, captured before the
         // edge so the reported subtree is the one the route saw.
         let lineage = self.ports.lifecycle.lineage();
-        match self.terminate(&target, lineage).await {
+        match self.terminate(&target, &lineage).await {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
-                self.ports.registry.release_stopping(&target);
+                if !effects_dispatched(&error) {
+                    self.ports.registry.release_stopping(&target);
+                }
                 Err(error)
             }
         }
@@ -100,20 +92,10 @@ impl KillDelegatedAgent {
     async fn terminate(
         &self,
         target: &DelegatedAgentIdentity,
-        lineage: LineageSnapshot,
+        lineage: &LineageSnapshot,
     ) -> Result<KillDelegatedAgentOutcome, KillDelegatedAgentError> {
-        let edge = self.route_one_edge(target).await?;
-        let result = match edge {
-            Edge::Direct(attempt) => self.conclude_direct(target, attempt).await?,
-            Edge::Forwarded => {
-                // Nothing this harness owns ends a nested target: the only
-                // truthful observation is its row's compensation, which the
-                // intermediate's reported snapshot drives.
-                self.observe_compensated(target).await?;
-                TerminationResult::Graceful
-            }
-        };
-        let removed = self.compensate(target, &lineage).await?;
+        let result = self.route_one_edge(target, lineage).await?;
+        let removed = self.compensate(target, lineage).await?;
         Ok(KillDelegatedAgentOutcome {
             target: target.clone(),
             result,
@@ -121,82 +103,60 @@ impl KillDelegatedAgent {
         })
     }
 
+    /// The depth the route needs: exactly the edges between this harness
+    /// and the target, so every hop's bound is sized to the real route. A
+    /// lineage the walk refuses gets the maximum and is refused again, with
+    /// the same error, by the route itself.
+    fn depth_for(lineage: &LineageSnapshot, target: &DelegatedAgentIdentity) -> RoutingDepth {
+        route_length(lineage, target)
+            .ok()
+            .and_then(|hops| RoutingDepth::new(hops).ok())
+            .unwrap_or_else(|| {
+                RoutingDepth::new(RoutingDepth::MAX_HOPS)
+                    .expect("the maximum hop count is a valid depth")
+            })
+    }
+
     async fn route_one_edge(
         &self,
         target: &DelegatedAgentIdentity,
-    ) -> Result<Edge, KillDelegatedAgentError> {
+        lineage: &LineageSnapshot,
+    ) -> Result<TerminationResult, KillDelegatedAgentError> {
         let request = TerminateDelegatedAgentRequest {
             target: target.clone(),
-            remaining_depth: RoutingDepth::new(RoutingDepth::MAX_HOPS)
-                .expect("the maximum hop count is a valid depth"),
+            remaining_depth: Self::depth_for(lineage, target),
         };
         match self.route.execute(request).await {
-            Ok(TerminationRouted::ShutdownRequested { child }) => {
+            Ok(TerminationRouted::ShutdownRequested { child, result }) => {
                 debug_assert_eq!(&child, target, "self shutdown goes only to the target");
-                Ok(Edge::Direct(ProtocolAttempt::Acknowledged))
+                self.observed_or_relayed(target, result).await
             }
-            Ok(TerminationRouted::Forwarded { via, .. }) => {
+            Ok(TerminationRouted::Forwarded { via, result, .. }) => {
                 debug_assert_ne!(via.uuid, target.uuid, "an intermediate is never the target");
-                Ok(Edge::Forwarded)
+                self.observed_or_relayed(target, result).await
             }
-            Err(TerminateDelegatedAgentError::ChildUnreachable { child, detail }) => {
-                if child == target.uuid {
-                    Ok(Edge::Direct(ProtocolAttempt::Negative(detail)))
-                } else {
-                    Err(KillDelegatedAgentError::RouteUnreachable { via: child, detail })
-                }
-            }
-            Err(TerminateDelegatedAgentError::Rejected(error)) => {
-                Err(KillDelegatedAgentError::Rejected(error))
-            }
-            Err(TerminateDelegatedAgentError::NotAccepting) => {
-                Err(KillDelegatedAgentError::NotAccepting)
-            }
+            // The end was observed before the route could act on it.
+            Err(TerminateDelegatedAgentError::TargetAlreadyExited(_))
+            | Err(TerminateDelegatedAgentError::Downstream {
+                rejection: DownstreamRejection::AlreadyExited,
+                ..
+            }) => Ok(TerminationResult::AlreadyExited),
+            Err(error) => Err(map_route_error(target, error)),
         }
     }
 
-    /// Conclude a direct child: the owned-handle fallback if this harness
-    /// retains its process, otherwise the compensation observation alone.
-    async fn conclude_direct(
+    /// A result the owner reported, or — for a bare route that observed
+    /// nothing — the row's compensation as the only truthful observation.
+    async fn observed_or_relayed(
         &self,
         target: &DelegatedAgentIdentity,
-        attempt: ProtocolAttempt,
+        result: Option<TerminationResult>,
     ) -> Result<TerminationResult, KillDelegatedAgentError> {
-        let acknowledged = matches!(attempt, ProtocolAttempt::Acknowledged);
-        let negative = match &attempt {
-            ProtocolAttempt::Acknowledged => None,
-            ProtocolAttempt::Negative(detail) => Some(detail.clone()),
-        };
-        match self
-            .ports
-            .termination
-            .conclude(target, attempt, ConclusionBudget::Standard)
-            .await
-        {
-            TerminationConclusion::NoRetainedHandle => {
-                if let Some(detail) = negative {
-                    // The edge may have failed because the child was already
-                    // gone: its reaper (or monitor) observed the exit, claimed
-                    // the terminal effects with this kill's intent and
-                    // retired the handle before the protocol answered. That
-                    // is an exited child, not a failed termination.
-                    if self.ports.registry.terminal_claimed(target) {
-                        self.observe_compensated(target).await?;
-                        return Ok(TerminationResult::AlreadyExited);
-                    }
-                    // Not owned and not reachable: nothing more is
-                    // authorised, so the failure is reported as it is.
-                    return Err(KillDelegatedAgentError::Failed { detail });
-                }
-                debug_assert!(acknowledged);
+        match result {
+            Some(result) => Ok(result),
+            None => {
                 self.observe_compensated(target).await?;
                 Ok(TerminationResult::Graceful)
-            }
-            TerminationConclusion::AlreadyExited => Ok(TerminationResult::AlreadyExited),
-            TerminationConclusion::ExitedAfterProtocol => Ok(TerminationResult::Graceful),
-            TerminationConclusion::ExitedAfterFallback => Ok(TerminationResult::Fallback),
-            TerminationConclusion::StillRunning(detail) => {
-                Err(KillDelegatedAgentError::Failed { detail })
             }
         }
     }
@@ -209,6 +169,7 @@ impl KillDelegatedAgent {
             CompensationObservation::Compensated => Ok(()),
             CompensationObservation::TimedOut => Err(KillDelegatedAgentError::Failed {
                 detail: "acknowledged but its exit was not observed within the bound".into(),
+                effects_dispatched: true,
             }),
             CompensationObservation::Unknown => Err(KillDelegatedAgentError::Rejected(
                 TerminationRouteError::UnknownTarget(target.uuid.clone()),
@@ -217,12 +178,13 @@ impl KillDelegatedAgent {
     }
 
     /// The exit was observed: claim the terminal effects, or join the path
-    /// (reaper, monitor, reported snapshot) that already claimed them.
+    /// (the owner's conclusion, the reaper, the monitor, a reported
+    /// snapshot) that already claimed them.
     async fn compensate(
         &self,
         target: &DelegatedAgentIdentity,
         lineage: &LineageSnapshot,
-    ) -> Result<Vec<crate::domain::ids::AgentUuid>, KillDelegatedAgentError> {
+    ) -> Result<Vec<AgentUuid>, KillDelegatedAgentError> {
         match self.ports.registry.claim_terminal(target) {
             TerminalClaim::Claimed => Ok(self
                 .ports
@@ -238,11 +200,68 @@ impl KillDelegatedAgent {
     }
 }
 
-/// The target and every descendant beneath it in `lineage`, target first.
-fn subtree(
-    lineage: &LineageSnapshot,
+/// Whether an error means something reached the agent, so its stopping
+/// claim must be kept for the exit that will follow.
+fn effects_dispatched(error: &KillDelegatedAgentError) -> bool {
+    match error {
+        KillDelegatedAgentError::Failed {
+            effects_dispatched, ..
+        } => *effects_dispatched,
+        KillDelegatedAgentError::Unresolved(_)
+        | KillDelegatedAgentError::AlreadyStopping
+        | KillDelegatedAgentError::Rejected(_)
+        | KillDelegatedAgentError::NotAccepting
+        | KillDelegatedAgentError::RouteUnreachable { .. }
+        | KillDelegatedAgentError::DownstreamRejected { .. } => false,
+    }
+}
+
+fn map_route_error(
     target: &DelegatedAgentIdentity,
-) -> Vec<crate::domain::ids::AgentUuid> {
+    error: TerminateDelegatedAgentError,
+) -> KillDelegatedAgentError {
+    match error {
+        TerminateDelegatedAgentError::Rejected(error) => KillDelegatedAgentError::Rejected(error),
+        TerminateDelegatedAgentError::NotAccepting => KillDelegatedAgentError::NotAccepting,
+        TerminateDelegatedAgentError::ChildUnreachable { child, detail } => {
+            if child == target.uuid {
+                KillDelegatedAgentError::Failed {
+                    detail,
+                    effects_dispatched: false,
+                }
+            } else {
+                KillDelegatedAgentError::RouteUnreachable { via: child, detail }
+            }
+        }
+        TerminateDelegatedAgentError::TerminationFailed { detail, .. } => {
+            KillDelegatedAgentError::Failed {
+                detail,
+                effects_dispatched: true,
+            }
+        }
+        TerminateDelegatedAgentError::Downstream {
+            rejection: DownstreamRejection::Failed(detail),
+            ..
+        } => KillDelegatedAgentError::Failed {
+            detail,
+            effects_dispatched: true,
+        },
+        TerminateDelegatedAgentError::Downstream { via, rejection } => {
+            KillDelegatedAgentError::DownstreamRejected {
+                via,
+                detail: rejection.to_string(),
+            }
+        }
+        // The caller turns this into a result before mapping errors; kept
+        // total so a future route error cannot fall through silently.
+        TerminateDelegatedAgentError::TargetAlreadyExited(_) => {
+            KillDelegatedAgentError::Unresolved(ResolutionError::Exited)
+        }
+    }
+}
+
+/// The target and every descendant beneath it in `lineage`, target first.
+fn subtree(lineage: &LineageSnapshot, target: &DelegatedAgentIdentity) -> Vec<AgentUuid> {
     let mut removed = vec![target.uuid.clone()];
     let mut index = 0;
     while index < removed.len() {

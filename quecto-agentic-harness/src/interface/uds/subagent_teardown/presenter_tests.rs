@@ -59,12 +59,14 @@ fn termination_responses_distinguish_shutdown_from_forward() {
         Some("t"),
         &TerminationRouted::ShutdownRequested {
             child: child.clone(),
+            result: Some(crate::application::subagents::dto::TerminationResult::Fallback),
         },
     );
     assert_eq!(
         requested.data,
         Some(TeardownResponseData::ShutdownRequested {
-            child_uuid: "B".into()
+            child_uuid: "B".into(),
+            result: Some("fallback".into()),
         })
     );
     let forwarded = termination_response(
@@ -72,13 +74,15 @@ fn termination_responses_distinguish_shutdown_from_forward() {
         &TerminationRouted::Forwarded {
             via: DelegatedAgentIdentity::new(AgentUuid::new("A"), LaunchGeneration::new(1)),
             remaining_depth: RoutingDepth::new(2).unwrap(),
+            result: None,
         },
     );
     assert_eq!(
         forwarded.data,
         Some(TeardownResponseData::Forwarded {
             via_uuid: "A".into(),
-            remaining_depth: 2
+            remaining_depth: 2,
+            result: None,
         })
     );
 }

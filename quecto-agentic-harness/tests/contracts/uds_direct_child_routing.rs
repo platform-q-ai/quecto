@@ -200,7 +200,8 @@ async fn selected_termination_routes_through_the_real_adapter() {
     assert_eq!(
         routed,
         TerminationRouted::ShutdownRequested {
-            child: identity("D", 1)
+            child: identity("D", 1),
+            result: None,
         }
     );
     let routed = use_case
@@ -215,6 +216,7 @@ async fn selected_termination_routes_through_the_real_adapter() {
         TerminationRouted::Forwarded {
             via: identity("A", 1),
             remaining_depth: RoutingDepth::new(1).unwrap(),
+            result: None,
         }
     );
     let refused = use_case
@@ -242,4 +244,120 @@ async fn selected_termination_routes_through_the_real_adapter() {
     assert_eq!(a[0]["type"], "terminate_delegated_agent");
     assert_eq!(a[0]["remaining_depth"], 1);
     let _ = DelegatedAgentIdentity::new("unused", LaunchGeneration::new(0));
+}
+
+/// A fake child answering a forward with a scripted response body.
+fn fake_child_answering(body: serde_json::Value) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("q-ct-{}.sock", uuid::Uuid::new_v4().simple()));
+    let _ = std::fs::remove_file(&path);
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            let body = body.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let (read, mut write) = tokio::io::split(stream);
+                let mut reader = tokio::io::BufReader::new(read);
+                let Ok(Some(incoming)) =
+                    quecto_line_io::read_frame_or_legacy_line(&mut reader, 64 * 1024).await
+                else {
+                    return;
+                };
+                let bytes = match incoming {
+                    quecto_line_io::Incoming::Frame(b)
+                    | quecto_line_io::Incoming::LegacyLine(b) => b,
+                };
+                let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                let mut reply = body;
+                reply["type"] = "response".into();
+                reply["id"] = request["id"].clone();
+                reply["command"] = request["type"].clone();
+                let _ = write.write_all(format!("{reply}\n").as_bytes()).await;
+                let _ = quecto_line_io::read_frame_or_legacy_line(&mut reader, 1024).await;
+            });
+        }
+    });
+    path
+}
+
+/// The owner's answer travels back with the hop: a relayed result on
+/// success, the refusal's kind on failure (#1936 review).
+#[tokio::test]
+async fn a_forward_relays_the_owners_result_and_the_refusals_kind() {
+    use quecto::application::subagents::ports::{DownstreamRejection, TerminationResult};
+    for (body, expected) in [
+        (
+            serde_json::json!({"success": true, "data": {"status": "shutdown_requested", "child_uuid": "B", "result": "fallback"}}),
+            Ok(Some(TerminationResult::Fallback)),
+        ),
+        (
+            serde_json::json!({"success": true, "data": {"status": "forwarded", "via_uuid": "X", "remaining_depth": 1}}),
+            Ok(None),
+        ),
+        (
+            serde_json::json!({"success": false, "error": "target B already exited", "error_kind": "already_exited"}),
+            Err(ChildRoutingError::Downstream(
+                DownstreamRejection::AlreadyExited,
+            )),
+        ),
+        (
+            serde_json::json!({"success": false, "error": "termination of B failed: no exit", "error_kind": "failed"}),
+            Err(ChildRoutingError::Downstream(DownstreamRejection::Failed(
+                "termination of B failed: no exit".into(),
+            ))),
+        ),
+        (
+            serde_json::json!({"success": false, "error": "unknown target", "error_kind": "unknown_target"}),
+            Err(ChildRoutingError::Downstream(
+                DownstreamRejection::UnknownTarget,
+            )),
+        ),
+        (
+            serde_json::json!({"success": false, "error": "harness already terminated"}),
+            Err(ChildRoutingError::Unreachable(
+                "harness already terminated".into(),
+            )),
+        ),
+    ] {
+        let socket = fake_child_answering(body);
+        let port = UdsDirectChildRouting::new(registry(vec![("A", launched("A", &socket, 1))]));
+        let answer = tokio::time::timeout(
+            Duration::from_secs(5),
+            port.forward_termination(
+                &identity("A", 1),
+                &identity("B", 1),
+                RoutingDepth::new(1).unwrap(),
+            ),
+        )
+        .await
+        .expect("bounded");
+        assert_eq!(answer, expected);
+    }
+}
+
+/// The bound of a forward grows with the depth still to route, so a slow
+/// deep hop is not misreported while its owner concludes the target.
+#[test]
+fn forward_bound_grows_with_the_remaining_depth() {
+    use quecto::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND;
+    let port = UdsDirectChildRouting::new(registry(vec![]));
+    let one = port.forward_timeout(RoutingDepth::new(1).unwrap());
+    let three = port.forward_timeout(RoutingDepth::new(3).unwrap());
+    assert_eq!(one, PROTOCOL_ACK_TIMEOUT + PER_HOP_CONCLUSION_BOUND * 2);
+    assert_eq!(three, PROTOCOL_ACK_TIMEOUT + PER_HOP_CONCLUSION_BOUND * 4);
+    assert!(
+        PER_HOP_CONCLUSION_BOUND
+            >= quecto::infrastructure::processes::owned_child_supervisor::TerminationBudget::DEFAULT
+                .exit_after_ack + PROTOCOL_ACK_TIMEOUT,
+        "one hop covers the owner's protocol attempt and the child's exit budget"
+    );
+    let short =
+        UdsDirectChildRouting::new(registry(vec![])).with_per_hop_bound(Duration::from_millis(10));
+    assert_eq!(
+        short.forward_timeout(RoutingDepth::new(2).unwrap()),
+        PROTOCOL_ACK_TIMEOUT + Duration::from_millis(30)
+    );
 }

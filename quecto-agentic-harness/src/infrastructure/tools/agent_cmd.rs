@@ -25,9 +25,10 @@ pub struct AgentCmdTool {
     /// Shared registry populated by [`super::spawn::SpawnTool`].
     registry: SubagentRegistry,
     /// The owner of the `kill` command (#1936): the composed selected
-    /// termination tool. Without one, `kill` is refused: this tool never
-    /// decides a lifecycle itself.
-    kill: Option<std::sync::Arc<dyn Tool>>,
+    /// termination tool, installed by the interface after this tool is
+    /// built. Empty, `kill` is refused: this tool never decides a
+    /// lifecycle itself.
+    kill: KillToolSlot,
     /// Side-effect-free environment inventory query and kill owner.
     list_environments:
         Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
@@ -35,10 +36,27 @@ pub struct AgentCmdTool {
         Option<std::sync::Arc<crate::application::environments::use_cases::KillEnvironment>>,
 }
 
+/// Where the composed `agent_cmd kill` owner lives (#1936): filled once by
+/// the interface after the agent-control tools are built, read by every
+/// `kill` command. A second install is ignored: one owner per harness.
+#[derive(Clone, Default)]
+pub struct KillToolSlot(std::sync::Arc<std::sync::OnceLock<std::sync::Arc<dyn Tool>>>);
+
+impl KillToolSlot {
+    /// Install the owner; `true` when this call filled the slot.
+    pub fn install(&self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.0.set(tool).is_ok()
+    }
+
+    pub fn get(&self) -> Option<std::sync::Arc<dyn Tool>> {
+        self.0.get().cloned()
+    }
+}
+
 impl std::fmt::Debug for AgentCmdTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentCmdTool")
-            .field("kill", &self.kill.is_some())
+            .field("kill", &self.kill.get().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -48,7 +66,7 @@ impl AgentCmdTool {
     pub fn new(registry: SubagentRegistry) -> Self {
         Self {
             registry,
-            kill: None,
+            kill: KillToolSlot::default(),
             list_environments: None,
             environment_control: None,
         }
@@ -74,11 +92,16 @@ impl AgentCmdTool {
         self
     }
 
-    /// Attach the composed selected-termination tool that owns `kill`
-    /// (built by composition, injected through the agent-control deps).
-    pub fn with_kill_tool(mut self, kill: std::sync::Arc<dyn Tool>) -> Self {
-        self.kill = Some(kill);
+    /// Attach the composed selected-termination tool that owns `kill`.
+    pub fn with_kill_tool(self, kill: std::sync::Arc<dyn Tool>) -> Self {
+        self.kill.install(kill);
         self
+    }
+
+    /// The slot the interface installs the composed `kill` owner into once
+    /// this tool is already registered.
+    pub fn kill_slot(&self) -> KillToolSlot {
+        self.kill.clone()
     }
 
     /// Create a new empty registry (convenience for tests and wiring).
@@ -127,7 +150,7 @@ impl AgentCmdTool {
         if command != "kill" {
             return None;
         }
-        let Some(kill) = self.kill.as_ref() else {
+        let Some(kill) = self.kill.get() else {
             return Some(ToolResult {
                 content: "agent_cmd error: kill is not available in this composition".into(),
                 is_error: true,

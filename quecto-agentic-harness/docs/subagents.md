@@ -726,22 +726,39 @@ session.
   harness still retains defers to the reaper: no row is removed while its
   process lives
 - **Selected termination** (`agent_cmd kill`, #1936 / #1882): the target is
-  resolved by uuid or live display label (an ambiguous label, an exited row
-  or a row this harness never launched is refused with no effect), claimed
-  stopping, then exactly one edge is routed. A direct child receives the
-  `shutdown` protocol command; a deeper descendant — reported upward with
-  its launch generation — is reached by sending its direct ancestor the
-  authenticated `terminate_delegated_agent` command, each receiver resolving
-  only its next direct edge, so intermediates stay alive and only the direct
-  owner shuts the target down. A directly owned local child is then
-  concluded by the supervisor: an acknowledged child that exits is
-  `graceful`; a negative acknowledgement (unreachable, refused, malformed)
-  or no exit within the budget authorises the TERM/KILL fallback
-  (`fallback`); a child already gone is `already-exited`. A target this
-  harness does not own has no fallback: its end is observed through its
-  row's compensation, and a failure is reported as `failed` with the row
-  left as it was. No descendant pid is ever signalled: a child's subtree
-  ends through the child's own teardown and the parent-loss binding
+  resolved by uuid or live display label (an ambiguous label, a row this
+  harness never launched, or an exited row — a retained dead row answers
+  `already exited`, never `not found` — is refused with no effect), claimed
+  stopping, then exactly one edge is routed with the depth the lineage says
+  the route needs. **The direct owner of the target concludes it**: the
+  `shutdown` protocol first, the exit observed within a bound, and — only
+  when the protocol did not suffice (unreachable, refused, malformed or
+  mismatched acknowledgement, or an acknowledged child that does not exit
+  within its budget) and only for a directly owned local handle — the
+  supervisor's TERM/KILL fallback; then the row's compensation. That is
+  the same whether the kill started at this harness or arrived as a
+  forwarded `terminate_delegated_agent`: a deeper descendant — reported
+  upward with its launch generation — is reached by sending its direct
+  ancestor the authenticated command, each receiver resolving only its
+  next direct edge, and the receiver that owns the target runs the whole
+  conclusion before it answers. Intermediates stay alive, lift their own
+  claim on every downstream answer (result, refusal or timeout), and relay
+  the answer: the owner's result (`graceful`, `fallback`,
+  `already-exited`) or the refusal's kind (`unknown_target`,
+  `stale_generation`, `already_exited`, `rejected`, `not_accepting`,
+  `unreachable`, `failed`) on the response's `error_kind`, so the root
+  presents the owner's truth. The per-hop acknowledgement bound grows
+  with the remaining depth (`PER_HOP_CONCLUSION_BOUND` per hop), so a
+  slow deep conclusion is not misreported as unreachable. A target this
+  harness does not own and cannot reach has no fallback: `failed`, with
+  the row left as it was. A failure *after* effects reached the child
+  (an acknowledged shutdown whose exit was not observed, a fallback that
+  signalled without an observed exit, or such a failure relayed from
+  downstream) keeps the row claimed stopping, so the eventual exit is
+  compensated as this kill and a retry is refused as in flight; only a
+  refusal before anything reached the child lifts the claim. No
+  descendant pid is ever signalled: a child's subtree ends through the
+  child's own teardown and the parent-loss binding
 - **Fleet teardown** (`TerminateAllDelegatedAgents`, #1938): the one owner
   of every whole-fleet end — an operator's `delete_all_subagents` (idle or
   while a turn runs), SIGTERM/SIGINT, the last client of the default

@@ -11,16 +11,17 @@ use std::sync::Arc;
 
 use crate::application::environments::ports::EnvironmentMemberShutdown;
 use crate::application::subagents::use_cases::{
-    KillDelegatedAgent, KillDelegatedAgentPorts, SettleDelegatedChild, SettleDelegatedChildPorts,
-    TerminateDelegatedAgent,
+    KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, SettleDelegatedChild,
+    SettleDelegatedChildPorts, TerminateDelegatedAgent,
 };
 use crate::domain::tool::Tool;
-use crate::infrastructure::extensions::native::{KillToolWiring, TerminationOwners};
+use crate::infrastructure::extensions::native::TerminationOwners;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;
 use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::infrastructure::tools::swarm_member_termination::DelegatedSwarmMemberTermination;
+use crate::interface::cli::KillToolWiring;
 use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 use crate::interface::tools::agent_cmd_kill::KillDelegatedAgentTool;
 
@@ -46,16 +47,24 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
     ));
     let routing = Arc::new(UdsDirectChildRouting::new(inputs.registry.clone()));
     let termination = Arc::new(SupervisedChildTermination::new(inputs.registry.clone()));
+    // A selected direct child is concluded by the route itself, as this
+    // harness's own: protocol, observed exit, owned-handle fallback only
+    // when the protocol did not suffice, compensation. The kill above it
+    // resolves, claims, routes and joins; it owns no termination port.
     let route = Arc::new(
-        TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone())
-            .with_registry(agents.clone()),
+        TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone()).with_owner_conclusion(
+            OwnerConclusionPorts {
+                registry: agents.clone(),
+                termination: termination.clone(),
+                compensation: agents.clone(),
+            },
+        ),
     );
     let kill = Arc::new(KillDelegatedAgent::new(
         route,
         KillDelegatedAgentPorts {
             registry: agents.clone(),
             lifecycle,
-            termination: termination.clone(),
             compensation: agents.clone(),
         },
     ));

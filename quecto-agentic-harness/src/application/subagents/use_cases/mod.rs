@@ -22,7 +22,7 @@ pub use settle_delegated_child::{
 pub use terminate_all_delegated_agents::{
     TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
 };
-pub use terminate_delegated_agent::TerminateDelegatedAgent;
+pub use terminate_delegated_agent::{OwnerConclusionPorts, TerminateDelegatedAgent};
 
 #[cfg(test)]
 #[path = "lifecycle_fakes_tests.rs"]

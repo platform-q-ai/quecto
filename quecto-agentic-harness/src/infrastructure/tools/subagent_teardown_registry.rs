@@ -94,12 +94,24 @@ impl RegistryDelegatedAgents {
 impl DelegatedAgentRegistry for RegistryDelegatedAgents {
     fn resolve(&self, reference: &str) -> Result<DelegatedAgentIdentity, ResolutionError> {
         let entries = self.lock();
-        let key = super::subagent_registry::resolve_registry_key(&entries, reference).map_err(
-            |error| match error {
-                DisplayNameResolveError::AmbiguousLiveMatch { .. } => ResolutionError::Ambiguous,
-                DisplayNameResolveError::NoLiveMatch { .. } => ResolutionError::Unknown,
-            },
-        )?;
+        let key = match super::subagent_registry::resolve_registry_key(&entries, reference) {
+            Ok(key) => key,
+            Err(DisplayNameResolveError::AmbiguousLiveMatch { .. }) => {
+                return Err(ResolutionError::Ambiguous);
+            }
+            // No live row answers to the label: a retained dead row that
+            // does is exited, not unknown.
+            Err(DisplayNameResolveError::NoLiveMatch { .. }) => {
+                let exited = entries
+                    .iter()
+                    .any(|(key, entry)| entry.effective_display_name(key) == reference);
+                return Err(if exited {
+                    ResolutionError::Exited
+                } else {
+                    ResolutionError::Unknown
+                });
+            }
+        };
         let entry = entries.get(&key).ok_or(ResolutionError::Unknown)?;
         if !Self::is_live(entry) {
             return Err(ResolutionError::Exited);
@@ -345,10 +357,13 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                 // One survivor-only roster per compensation.
                 let _ = tx.send(event);
             }
-            let mut removed: Vec<_> = removed
+            // Rows that were no longer live before this compensation ran
+            // (a descendant that already ended, or the target itself when
+            // its exit was recorded first) leave the registry with the
+            // subtree but are neither cleaned up nor signalled again.
+            let (mut removed, already_ended): (Vec<_>, Vec<_>) = removed
                 .into_iter()
-                .filter(|(id, _)| live_before.contains(id))
-                .collect();
+                .partition(|(id, _)| live_before.contains(id));
             super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
             let kind = exit_kind(cause);
             for (id, entry) in &removed {
@@ -391,6 +406,13 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                 removed.first().is_none_or(|(id, _)| id == key),
                 "the cascade lists the target first"
             );
+            // Every terminal effect has run: only now is the row (and each
+            // row that fell with it) compensated for whoever waits on it —
+            // the already-ended rows too, since nothing further will ever
+            // run for a row that has left the registry.
+            for (_, entry) in removed.iter().chain(&already_ended) {
+                super::subagent_cascade::mark_entry_compensated(entry);
+            }
             Compensated {
                 removed: removed
                     .iter()

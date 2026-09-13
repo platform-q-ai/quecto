@@ -101,6 +101,50 @@ impl EnvironmentMemberShutdown for DelegatedMemberShutdown {
     }
 }
 
+/// Where the composed member shutdown lives (#1936 review, #1939): the
+/// environment kill is built with the agent-control tools, before
+/// composition's termination owners exist, so it shuts members down through
+/// this slot; the interface fills it once. Empty, every member is reported
+/// unsettled and the environment stays retryable rather than running the
+/// retained kill under live members. A second install is ignored: one
+/// owner per harness.
+#[derive(Clone, Default)]
+pub struct MemberShutdownSlot(Arc<std::sync::OnceLock<Arc<dyn EnvironmentMemberShutdown>>>);
+
+impl MemberShutdownSlot {
+    /// Install the owner; `true` when this call filled the slot.
+    pub fn install(&self, owner: Arc<dyn EnvironmentMemberShutdown>) -> bool {
+        self.0.set(owner).is_ok()
+    }
+
+    pub fn get(&self) -> Option<Arc<dyn EnvironmentMemberShutdown>> {
+        self.0.get().cloned()
+    }
+}
+
+impl EnvironmentMemberShutdown for MemberShutdownSlot {
+    fn shutdown_members<'a>(
+        &'a self,
+        members: &'a [String],
+    ) -> PortFuture<'a, MemberShutdownReport> {
+        Box::pin(async move {
+            match self.get() {
+                Some(owner) => owner.shutdown_members(members).await,
+                None => MemberShutdownReport {
+                    settled: Vec::new(),
+                    unsettled: members
+                        .iter()
+                        .map(|member| UnsettledMember {
+                            member: member.clone(),
+                            detail: "no member shutdown is composed in this session".into(),
+                        })
+                        .collect(),
+                },
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 #[path = "environment_member_shutdown_tests.rs"]
 mod tests;

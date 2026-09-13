@@ -43,7 +43,8 @@ async fn targeting_a_direct_child_invokes_self_shutdown_on_that_child_only() {
     assert_eq!(
         routed,
         TerminationRouted::ShutdownRequested {
-            child: identity("A", 1)
+            child: identity("A", 1),
+            result: None,
         }
     );
     assert_eq!(
@@ -64,6 +65,7 @@ async fn targeting_a_grandchild_forwards_through_the_intermediate_and_keeps_it_a
         TerminationRouted::Forwarded {
             via: identity("A", 1),
             remaining_depth: depth(2),
+            result: None,
         }
     );
     assert_eq!(
@@ -99,7 +101,8 @@ async fn intermediate_hop_shuts_down_the_direct_child_that_is_the_target() {
     assert_eq!(
         routed,
         TerminationRouted::ShutdownRequested {
-            child: identity("B", 1)
+            child: identity("B", 1),
+            result: None,
         }
     );
     assert_eq!(
@@ -233,11 +236,20 @@ async fn the_receiver_claims_the_target_stopping_before_routing_its_edge() {
         registry.trace().last().map(String::as_str),
         Some("claim-stopping D")
     );
-    // A nested target: its reported row is claimed too, the ancestor's is not.
+    // A nested target: its reported row is claimed for the hop and lifted
+    // again once the hop answered (the owner's snapshot ends the row); the
+    // ancestor's row is never claimed.
     use_case.execute(request("B", 1, 3)).await.unwrap();
+    assert_eq!(registry.phase("B"), Phase::Live);
     assert_eq!(
-        registry.phase("B"),
-        Phase::Stopping(TerminationCause::SelectedTermination)
+        registry
+            .trace()
+            .iter()
+            .rev()
+            .take(2)
+            .rev()
+            .collect::<Vec<_>>(),
+        ["claim-stopping B", "release-stopping B"]
     );
     assert_eq!(registry.phase("A"), Phase::Live);
     // An edge that cannot be delivered lifts the claim this edge took...
@@ -264,4 +276,299 @@ async fn the_receiver_claims_the_target_stopping_before_routing_its_edge() {
     let use_case = TerminateDelegatedAgent::new(lifecycle, routing).with_registry(registry.clone());
     use_case.execute(request("A", 9, 1)).await.unwrap_err();
     assert!(registry.trace().is_empty());
+}
+
+mod owner {
+    //! The receiver as the direct owner of the target (#1936 review): the
+    //! protocol, the observed exit, the owned-handle fallback and the
+    //! compensation all run here, and only a failure after effects were
+    //! dispatched keeps the claim.
+    use std::sync::Arc;
+
+    use super::super::super::lifecycle_fakes::{
+        FakeCompensation, FakeRegistry, FakeTermination, Phase,
+    };
+    use super::super::super::teardown_fakes::{FakeLifecycle, FakeRouting, root_tree};
+    use super::*;
+    use crate::application::subagents::dto::TerminationResult;
+    use crate::application::subagents::ports::{
+        DownstreamRejection, TerminationCause, TerminationConclusion,
+    };
+
+    struct Rig {
+        registry: Arc<FakeRegistry>,
+        routing: Arc<FakeRouting>,
+        termination: Arc<FakeTermination>,
+        compensation: Arc<FakeCompensation>,
+        use_case: TerminateDelegatedAgent,
+    }
+
+    fn rig(registry: Arc<FakeRegistry>, conclusion: TerminationConclusion) -> Rig {
+        let lifecycle = FakeLifecycle::new(root_tree());
+        let routing = FakeRouting::new();
+        let termination = FakeTermination::new(registry.clone(), conclusion);
+        let compensation = FakeCompensation::new(registry.clone());
+        let use_case = TerminateDelegatedAgent::new(lifecycle, routing.clone())
+            .with_owner_conclusion(OwnerConclusionPorts {
+                registry: registry.clone(),
+                termination: termination.clone(),
+                compensation: compensation.clone(),
+            });
+        Rig {
+            registry,
+            routing,
+            termination,
+            compensation,
+            use_case,
+        }
+    }
+
+    fn owned(uuid: &str) -> Arc<FakeRegistry> {
+        FakeRegistry::new()
+            .with_row(uuid, 1, uuid)
+            .holding_process(uuid)
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_child_that_exits_is_concluded_and_compensated_here() {
+        let rig = rig(owned("A"), TerminationConclusion::ExitedAfterProtocol);
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        assert_eq!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                child: identity("A", 1),
+                result: Some(TerminationResult::Graceful),
+            }
+        );
+        assert_eq!(rig.termination.calls().len(), 1);
+        assert_eq!(
+            rig.compensation.calls(),
+            [(identity("A", 1), TerminationCause::SelectedTermination)]
+        );
+        assert_eq!(
+            rig.registry.trace(),
+            ["claim-stopping A", "claim-terminal A", "compensated A"]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_child_that_never_exits_is_ended_by_the_owned_handle() {
+        let rig = rig(owned("A"), TerminationConclusion::ExitedAfterFallback);
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        assert!(matches!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                result: Some(TerminationResult::Fallback),
+                ..
+            }
+        ));
+        assert_eq!(rig.registry.phase("A"), Phase::Compensated);
+    }
+
+    #[tokio::test]
+    async fn a_fallback_that_could_not_end_the_child_keeps_the_claim() {
+        let rig = rig(
+            owned("A"),
+            TerminationConclusion::StillRunning("kill sent".into()),
+        );
+        let error = rig.use_case.execute(request("A", 1, 1)).await.unwrap_err();
+        assert_eq!(
+            error,
+            TerminateDelegatedAgentError::TerminationFailed {
+                child: AgentUuid::new("A"),
+                detail: "kill sent".into(),
+            }
+        );
+        assert_eq!(
+            rig.registry.phase("A"),
+            Phase::Stopping(TerminationCause::SelectedTermination),
+            "effects were dispatched: the eventual exit is this kill's"
+        );
+        assert!(rig.compensation.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_child_without_a_handle_lifts_the_claim() {
+        let rig = rig(
+            FakeRegistry::new().with_row("A", 1, "alpha"),
+            TerminationConclusion::NoRetainedHandle,
+        );
+        rig.routing
+            .unreachable
+            .lock()
+            .unwrap()
+            .push(AgentUuid::new("A"));
+        let error = rig.use_case.execute(request("A", 1, 1)).await.unwrap_err();
+        assert!(matches!(
+            error,
+            TerminateDelegatedAgentError::ChildUnreachable { .. }
+        ));
+        assert_eq!(rig.registry.phase("A"), Phase::Live);
+        assert_eq!(
+            rig.registry.trace(),
+            ["claim-stopping A", "release-stopping A"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_child_whose_reaper_won_during_the_protocol_is_already_exited() {
+        let rig = rig(
+            FakeRegistry::new().with_row("A", 1, "alpha"),
+            TerminationConclusion::NoRetainedHandle,
+        );
+        rig.routing
+            .unreachable
+            .lock()
+            .unwrap()
+            .push(AgentUuid::new("A"));
+        // The reaper claimed the terminal effects while the edge was in
+        // flight (the row is already compensated when the answer comes).
+        rig.registry.set_phase("A", Phase::Compensated);
+        let routed = rig.use_case.execute(request("A", 1, 1)).await.unwrap();
+        assert!(matches!(
+            routed,
+            TerminationRouted::ShutdownRequested {
+                result: Some(TerminationResult::AlreadyExited),
+                ..
+            }
+        ));
+        assert!(rig.compensation.calls().is_empty(), "joined, not repeated");
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_member_without_a_handle_whose_exit_is_not_observed_keeps_the_claim() {
+        let registry = FakeRegistry::new().with_row("A", 1, "alpha");
+        *registry.time_out_waits.lock().unwrap() = true;
+        let rig = rig(registry, TerminationConclusion::NoRetainedHandle);
+        let error = rig.use_case.execute(request("A", 1, 1)).await.unwrap_err();
+        assert!(matches!(
+            error,
+            TerminateDelegatedAgentError::TerminationFailed { .. }
+        ));
+        assert_eq!(
+            rig.registry.phase("A"),
+            Phase::Stopping(TerminationCause::SelectedTermination)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_target_this_harness_already_saw_exit_is_reported_as_such() {
+        // The lineage no longer lists Q (it is exited) but the registry
+        // retains its compensated row.
+        let registry = FakeRegistry::new().with_row("Q", 1, "quebec");
+        registry.set_phase("Q", Phase::Compensated);
+        let rig = rig(registry, TerminationConclusion::NoRetainedHandle);
+        let error = rig.use_case.execute(request("Q", 1, 1)).await.unwrap_err();
+        assert_eq!(
+            error,
+            TerminateDelegatedAgentError::TargetAlreadyExited(AgentUuid::new("Q"))
+        );
+        assert!(rig.routing.calls().is_empty());
+    }
+
+    /// An intermediate lifts its own claim on every downstream answer —
+    /// a relayed result, a refusal, a timeout — and relays the answer.
+    #[tokio::test]
+    async fn an_intermediate_relays_the_downstream_answer_and_lifts_its_claim() {
+        let rig = rig(
+            FakeRegistry::new()
+                .with_row("A", 1, "alpha")
+                .with_row("B", 1, "bravo"),
+            TerminationConclusion::NoRetainedHandle,
+        );
+        *rig.routing.forward_result.lock().unwrap() = Some(TerminationResult::Fallback);
+        let routed = rig.use_case.execute(request("B", 1, 2)).await.unwrap();
+        assert!(matches!(
+            routed,
+            TerminationRouted::Forwarded {
+                result: Some(TerminationResult::Fallback),
+                ..
+            }
+        ));
+        assert_eq!(rig.registry.phase("B"), Phase::Live);
+        assert_eq!(
+            rig.registry.trace(),
+            ["claim-stopping B", "release-stopping B"]
+        );
+        for rejection in [
+            DownstreamRejection::Failed("no exit".into()),
+            DownstreamRejection::AlreadyExited,
+            DownstreamRejection::UnknownTarget,
+        ] {
+            *rig.routing.downstream.lock().unwrap() =
+                vec![(AgentUuid::new("A"), rejection.clone())];
+            let error = rig.use_case.execute(request("B", 1, 2)).await.unwrap_err();
+            assert_eq!(
+                error,
+                TerminateDelegatedAgentError::Downstream {
+                    via: AgentUuid::new("A"),
+                    rejection,
+                }
+            );
+            assert_eq!(rig.registry.phase("B"), Phase::Live, "released");
+        }
+        rig.routing.downstream.lock().unwrap().clear();
+        rig.routing
+            .unreachable
+            .lock()
+            .unwrap()
+            .push(AgentUuid::new("A"));
+        let error = rig.use_case.execute(request("B", 1, 2)).await.unwrap_err();
+        assert!(matches!(
+            error,
+            TerminateDelegatedAgentError::ChildUnreachable { child, .. } if child == AgentUuid::new("A")
+        ));
+        assert_eq!(rig.registry.phase("B"), Phase::Live, "released on timeout");
+        assert!(
+            rig.termination.calls().is_empty(),
+            "never a fallback for a nested target"
+        );
+    }
+
+    #[test]
+    fn new_errors_render_their_vocabulary() {
+        assert_eq!(
+            TerminateDelegatedAgentError::TargetAlreadyExited(AgentUuid::new("Q")).to_string(),
+            "target Q already exited"
+        );
+        assert_eq!(
+            TerminateDelegatedAgentError::TerminationFailed {
+                child: AgentUuid::new("A"),
+                detail: "x".into()
+            }
+            .to_string(),
+            "termination of A failed: x"
+        );
+        assert_eq!(
+            TerminateDelegatedAgentError::Downstream {
+                via: AgentUuid::new("A"),
+                rejection: DownstreamRejection::NotAccepting
+            }
+            .to_string(),
+            "via A: downstream harness is not accepting"
+        );
+        for rejection in [
+            DownstreamRejection::UnknownTarget,
+            DownstreamRejection::StaleGeneration,
+            DownstreamRejection::AlreadyExited,
+            DownstreamRejection::Rejected("r".into()),
+            DownstreamRejection::NotAccepting,
+            DownstreamRejection::Unreachable("u".into()),
+            DownstreamRejection::Failed("f".into()),
+        ] {
+            let detail = rejection.to_string();
+            assert_eq!(
+                DownstreamRejection::from_kind(rejection.kind(), &detail).kind(),
+                rejection.kind()
+            );
+            assert_eq!(
+                rejection.effects_dispatched(),
+                matches!(rejection, DownstreamRejection::Failed(_))
+            );
+        }
+        assert_eq!(
+            DownstreamRejection::from_kind("mystery", "d"),
+            DownstreamRejection::Rejected("d".into())
+        );
+    }
 }

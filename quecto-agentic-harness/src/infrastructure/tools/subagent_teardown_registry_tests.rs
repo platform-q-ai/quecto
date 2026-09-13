@@ -75,10 +75,11 @@ fn resolution_accepts_uuids_and_live_labels_and_refuses_the_rest() {
         .send_replace(TeardownPhase::Compensated);
     assert_eq!(port.resolve("D"), Err(ResolutionError::Exited));
     assert_eq!(port.resolve("delta"), Err(ResolutionError::Exited));
-    // Once the row is also exited in the registry's status vocabulary the
-    // label no longer resolves at all.
+    // A retained dead row still answers to its label as exited, never as
+    // unknown: an operator retrying a kill learns the truth.
     registry.lock().unwrap().get_mut("D").unwrap().status = SubagentStatus::Exited;
-    assert_eq!(port.resolve("delta"), Err(ResolutionError::Unknown));
+    assert_eq!(port.resolve("delta"), Err(ResolutionError::Exited));
+    assert_eq!(port.resolve("D"), Err(ResolutionError::Exited));
 }
 
 #[test]
@@ -410,14 +411,18 @@ async fn compensation_reports_only_the_rows_it_moved_out_of_live_membership() {
     );
 }
 
-/// The reported-snapshot prune and the cascade both go through the ladder:
-/// a row they mark dead is `Compensated`, so a kill waiting on a nested
-/// target resolves at once instead of running out its bound.
+/// The reported-snapshot prune releases waiters at once (pruning is the
+/// whole of a reported row's compensation), while a cascade alone never
+/// does: only the compensation, after every terminal effect has run,
+/// moves the rows it removed to `Compensated` — so a joiner that wakes on
+/// the phase always finds the cleanup, exit signals and removal done.
 #[tokio::test]
-async fn prune_and_cascade_release_waiters_through_the_ladder() {
+async fn prune_releases_waiters_and_the_cascade_only_after_its_effects() {
     let registry = tree();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_millis(50));
+    let port = Arc::new(
+        RegistryDelegatedAgents::new(registry.clone(), None, None)
+            .with_compensation_wait(Duration::from_secs(5)),
+    );
     // A's next snapshot omits B: the merge prunes it.
     let line = serde_json::json!({"type": "subagent_state_changed", "subagents": [{
         "agentId": "charlie", "agentUuid": "C", "status": "idle", "pid": 4242,
@@ -441,16 +446,57 @@ async fn prune_and_cascade_release_waiters_through_the_ladder() {
         TeardownPhase::Live,
         "a listed descendant stays live"
     );
-    // A cascade of A marks C dead the same way.
-    super::super::subagent_cascade::cascade_remove(&registry, "A");
+    // A bare cascade marks C dead but releases nobody.
+    let (c_exit_tx, _c_exit_rx) = new_exit_signal_channel();
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("C")
+        .unwrap()
+        .exit_signal_tx = Some(c_exit_tx.clone());
+    let joiner = {
+        let port = port.clone();
+        let registry = registry.clone();
+        let c_exit_tx = c_exit_tx.clone();
+        tokio::spawn(async move {
+            let observed = port.await_compensated(&identity("C", 1)).await;
+            // Woken on `Compensated`: the terminal effects already ran.
+            let signalled = c_exit_tx.borrow().is_some();
+            let status = registry.lock().unwrap()["C"].status.clone();
+            (observed, signalled, status)
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    // A bare cascade (of the unrelated D) marks dead but releases nobody.
+    let removed = super::super::subagent_cascade::cascade_remove(&registry, "D");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(registry.lock().unwrap()["D"].status, SubagentStatus::Exited);
     assert_eq!(
-        registry.lock().unwrap()["C"].teardown_phase(),
-        TeardownPhase::Compensated
+        registry.lock().unwrap()["D"].teardown_phase(),
+        TeardownPhase::Live,
+        "a cascade alone never releases a waiter"
     );
+    assert!(!joiner.is_finished());
+    // The compensation runs the effects, then releases the joiner.
     assert_eq!(
-        port.await_compensated(&identity("C", 1)).await,
-        CompensationObservation::Compensated
+        port.claim_terminal(&identity("A", 1)),
+        TerminalClaim::Claimed
     );
+    port.compensate(&identity("A", 1), TerminationCause::SelectedTermination)
+        .await;
+    let (observed, signalled, status) = tokio::time::timeout(Duration::from_secs(5), joiner)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed, CompensationObservation::Compensated);
+    assert!(signalled, "the exit signal preceded the release");
+    assert_eq!(status, SubagentStatus::Exited);
+    for key in ["A", "C"] {
+        assert_eq!(
+            registry.lock().unwrap()[key].teardown_phase(),
+            TeardownPhase::Compensated
+        );
+    }
 }
 
 /// Review of #1938: a row is pruned only once its ladder reached

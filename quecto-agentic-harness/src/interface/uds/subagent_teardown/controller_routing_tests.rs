@@ -64,7 +64,7 @@ async fn a_three_edge_route_names_the_direct_child_at_every_hop() {
                 assert!(matches!(
                     &outcome,
                     ControllerOutcome::TerminationRouted {
-                        outcome: Ok(TerminationRouted::Forwarded { via: v, remaining_depth }),
+                        outcome: Ok(TerminationRouted::Forwarded { via: v, remaining_depth, .. }),
                         ..
                     } if v.uuid == AgentUuid::new(via) && remaining_depth.hops() == depth - 1
                 ));
@@ -81,7 +81,7 @@ async fn a_three_edge_route_names_the_direct_child_at_every_hop() {
                 assert!(matches!(
                     &outcome,
                     ControllerOutcome::TerminationRouted {
-                        outcome: Ok(TerminationRouted::ShutdownRequested { child }),
+                        outcome: Ok(TerminationRouted::ShutdownRequested { child, .. }),
                         ..
                     } if child.uuid == AgentUuid::new("C")
                 ));
@@ -155,6 +155,7 @@ async fn selected_routing_root_a_b_preserves_a_and_its_unrelated_children() {
             Ok(TerminationRouted::Forwarded {
                 via,
                 remaining_depth,
+                ..
             }),
         written: Ok(()),
     } = outcome

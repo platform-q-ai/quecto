@@ -3397,6 +3397,50 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
             "agent_cmd.rs still orchestrates a kill ({forbidden})"
         );
     }
+    // The builder alias and its wiring live with the interface's other
+    // composition entry points, never in infrastructure (#1936 review).
+    let cli = fs::read_to_string("src/interface/cli/mod.rs").unwrap();
+    assert!(cli.contains("pub type KillToolBuilder =") && cli.contains("fn(KillToolWiring)"));
+    assert!(cli.contains("pub struct KillToolWiring {"));
+    let native = production_source("src/infrastructure/extensions/native.rs");
+    assert!(
+        !native.contains("KillTool") || native.contains("KillToolSlot"),
+        "native.rs names no kill builder; it only exposes the slot"
+    );
+    assert!(!native.contains("KillToolBuilder") && !native.contains("KillToolWiring"));
+    let mut interface_files = Vec::new();
+    collect_rs_files(Path::new("src/interface"), &mut interface_files);
+    for file in &interface_files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        assert!(
+            !source.contains("infrastructure::extensions::native::Kill"),
+            "{path} names an infrastructure kill type"
+        );
+    }
+    // Both routes are composed with the owner conclusion: the direct
+    // owner of a target concludes it (protocol, exit, fallback,
+    // compensation), whether the kill started here or arrived by
+    // forwarding.
+    for path in [
+        "src/composition/subagent_termination.rs",
+        "src/composition/subagent_teardown.rs",
+    ] {
+        assert!(
+            production_source(path).contains(".with_owner_conclusion("),
+            "{path} composes the route without the owner conclusion"
+        );
+    }
+    // A row is `Compensated` only once its terminal effects ran.
+    let cascade = production_source("src/infrastructure/tools/subagent_cascade.rs");
+    let dead = cascade
+        .split("pub fn mark_entry_dead(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("mark_entry_dead");
+    assert!(
+        !dead.contains("Compensated"),
+        "mark_entry_dead must not release waiters before the effects ran"
+    );
     let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
     for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
         let parts: Vec<_> = dep.split("::").collect();
@@ -3445,9 +3489,9 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
 /// graceful / fallback / already-exited / failed.
 #[test]
 fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
-    let dto = fs::read_to_string("src/application/subagents/dto.rs").unwrap();
+    let ports = fs::read_to_string("src/application/subagents/ports.rs").unwrap();
     for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
-        assert!(dto.contains(word), "dto lacks {word}");
+        assert!(ports.contains(word), "ports lack {word}");
     }
     let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
     assert!(adapter.contains("\"failed\""));
