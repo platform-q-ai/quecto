@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from swarm_repository import lost_after_activation
 from swarm_store import Store, SwarmError, bounded, encode
 from swarm_tasks import Tasks
 from swarm_use_cases import Coordination
@@ -15,7 +16,9 @@ from swarm_use_cases import Coordination
 
 class Workbench(Tasks):
     def __init__(self, path, checkout, member):
-        self.store = Store(path, member)
+        # One injectable clock: event timestamps, expiry and the loss grace
+        # all read `self.coordination.clock` (tests rebind it).
+        self.store = Store(path, member, lambda: self.coordination.clock())
         self.checkout, self.member = checkout, member
         self.coordination = Coordination(self.store, member, time.time)
 
@@ -220,20 +223,40 @@ class Workbench(Tasks):
             db.execute("UPDATE members SET status='dead' WHERE id=?", (member,))
             self.store.event(db, 'launch_abandoned', {'member': member})
 
-    def _confirmed_dead(self, member):
-        # Harness-only (#1961): the harness that launched `member` reaped its
-        # owned process, so the member's whole process group is gone. Its
-        # active tasks block for `recover`; idle time, a lost socket, a
-        # timeout or a self-report never confer this authority (those stay
-        # `_quarantine`).
+    ABRUPT_BLOCKER = 'worker death confirmed (abrupt exit; reservations retained); coordinator recovery required'
+    ORDERLY_BLOCKER = 'worker death confirmed; coordinator recovery required'
+
+    def _confirmed_dead(self, member, exit='orderly'):
+        """Harness-only (#1961): the harness that launched `member` reaped its
+        owned process. The member is dead and its active tasks block for
+        `recover`; idle time, a lost socket, a timeout or a self-report never
+        confer this authority (those stay `_quarantine`).
+
+        `exit` says how it ended. `orderly` (a delegated kill, a protocol
+        shutdown, an exit the harness chose): the member's own teardown ended
+        its tool process groups, so its file reservations are released.
+        `abrupt` (a signal nobody here sent, or an unobservable end): Bash
+        tool children run in their own process groups and may outlive the
+        harness, still writing to the reserved paths, so the reservations are
+        retained and the tasks say so; only the coordinator frees them, with
+        `revoke(id, reason)` or `recover(id, release_files=True)`."""
+        if exit not in ('orderly', 'abrupt'):
+            raise SwarmError('exit kind must be orderly or abrupt')
         with self.store.operation(active=False) as (db, run):
             current = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
             if not current or current['status'] == 'dead':
                 return
             db.execute("UPDATE members SET status='dead' WHERE id=?", (member,))
-            db.execute("UPDATE tasks SET status='blocked',blocker='worker death confirmed; coordinator recovery required' WHERE owner=? AND status IN ('claimed','blocked','submitted')", (member,))
-            db.execute('DELETE FROM files WHERE owner=?', (member,))
-            self.store.event(db, 'death_confirmed', {'member': member})
+            blocker = self.ORDERLY_BLOCKER if exit == 'orderly' else self.ABRUPT_BLOCKER
+            db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE owner=? AND status IN ('claimed','blocked','submitted')", (blocker, member))
+            retained = db.execute('SELECT count(*) FROM files WHERE owner=?', (member,)).fetchone()[0]
+            if exit == 'orderly':
+                db.execute('DELETE FROM files WHERE owner=?', (member,))
+                retained = 0
+            detail = {'member': member, 'exit': exit, 'reservations_retained': retained}
+            if retained:
+                detail['reason'] = 'abrupt harness exit; orphaned tool processes may still write reserved paths'
+            self.store.event(db, 'death_confirmed', detail)
             if member == run['coordinator']:
                 self._end_by_loss(db, run, 'coordinator death confirmed')
 
@@ -403,12 +426,7 @@ class Workbench(Tasks):
         row = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
         if row is None or row['status'] == 'dead':
             return True
-        latest = {'scope_unknown': 0, 'activated': 0}
-        for event in db.execute(
-                "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
-            if json.loads(event['detail']).get('member') == member:
-                latest[event['action']] = event['id']
-        return latest['scope_unknown'] > latest['activated']
+        return lost_after_activation(db, member)
 
     def _lose_coordinator(self):
         """Harness-only (#1924): the supervising session outside the container

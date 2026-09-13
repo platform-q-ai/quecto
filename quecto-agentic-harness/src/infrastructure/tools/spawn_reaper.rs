@@ -42,6 +42,7 @@ pub fn spawn_reaper_task(
     } = context;
     tokio::spawn(async move {
         let exit = supervisor.wait_exit(handle).await;
+        let member_exit = member_exit_kind(exit.as_ref(), &supervisor.signals_sent(handle));
         // send_replace: store the real exit status even when no awaiter holds
         // a receiver yet, so late awaits report it instead of a fallback.
         exit_tx.send_replace(Some(exit_signal_from_exit(exit)));
@@ -64,7 +65,9 @@ pub fn spawn_reaper_task(
         }
         if let Some((context, member)) = swarm_member {
             let _ = tokio::task::spawn_blocking(move || {
-                if let Err(error) = super::swarm_lifecycle::member_exited(&context, &member) {
+                if let Err(error) =
+                    super::swarm_lifecycle::member_exited(&context, &member, member_exit)
+                {
                     tracing::error!(%error, member, "swarm reaper could not confirm the member's death; capacity retained");
                 }
             })
@@ -74,6 +77,24 @@ pub fn spawn_reaper_task(
         // can go; retained registry clones then see "no retained handle".
         supervisor.retire(handle);
     });
+}
+
+/// How a swarm member's reaped exit reads to the store (#1961): an exit code
+/// is the harness ending on its own terms (its teardown ran), a signal this
+/// harness sent reached the member's whole process group, so both are
+/// orderly; a signal nobody here sent (SIGKILL from the OOM killer, an
+/// operator) or an unobservable end is abrupt — its Bash tool groups may
+/// survive, so its reservations are retained.
+pub fn member_exit_kind(
+    exit: Option<&ChildExit>,
+    sent: &[crate::infrastructure::processes::owned_child_supervisor::SentSignal],
+) -> crate::domain::swarm::MemberExit {
+    use crate::domain::swarm::MemberExit;
+    match exit {
+        Some(ChildExit::Code(_)) => MemberExit::Orderly,
+        Some(ChildExit::Signal(_)) if !sent.is_empty() => MemberExit::Orderly,
+        Some(ChildExit::Signal(_)) | Some(ChildExit::Unobservable(_)) | None => MemberExit::Abrupt,
+    }
 }
 
 /// The supervisor's exit report in the registry's exit-signal vocabulary.

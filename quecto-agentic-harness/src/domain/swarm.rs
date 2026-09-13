@@ -158,8 +158,31 @@ pub trait CoordinationPort {
     fn quarantine(&self, member: &str) -> Result<(), DomainError>;
     /// The launching harness reaped the member's owned process (#1961): the
     /// member is dead, its active tasks block for the coordinator's
-    /// `recover`, and the run keeps going.
-    fn confirm_dead(&self, member: &str) -> Result<(), DomainError>;
+    /// `recover`, and the run keeps going. An orderly exit releases the
+    /// member's file reservations; an abrupt one retains them.
+    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError>;
+}
+
+/// How a launched member's process ended, as its launcher observed it
+/// (#1961). Bash tool children run in their own process groups and can
+/// outlive an abruptly ended harness, so only an orderly end (the member's
+/// own teardown ran: a delegated kill, a protocol shutdown, an exit it
+/// chose, or a fallback signal this harness sent to its whole group) frees
+/// its file reservations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemberExit {
+    Orderly,
+    /// Killed by a signal this harness did not send, or an unobservable end.
+    Abrupt,
+}
+
+impl MemberExit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Orderly => "orderly",
+            Self::Abrupt => "abrupt",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

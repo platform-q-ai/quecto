@@ -41,7 +41,7 @@ class WorkbenchBehavior(unittest.TestCase):
         base = time.time() if base is None else base
         observer.coordination.clock = lambda: base
         observer._quarantine(member)
-        observer.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        observer.coordination.clock = lambda: base + Workbench.LOSS_GRACE
         observer._quarantine(member)
         observer.coordination.clock = lambda: time.time()
 
@@ -934,7 +934,7 @@ class WorkbenchBehavior(unittest.TestCase):
         # A member that did not launch the worker observes its pid gone on
         # every reconcile pass and records nothing while the launcher lives.
         base = time.time()
-        for offset in (0, 5, 60, 600):
+        for offset in (0, 5, 60, 200):
             other.coordination.clock = lambda offset=offset: base + offset
             other._quarantine('worker')
         self.assertEqual(self.parent.summary()['status'], 'running')
@@ -953,7 +953,7 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(actions.count('scope_observed'), 1, 'one observation per observer and member')
         # A death the launcher's reaper confirms inside the grace never pauses.
         self.parent._confirmed_dead('worker')
-        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE
         self.parent._quarantine('worker')
         self.assertEqual(self.parent.summary()['status'], 'running')
         self.assertEqual(self.parent.task(task['id'])['status'], 'blocked')
@@ -979,7 +979,7 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(self.parent.summary()['status'], 'running')
         self.parent._quarantine('nested')
         self.assertEqual(self.parent.summary()['status'], 'running', 'grace starts at the first authorised observation')
-        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE
         self.parent._quarantine('nested')
         summary = self.parent.summary()
         self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
@@ -1001,6 +1001,89 @@ class WorkbenchBehavior(unittest.TestCase):
         member = next(m for m in self.parent.summary()['members'] if m['id'] == 'late')
         self.assertEqual(member['launcher'], 'coordinator')
         self.assertIsNone(next(m for m in self.parent.summary()['members'] if m['id'] == 'coordinator')['launcher'])
+
+    def test_an_orderly_exit_releases_reservations_and_an_abrupt_one_retains_them(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.reserve(task['id'], claim['token'], ['src/a.rs'])
+        with self.assertRaisesRegex(SwarmError, 'orderly or abrupt'):
+            self.parent._confirmed_dead('worker', 'maybe')
+        # Abrupt: dead, blocked for recovery, reservations kept and said so.
+        self.parent._confirmed_dead('worker', 'abrupt')
+        blocked = self.parent.task(task['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('reservations retained', blocked['blocker'])
+        self.assertEqual([f['path'] for f in self.parent.file_owners()], ['src/a.rs'])
+        event = json.loads([e for e in self.parent.events(limit=100)['events'] if e['action'] == 'death_confirmed'][-1]['detail'])
+        self.assertEqual((event['exit'], event['reservations_retained']), ('abrupt', 1))
+        self.assertIn('orphaned tool processes', event['reason'])
+        with self.assertRaisesRegex(SwarmError, 'release_files=True'):
+            self.parent.recover(task['id'])
+        self.assertEqual(len(self.parent.file_owners()), 1)
+        other = self.other_worker()
+        with self.assertRaisesRegex(SwarmError, 'already reserved'):
+            other_task = other.task_create('o', 'other work', ['pass'], [])
+            other.reserve(other_task['id'], other.claim(other_task['id'])['token'], ['src/a.rs'])
+        self.parent.recover(task['id'], release_files=True)
+        self.assertEqual(self.parent.file_owners(), [])
+        recovered = json.loads([e for e in self.parent.events(limit=100)['events'] if e['action'] == 'recovered'][-1]['detail'])
+        self.assertEqual(recovered['reservations_released'], 1)
+        # Orderly: the member's own teardown ended its tool groups.
+        self.parent._admit('tidy', 'reservation-t')
+        self.parent._activate('tidy', 'reservation-t', 12348, 'start-t', '/tmp/t.sock')
+        tidy = self.client('tidy')
+        second = tidy.task_create('t2', 'tidy work', ['pass'], [])
+        token = tidy.claim(second['id'])['token']
+        tidy.reserve(second['id'], token, ['src/b.rs'])
+        self.parent._confirmed_dead('tidy')
+        self.assertEqual(self.parent.file_owners(), [])
+        self.assertEqual(self.parent.task(second['id'])['blocker'], 'worker death confirmed; coordinator recovery required')
+        self.parent.recover(second['id'])
+
+    def test_revoke_frees_reservations_retained_after_an_abrupt_exit_with_the_reason(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.reserve(task['id'], claim['token'], ['src/a.rs'])
+        self.parent._confirmed_dead('worker', 'abrupt')
+        self.parent.revoke(task['id'], 'cargo test orphan confirmed gone')
+        self.assertEqual(self.parent.file_owners(), [])
+        self.assertEqual(self.parent.task(task['id'])['status'], 'ready')
+
+    def test_revoke_skips_the_message_when_the_previous_owner_inbox_is_full(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        for i in range(100):
+            self.parent.send(f'fill-{i}', 'worker', 'noise')
+        with self.assertRaisesRegex(SwarmError, 'inbox full'):
+            self.parent.send('overflow', 'worker', 'one more')
+        before = self.parent.summary()['event_cursor']
+        reopened = self.parent.revoke(task['id'], 'silent member')
+        self.assertEqual(reopened['status'], 'ready')
+        self.assertEqual(len(self.worker.inbox()), 100)
+        events = self.parent.events(after=before, limit=100)['events']
+        self.assertEqual([e['action'] for e in events], ['revoked'])
+
+    def test_the_loss_grace_runs_from_the_first_authorised_observation_by_anyone(self):
+        # The worker launched a nested member and then died: both the
+        # coordinator and another member may record the nested loss.
+        self.worker._admit('nested', 'reservation-n')
+        self.worker._activate('nested', 'reservation-n', 12347, 'start-n', '/tmp/n.sock')
+        self.parent._confirmed_dead('worker')
+        other = self.other_worker()
+        base = time.time()
+        self.parent.coordination.clock = lambda: base
+        self.parent._quarantine('nested')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        # Another observer's FIRST observation, a grace after the
+        # coordinator's, records the loss at once: the grace is measured from
+        # the earliest authorised observation, not from its own.
+        other.coordination.clock = lambda: base + Workbench.LOSS_GRACE
+        other._quarantine('nested')
+        summary = self.parent.summary()
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
+        observed = [e for e in self.parent.events(limit=100)['events'] if e['action'] == 'scope_observed']
+        self.assertEqual([e['actor'] for e in observed], ['coordinator', 'other'])
+        self.parent.coordination.clock = lambda: time.time()
 
 
 if __name__ == '__main__':

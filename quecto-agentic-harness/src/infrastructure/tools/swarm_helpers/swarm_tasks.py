@@ -166,9 +166,12 @@ class Tasks:
             db.execute('DELETE FROM files WHERE task=? AND claim=?', (task_id, token))
             self.store.event(db, 'verified', {'task': task_id, 'revision': revision})
 
-    def recover(self, task_id):
+    def recover(self, task_id, release_files=False):
         """Coordinator only: reopen work whose owner's death the harness confirmed
-        (its owned process exited, #1961); `revoke` covers a live owner."""
+        (its owned process exited, #1961); `revoke` covers a live owner. After
+        an abrupt exit the owner's file reservations were retained (orphaned
+        tool processes may still write them): pass `release_files=True` to
+        free them explicitly, or `revoke(id, reason)` to record why."""
         with self.store.operation(coordinator=True) as (db, _):
             task = self._task(db, task_id)
             if task['status'] not in ('claimed', 'blocked', 'submitted'):
@@ -176,8 +179,11 @@ class Tasks:
             member = db.execute('SELECT status FROM members WHERE id=?', (task['owner'],)).fetchone()
             if not member or member['status'] != 'dead':
                 raise SwarmError('recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner')
+            retained = db.execute('SELECT count(*) FROM files WHERE task=?', (task_id,)).fetchone()[0]
+            if retained and release_files is not True:
+                raise SwarmError('reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)')
             self._reopen(db, task_id)
-            self.store.event(db, 'recovered', {'task': task_id})
+            self.store.event(db, 'recovered', {'task': task_id, 'reservations_released': retained})
 
     def revoke(self, task_id, reason):
         """Coordinator only (#1961): take a claim back from an owner that will

@@ -62,11 +62,16 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
 }
 
 /// The reaper of a member this harness launched observed its exit (#1961):
-/// confirm the member dead (its tasks block for `recover`) and reconcile.
-pub fn member_exited(context: &SwarmContext, member: &str) -> Result<Value, DomainError> {
+/// confirm the member dead (its tasks block for `recover`; an orderly exit
+/// also releases its reservations) and reconcile.
+pub fn member_exited(
+    context: &SwarmContext,
+    member: &str,
+    exit: crate::domain::swarm::MemberExit,
+) -> Result<Value, DomainError> {
     context
         .lifecycle
-        .member_exited(context, &LinuxProcesses, member)?;
+        .member_exited(context, &LinuxProcesses, member, exit)?;
     context.summary()
 }
 

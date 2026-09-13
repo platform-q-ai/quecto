@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::{Member, ProcessIdentity, RunStatus};
+use crate::domain::swarm::{Member, MemberExit, ProcessIdentity, RunStatus};
 use std::sync::Mutex;
 
 struct Processes {
@@ -163,7 +163,7 @@ impl CoordinationPort for CoordinationFake {
         self.0.lock().unwrap().push(member.into());
         Ok(())
     }
-    fn confirm_dead(&self, member: &str) -> Result<(), DomainError> {
+    fn confirm_dead(&self, member: &str, _: MemberExit) -> Result<(), DomainError> {
         self.0.lock().unwrap().push(format!("dead:{member}"));
         Ok(())
     }
@@ -342,8 +342,11 @@ impl CoordinationPort for ExitBoard {
             .push(format!("quarantine:{member}"));
         Ok(())
     }
-    fn confirm_dead(&self, member: &str) -> Result<(), DomainError> {
-        self.log.lock().unwrap().push(format!("dead:{member}"));
+    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("dead:{member}:{}", exit.as_str()));
         self.dead.lock().unwrap().push(member.into());
         Ok(())
     }
@@ -362,8 +365,8 @@ fn an_observed_member_exit_confirms_death_instead_of_quarantining_the_run() {
         dead: Mutex::new(vec![]),
     };
     // The worker's process (pid 2) is gone by the time the reaper runs.
-    let snapshot = member_exited(&board, &Observations, "worker").unwrap();
-    assert_eq!(*board.log.lock().unwrap(), ["dead:worker"]);
+    let snapshot = member_exited(&board, &Observations, "worker", MemberExit::Abrupt).unwrap();
+    assert_eq!(*board.log.lock().unwrap(), ["dead:worker:abrupt"]);
     assert_eq!(
         snapshot
             .members
@@ -374,8 +377,8 @@ fn an_observed_member_exit_confirms_death_instead_of_quarantining_the_run() {
         MemberStatus::Dead
     );
     // A second observation of the same exit changes nothing.
-    member_exited(&board, &Observations, "worker").unwrap();
-    assert_eq!(*board.log.lock().unwrap(), ["dead:worker"]);
+    member_exited(&board, &Observations, "worker", MemberExit::Orderly).unwrap();
+    assert_eq!(*board.log.lock().unwrap(), ["dead:worker:abrupt"]);
 }
 
 #[test]

@@ -103,11 +103,17 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
   the reason and previous owner, and the previous owner is messaged. Its stale
   token then fails with `stale or unowned claim`. A repeat on an unowned task is
   a no-op.
-- `recover(id)` reopens work whose owner's death the harness confirmed: a
-  member you launched that exited (on its own or by your `agent_cmd kill`) is
-  marked dead by your harness, its tasks block with `worker death confirmed;
-  coordinator recovery required`, its reservations are released and the run
-  keeps running. A vanished harness seen by `op=reconcile` is not a confirmed
+- `recover(id, release_files=False)` reopens work whose owner's death the
+  harness confirmed: a member you launched that exited (on its own or by your
+  `agent_cmd kill`) is marked dead by your harness, its tasks block with
+  `worker death confirmed; coordinator recovery required`, and the run keeps
+  running. An orderly end (exit code, protocol shutdown, delegated kill)
+  releases its reservations; an abrupt one (a signal nobody here sent, an
+  unobservable exit) retains them because Bash tool children in their own
+  process groups may still be writing those paths — the tasks say
+  `reservations retained`, and only `revoke(id, reason)` or
+  `recover(id, release_files=True)` frees them; both need a running run
+  (resume first). A vanished harness seen by `op=reconcile` is not a confirmed
   death: only the member's launcher (or anyone, once that launcher is dead)
   records the loss, after a ten-second grace in which the launcher's reaper
   normally confirms the death instead; a recorded loss pauses the run holding

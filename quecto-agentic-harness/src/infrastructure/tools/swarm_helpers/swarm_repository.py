@@ -3,6 +3,18 @@ import json
 from swarm_policy import SwarmError
 
 
+def lost_after_activation(connection, member):
+    """Whether `member`'s harness was quarantined (`scope_unknown`) after its
+    latest `activated` event; shared by the coordinator-loss blocker (#1924)
+    and the per-member loss record (#1961)."""
+    latest = {'scope_unknown': 0, 'activated': 0}
+    for row in connection.execute(
+            "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
+        if json.loads(row['detail']).get('member') == member:
+            latest[row['action']] = row['id']
+    return latest['scope_unknown'] > latest['activated']
+
+
 class Transaction:
     def __init__(self, store, connection):
         self.store, self.connection = store, connection
@@ -64,12 +76,7 @@ class Transaction:
         """The coordinator's id when its harness was quarantined after its latest
         activation (#1924); None while it is (re)activated or was never lost."""
         coordinator = self.run()['coordinator']
-        latest = {'scope_unknown': 0, 'activated': 0}
-        for row in self.connection.execute(
-                "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
-            if json.loads(row['detail']).get('member') == coordinator:
-                latest[row['action']] = row['id']
-        return coordinator if latest['scope_unknown'] > latest['activated'] else None
+        return coordinator if lost_after_activation(self.connection, coordinator) else None
 
     def pause_started(self):
         row = self.connection.execute("SELECT detail FROM events WHERE action='paused' ORDER BY id DESC LIMIT 1").fetchone()

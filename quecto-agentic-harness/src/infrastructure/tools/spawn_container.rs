@@ -283,11 +283,21 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
             // death (#1961); a child still running (or no longer retained)
             // keeps its reservation for reconciliation.
             use super::super::processes::owned_child_supervisor::TerminationOutcome;
-            if !matches!(
-                outcome,
-                TerminationOutcome::StillRunning { .. } | TerminationOutcome::NoRetainedHandle
-            ) {
-                reservation.rolled_back()?;
+            let exit = match outcome {
+                TerminationOutcome::StillRunning { .. } | TerminationOutcome::NoRetainedHandle => {
+                    None
+                }
+                TerminationOutcome::AlreadyExited(_) => {
+                    Some(crate::domain::swarm::MemberExit::Abrupt)
+                }
+                TerminationOutcome::ExitedAfterProtocol(_)
+                | TerminationOutcome::ExitedAfterTerm { .. }
+                | TerminationOutcome::ExitedAfterKill { .. } => {
+                    Some(crate::domain::swarm::MemberExit::Orderly)
+                }
+            };
+            if let Some(exit) = exit {
+                reservation.rolled_back(exit)?;
             }
             return Err(error);
         }

@@ -111,14 +111,25 @@ A member exit the launching harness observed itself is different (#1961): the
 harness that spawned a member owns its process, and when that process exits
 (on its own, or because the coordinator ended it with `agent_cmd kill`, or a
 launch was rolled back after the child exited) the exit is authoritative for
-the member's whole process group. The member is confirmed dead, its active
-tasks block with `worker death confirmed; coordinator recovery required`, its
-file reservations are released, and the run keeps running; the coordinator
-reopens the work with `recover(task_id)`. Only a harness death nobody observed
-this way (a socket loss, a vanished pid of a member this harness did not
-launch) is the conservative quarantine above; a socket loss alone never
-confirms a death. Neither idle time nor a worker's completion message frees a
-slot.
+the member's harness. The member is confirmed dead, its active tasks block for
+`recover(task_id)`, and the run keeps running. What happens to its file
+reservations depends on how it ended, because reservations are cooperative and
+Bash tool children run in their own process groups: an **orderly** end (an exit
+code, a protocol shutdown, a delegated kill, or a fallback signal this harness
+sent to the member's whole group) ran the member's own teardown, so its
+reservations are released and the tasks read `worker death confirmed;
+coordinator recovery required`; an **abrupt** end (a signal nobody here sent —
+the OOM killer, an operator — or an unobservable exit) may leave an orphaned
+`cargo test` or build still writing the reserved paths, so the reservations are
+retained, the tasks read `worker death confirmed (abrupt exit; reservations
+retained); coordinator recovery required`, and the `death_confirmed` event
+carries `reservations_retained` and the reason. The coordinator decides:
+`revoke(task_id, reason)` frees them and records why, or
+`recover(task_id, release_files=True)` frees them explicitly; a plain `recover`
+refuses while they are retained. Only a harness death nobody observed this way
+(a socket loss, a vanished pid of a member this harness did not launch) is the
+conservative quarantine above; a socket loss alone never confirms a death.
+Neither idle time nor a worker's completion message frees a slot.
 
 ## Packaged API
 
