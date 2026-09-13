@@ -166,7 +166,11 @@ fn whole_crate_dependency_direction_holds() {
 /// Pure teardown domain: no trait carrying I/O, no async, no process, socket
 /// or runtime types in the lifecycle/teardown domain modules. Whole-crate,
 /// the legacy domain files that still hold ports or tokio types are an exact
-/// baseline that may only shrink.
+/// baseline that may only shrink. #1940 moved the teardown-related ports out
+/// (`SubagentLaunchPorts` → `application::subagent_launch`; `ProcessControl`,
+/// `ProcessObservation`, `Clock`, `SwarmLifecycle` → `application::swarm`);
+/// what remains is owned by **#1960** (part of the #1666 clean-architecture
+/// epic), one file per row below, and nothing else may join.
 #[test]
 fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let impure = [
@@ -178,20 +182,36 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "async fn",
         "Pin<Box<dyn Future",
     ];
+    // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/agent.rs",
-        "src/domain/audit.rs",
-        "src/domain/extension.rs",
-        "src/domain/extension_tool.rs",
-        "src/domain/provider.rs",
-        "src/domain/request_observation.rs",
-        "src/domain/session.rs",
-        "src/domain/subagent_launch.rs",
-        "src/domain/swarm.rs",
-        "src/domain/tool.rs",
+        "src/domain/agent.rs",               // #1960: AgentLoop
+        "src/domain/audit.rs",               // #1960: AuditSink
+        "src/domain/extension.rs",           // #1960: Extension
+        "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
+        "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission
+        "src/domain/request_observation.rs", // #1960: RequestAccounting
+        "src/domain/session.rs",             // #1960: SessionStore, ContextSpillStore
+        "src/domain/subagent_launch.rs",     // #1960: LaunchFuture alias
+        "src/domain/swarm.rs",               // #1960: CoordinationPort, SwarmRunControl
+        "src/domain/tool.rs",                // #1960: Tool, ToolGuard, ToolCatalog, …
     ]
     .into_iter()
     .collect();
+    // The ports #1940 moved out must not come back.
+    for (file, retired_port) in [
+        ("src/domain/subagent_launch.rs", "trait SubagentLaunchPorts"),
+        ("src/domain/swarm.rs", "trait ProcessControl"),
+        ("src/domain/swarm.rs", "trait ProcessObservation"),
+        ("src/domain/swarm.rs", "trait Clock"),
+        ("src/domain/swarm.rs", "trait SwarmLifecycle"),
+    ] {
+        assert!(
+            !production_code(file)
+                .iter()
+                .any(|(_, l)| l.contains(retired_port)),
+            "{file} re-declares `{retired_port}`, which #1940 moved to the application"
+        );
+    }
     let mut files = Vec::new();
     walk(Path::new("src/domain"), &mut files);
     let mut legacy_seen = BTreeSet::new();

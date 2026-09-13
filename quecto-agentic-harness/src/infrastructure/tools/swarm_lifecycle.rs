@@ -1,11 +1,9 @@
 //! Linux process and UDS adapters for the swarm lifecycle use cases.
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
+use crate::application::swarm::{ProcessControl, ProcessObservation};
 use crate::domain::error::DomainError;
 use crate::domain::subagent_launch::LaunchFuture;
-use crate::domain::swarm::{
-    CoordinationPort, Member, MemberStatus, ProcessControl, ProcessIdentity, ProcessObservation,
-    RunStatus,
-};
+use crate::domain::swarm::{CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus};
 use serde_json::{Value, json};
 
 /// Join the container's coordination store; returns whether this container
@@ -262,7 +260,7 @@ pub fn supervise(
 }
 
 struct SystemClock;
-impl crate::domain::swarm::Clock for SystemClock {
+impl crate::application::swarm::Clock for SystemClock {
     fn now_seconds(&self) -> f64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

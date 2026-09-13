@@ -115,25 +115,28 @@ descendant pid the suite ever targeted would receive the signal there.
 
 - **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
 - **Image:** `quecto-box:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
-- **Command:**
+- **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2
+  wrapper `scripts/bdd-in-box/pid2_signal_log.py`), which runs exactly:
 
   ```bash
-  podman run --rm --init --name q1940-proof \
+  podman run --rm --init --name quecto-bdd-in-box \
     --userns=keep-id --pids-limit 16384 --user 1000:1000 \
-    -v <worktree>:/src -v q1940-target:/tmp/target \
-    -v /var/tmp/q1940/proof/home:/home/dev -v /var/tmp/q1940/proof/pid2_wrapper.py:/pid2_wrapper.py:ro \
+    -v <repo>:/src -v quecto-bdd-in-box-target:/tmp/target \
+    -v <scratch>/home:/home/dev -v scripts/bdd-in-box/pid2_signal_log.py:/pid2_signal_log.py:ro \
     -e CARGO_TARGET_DIR=/tmp/target -e HOME=/home/dev -e TMPDIR=/home/dev/tmp \
     -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log -e RUST_LOG=warn -w /src \
-    quecto-box:local python3 /pid2_wrapper.py \
-    bash -c 'for i in 0 1 2 3; do QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
-      cargo test -p quecto-agentic-harness --features test-support --test bdd || exit 1; done'
+    quecto-box:local python3 /pid2_signal_log.py \
+    bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
+      QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
+      cargo test -p quecto-agentic-harness --features test-support --test bdd || status=1; done; exit $status'
   ```
 
   The suite runs as four sequential shards (one `bdd` process each) under
   the same pid 2 because one process running all ~1600 scenarios exhausts the
   container's 16384-pid cgroup: the BDD steps leak forgotten tokio runtimes
   (`std::mem::forget(runtime)`, 128 sites), ~19 threads per scenario, and a
-  single-process run stalled at 16378 threads with `Cannot fork`.
+  single-process run stalled at 16378 threads with `Cannot fork` — tracked
+  by #1959, whose close re-runs the proof as one process.
 - **Log:** `/var/tmp/q1940/proof/final-run.log` (10 700 lines) and
   `/var/tmp/q1940/proof/final-pid2-signals.log` on the machine that ran it.
 - **Counts:** 4 shards, **1609 scenarios passed, 0 failed** (393 + 376 + 394

@@ -351,7 +351,8 @@ impl SpawnTool {
     #[doc(hidden)]
     pub fn launch_ports_for_contract(
         &self,
-    ) -> impl crate::domain::subagent_launch::SubagentLaunchPorts<Prepared: Send> + Send + '_ {
+    ) -> impl crate::application::subagent_launch::SubagentLaunchPorts<Prepared: Send> + Send + '_
+    {
         super::spawn_launch_ports::SpawnLaunchPorts::new(self)
     }
 

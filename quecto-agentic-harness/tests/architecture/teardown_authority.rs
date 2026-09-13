@@ -8,27 +8,167 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-/// Production source: everything before the first `#[cfg(test)]`, with
-/// comment-only lines dropped so a doc comment naming `kill(2)` is not an
-/// effect.
+/// Production lines of a source file, numbered: every `#[cfg(test)]`-gated
+/// ITEM is removed — the attribute, any attributes that follow it, and the
+/// one item they gate (a `;`-terminated `use`/`mod x;`, or a braced item
+/// such as `mod tests { … }` / `fn`, to its matching close brace) — and
+/// comment-only lines are dropped so a doc comment naming `kill(2)` is not
+/// an effect. Nothing else is cut: an early `#[cfg(test)] use …` no longer
+/// hides the rest of the file (review of #1940).
 pub(super) fn production_code(path: &str) -> Vec<(usize, String)> {
     let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    // Cut at the first module-level `#[cfg(test)]` (column 0); an indented
-    // one gates a single field or item, not the rest of the file.
-    let cut = source
-        .lines()
-        .position(|line| line == "#[cfg(test)]")
-        .unwrap_or(usize::MAX);
-    source
-        .lines()
-        .take(cut)
-        .enumerate()
-        .map(|(i, line)| (i + 1, line.to_string()))
+    strip_test_items(&source)
+        .into_iter()
         .filter(|(_, line)| {
             let trimmed = line.trim_start();
             !(trimmed.starts_with("//") || trimmed.is_empty())
         })
         .collect()
+}
+
+/// [`production_code`] joined back into one string (comments kept), for the
+/// substring ratchets of `tests/architecture.rs`.
+pub(super) fn production_source(path: &str) -> String {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    strip_test_items(&source)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Brace delta of one line with string and char literals blanked, so a
+/// `"{"` inside a format string does not open an item.
+fn brace_delta(line: &str) -> i64 {
+    let mut delta = 0i64;
+    let mut chars = line.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if in_string => {
+                chars.next();
+            }
+            '"' => in_string = !in_string,
+            '\'' if !in_string => {
+                // A char literal (`'{'`) or a lifetime (`'a`): skip a quoted
+                // single char, leave lifetimes alone.
+                let mut ahead = chars.clone();
+                if let (Some(_), Some('\'')) = (ahead.next(), ahead.next()) {
+                    chars.next();
+                    chars.next();
+                }
+            }
+            '{' if !in_string => delta += 1,
+            '}' if !in_string => delta -= 1,
+            _ => {}
+        }
+    }
+    delta
+}
+
+/// Remove every `#[cfg(test)]`-gated item; keeps the original line numbers.
+pub(super) fn strip_test_items(source: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() != "#[cfg(test)]" {
+            out.push((i + 1, lines[i].to_string()));
+            i += 1;
+            continue;
+        }
+        // Skip the attribute run, then the one item it gates.
+        let mut j = i + 1;
+        while j < lines.len() && lines[j].trim_start().starts_with("#[") {
+            j += 1;
+        }
+        let mut depth = 0i64;
+        let mut opened = false;
+        while j < lines.len() {
+            let line = lines[j];
+            let delta = brace_delta(line);
+            if delta != 0 || line.contains('{') {
+                opened = true;
+            }
+            depth += delta;
+            j += 1;
+            if opened && depth <= 0 {
+                break;
+            }
+            if !opened && line.trim_end().ends_with(';') {
+                break;
+            }
+        }
+        i = j;
+    }
+    out
+}
+
+#[test]
+fn strip_test_items_removes_only_gated_items() {
+    let source = "\
+#[cfg(test)]
+use x::y;
+pub fn keep() {}
+#[cfg(test)]
+#[path = \"t.rs\"]
+mod tests;
+fn also_kept() { let s = \"{\"; }
+#[cfg(test)]
+mod inline {
+    fn hidden() { libc::kill(1, 9); }
+}
+fn last() {}
+";
+    let kept: Vec<String> = strip_test_items(source)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(
+        kept,
+        vec![
+            "pub fn keep() {}",
+            "fn also_kept() { let s = \"{\"; }",
+            "fn last() {}",
+        ]
+    );
+    let numbers: Vec<usize> = strip_test_items(source)
+        .into_iter()
+        .map(|(number, _)| number)
+        .collect();
+    assert_eq!(numbers, vec![3, 7, 12]);
+}
+
+/// The scan really reaches the whole file: the files whose first
+/// `#[cfg(test)]` gates an early `use` are read to their production end.
+#[test]
+fn production_code_reads_past_an_early_cfg_test_use() {
+    for (path, needle) in [
+        ("src/infrastructure/tools/spawn.rs", "pub fn with_base_dir"),
+        (
+            "src/infrastructure/tools/subagent_registry.rs",
+            "pub fn with_identity",
+        ),
+        (
+            "src/infrastructure/tools/subagent_monitor.rs",
+            "pub fn spawn_monitor_task",
+        ),
+        (
+            "src/infrastructure/tools/bash/mod.rs",
+            "libc::kill(-(pid as libc::pid_t), libc::SIGKILL)",
+        ),
+        (
+            "src/interface/cli/uds_multi.rs",
+            "async fn handle_disconnect(",
+        ),
+    ] {
+        assert!(
+            production_code(path)
+                .iter()
+                .any(|(_, line)| line.contains(needle)),
+            "{path}: `{needle}` must be visible to the scan"
+        );
+    }
 }
 
 pub(super) fn walk(dir: &Path, out: &mut Vec<String>) {
@@ -73,9 +213,27 @@ fn matches(line: &str, pattern: &str) -> bool {
 }
 
 /// The vocabulary of a process effect or of process-identity authority.
+///
+/// Known evasions this textual scan does NOT catch (documented, review of
+/// #1940): a raw `libc::syscall(libc::SYS_kill, …)` / `SYS_tgkill` (the
+/// constant names are listed below, a numeric syscall id is not),
+/// `pthread_kill`/`tgkill` (listed), shelling out (`pkill`, `killall`,
+/// `kill` inside a `sh -c` string — only the literal `"pkill"`/`"killall"`
+/// and `Command::new("kill")` forms are listed), a helper copied under a
+/// different name that wraps one of these (its call site is caught only if
+/// the helper's own file is outside the allowlist), and `procfs`-style
+/// crates reading `/proc` through a library. The retired-name sweep, the
+/// no-pid files and the single-owner list are the other legs of the
+/// ratchet; a new signalling mechanism must add its file here on purpose.
 const PROCESS_EFFECT_PATTERNS: &[&str] = &[
     "libc::kill",
     "kill(",
+    "SYS_kill",
+    "SYS_tgkill",
+    "tgkill",
+    "pthread_kill",
+    "\"pkill\"",
+    "killall",
     "Command::new(\"kill\")",
     "start_kill",
     "kill_on_drop",
@@ -494,80 +652,109 @@ const SINGLE_OWNERS: &[(&str, &str, &str)] = &[
     (
         "direct unreaped Child handle and TERM/KILL fallback",
         "src/infrastructure/processes/owned_child_supervisor.rs",
-        "pub struct OwnedChildSupervisor",
+        "struct OwnedChildSupervisor",
     ),
     (
         "selected termination (agent_cmd kill, forwarded terminate_delegated_agent)",
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
-        "pub struct KillDelegatedAgent",
+        "struct KillDelegatedAgent",
     ),
     (
         "owner conclusion of a selected direct child",
         "src/application/subagents/use_cases/terminate_delegated_agent.rs",
-        "pub struct TerminateDelegatedAgent",
+        "struct TerminateDelegatedAgent",
     ),
     (
         "whole-fleet teardown (delete-all, signals, last client, session transitions, common shutdown)",
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
-        "pub struct TerminateAllDelegatedAgents",
+        "struct TerminateAllDelegatedAgents",
     ),
     (
         "per-child sweep settlement (fleet and environment kill)",
         "src/application/subagents/use_cases/settle_delegated_child.rs",
-        "pub struct SettleDelegatedChild",
+        "struct SettleDelegatedChild",
     ),
     (
         "common harness shutdown drive",
         "src/application/subagents/use_cases/harness_shutdown.rs",
-        "pub struct ExecuteHarnessShutdown",
+        "struct ExecuteHarnessShutdown",
     ),
     (
         "exit observation of an owned child",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
-        "pub struct ObserveOwnedChildExit",
+        "struct ObserveOwnedChildExit",
     ),
     (
         "launch rollback",
         "src/application/subagents/use_cases/compensate_failed_launch.rs",
-        "pub struct CompensateFailedLaunch",
+        "struct CompensateFailedLaunch",
     ),
     (
         "environment kill (kill_container)",
         "src/application/environments/use_cases/kill_environment.rs",
-        "pub struct KillEnvironment",
+        "struct KillEnvironment",
     ),
     (
         "environment member finalization and #1924 retention",
         "src/application/environments/use_cases/finalize_environment_member.rs",
-        "pub struct FinalizeEnvironmentMember",
+        "struct FinalizeEnvironmentMember",
     ),
     (
         "swarm member termination by delegation",
         "src/infrastructure/tools/swarm_member_termination.rs",
-        "pub struct DelegatedSwarmMemberTermination",
+        "struct DelegatedSwarmMemberTermination",
     ),
     (
         "registry claim ladder and compensation",
         "src/infrastructure/tools/subagent_teardown_registry.rs",
-        "pub struct RegistryDelegatedAgents",
+        "struct RegistryDelegatedAgents",
     ),
     (
         "child parent-loss binding",
         "src/interface/cli/uds_parent_control.rs",
-        "pub struct ConnectionTeardown",
+        "struct ConnectionTeardown",
     ),
 ];
 
-/// `line` declares exactly `declaration` (not a longer identifier).
+/// `line` declares exactly `declaration` (`struct X` / `enum X` / `fn X` /
+/// `trait X` / `type X`) under ANY visibility — `pub`, `pub(crate)`,
+/// `pub(super)`, `pub(in …)` or private — and not a longer identifier.
 fn declares(line: &str, declaration: &str) -> bool {
-    line.trim_start()
-        .strip_prefix(declaration)
-        .is_some_and(|rest| {
-            !rest
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
+    let mut rest = line.trim_start();
+    if let Some(after) = rest.strip_prefix("pub") {
+        rest = match after.strip_prefix('(') {
+            Some(scoped) => scoped.split_once(')').map(|(_, r)| r).unwrap_or(""),
+            None => after,
+        }
+        .trim_start();
+    }
+    rest.strip_prefix(declaration).is_some_and(|tail| {
+        !tail
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+#[test]
+fn declares_matches_every_visibility_and_only_exact_names() {
+    for line in [
+        "pub struct KillDelegatedAgent {",
+        "pub(crate) struct KillDelegatedAgent {",
+        "pub(super) struct KillDelegatedAgent<'a> {",
+        "pub(in crate::x) struct KillDelegatedAgent;",
+        "    struct KillDelegatedAgent {",
+    ] {
+        assert!(declares(line, "struct KillDelegatedAgent"), "{line}");
+    }
+    assert!(!declares(
+        "pub struct KillDelegatedAgentTool {",
+        "struct KillDelegatedAgent"
+    ));
+    assert!(!declares(
+        "pub enum KillDelegatedAgent {",
+        "struct KillDelegatedAgent"
+    ));
 }
 
 #[test]

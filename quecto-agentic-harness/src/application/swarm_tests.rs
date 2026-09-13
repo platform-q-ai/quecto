@@ -123,7 +123,7 @@ async fn active_runs_have_no_settlement_effects() {
 }
 
 struct Time(f64);
-impl crate::domain::swarm::Clock for Time {
+impl crate::application::swarm::Clock for Time {
     fn now_seconds(&self) -> f64 {
         self.0
     }

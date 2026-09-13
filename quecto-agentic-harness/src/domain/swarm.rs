@@ -155,46 +155,6 @@ pub trait CoordinationPort {
     fn quarantine(&self, member: &str) -> Result<(), DomainError>;
 }
 
-pub trait ProcessObservation {
-    fn harness_dead(&self, process: &ProcessIdentity) -> bool;
-}
-
-pub trait ProcessControl: Sync {
-    /// Cancel this member's detached execution registry independently of turn abort.
-    fn cancel_local_executions(&self);
-    /// Cancel current jobs while retaining admission for a later resume.
-    fn suspend_local_executions(&self, snapshot: &Snapshot);
-    /// Suspend only this process; never signal a future turn or another member.
-    fn suspend_local_inference(&self, snapshot: &Snapshot);
-    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
-    /// End the member's harness by delegation (#1939): the shutdown protocol
-    /// over the endpoint it registered, the locally owned handle only when
-    /// this harness launched it. The member's `ProcessIdentity` is an
-    /// observation for liveness, never an authority to signal; a member
-    /// reachable neither way is reported failed, not signalled.
-    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>>;
-}
-
-pub trait Clock {
-    fn now_seconds(&self) -> f64;
-}
-
-/// Application lifecycle entrypoint, injected by the composition root.
-pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
-    fn reconcile(
-        &self,
-        coordination: &dyn CoordinationPort,
-        processes: &dyn ProcessObservation,
-    ) -> Result<Snapshot, DomainError>;
-    fn settle<'a>(
-        &'a self,
-        snapshot: &'a Snapshot,
-        actor: &'a str,
-        processes: &'a dyn ProcessControl,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>;
-    fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
-}
-
 #[derive(Clone, Debug)]
 pub enum RunControlAction {
     Wake {

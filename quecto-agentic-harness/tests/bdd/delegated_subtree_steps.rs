@@ -26,6 +26,8 @@ pub(crate) struct DelegatedSubtreeState {
     config_path: Option<PathBuf>,
     /// Registry key and pid of every observed row, by display label.
     observed: std::collections::HashMap<String, (String, u32)>,
+    /// The `--socket` path each observed process really serves.
+    sockets: std::collections::HashMap<String, PathBuf>,
     kill_result: Option<serde_json::Value>,
     /// `RUST_LOG` before the scenario raised it for the launched tree.
     previous_rust_log: Option<Option<std::ffi::OsString>>,
@@ -239,6 +241,9 @@ fn observe(world: &mut QuectoWorld, display: &str) -> (String, u32) {
                 pid_serving_row(&key)
             };
             if let Some(pid) = pid.filter(|pid| *pid != 0) {
+                let socket = socket_path_of(pid)
+                    .unwrap_or_else(|| panic!("{display} ({pid}) has no --socket argument"));
+                s.sockets.insert(display.to_string(), socket);
                 s.observed.insert(display.to_string(), (key.clone(), pid));
                 return (key, pid);
             }
@@ -330,43 +335,39 @@ fn then_gone(world: &mut QuectoWorld, child: String, grandchild: String, seconds
     }
 }
 
-#[then(expr = "the grandchild {string} exited gracefully leaving no socket")]
-fn then_graceful(world: &mut QuectoWorld, grandchild: String) {
-    let key = state(world).observed[&grandchild].0.clone();
-    let needle = format!("quecto-agent-{key}.sock");
-    let sockets = std::env::var("QUECTO_BASE_DIR").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let mut leftover = Vec::new();
-        for entry in walkdir(&PathBuf::from(&sockets)) {
-            if entry.to_string_lossy().ends_with(&needle) {
-                leftover.push(entry);
-            }
-        }
-        if leftover.is_empty() {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "a SIGKILLed or unreached grandchild leaves its socket behind: {leftover:?}"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+/// The `--socket <path>` argument of a live `quecto` process: the real path
+/// its UDS server binds, read from `/proc` rather than assumed from any
+/// directory convention (the child harness picks `$XDG_RUNTIME_DIR` or the
+/// temp dir on its own).
+fn socket_path_of(pid: u32) -> Option<PathBuf> {
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<&[u8]> = cmdline.split(|b| *b == 0).collect();
+    args.windows(2)
+        .find(|pair| pair[0] == b"--socket")
+        .map(|pair| PathBuf::from(String::from_utf8_lossy(pair[1]).into_owned()))
 }
 
-fn walkdir(dir: &PathBuf) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                out.extend(walkdir(&path));
-            } else {
-                out.push(path);
-            }
-        }
+#[then(expr = "the grandchild {string} exited gracefully leaving no socket")]
+fn then_graceful(world: &mut QuectoWorld, grandchild: String) {
+    let socket = state(world)
+        .sockets
+        .get(&grandchild)
+        .cloned()
+        .unwrap_or_else(|| panic!("the socket path of {grandchild} was never observed"));
+    assert!(
+        socket.is_absolute() && socket.file_name().is_some(),
+        "an observed socket path is a real file path: {}",
+        socket.display()
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while socket.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
     }
-    out
+    assert!(
+        !socket.exists(),
+        "a SIGKILLed or unreached grandchild leaves its socket behind: {}",
+        socket.display()
+    );
 }
 
 #[then(expr = "every root row for {string} and {string} is exited")]
