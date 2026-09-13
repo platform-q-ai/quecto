@@ -1048,13 +1048,14 @@ fn kill_result_json(world: &QuectoWorld) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("kill_container result is JSON: {e}: {}", r.content))
 }
 
-/// A member asked AFTER its sibling settled may truthfully have ended
-/// already — under a loaded runner the sibling's settlement takes seconds
-/// and the member's own turn or lifetime can end meanwhile — so the kill
-/// reports it `already-exited` rather than `graceful`. Either is a settled
-/// end; the property under test (every member settled before the retained
-/// kill runs exactly once, with no live member) is asserted by the steps
-/// that follow. An `already-exited` member must really be an exited row.
+/// Any member, asked in any order, may truthfully have ended already when
+/// the delegated shutdown reaches it — under a loaded runner (24 CI shards)
+/// a member's own turn or lifetime ends in the seconds a settlement takes —
+/// so the kill reports it `already-exited` rather than `graceful`. Either is
+/// a settled end; the properties under test (every member settled exactly
+/// once before the retained kill runs exactly once — or is withheld — with
+/// no live member, and the final listing) are asserted by the steps that
+/// follow. An `already-exited` member must really be an exited row.
 #[then(expr = "the kill result should report member {string} settled gracefully or already gone")]
 fn then_kill_result_member_settled_or_gone(world: &mut QuectoWorld, agent_id: String) {
     let parsed = kill_result_json(world);
@@ -1125,6 +1126,44 @@ fn then_kill_result_member_settled(world: &mut QuectoWorld, agent_id: String, re
         .find(|entry| entry["agent"] == uuid)
         .unwrap_or_else(|| panic!("member {agent_id} ({uuid}) is not listed as settled: {parsed}"));
     assert_eq!(entry["result"], result, "{parsed}");
+}
+
+/// The kill's `settled` list names exactly these members (comma separated
+/// display names), each exactly once: every member was asked once and
+/// nothing else was.
+#[then(expr = "the kill result should settle exactly the members {string} once each")]
+fn then_kill_result_settles_exactly(world: &mut QuectoWorld, members: String) {
+    let parsed = kill_result_json(world);
+    let expected: Vec<String> = members
+        .split(',')
+        .map(|name| {
+            let name = name.trim();
+            world
+                .agent_cmd_registry
+                .as_ref()
+                .and_then(|registry| {
+                    let entries = registry.lock().unwrap();
+                    entries
+                        .values()
+                        .find(|entry| entry.display_name == name)
+                        .map(|entry| entry.agent_uuid.as_str().to_owned())
+                })
+                .unwrap_or_else(|| panic!("member {name} has no registry row: {parsed}"))
+        })
+        .collect();
+    let mut settled: Vec<String> = parsed["settled"]
+        .as_array()
+        .unwrap_or_else(|| panic!("kill result carries `settled`: {parsed}"))
+        .iter()
+        .map(|entry| entry["agent"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    let mut wanted = expected.clone();
+    settled.sort();
+    wanted.sort();
+    assert_eq!(
+        settled, wanted,
+        "every member is settled exactly once and nothing else is: {parsed}"
+    );
 }
 
 #[then(expr = "the retained kill should have found {int} live member(s)")]
