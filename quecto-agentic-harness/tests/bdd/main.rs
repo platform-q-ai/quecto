@@ -3,13 +3,14 @@
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::session::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
+use quecto::domain::session::Session;
 use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,

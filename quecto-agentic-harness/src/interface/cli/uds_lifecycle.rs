@@ -6,8 +6,9 @@ use super::uds_multi::MultiClientArgs;
 mod uds_session_load;
 use super::uds_session::AgentSession;
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use uds_session_load::load_session;
 

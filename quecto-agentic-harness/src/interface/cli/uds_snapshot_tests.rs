@@ -132,7 +132,7 @@ pub(super) struct BlockingSpillStore {
     pub(super) release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
-impl crate::domain::session::ContextSpillStore for BlockingSpillStore {
+impl crate::application::session::ports::ContextSpillStore for BlockingSpillStore {
     fn append(
         &self,
         _session_key: &str,

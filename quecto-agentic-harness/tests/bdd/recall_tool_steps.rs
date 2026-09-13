@@ -1,5 +1,6 @@
 use super::*;
-use quecto::domain::session::{SpillEntry, SpillIndex, SpillIndexList};
+use quecto::application::session::ports::SpillIndexList;
+use quecto::domain::session::{SpillEntry, SpillIndex};
 use quecto::infrastructure::tools::recall::RecallTool;
 
 #[derive(Debug, Default)]

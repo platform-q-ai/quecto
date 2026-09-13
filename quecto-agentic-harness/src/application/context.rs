@@ -21,8 +21,9 @@
 //!   and physical drops.
 
 use crate::application::context_pruning;
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
 

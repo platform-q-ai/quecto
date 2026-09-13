@@ -4,8 +4,8 @@ use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
     messages_page_json,
 };
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role, ThinkingBlock};
-use crate::domain::session::ContextSpillStore;
 use std::collections::VecDeque;
 use std::sync::Arc;
 pub(super) fn is_injected_system_prompt(message: &Message, prompt: &str) -> bool {

@@ -49,7 +49,10 @@ impl ContextSpillStore for MemStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> crate::application::session::ports::SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()

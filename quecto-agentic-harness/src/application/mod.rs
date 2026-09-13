@@ -15,6 +15,7 @@ pub mod extensions;
 pub mod ports;
 pub mod provider_runtime;
 mod request_observation;
+pub mod session;
 pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]

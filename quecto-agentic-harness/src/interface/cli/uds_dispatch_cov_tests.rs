@@ -4,9 +4,10 @@ use super::{
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::session::ports::{ContextSpillStore, SessionStore};
 use crate::application::tools::ports::Tool;
 use crate::domain::message::Message;
-use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use crate::domain::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};

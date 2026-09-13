@@ -1,5 +1,6 @@
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;
 

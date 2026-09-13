@@ -1,5 +1,6 @@
 use super::dispatch_test_env::DispatchTestEnv;
-use crate::domain::session::{Session, SessionStore};
+use crate::application::session::ports::SessionStore;
+use crate::domain::session::Session;
 
 fn persisted_feature_run(done: Vec<bool>) -> crate::domain::workflow::WorkflowRunPersisted {
     crate::domain::workflow::WorkflowRunPersisted {

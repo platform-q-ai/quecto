@@ -614,7 +614,8 @@ async fn forward_get_message_unknown_agent_is_error_event() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
-    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::{Session, SubagentLiveness};
 
     let registry = new_registry();
     {
@@ -657,7 +658,8 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_omitted() {
-    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::{Session, SubagentLiveness};
     use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
 
     let registry = new_registry();

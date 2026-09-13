@@ -34,10 +34,8 @@ async fn raw_report_export_preserves_content_without_consuming_cursor() {
 
 mod export_control_tests {
     use super::*;
-    use crate::domain::{
-        error::DomainError,
-        session::{ContextSpillStore, SpillEntry, SpillIndexList},
-    };
+    use crate::application::session::ports::{ContextSpillStore, SpillIndexList};
+    use crate::domain::{error::DomainError, session::SpillEntry};
     use std::{future::Future, pin::Pin, sync::Arc};
     struct SlowExportStore;
     impl ContextSpillStore for SlowExportStore {
@@ -140,9 +138,10 @@ async fn asynchronous_export_returns_correlated_artifact_or_storage_error() {
 
 mod unavailable_spill {
     use super::*;
+    use crate::application::session::ports::{ContextSpillStore, SpillIndexList};
     use crate::domain::{
         error::DomainError,
-        session::{ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList},
+        session::{SpillEntry, SpillIndex},
     };
     use std::{future::Future, pin::Pin, sync::Arc};
     struct Store(&'static str);

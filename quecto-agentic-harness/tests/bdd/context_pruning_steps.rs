@@ -3,7 +3,8 @@ use std::sync::Arc;
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
 use quecto::application::context_pruning;
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use quecto::application::session::ports::{ContextSpillStore, SessionStore};
+use quecto::domain::session::{Session, SpillEntry, SpillIndex};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 
 // ===========================================================================

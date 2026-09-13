@@ -204,7 +204,7 @@ async fn legacy_session_on_disk(
     key: &str,
     rows: serde_json::Value,
 ) -> crate::domain::session::Session {
-    use crate::domain::session::SessionStore;
+    use crate::application::session::ports::SessionStore;
     let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(dir);
     let path = dir.join("sessions").join(format!(
         "{}.json",

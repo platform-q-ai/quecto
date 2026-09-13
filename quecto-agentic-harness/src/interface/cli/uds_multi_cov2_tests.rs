@@ -1,10 +1,10 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::session::ports::SessionStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::domain::session::SessionStore;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;

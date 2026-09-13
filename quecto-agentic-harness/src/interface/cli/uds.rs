@@ -17,10 +17,11 @@ use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 use crate::domain::workflow::WorkflowRunPersisted;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<

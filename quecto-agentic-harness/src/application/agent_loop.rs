@@ -7,6 +7,7 @@ pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
+use crate::application::session::ports::ContextSpillStore;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
@@ -16,7 +17,6 @@ use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::provider_error::classify_provider_error;
-use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolProfileContext;
 use std::pin::Pin;
 use std::sync::Arc;

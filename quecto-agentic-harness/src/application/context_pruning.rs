@@ -16,8 +16,8 @@
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
 
+use crate::application::session::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::ContextSpillStore;
 
 /// Sentinel value indicating that tool-result collapse is disabled.
 /// When `context_collapse_after_tool_calls` is set to this value, collapse is

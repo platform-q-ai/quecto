@@ -399,7 +399,8 @@ fn wait_gone(pid: u32, what: &str) {
 
 /// The persisted session of `session` carries no live operational child.
 fn assert_no_live_child_persisted(fixture: &Fixture, session: &str) {
-    use quecto::domain::session::{Session, SessionStore, SubagentLiveness};
+    use quecto::application::session::ports::SessionStore;
+    use quecto::domain::session::{Session, SubagentLiveness};
     let store =
         quecto::infrastructure::persistence::session_store::FileSessionStore::new(&fixture.base);
     let key = Session::build_key("cli", session);

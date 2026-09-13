@@ -9,10 +9,11 @@
 use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::session::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
+use quecto::domain::session::Session;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;

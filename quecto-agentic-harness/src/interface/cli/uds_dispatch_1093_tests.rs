@@ -1,6 +1,7 @@
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::session::ports::{ContextSpillStore, SessionStore};
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use crate::domain::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool::ToolProfileContext;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};

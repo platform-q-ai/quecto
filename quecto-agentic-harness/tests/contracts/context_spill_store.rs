@@ -4,7 +4,8 @@
 //! append → recall returns the same entry, list_entries reflects all appends,
 //! clear truncates to empty.
 
-use quecto::domain::session::{ContextSpillStore, SpillEntry};
+use quecto::application::session::ports::ContextSpillStore;
+use quecto::domain::session::SpillEntry;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use std::sync::Arc;
 

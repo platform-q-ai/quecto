@@ -7,8 +7,9 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::session::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 
 use super::protocol::AgentEvent;
 use super::uds::uds_dispatch_session;

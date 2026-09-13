@@ -4,8 +4,9 @@
 //! `FileSessionStore` (the production adapter) through a trait object so the
 //! tests can't accidentally depend on adapter-specific surface.
 
+use quecto::application::session::ports::SessionStore;
 use quecto::domain::message::Message;
-use quecto::domain::session::{Session, SessionStore};
+use quecto::domain::session::Session;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use std::sync::Arc;
 

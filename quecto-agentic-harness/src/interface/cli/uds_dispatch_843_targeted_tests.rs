@@ -281,7 +281,8 @@ async fn forward_get_message_rejects_malformed_child_response() {
 
 #[tokio::test]
 async fn forward_get_messages_rejects_stale_historical_before_cursor() {
-    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+    use crate::application::session::ports::SessionStore;
+    use crate::domain::session::{Session, SubagentLiveness};
 
     let registry = new_registry();
     {
