@@ -21,11 +21,14 @@ Feature: A subtree ends by delegation and parent-loss, never by a pid from the r
     And the supervisor sent no signals to "aye"
     And every root row for "aye" and "grand" is exited
 
+  # The grandchild ends through its lifetime binding either way: the loss of
+  # its bound parent connection, or — when the SIGKILL lands before A's
+  # monitor bound it — the 30 s bind deadline. The bound covers both.
   Scenario: SIGKILL of the intermediate child ends its grandchild by parent loss
     When the root spawns child "aye" with task "SPAWN_ONE"
     Then child "aye" reports grandchild "grand" with a launch generation and no pid
     When the process of child "aye" is SIGKILLed behind the root's back
-    Then the processes of "aye" and its grandchild "grand" are gone within 30 seconds
+    Then the processes of "aye" and its grandchild "grand" are gone within 60 seconds
     And the grandchild "grand" exited gracefully leaving no socket
     And the supervisor sent no signals to "aye"
     And every root row for "aye" and "grand" is exited

@@ -30,9 +30,8 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 
 ## Ending children
 
-- `agent_cmd kill` (target by UUID) asks the child to shut down over its control connection; the child settles its own children the same way, persists and exits. A grandchild is reached through its parent, never directly. Result: `graceful`, `fallback` (a directly owned child that had to be TERM/KILLed after not exiting) or `already-exited`; a refusal names why (`unknown_target`, `already_exited`, `rejected`, `unreachable`, `failed`). A kill of an idle child returns in milliseconds; worst case ≈ 19 s for a direct child, up to 30 s per hop for a nested one.
-- `delete_all_subagents` (UDS) ends every direct child the same way. Children also end on their own when their launching harness exits or loses its connection to them — you never need to clean up after a parent that died.
-- Restore is history only: after `resume_session` old children are gone; re-spawn what you need.
+- `agent_cmd kill` (by UUID) asks the child to shut down over its control connection; it settles its own children the same way. Result `graceful` / `fallback` / `already-exited`; an idle child ends in milliseconds, worst case ≈ 19 s.
+- Children end with their launcher. Restore is history only: re-spawn what you need.
 
 ## Container spawning (named container configs)
 
