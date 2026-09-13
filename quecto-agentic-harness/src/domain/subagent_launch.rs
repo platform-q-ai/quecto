@@ -1,16 +1,13 @@
 //! Pure launch vocabulary for subagent launch transactions.
 //!
 //! Per ADR-0021 the domain owns launch intent/result identities only. The
-//! launch port (`SubagentLaunchPorts`) is the application's
-//! (`application::subagent_launch`, #1940); every side effect (process
-//! construction, sockets, script execution, JSON contract parsing) lives
-//! behind its implementations in infrastructure.
+//! launch port (`SubagentLaunchPorts`) and its boxed-future alias
+//! (`LaunchFuture`) are the application's (`application::subagent_launch`,
+//! #1940, #1960); every side effect (process construction, sockets, script
+//! execution, JSON contract parsing) lives behind its implementations in
+//! infrastructure.
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
-
-pub type LaunchFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Typed parent-side endpoint for reaching a launched child (#1369 slice 3).
 ///

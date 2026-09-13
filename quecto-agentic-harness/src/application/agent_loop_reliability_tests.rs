@@ -102,7 +102,7 @@ impl crate::application::providers::ports::RequestAccounting for RetryAccounting
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             let mut records = self.records.lock().unwrap();
             records.push(observation.request_id.clone());
@@ -144,7 +144,7 @@ impl crate::application::providers::ports::RequestAccounting for RejectingAccoun
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             self.records
                 .lock()

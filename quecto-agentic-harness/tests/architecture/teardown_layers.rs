@@ -252,6 +252,11 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     ),
     ("src/domain/swarm.rs", "trait CoordinationPort", SWARM_PORTS),
     ("src/domain/swarm.rs", "trait SwarmRunControl", SWARM_PORTS),
+    (
+        "src/domain/subagent_launch.rs",
+        "type LaunchFuture",
+        "src/application/subagent_launch.rs",
+    ),
 ];
 
 const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
@@ -275,11 +280,9 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "Pin<Box<dyn Future",
     ];
     // (file, what keeps it here — tracked by #1960)
-    let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/subagent_launch.rs", // #1960: LaunchFuture alias
-    ]
-    .into_iter()
-    .collect();
+    // Empty since #1960: every legacy port and async alias has left the
+    // domain. A file may only be added here by widening the epic's scope.
+    let legacy_baseline: BTreeSet<&str> = BTreeSet::new();
     // The ports #1940 and #1960 moved out must not come back, and each one
     // is declared in its capability-local ports file and nowhere else.
     for (file, retired_port, new_home) in RETIRED_DOMAIN_PORTS {

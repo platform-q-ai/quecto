@@ -7,7 +7,7 @@ impl SwarmRunControl for Control {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -152,7 +152,7 @@ impl SwarmRunControl for RunningAt {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -241,7 +241,7 @@ impl SwarmRunControl for Answer {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -716,7 +716,7 @@ impl SwarmRunControl for Rising {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {

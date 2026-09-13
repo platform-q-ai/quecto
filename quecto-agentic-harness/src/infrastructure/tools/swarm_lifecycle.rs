@@ -1,9 +1,9 @@
 //! Linux process and UDS adapters for the swarm lifecycle use cases.
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
 use crate::application::swarm::ports::CoordinationPort;
+use crate::application::swarm::ports::PortFuture;
 use crate::application::swarm::ports::{ProcessControl, ProcessObservation};
 use crate::domain::error::DomainError;
-use crate::domain::subagent_launch::LaunchFuture;
 use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus};
 use serde_json::{Value, json};
 
@@ -147,7 +147,7 @@ impl ProcessControl for RuntimeProcesses<'_> {
     fn cancel_local_executions(&self) {
         super::swarm::cancel_context_jobs(self.0);
     }
-    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool> {
+    fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async move {
             let Some(socket) = &member.endpoint else {
                 return false;
@@ -165,7 +165,7 @@ impl ProcessControl for RuntimeProcesses<'_> {
     /// delegated-agent graph bound by composition when this harness
     /// launched the member, over its registered endpoint otherwise. Never
     /// a pid.
-    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
+    fn terminate<'a>(&'a self, member: &'a Member) -> PortFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             match MEMBER_TERMINATION.get() {
                 Some(termination) => termination.terminate(member).await,
@@ -285,7 +285,7 @@ impl crate::application::swarm::ports::Clock for SystemClock {
 }
 
 impl crate::application::providers::ports::RequestAdmission for SwarmContext {
-    fn check(&self) -> LaunchFuture<'_, Result<(), DomainError>> {
+    fn check(&self) -> PortFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();
         Box::pin(async move {
@@ -317,7 +317,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     fn apply(
         &self,
         action: crate::domain::swarm::RunControlAction,
-    ) -> LaunchFuture<'_, Result<crate::domain::swarm::RunControlReceipt, DomainError>> {
+    ) -> PortFuture<'_, Result<crate::domain::swarm::RunControlReceipt, DomainError>> {
         let context = self.clone();
         Box::pin(async move {
             let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
@@ -362,7 +362,7 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
         &'a self,
         name: &'a str,
         arguments: &'a str,
-    ) -> LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> PortFuture<'a, Result<(), DomainError>> {
         let context = self.clone();
         Box::pin(async move {
             let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())

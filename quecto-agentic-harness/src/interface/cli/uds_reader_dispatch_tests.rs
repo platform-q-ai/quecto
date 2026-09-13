@@ -105,7 +105,7 @@ impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -279,7 +279,7 @@ impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
     > {

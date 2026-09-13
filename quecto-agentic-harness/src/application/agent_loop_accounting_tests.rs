@@ -37,7 +37,8 @@ async fn poisoned_accounting_locks_are_recovered() {
         fn record<'a>(
             &'a self,
             _: &'a RequestObservation,
-        ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+        ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>>
+        {
             Box::pin(async { Ok(()) })
         }
     }
