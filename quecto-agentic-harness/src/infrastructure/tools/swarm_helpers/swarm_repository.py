@@ -19,7 +19,10 @@ class Transaction:
         return self.connection.execute("SELECT count(*) FROM members WHERE status IN ('live','reserved')").fetchone()[0]
 
     def reserve_member(self, identity, reservation):
-        self.connection.execute("INSERT INTO members VALUES(?,?,'reserved',NULL,NULL,NULL)", (identity, reservation))
+        """The reserving actor is the member's launcher (#1961)."""
+        self.connection.execute(
+            "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,'reserved',NULL,NULL,NULL,?)",
+            (identity, reservation, self.store.actor))
 
     def completion_state(self):
         return {'criteria': json.loads(self.run()['criteria']),

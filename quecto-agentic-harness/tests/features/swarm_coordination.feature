@@ -176,7 +176,7 @@ Feature: Container swarm coordination
 
   @done @swarm-supervision
   Scenario: A member the coordinator kills is confirmed dead and its work recovered without pausing the run
-    When a member the coordinator launched is killed while holding a claim
+    When a member the coordinator launched is killed while holding a claim and another member reconciles throughout
     Then the run kept running, the member is dead and another member takes over its recovered work
 
   @done @swarm-supervision

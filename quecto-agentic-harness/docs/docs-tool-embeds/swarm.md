@@ -107,9 +107,12 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
   member you launched that exited (on its own or by your `agent_cmd kill`) is
   marked dead by your harness, its tasks block with `worker death confirmed;
   coordinator recovery required`, its reservations are released and the run
-  keeps running. A harness death nobody here launched (`op=reconcile`) is not
-  a confirmed death: the run pauses holding `failed`, once per member, and
-  ownership is retained until the master resumes and you `revoke`.
+  keeps running. A vanished harness seen by `op=reconcile` is not a confirmed
+  death: only the member's launcher (or anyone, once that launcher is dead)
+  records the loss, after a ten-second grace in which the launcher's reaper
+  normally confirms the death instead; a recorded loss pauses the run holding
+  `failed`, once per member, and ownership is retained until the master
+  resumes and you `revoke`. Other members' reconciles record nothing.
 
 Actually inspect command results and independent review before accepting them.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.

@@ -58,7 +58,7 @@ class Workbench(Tasks):
                 db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, goal, encode(constraints), encode(criteria), self.member,
                             self.member, member_limit, deadline, 'running'))
-                db.execute("INSERT INTO members VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
+                db.execute("INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',NULL,NULL,NULL)", (self.member, uuid.uuid4().hex))
             self.store.event(db, 'created', {'goal': goal, 'deadline': deadline, 'contract': {'goal': goal, 'constraints': constraints, 'criteria': criteria}})
         return self.summary()
 
@@ -174,7 +174,7 @@ class Workbench(Tasks):
             if not db.execute('SELECT 1 FROM run').fetchone():
                 db.execute('INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) VALUES(?,?,?,?,?,?,?,?,?)',
                            (uuid.uuid4().hex, '', '[]', '[]', self.member, self.member, 10, 0, 'setup'))
-                db.execute("INSERT INTO members VALUES(?,?,'live',?,?,?)",
+                db.execute("INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',?,?,?)",
                            (self.member, uuid.uuid4().hex, pid, started, socket))
                 self.store.event(db, 'container_setup', {'member': self.member})
         return self._join(reservation, pid, started, socket)
@@ -346,24 +346,62 @@ class Workbench(Tasks):
         bounded(encode(evidence), 'evidence references')
         return self.coordination.revalidate_task(task_id, revision, evidence)
 
+    LOSS_GRACE = 10.0
+
     def _quarantine(self, member):
-        # A missing harness is not proof that its independent execution groups
-        # stopped. Keep all ownership until the environment is discarded.
-        # Idempotent per member (#1961): the same vanished pid is seen by every
-        # later reconcile, and a member already recorded lost (or confirmed
-        # dead) must not pause the run again after the supervisor resumed it.
+        """Harness-only: this member's harness observed `member`'s pid gone.
+
+        A missing harness is not proof that its independent execution groups
+        stopped, so ownership is kept until the environment is discarded.
+        Observer authority (#1961): only the harness that launched `member`
+        (its reservation's actor) may record its loss, and it does so only
+        after a grace, because its owned-handle reaper normally confirms the
+        death first (`_confirmed_dead`) and a confirmed death never pauses
+        the run. Another member's reconcile observes but records nothing while
+        the launcher lives; once the launcher is itself dead or lost, any
+        member may record the loss after the same grace so the store never
+        stalls. A member without a launcher (the bootstrapped coordinator)
+        is recorded at once, as before (#1924 records the coordinator from
+        outside). Idempotent per member: a member already recorded lost or
+        confirmed dead never pauses the run again."""
         with self.store.operation(active=False) as (db, run):
             if self._lost(db, member):
                 return
+            row = db.execute('SELECT launcher FROM members WHERE id=?', (member,)).fetchone()
+            launcher = row['launcher'] if row else None
+            if launcher is not None:
+                if self.member != launcher and not self._lost(db, launcher):
+                    return
+                if not self._grace_elapsed(db, member):
+                    return
             self.store.event(db, 'scope_unknown', {'member': member,
                 'reason': 'harness exited; execution scope unconfirmed; discard environment'})
             self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+
+    def _grace_elapsed(self, db, member):
+        """Record the first observation of `member`'s vanished harness (one
+        `scope_observed` event per observer and member); True once the
+        earliest observation is `LOSS_GRACE` seconds old."""
+        now = self.coordination.clock()
+        first = None
+        for event in db.execute("SELECT actor, time, detail FROM events WHERE action='scope_observed' ORDER BY id"):
+            if json.loads(event['detail']).get('member') != member:
+                continue
+            if first is None:
+                first = event['time']
+            if event['actor'] == self.member:
+                break
+        else:
+            self.store.event(db, 'scope_observed', {'member': member})
+            if first is None:
+                first = now
+        return now - first >= self.LOSS_GRACE
 
     @staticmethod
     def _lost(db, member):
         """Whether `member` is dead, or was quarantined after its latest activation."""
         row = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
-        if row is not None and row['status'] == 'dead':
+        if row is None or row['status'] == 'dead':
             return True
         latest = {'scope_unknown': 0, 'activated': 0}
         for event in db.execute(

@@ -30,9 +30,12 @@ CREATE TABLE IF NOT EXISTS notification_cursors (actor TEXT PRIMARY KEY, event I
 # Columns added after the first release, migrated in place on every open:
 # #1729 a paused run may hold the outcome the coordinator proposed; #1837 a
 # message may name a revision and supersede an earlier one.
+# #1961 a member records the harness that reserved (launched) it: only that
+# launcher may record its loss.
 ADDED_COLUMNS = {
     'run': (('outcome', 'TEXT'), ('outcome_reason', 'TEXT')),
     'messages': (('revision', 'TEXT'), ('supersedes', 'INTEGER'), ('superseded_by', 'INTEGER')),
+    'members': (('launcher', 'TEXT'),),
 }
 
 

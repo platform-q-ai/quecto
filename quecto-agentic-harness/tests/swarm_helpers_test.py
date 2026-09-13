@@ -35,6 +35,16 @@ class WorkbenchBehavior(unittest.TestCase):
     def client(self, member):
         return Workbench(str(self.db), str(self.root), member)
 
+    def lose(self, observer, member, base=None):
+        """The launcher's (or an authorised observer's) loss record: a first
+        observation, then one past the grace (#1961)."""
+        base = time.time() if base is None else base
+        observer.coordination.clock = lambda: base
+        observer._quarantine(member)
+        observer.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        observer._quarantine(member)
+        observer.coordination.clock = lambda: time.time()
+
     def task(self, request='task', dependencies=None):
         return self.worker.task_create(request, 'implement behavior', ['tests pass'], dependencies or [])
 
@@ -765,7 +775,7 @@ class WorkbenchBehavior(unittest.TestCase):
         with patch('time.time', return_value=now):
             self.parent.pause('hold')
         with patch('time.time', return_value=now + 100):
-            self.parent._quarantine('worker')
+            self.lose(self.parent, 'worker', now + 100)
         held = self.parent.summary()
         self.assertEqual((held['status'], held['outcome']), ('paused', 'failed'))
         with patch('time.time', return_value=now + 500):
@@ -776,7 +786,7 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.evidence('tests', 'ci.log', 'R1', 'command', True)
         self.parent.evidence('review', 'review.md', 'R1', 'review', True)
         self.parent.complete('R1')
-        self.parent._quarantine('worker')
+        self.lose(self.parent, 'worker')
         held = self.parent.summary()
         self.assertEqual((held['status'], held['outcome']), ('paused', 'succeeded'))
         self.assertEqual(self.parent.events(limit=100)['events'][-1]['action'], 'scope_unknown')
@@ -879,14 +889,14 @@ class WorkbenchBehavior(unittest.TestCase):
     def test_a_lost_member_is_recorded_once_and_never_pauses_a_resumed_run_again(self):
         task = self.task()
         self.worker.claim(task['id'])
-        self.parent._quarantine('worker')
+        self.lose(self.parent, 'worker')
         summary = self.parent.summary()
         self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
         self.parent._resume_external()
         self.assertEqual(self.parent.summary()['status'], 'running')
         # The stale observation of the same vanished harness replays on every
         # later reconcile: it must not re-pause the run.
-        self.parent._quarantine('worker')
+        self.lose(self.parent, 'worker', time.time() + 100)
         self.assertEqual(self.parent.summary()['status'], 'running')
         actions = [e['action'] for e in self.parent.events(limit=100)['events']]
         self.assertEqual(actions.count('scope_unknown'), 1)
@@ -916,6 +926,81 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.recover(task['id'])
         other = self.other_worker()
         self.assertEqual(other.claim(task['id'])['owner'], 'other')
+
+    def test_only_the_launcher_records_a_member_loss_and_only_after_the_grace(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        other = self.other_worker()
+        # A member that did not launch the worker observes its pid gone on
+        # every reconcile pass and records nothing while the launcher lives.
+        base = time.time()
+        for offset in (0, 5, 60, 600):
+            other.coordination.clock = lambda offset=offset: base + offset
+            other._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        actions = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(actions.count('scope_unknown'), 0)
+        self.assertEqual(actions.count('scope_observed'), 0)
+        # The launcher's first observation only starts the grace: its reaper
+        # normally confirms the death first.
+        self.parent.coordination.clock = lambda: base
+        self.parent._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE - 1
+        self.parent._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        actions = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(actions.count('scope_observed'), 1, 'one observation per observer and member')
+        # A death the launcher's reaper confirms inside the grace never pauses.
+        self.parent._confirmed_dead('worker')
+        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        self.parent._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.assertEqual(self.parent.task(task['id'])['status'], 'blocked')
+        self.parent.recover(task['id'])
+
+    def test_the_launcher_records_a_loss_its_reaper_never_confirmed_after_the_grace(self):
+        self.task()
+        self.worker.claim(1)
+        self.lose(self.parent, 'worker')
+        summary = self.parent.summary()
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
+        self.assertEqual(self.parent.task(1)['owner'], 'worker', 'ownership retained')
+
+    def test_any_member_records_a_loss_once_the_launcher_itself_is_dead(self):
+        # The worker launches a nested member; the worker then dies.
+        self.worker._admit('nested', 'reservation-n')
+        self.worker._activate('nested', 'reservation-n', 12347, 'start-n', '/tmp/n.sock')
+        base = time.time()
+        self.parent.coordination.clock = lambda: base
+        self.parent._quarantine('nested')
+        self.assertEqual(self.parent.summary()['status'], 'running', 'launcher alive: no authority')
+        self.parent._confirmed_dead('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.parent._quarantine('nested')
+        self.assertEqual(self.parent.summary()['status'], 'running', 'grace starts at the first authorised observation')
+        self.parent.coordination.clock = lambda: base + Workbench.LOSS_GRACE + 1
+        self.parent._quarantine('nested')
+        summary = self.parent.summary()
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
+        self.parent.coordination.clock = lambda: time.time()
+
+    def test_a_launcher_less_member_loss_is_recorded_at_once(self):
+        # The bootstrapped coordinator has no launcher (#1924 records it from
+        # outside); an in-swarm observation records it as before.
+        self.worker._quarantine('coordinator')
+        summary = self.worker.summary()
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
+
+    def test_the_launcher_column_is_migrated_into_an_older_store(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute('ALTER TABLE members DROP COLUMN launcher')
+            db.commit()
+        self.assertEqual(self.parent.summary()['members'][0]['id'], 'coordinator')
+        self.parent._admit('late', 'reservation-late')
+        member = next(m for m in self.parent.summary()['members'] if m['id'] == 'late')
+        self.assertEqual(member['launcher'], 'coordinator')
+        self.assertIsNone(next(m for m in self.parent.summary()['members'] if m['id'] == 'coordinator')['launcher'])
 
 
 if __name__ == '__main__':

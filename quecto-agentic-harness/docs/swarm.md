@@ -94,9 +94,18 @@ run pauses holding `failed` (a paused run keeps its pause clock and any verdict
 the coordinator had already proposed), membership and file ownership stay
 reserved, and replacement claims are rejected. Close and discard that container
 environment before starting a fresh run.
-That loss is recorded once per member: a later reconcile seeing the same
-vanished pid (after the master resumed the run) does not pause it again, and
-`revoke` reassigns the lost member's work.
+That loss is recorded once per member, and only by an observer with authority
+over the member's fate (#1961): the harness that launched it (the actor of its
+reservation, recorded as the member's `launcher`). Another member's reconcile
+may see the vanished pid but records nothing while the launcher lives; once the
+launcher is itself dead or lost, any member may record the loss. Every recording
+waits a grace of ten seconds from the first authorised observation (one
+`scope_observed` event per observer and member), because the launcher's
+owned-handle reaper normally confirms the death first (below) and a confirmed
+death never pauses the run. A later reconcile seeing the same vanished pid
+(after the master resumed the run) does not pause it again, and `revoke`
+reassigns the lost member's work. The bootstrapped coordinator has no launcher:
+its loss is recorded from outside the container (#1924), unchanged.
 
 A member exit the launching harness observed itself is different (#1961): the
 harness that spawned a member owns its process, and when that process exits

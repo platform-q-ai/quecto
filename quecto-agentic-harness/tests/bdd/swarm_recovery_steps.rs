@@ -135,6 +135,21 @@ async fn admit_other(workspace: &Path) {
     python(workspace, "coordinator", &code).await.unwrap();
 }
 
+/// Ask the coordinator to run one `op=reconcile` (a tool call and its
+/// answer) and wait until that turn is over.
+async fn reconcile(runtime: &fixture::Runtime, message: &str) {
+    let before = runtime.requests.load(std::sync::atomic::Ordering::SeqCst);
+    runtime
+        .command(json!({"type":"prompt","message":message,"ack":"accept"}))
+        .await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(15);
+    while runtime.requests.load(std::sync::atomic::Ordering::SeqCst) < before + 2 {
+        assert!(tokio::time::Instant::now() < until, "reconcile never ran");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    runtime.wait_idle().await;
+}
+
 async fn control_status(runtime: &fixture::Runtime) -> Value {
     runtime
         .command(json!({"type":"swarm_control","action":"status"}))
@@ -182,7 +197,9 @@ fn spawn_exercise(
 
 // ── Observed exit: confirmed death, run keeps running, recover ─────────────
 
-#[when("a member the coordinator launched is killed while holding a claim")]
+#[when(
+    "a member the coordinator launched is killed while holding a claim and another member reconciles throughout"
+)]
 fn kill_claiming_member(world: &mut QuectoWorld) {
     spawn_exercise(world, |workspace| Box::pin(exercise_kill(workspace)));
 }
@@ -212,6 +229,25 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
     assert_eq!(worker["status"], "live", "{claimed}");
     assert_eq!(claimed["tasks"][0]["owner"], worker["id"], "{claimed}");
     let events_before = events(&workspace);
+    // Another live member (not the worker's launcher) reconciles in a tight
+    // loop through the real lifecycle path for the whole kill window: it
+    // observes the vanished pid but has no authority to record a loss.
+    admit_other(&workspace).await;
+    let racing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let other_passes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reconciler = {
+        let (racing, passes, context) = (
+            racing.clone(),
+            other_passes.clone(),
+            context(&workspace, "other"),
+        );
+        std::thread::spawn(move || {
+            while racing.load(std::sync::atomic::Ordering::SeqCst) {
+                quecto::infrastructure::tools::swarm_lifecycle::reconcile(&context).unwrap();
+                passes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    };
     runtime
         .command(json!({"type":"prompt","message":"Kill the worker","ack":"accept"}))
         .await;
@@ -227,6 +263,11 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         },
     )
     .await;
+    // Keep racing a little past the death so a stale observation of the
+    // dead member's pid is exercised too, then stop.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    racing.store(false, std::sync::atomic::Ordering::SeqCst);
+    reconciler.join().unwrap();
     let status = control_status(&runtime).await;
     let after = events(&workspace);
     python(
@@ -236,7 +277,6 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
     )
     .await
     .unwrap();
-    admit_other(&workspace).await;
     let reclaimed = python(
         &workspace,
         "other",
@@ -254,7 +294,9 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         "resume_blockers": status["resume_blockers"],
         "death_confirmed": count(&after, "death_confirmed") - count(&events_before, "death_confirmed"),
         "scope_unknown": count(&after, "scope_unknown"),
+        "scope_observed": count(&after, "scope_observed"),
         "paused": count(&after, "paused"),
+        "other_reconcile_passes": other_passes.load(std::sync::atomic::Ordering::SeqCst),
         "reclaimed_by": reclaimed,
     });
     context(&workspace, "coordinator").cancel_run().unwrap();
@@ -283,7 +325,13 @@ fn recovered_after_kill(world: &mut QuectoWorld) {
     assert_eq!(evidence["files"], json!([]), "{evidence}");
     assert_eq!(evidence["death_confirmed"], 1, "{evidence}");
     assert_eq!(evidence["scope_unknown"], 0, "{evidence}");
+    // A non-launcher observes and records nothing, not even an observation.
+    assert_eq!(evidence["scope_observed"], 0, "{evidence}");
     assert_eq!(evidence["paused"], 0, "{evidence}");
+    assert!(
+        evidence["other_reconcile_passes"].as_u64().unwrap() >= 3,
+        "the other member must have reconciled through the kill: {evidence}"
+    );
     assert_eq!(evidence["reclaimed_by"], "other", "{evidence}");
 }
 
@@ -320,9 +368,13 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // Its harness vanishes without anyone observing the exit.
     ghost.kill().unwrap();
     ghost.wait().unwrap();
-    runtime
-        .command(json!({"type":"prompt","message":"Reconcile the board","ack":"accept"}))
-        .await;
+    // The ghost's launcher (the coordinator) observes the vanished pid: the
+    // first pass only starts the grace (its reaper would normally confirm a
+    // death first); a pass past the grace records the loss.
+    reconcile(&runtime, "Reconcile the board").await;
+    let observed = context(&workspace, "coordinator").summary().unwrap();
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    reconcile(&runtime, "Reconcile the board once more").await;
     let paused = wait_summary(&runtime, &workspace, "paused by the loss", |s| {
         s["status"] == "paused"
     })
@@ -334,19 +386,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     runtime.wait_idle().await;
     // The same vanished pid is observed again after the resume: the
     // coordinator's reconcile (a tool call and its answer) runs to the end.
-    let before = runtime.requests.load(std::sync::atomic::Ordering::SeqCst);
-    runtime
-        .command(json!({"type":"prompt","message":"Reconcile the board again","ack":"accept"}))
-        .await;
-    let until = tokio::time::Instant::now() + Duration::from_secs(15);
-    while runtime.requests.load(std::sync::atomic::Ordering::SeqCst) < before + 2 {
-        assert!(
-            tokio::time::Instant::now() < until,
-            "second reconcile never ran"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    runtime.wait_idle().await;
+    reconcile(&runtime, "Reconcile the board again").await;
     let after = context(&workspace, "coordinator").summary().unwrap();
     let status = control_status(&runtime).await;
     let recover = python(
@@ -374,6 +414,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     .unwrap();
     let events = events(&workspace);
     let evidence = json!({
+        "observed_only": observed["status"],
         "paused": paused["status"],
         "paused_outcome": paused["outcome"],
         "ghost_after_pause": member(&paused, "ghost")["status"],
@@ -396,6 +437,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
 #[then("the stale loss never pauses the run again and the work is revoked and reclaimed")]
 fn no_repause(world: &mut QuectoWorld) {
     let evidence = result_json(world);
+    assert_eq!(evidence["observed_only"], "running", "{evidence}");
     assert_eq!(evidence["paused"], "paused", "{evidence}");
     assert_eq!(evidence["paused_outcome"], "failed", "{evidence}");
     // An unobserved loss retains the member and its ownership (#1924 rule).
