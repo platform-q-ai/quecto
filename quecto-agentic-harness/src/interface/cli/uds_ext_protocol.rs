@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::extension_tool::ToolInvocation;
+use crate::application::extensions::ports::PendingToolInvocation;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
@@ -115,7 +115,7 @@ pub struct ClientToolState {
     /// takes ownership and spawns a forwarder task for each — at which
     /// point the rx is moved out and replaced by an entry in
     /// `tool_request_tasks`.
-    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<ToolInvocation>>,
+    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<PendingToolInvocation>>,
     /// Forwarder tasks that consume `ToolInvocation`s from the mpsc
     /// receiver created by `create_uds_tool`, register the oneshot
     /// result sender into `pending_results`, and emit an `execute_tool`

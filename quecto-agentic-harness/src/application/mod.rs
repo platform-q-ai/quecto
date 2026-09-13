@@ -11,8 +11,6 @@ pub mod catalogue_refresh;
 pub mod context;
 pub mod context_pruning;
 pub mod environments;
-#[cfg(any(test, feature = "test-support"))]
-pub mod extension_tool;
 pub mod extensions;
 pub mod ports;
 pub mod provider_runtime;

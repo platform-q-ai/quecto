@@ -9,6 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::application::extensions::ports::PendingToolInvocation;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::extension_tool::ToolInvocation;
@@ -20,9 +21,9 @@ use crate::domain::tool::{ToolDefinition, ToolResult};
 /// for a `tool_result` response via a oneshot channel.
 pub struct UdsExtensionTool {
     definition: ToolDefinition,
-    /// Sender delivers `ToolInvocation`s to whichever transport is registered
+    /// Sender delivers `PendingToolInvocation`s to whichever transport is registered
     /// for this tool.
-    exec_tx: tokio::sync::mpsc::Sender<ToolInvocation>,
+    exec_tx: tokio::sync::mpsc::Sender<PendingToolInvocation>,
     /// Maximum time to wait for a tool_result response.
     timeout: std::time::Duration,
 }
@@ -39,7 +40,7 @@ impl UdsExtensionTool {
     /// Create a new UDS extension tool.
     pub fn new(
         definition: ToolDefinition,
-        exec_tx: tokio::sync::mpsc::Sender<ToolInvocation>,
+        exec_tx: tokio::sync::mpsc::Sender<PendingToolInvocation>,
         timeout: std::time::Duration,
     ) -> Self {
         Self {
@@ -68,10 +69,12 @@ impl Tool for UdsExtensionTool {
             let tool_call_id = format!("uds-{}", uuid_v4());
             let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
-            let request = ToolInvocation {
-                tool_call_id,
-                tool_name: tool_name.clone(),
-                arguments,
+            let request = PendingToolInvocation {
+                invocation: ToolInvocation {
+                    tool_call_id,
+                    tool_name: tool_name.clone(),
+                    arguments,
+                },
                 reply: result_tx,
             };
 
@@ -137,7 +140,10 @@ fn uuid_v4() -> String {
 pub fn create_uds_tool(
     definition: ToolDefinition,
     timeout: std::time::Duration,
-) -> (Arc<dyn Tool>, tokio::sync::mpsc::Receiver<ToolInvocation>) {
+) -> (
+    Arc<dyn Tool>,
+    tokio::sync::mpsc::Receiver<PendingToolInvocation>,
+) {
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let tool = Arc::new(UdsExtensionTool::new(definition, tx, timeout));
     (tool, rx)

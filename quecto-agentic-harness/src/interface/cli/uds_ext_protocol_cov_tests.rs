@@ -348,10 +348,12 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
 
     handle_one_request(
         "weather",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "call-1".to_string(),
-            tool_name: "weather".to_string(),
-            arguments: r#"{"city":"Oslo"}"#.to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "weather".to_string(),
+                arguments: r#"{"city":"Oslo"}"#.to_string(),
+            },
             reply: reply_tx,
         },
         91,
@@ -390,10 +392,12 @@ async fn handle_one_request_without_writer_drops_pending_so_caller_fails_fast() 
 
     handle_one_request(
         "offline",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "call-2".to_string(),
-            tool_name: "offline".to_string(),
-            arguments: "{}".to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-2".to_string(),
+                tool_name: "offline".to_string(),
+                arguments: "{}".to_string(),
+            },
             reply: reply_tx,
         },
         92,
@@ -595,12 +599,16 @@ async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason(
     ));
 
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    tx.send(crate::domain::extension_tool::ToolInvocation {
-        tool_call_id: "call-3".to_string(),
-        tool_name: "drainme".to_string(),
-        arguments: "{}".to_string(),
-        reply: reply_tx,
-    })
+    tx.send(
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-3".to_string(),
+                tool_name: "drainme".to_string(),
+                arguments: "{}".to_string(),
+            },
+            reply: reply_tx,
+        },
+    )
     .await
     .unwrap();
     shutdown_tx.send("Tool unregistered").unwrap();
@@ -684,10 +692,12 @@ async fn poisoned_registry_lock_recovered_by_forwarder_paths() {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     handle_one_request(
         "poisoned_forward",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "forward-call".to_string(),
-            tool_name: "poisoned_forward".to_string(),
-            arguments: "{}".to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "forward-call".to_string(),
+                tool_name: "poisoned_forward".to_string(),
+                arguments: "{}".to_string(),
+            },
             reply: reply_tx,
         },
         777,

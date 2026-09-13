@@ -6,6 +6,19 @@
 use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
+use crate::domain::extension_tool::ToolInvocation;
+use crate::domain::tool::ToolResult;
+
+/// The handle a forwarded invocation's result is delivered on.
+pub type ToolReply = tokio::sync::oneshot::Sender<ToolResult>;
+
+/// An in-flight extension tool invocation: the pure request together with
+/// the handle the transport completes with its result (#1960).
+pub struct PendingToolInvocation {
+    pub invocation: ToolInvocation,
+    /// Deliver the `ToolResult` here.
+    pub reply: ToolReply,
+}
 
 /// An extension contributes tools and optional system prompt context.
 pub trait Extension: Send + Sync {

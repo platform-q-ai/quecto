@@ -262,7 +262,6 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ];
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
         "src/domain/provider.rs",            // #1960: LlmProvider, RequestAdmission
         "src/domain/request_observation.rs", // #1960: RequestAccounting
         "src/domain/session.rs",             // #1960: SessionStore, ContextSpillStore

@@ -3,6 +3,7 @@
 //! Kept in a sibling module so `uds_ext_protocol.rs` stays under the line-count gate.
 
 use super::*;
+use crate::domain::extension_tool::ToolInvocation;
 // ─── Dispatch helpers (called from uds.rs dispatch_command) ───────────────
 
 fn catalogue_values(
@@ -197,7 +198,7 @@ pub(crate) fn spawn_tool_forwarder_for(
 pub(crate) async fn forward_tool_requests(
     client_id: u64,
     tool_name: String,
-    mut rx: tokio::sync::mpsc::Receiver<ToolInvocation>,
+    mut rx: tokio::sync::mpsc::Receiver<PendingToolInvocation>,
     mut shutdown: tokio::sync::oneshot::Receiver<&'static str>,
     registry: ClientToolRegistry,
     writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
@@ -240,15 +241,18 @@ pub(crate) async fn forward_tool_requests(
 /// up on delivery failure.
 pub(crate) async fn handle_one_request(
     tool_name: &str,
-    req: ToolInvocation,
+    req: PendingToolInvocation,
     client_id: u64,
     registry: &ClientToolRegistry,
     writer_tx: &Option<tokio::sync::mpsc::Sender<String>>,
 ) {
-    let ToolInvocation {
-        tool_call_id,
-        tool_name: sent_tool,
-        arguments,
+    let PendingToolInvocation {
+        invocation:
+            ToolInvocation {
+                tool_call_id,
+                tool_name: sent_tool,
+                arguments,
+            },
         reply,
     } = req;
 
