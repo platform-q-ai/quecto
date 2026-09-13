@@ -126,6 +126,7 @@ async fn join_script_managed_child(
         // Joining never owns the environment: a failed join must not
         // uncommit or stop it.
         environments: None,
+        stderr_tail: None,
     })
 }
 
@@ -237,6 +238,9 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     }
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
+    // The child's stderr is drained for its whole life and its tail kept,
+    // so a startup refusal reaches the launcher (#1937 review).
+    cmd.stderr(std::process::Stdio::piped());
     let swarm_member = reservation.is_some();
     // Spawned and owned by the supervisor from the first instant: no other
     // holder of the process ever exists (#1935). The parent-loss contract
@@ -257,6 +261,9 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         .await
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
     let (handle, display_pid) = (spawned.handle, spawned.display_pid);
+    let stderr_tail = spawned
+        .stderr
+        .map(|stderr| child.supervisor.retain_stderr_tail(stderr));
     if let Some(reservation) = &mut reservation {
         let result = if display_pid.0 == 0 {
             Err(DomainError::Tool("swarm child has no pid".into()))
@@ -297,6 +304,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,
+        stderr_tail,
     })
 }
 
@@ -453,6 +461,7 @@ async fn spawn_script_managed_child(
         cleanup_environment_id: Some(result.environment_id),
         cleanup_argv: container.cleanup.clone(),
         environments: Some(environments.clone()),
+        stderr_tail: None,
     })
 }
 

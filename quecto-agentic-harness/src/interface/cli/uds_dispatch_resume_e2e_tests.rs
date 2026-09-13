@@ -273,118 +273,115 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     );
 }
 
-// ── Session switch tears down the current session's children (#1937 interim) ─
+// ── Session switch releases the departing session's children (#1937 interim) ─
 
-use crate::infrastructure::processes::owned_child_supervisor::{
-    ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup,
-};
+use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
 use crate::infrastructure::tools::subagent_registry::SubagentEntry;
 
-/// A real `sleep` child owned by a fresh supervisor, registered as a live
-/// launched row whose socket does not exist (the protocol attempt fails at
-/// once, so the supervisor's TERM ends it).
-async fn owned_sleeping_child(
+const RELEASE_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A fake child: a listener the production monitor task connects to, exactly
+/// as it connects to a launched child's socket. The accepted stream is the
+/// child's view of its bound parent connection; its EOF is parent loss.
+struct BoundChild {
+    accepted: tokio::net::UnixStream,
+    entry: SubagentEntry,
+}
+
+async fn bound_child(
     dir: &std::path::Path,
-) -> (
-    std::sync::Arc<OwnedChildSupervisor>,
-    ChildHandleId,
-    SubagentEntry,
-) {
-    let supervisor = std::sync::Arc::new(OwnedChildSupervisor::new());
-    let mut command = tokio::process::Command::new("sleep");
-    command.arg("60");
-    command.stdin(std::process::Stdio::null());
-    command.stdout(std::process::Stdio::null());
-    command.stderr(std::process::Stdio::null());
-    let spawned = supervisor
-        .spawn(command, ProcessGroup::Inherited)
-        .await
-        .expect("spawn sleep");
-    let mut entry = SubagentEntry::new(dir.join("owned-child.sock"), spawned.display_pid.0);
-    entry.owned_child = Some(spawned.handle);
-    entry.owned_child_supervisor = Some(supervisor.clone());
-    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
-    (supervisor, spawned.handle, entry)
-}
-
-fn kill_plan_script(log: &std::path::Path) -> std::path::PathBuf {
-    let script = log.parent().unwrap().join("kill.sh");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
-            log.display()
-        ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    script
-}
-
-async fn assert_exited_within_budget(supervisor: &OwnedChildSupervisor, handle: ChildHandleId) {
-    let exit = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        supervisor.wait_exit(handle),
-    )
-    .await
-    .expect("the owned child must exit within the session-switch budget");
-    assert!(
-        matches!(
-            exit,
-            None | Some(ChildExit::Signal(_)) | Some(ChildExit::Code(_))
-        ),
-        "unexpected exit {exit:?}"
+    name: &str,
+    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+) -> BoundChild {
+    let socket_path = dir.join(format!("{name}.sock"));
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let mut entry = SubagentEntry::new(socket_path.clone(), 0);
+    entry.display_name = name.to_string();
+    let monitor = spawn_monitor_task_unbound(
+        entry.agent_uuid.as_str().to_string(),
+        socket_path,
+        registry.clone(),
+        None,
+        None,
+        None,
     );
+    entry.monitor_handle = Some(std::sync::Arc::new(monitor));
+    let (accepted, _) = tokio::time::timeout(RELEASE_BOUND, listener.accept())
+        .await
+        .expect("the monitor connects within the bound")
+        .unwrap();
+    BoundChild { accepted, entry }
+}
+
+/// The child's side of the bound connection reaches EOF within the bound:
+/// the parent side was closed, which is what a launch-bound child reacts to.
+async fn assert_parent_lost(mut accepted: tokio::net::UnixStream, what: &str) {
+    use tokio::io::AsyncReadExt;
+    let mut sink = [0u8; 1024];
+    let eof = tokio::time::timeout(RELEASE_BOUND, async {
+        loop {
+            match accepted.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {} // the monitor's framed hello
+            }
+        }
+    })
+    .await;
     assert!(
-        !supervisor.retains(handle),
-        "the handle is released after the exit"
+        eof.is_ok(),
+        "{what}: the bound parent connection stayed open"
     );
 }
 
 /// #1937 review: `new_session` must not strand the current session's live
-/// launched child — it can never be readopted, so it is torn down (protocol
-/// first, TERM after the negative outcome) before the roster is reset.
+/// launched child. Its monitor task — the owner of the bound parent
+/// connection — is aborted before the row is cleared, so the child observes
+/// parent loss and ends itself; no signal is sent and nothing is awaited.
 #[tokio::test]
-async fn e2e_new_session_tears_down_the_current_sessions_live_child() {
+async fn e2e_new_session_releases_the_departing_childs_bound_connection() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
-    let (supervisor, handle, entry) = owned_sleeping_child(dir.path()).await;
     let registry = new_registry();
-    registry
-        .lock()
-        .unwrap()
-        .insert(entry.agent_uuid.as_str().to_string(), entry);
+    let child = bound_child(dir.path(), "departing", &registry).await;
+    registry.lock().unwrap().insert(
+        child.entry.agent_uuid.as_str().to_string(),
+        child.entry.clone(),
+    );
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
     assert!(registry.lock().unwrap().is_empty());
-    assert_exited_within_budget(&supervisor, handle).await;
+    assert_parent_lost(child.accepted, "new_session").await;
+    assert!(
+        child.entry.monitor_handle.unwrap().is_finished(),
+        "the monitor task was aborted, not merely dropped"
+    );
 }
 
 /// #1937 review: resuming away from a session with a live launched child
-/// ends that child and restores the target session with an empty roster.
+/// releases that child the same way and restores the target session with an
+/// empty roster; the target's legacy rows are still never probed.
 #[tokio::test]
-async fn e2e_resume_away_tears_down_the_current_sessions_live_child() {
+async fn e2e_resume_away_releases_the_departing_childs_bound_connection() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
-    fx.store
-        .save(&Session {
-            key: "cli:elsewhere".to_string(),
-            messages: vec![Message::user("elsewhere")],
-            workflow_run: None,
-            subagent_roster: Vec::new(),
-        })
-        .await
-        .unwrap();
-    let (supervisor, handle, entry) = owned_sleeping_child(dir.path()).await;
+    let legacy_socket = dir.path().join("legacy.sock");
+    let legacy_listener = silent_listener(&legacy_socket);
+    write_legacy_session_file(
+        &fx,
+        "cli:elsewhere",
+        serde_json::json!([legacy_row("legacy", &legacy_socket, "live", "running")]),
+        serde_json::Value::Null,
+    )
+    .await;
     let registry = new_registry();
-    registry
-        .lock()
-        .unwrap()
-        .insert(entry.agent_uuid.as_str().to_string(), entry);
+    let child = bound_child(dir.path(), "departing", &registry).await;
+    registry.lock().unwrap().insert(
+        child.entry.agent_uuid.as_str().to_string(),
+        child.entry.clone(),
+    );
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
@@ -400,30 +397,46 @@ async fn e2e_resume_away_tears_down_the_current_sessions_live_child() {
     }
     assert_eq!(fx.session_key, "cli:elsewhere");
     assert!(registry.lock().unwrap().is_empty());
-    assert_exited_within_budget(&supervisor, handle).await;
+    assert_parent_lost(child.accepted, "resume_session").await;
+    assert_never_probed(&legacy_listener, "legacy row of the resumed session");
 }
 
-/// #1937 review: a container member's kill plan runs exactly once on the
-/// session switch instead of being discarded with the row.
+/// A proxy-transport child's bridge accept loop and socket go with the row:
+/// nothing can connect to the released child's bridge afterwards.
 #[tokio::test]
-async fn e2e_session_switch_runs_a_container_childs_kill_plan_once() {
+async fn e2e_session_switch_tears_down_a_departing_childs_proxy_bridge() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
-    let log = dir.path().join("kill.log");
-    let script = kill_plan_script(&log);
+    let bridge_socket = dir.path().join("bridge.sock");
+    let listener = tokio::net::UnixListener::bind(&bridge_socket).unwrap();
+    let accept_loop = tokio::spawn(async move {
+        loop {
+            let _ = listener.accept().await;
+        }
+    });
     let mut member = SubagentEntry::new(dir.path().join("member.sock"), 0);
-    member.cleanup_environment_id = Some("env-switch".into());
-    member.cleanup_argv = vec![script.to_string_lossy().to_string()];
+    member.proxy_bridge_handle = Some(std::sync::Arc::new(accept_loop));
+    member.proxy_bridge_socket = Some(bridge_socket.clone());
     let registry = new_registry();
-    registry.lock().unwrap().insert("member".into(), member);
+    registry
+        .lock()
+        .unwrap()
+        .insert("member".into(), member.clone());
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
-        // A second switch finds nothing left to finalize.
+        // A second switch finds nothing left to release.
         assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
     }
     assert!(registry.lock().unwrap().is_empty());
-    let text = std::fs::read_to_string(&log).expect("the kill plan ran");
-    assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-switch"]);
+    assert!(!bridge_socket.exists(), "the bridge socket is removed");
+    let handle = member.proxy_bridge_handle.unwrap();
+    tokio::time::timeout(RELEASE_BOUND, async {
+        while !handle.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the accept loop is aborted");
 }

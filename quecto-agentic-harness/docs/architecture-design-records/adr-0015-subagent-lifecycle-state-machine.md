@@ -109,3 +109,20 @@ describes whether anyone can still reach it. A `Busy` agent can be `detached`
 The roster of known agents (pid + socket registry sidecar) is persisted in
 the session store so a restarted TUI can re-derive `live | detached | dead`
 by probing, rather than trusting stale files. Tracked by #1461.
+
+### Lifetime correction — #1937 (epic #1929)
+
+The paragraph above no longer describes the launcher's children. Under #1935
+a launcher-created subagent is **launch-bound**: it is started without
+`--persist`, ignores client churn, and runs the common shutdown when its
+bound parent connection is lost, so it cannot outlive the harness that
+launched it. The persisted roster is therefore history only: it carries no
+`socketPath` or `pid` (a legacy record's are ignored when read and dropped on
+the next save), and a restarting harness probes nothing and readopts nothing
+— it resets the operational roster to empty and the master re-spawns the
+workers it needs with a fresh identity and launch generation. On a session
+transition the departing session's live children are released through parent
+loss (interim until #1938). The `live | detached | dead` liveness dimension
+survives only for a **top-level** `quecto agent --persist` process, which the
+TUI still multiplexes and reattaches to; it is never re-derived for a
+launcher's children. See ADR-0025's #1937 correction for the roster policy.

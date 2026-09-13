@@ -83,91 +83,88 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
 /// rows — live, detached, dead or malformed alike — are read only to be
 /// ignored; the transcript, workflow and past child messages are restored by
 /// the caller, and the master explicitly re-spawns the workers it needs with
-/// a fresh identity and launch generation.
+/// a fresh identity and launch generation. The children the departing
+/// session still held are released first (see [`reset_subagent_roster`]).
 pub(crate) fn reset_subagent_roster_on_restore(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
-    let Some(registry) = registry else { return };
-    if !persisted.is_empty() {
+    if registry.is_some() && !persisted.is_empty() {
         tracing::info!(
             ignored_rows = persisted.len(),
             "session restore: persisted subagent rows are history only; no child readopted"
         );
     }
-    registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    reset_subagent_roster(registry, "resume_session");
 }
 
-/// Bound on waiting for the current session's owned children to exit after
-/// the session-transition teardown: the protocol ACK (5 s) plus the
-/// acknowledged-exit wait (10 s) plus the TERM and KILL graces (2 s each).
-const SESSION_TRANSITION_EXIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// Tear down the current session's children before the harness switches
-/// away from it (`resume_session` into another session, `new_session`).
+/// Reset the operational roster on a session transition (`new_session`,
+/// `resume_session`), releasing the departing session's live children
+/// through parent loss (#1937 interim, replaced by #1938).
 ///
-/// Interim for #1937 until #1938 migrates the session-transition exit into
-/// the application-owned teardown: a launcher-created child cannot be
-/// readopted by any later session (restore creates no operational row), so
-/// a child left running past this point would be unreachable from every
-/// teardown path until the master exits. The existing registry-driven
-/// teardown runs — supervisor termination protocol-first for owned children,
-/// the environment kill plans for container members — on a blocking thread,
-/// then the owned children's exit is awaited within a bounded budget.
-pub(crate) async fn tear_down_children_before_session_switch(
-    ctx: &mut DispatchCtx<'_>,
+/// A launcher-created child can never be readopted (restore creates no
+/// operational row), so a row merely dropped here would leave its child an
+/// orphan no teardown path can reach until the master exits. Each departing
+/// row's monitor task **owns the child's bound parent-control connection**
+/// (#1935): aborting it closes that connection, and a launch-bound child
+/// then runs its own parent-loss shutdown (#1946) — no signal, no fleet
+/// teardown and no waiting on this dispatch path. The proxy bridge of a
+/// container-transport child is aborted the same way so the loss propagates
+/// through the proxy. Both happen BEFORE the row is cleared. #1938 replaces
+/// this release with the acknowledged session-transition teardown.
+///
+/// Returns the number of rows released.
+pub(crate) fn reset_subagent_roster(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     transition: &str,
-) {
-    let Some(registry) = ctx.subagent_registry.clone() else {
-        return;
-    };
-    let owned: Vec<_> = {
-        let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        if entries.is_empty() {
-            return;
-        }
+) -> usize {
+    let Some(registry) = registry else { return 0 };
+    let departing: Vec<_> = registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    for (key, entry) in &departing {
+        release_departing_entry(key, entry, transition);
+    }
+    let released = departing.len();
+    // The rows are dropped only after every bound connection was released.
+    drop(departing);
+    if released > 0 {
         tracing::warn!(
             transition,
-            live_rows = entries.len(),
-            "session switch: tearing down the current session's children; they cannot be readopted"
+            released,
+            "session switch: the departing session's children were released via parent loss"
         );
-        entries
-            .values()
-            .filter_map(|entry| Some((entry.owned_child?, entry.owned_child_supervisor.clone()?)))
-            .collect()
-    };
-    let broadcast_tx = ctx.broadcast_tx.clone();
-    let removed = tokio::task::spawn_blocking(move || {
-        super::super::uds_delete_all_subagents::delete_all_subagents_from_registry(
-            &registry,
-            broadcast_tx.as_ref(),
-        )
-    })
-    .await
-    .unwrap_or_else(|join_error| {
-        tracing::error!(%join_error, "session switch: teardown thread failed");
-        0
-    });
-    let deadline = tokio::time::Instant::now() + SESSION_TRANSITION_EXIT_BUDGET;
-    let mut exited = 0usize;
-    for (handle, supervisor) in &owned {
-        match tokio::time::timeout_at(deadline, supervisor.wait_exit(*handle)).await {
-            Ok(_) => exited += 1,
-            Err(_elapsed) => {
-                tracing::warn!(
-                    ?handle,
-                    "session switch: owned child did not exit within budget"
-                );
-            }
-        }
     }
-    tracing::warn!(
+    released
+}
+
+/// Close what keeps one departing child bound to this harness: its monitor
+/// task (the bound parent-control connection) and, for a proxy-transport
+/// child, the bridge accept loop and socket.
+fn release_departing_entry(
+    key: &str,
+    entry: &crate::infrastructure::tools::subagent_registry::SubagentEntry,
+    transition: &str,
+) {
+    entry.release_bound_connection();
+    tracing::info!(
         transition,
-        removed,
-        owned = owned.len(),
-        exited,
-        "session switch: current session's children torn down"
+        agent = %key,
+        bound = entry.monitor_handle.is_some(),
+        "session switch: released departing child; it cannot be readopted"
     );
+}
+
+/// Tell every connected client the survivor set is empty after a roster
+/// reset, so no panel keeps a released child.
+fn broadcast_roster_reset(ctx: &DispatchCtx<'_>) {
+    if let (Some(registry), Some(tx)) = (&ctx.subagent_registry, &ctx.broadcast_tx) {
+        let _ = tx.send(
+            crate::infrastructure::tools::subagent_cascade::build_state_changed_event(registry),
+        );
+    }
 }
 
 pub(super) async fn persist_current_session(
@@ -281,10 +278,8 @@ pub(super) async fn handle_new_session(
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
-    tear_down_children_before_session_switch(ctx, "new_session").await;
-    if let Some(registry) = &ctx.subagent_registry {
-        registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    }
+    reset_subagent_roster(&ctx.subagent_registry, "new_session");
+    broadcast_roster_reset(ctx);
     let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
@@ -398,9 +393,6 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
-    // The session we are leaving cannot readopt its children later, and no
-    // other session can: end them now, before the roster is reset.
-    tear_down_children_before_session_switch(ctx, "resume_session").await;
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);
@@ -417,7 +409,10 @@ pub(super) async fn handle_resume_session(
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     let workflow_run = loaded.workflow_run;
+    // The session we are leaving cannot readopt its children later, and no
+    // other session can: release them before the roster is reset.
     reset_subagent_roster_on_restore(&ctx.subagent_registry, &loaded.subagent_roster);
+    broadcast_roster_reset(ctx);
     *ctx.messages = loaded.messages;
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);

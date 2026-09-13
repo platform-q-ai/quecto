@@ -506,9 +506,16 @@ impl SpawnTool {
                     Some(exit) => format!(" with {exit:?}"),
                     None => ": no owned process to observe".to_string(),
                 };
+                // The child's last words name the reason (#1937 review): a
+                // startup refusal is otherwise invisible to the launcher.
+                let stderr = prepared.stderr_tail_report().await;
+                let stderr = if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!("; stderr: {stderr}")
+                };
                 Err(DomainError::Tool(format!(
-                    "subagent exited before socket ready{}",
-                    detail
+                    "subagent exited before socket ready{detail}{stderr}"
                 )))
             }
         }
@@ -661,6 +668,10 @@ mod tests;
 #[cfg(test)]
 #[path = "spawn_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "spawn_stderr_tail_tests.rs"]
+mod stderr_tail_tests;
 
 #[cfg(test)]
 #[path = "spawn_swarm_tests.rs"]

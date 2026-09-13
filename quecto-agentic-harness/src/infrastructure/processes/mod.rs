@@ -2,6 +2,7 @@
 //! the out-of-band parent-control delivery, and the protocol edge to a
 //! direct child. Effects only; no teardown policy lives here.
 
+pub mod child_stderr_tail;
 pub mod direct_child_routing;
 pub mod owned_child_supervisor;
 pub mod parent_control;

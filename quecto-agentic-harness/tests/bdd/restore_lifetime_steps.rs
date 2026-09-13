@@ -257,6 +257,19 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
     s.legacy_session_key = Some(key);
 }
 
+#[given(expr = "session {string} was saved by an earlier harness with no child rows")]
+fn given_plain_session(world: &mut QuectoWorld, session_name: String) {
+    let store = FileSessionStore::new(base(world));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(store.save(&Session {
+        key: Session::build_key("cli", &session_name),
+        messages: vec![Message::user("a session with no children")],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    }))
+    .unwrap();
+}
+
 #[given("a restoring UDS harness with a subagent registry")]
 fn given_restoring_harness(world: &mut QuectoWorld) {
     world.session_name = Some("restoring-master".into());
@@ -616,10 +629,14 @@ fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-/// The session switch tore the re-spawned child down: the supervisor no
-/// longer retains its handle, its process is gone and its socket removed.
-#[then(expr = "the re-spawned {string} is gone within {int} seconds")]
-fn then_respawned_gone(world: &mut QuectoWorld, agent_id: String, seconds: u64) {
+/// The session switch released the re-spawned child through parent loss:
+/// its bound connection closed, it ran the common shutdown by itself (a
+/// graceful exit removes its socket), the supervisor sent it no signal and,
+/// once the reaper observed the exit, no longer retains its handle. The exit
+/// is read from the row's exit-signal channel, which the reaper fills with
+/// the real status before it retires the handle.
+#[then(expr = "the re-spawned {string} exits gracefully via parent loss within {int} seconds")]
+fn then_respawned_released(world: &mut QuectoWorld, agent_id: String, seconds: u64) {
     let entry = state(world)
         .respawned
         .clone()
@@ -627,14 +644,39 @@ fn then_respawned_gone(world: &mut QuectoWorld, agent_id: String, seconds: u64) 
     assert_eq!(entry.display_name, agent_id);
     let supervisor = entry.owned_child_supervisor.clone().expect("supervisor");
     let handle = entry.owned_child.expect("owned handle");
+    let mut exit_rx = entry
+        .exit_signal_tx
+        .as_ref()
+        .expect("exit signal")
+        .subscribe();
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime
+    let exit = runtime
         .block_on(async {
-            tokio::time::timeout(Duration::from_secs(seconds), supervisor.wait_exit(handle)).await
+            tokio::time::timeout(
+                Duration::from_secs(seconds),
+                exit_rx.wait_for(|signal| signal.is_some()),
+            )
+            .await
         })
-        .expect("the child must exit within the bound");
-    assert!(!supervisor.retains(handle));
+        .expect("the child must exit within the bound")
+        .expect("the exit channel outlives the wait")
+        .clone()
+        .expect("an exit was published");
+    assert_eq!(
+        (exit.exit_code, exit.signal),
+        (Some(0), None),
+        "parent loss runs the common shutdown, a graceful exit: {exit:?}"
+    );
+    assert!(
+        supervisor.signals_sent(handle).is_empty(),
+        "released via parent loss, not signalled: {:?}",
+        supervisor.signals_sent(handle)
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
+    while supervisor.retains(handle) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!supervisor.retains(handle), "the reaper retired the handle");
     while process_alive(entry.pid) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
