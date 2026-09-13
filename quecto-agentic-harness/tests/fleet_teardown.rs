@@ -19,7 +19,9 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const BOUND: Duration = Duration::from_secs(60);
+/// Bound on every wait. Generous for a 2-vCPU CI runner where six harness
+/// processes, their children, bridges and mock providers share the cores.
+const BOUND: Duration = Duration::from_secs(120);
 
 fn alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes existence of the given pid.
@@ -305,14 +307,20 @@ impl Client {
     }
 
     /// Read newline-delimited JSON until one matches, within the bound.
-    fn read_until(&mut self, want: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+    /// `what` names the awaited event in a failure, with the events seen.
+    fn read_until(
+        &mut self,
+        what: &str,
+        want: impl Fn(&serde_json::Value) -> bool,
+    ) -> serde_json::Value {
         let deadline = Instant::now() + BOUND;
         let mut buffer = Vec::new();
         let mut byte = [0u8; 1];
+        let mut seen: Vec<String> = Vec::new();
         loop {
             assert!(
                 Instant::now() < deadline,
-                "no matching event within the bound"
+                "no {what} within the bound; events seen: {seen:?}"
             );
             match self.stream.read(&mut byte) {
                 Ok(0) => panic!("harness closed the connection while waiting"),
@@ -321,10 +329,17 @@ impl Client {
                 Err(e) => panic!("read failed: {e}"),
             }
             if byte[0] == b'\n' {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buffer)
-                    && want(&value)
-                {
-                    return value;
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buffer) {
+                    if want(&value) {
+                        return value;
+                    }
+                    seen.push(
+                        value["type"]
+                            .as_str()
+                            .or_else(|| value["command"].as_str())
+                            .unwrap_or("?")
+                            .to_owned(),
+                    );
                 }
                 buffer.clear();
             } else {
@@ -335,7 +350,7 @@ impl Client {
 
     fn request(&mut self, line: &str, id: &str) -> serde_json::Value {
         self.send(line);
-        self.read_until(|v| v["id"] == id)
+        self.read_until(&format!("response {id}"), |v| v["id"] == id)
     }
 
     /// Prompt the harness to spawn one child and wait until the child is
@@ -345,18 +360,22 @@ impl Client {
     /// the create script publishes.
     fn spawn_worker(&mut self, local: bool) -> u32 {
         self.send(r#"{"type":"prompt","message":"SPAWN_ONE","id":"p1"}"#);
-        let event = self.read_until(|v| {
+        // The spawn tool returned: the child is registered (its pid known
+        // for a local child) and the turn is over. A container child's
+        // status is not awaited here — its liveness is proven through the
+        // pid the create script published — so a slow bridge on a loaded
+        // runner cannot stall the test before the teardown it exercises.
+        let event = self.read_until("registered worker", |v| {
             v["type"] == "subagent_state_changed"
                 && v["subagents"].as_array().is_some_and(|rows| {
                     rows.iter().any(|row| {
                         (!local || row["pid"].as_u64().unwrap_or(0) > 0)
-                            && row["status"] != "starting"
                             && row["status"] != "exited"
                     })
                 })
         });
         let pid = event["subagents"][0]["pid"].as_u64().unwrap_or(0) as u32;
-        self.read_until(|v| v["type"] == "agent_end");
+        self.read_until("agent_end", |v| v["type"] == "agent_end");
         pid
     }
 }

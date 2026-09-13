@@ -256,7 +256,16 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         .map(|v| v.as_str().unwrap())
         .collect();
     assert_eq!(removed[0], a.key);
-    assert!(removed.contains(&c.key.as_str()), "{removed:?}");
+    // C ends through A's own fleet teardown (#1938): A settles C, and its
+    // survivor snapshot may reach the root — pruning C's reported row —
+    // before A's own compensation runs, in which case C is already exited
+    // here rather than listed with A's kill. Either way C is not signalled
+    // from the root and ends up exited.
+    let c_already_exited = registry.lock().unwrap()[&c.key].status == SubagentStatus::Exited;
+    assert!(
+        removed.contains(&c.key.as_str()) || c_already_exited,
+        "{removed:?}"
+    );
     wait_gone(a.pid, "A").await;
     wait_gone(c.pid, "C").await;
     let all_exited = registry
@@ -379,7 +388,18 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
     );
     wait_gone(a.pid, "A").await;
     wait_gone(c.pid, "C").await;
-    let exit = a_exit.borrow().clone().expect("A's exit was reaped");
+    // The pid disappears the moment the supervisor reaps; the reaper task
+    // publishes the status on the row's channel right after, so the status
+    // is awaited on that channel rather than read once.
+    let exit = tokio::time::timeout(
+        EXIT_BOUND,
+        a_exit.subscribe().wait_for(|signal| signal.is_some()),
+    )
+    .await
+    .expect("A's exit is published within the bound")
+    .expect("A's exit channel outlives the wait")
+    .clone()
+    .expect("A's exit was reaped");
     assert_eq!(
         (exit.exit_code, exit.signal),
         (Some(0), None),
