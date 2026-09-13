@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use super::error::DomainError;
 use super::message::Message;
 use super::tool::ToolPolicyReconciliation;
 use super::tool_descriptor::ToolCatalogueEntry;
@@ -162,21 +161,6 @@ impl AgentResult {
             || self.cache_write_tokens > 0
             || self.cost_micro_usd > 0
     }
-}
-
-/// Port: the agent loop that processes messages through LLM + tools.
-pub trait AgentLoop: Send + Sync {
-    /// Process a conversation: send messages to the LLM, execute tool calls,
-    /// and return the final assistant response with metadata.
-    fn process<'a>(
-        &'a mut self,
-        messages: &'a mut Vec<super::message::Message>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>,
-    >;
-
-    /// Return information about this agent's configuration.
-    fn info(&self) -> AgentInfo;
 }
 
 #[cfg(test)]

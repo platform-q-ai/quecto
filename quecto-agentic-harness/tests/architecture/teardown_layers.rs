@@ -171,6 +171,55 @@ fn whole_crate_dependency_direction_holds() {
 /// `ProcessObservation`, `Clock`, `SwarmLifecycle` → `application::swarm`);
 /// what remains is owned by **#1960** (part of the #1666 clean-architecture
 /// epic), one file per row below, and nothing else may join.
+/// Whether `line` declares `item` (`trait Foo` / `type Foo`) at any
+/// visibility, matching the whole identifier.
+fn declares(line: &str, item: &str) -> bool {
+    let trimmed = line.trim_start();
+    let body = trimmed
+        .strip_prefix("pub(crate) ")
+        .or_else(|| trimmed.strip_prefix("pub(super) "))
+        .or_else(|| trimmed.strip_prefix("pub "))
+        .unwrap_or(trimmed);
+    body.strip_prefix(item)
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+}
+
+/// (domain file, retired declaration, capability-local ports file it moved to)
+const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
+    // #1940
+    (
+        "src/domain/subagent_launch.rs",
+        "trait SubagentLaunchPorts",
+        "src/application/subagent_launch.rs",
+    ),
+    (
+        "src/domain/swarm.rs",
+        "trait ProcessControl",
+        "src/application/swarm.rs",
+    ),
+    (
+        "src/domain/swarm.rs",
+        "trait ProcessObservation",
+        "src/application/swarm.rs",
+    ),
+    (
+        "src/domain/swarm.rs",
+        "trait Clock",
+        "src/application/swarm.rs",
+    ),
+    (
+        "src/domain/swarm.rs",
+        "trait SwarmLifecycle",
+        "src/application/swarm.rs",
+    ),
+    // #1960
+    (
+        "src/domain/agent.rs",
+        "trait AgentLoop",
+        "src/application/agent_turn/ports.rs",
+    ),
+];
+
 #[test]
 fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     let impure = [
@@ -184,7 +233,6 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ];
     // (file, what keeps it here — tracked by #1960)
     let legacy_baseline: BTreeSet<&str> = [
-        "src/domain/agent.rs",               // #1960: AgentLoop
         "src/domain/audit.rs",               // #1960: AuditSink
         "src/domain/extension.rs",           // #1960: Extension
         "src/domain/extension_tool.rs",      // #1960: tokio oneshot reply
@@ -197,19 +245,27 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     ]
     .into_iter()
     .collect();
-    // The ports #1940 moved out must not come back.
-    for (file, retired_port) in [
-        ("src/domain/subagent_launch.rs", "trait SubagentLaunchPorts"),
-        ("src/domain/swarm.rs", "trait ProcessControl"),
-        ("src/domain/swarm.rs", "trait ProcessObservation"),
-        ("src/domain/swarm.rs", "trait Clock"),
-        ("src/domain/swarm.rs", "trait SwarmLifecycle"),
-    ] {
+    // The ports #1940 and #1960 moved out must not come back, and each one
+    // is declared in its capability-local ports file and nowhere else.
+    for (file, retired_port, new_home) in RETIRED_DOMAIN_PORTS {
         assert!(
             !production_code(file)
                 .iter()
-                .any(|(_, l)| l.contains(retired_port)),
-            "{file} re-declares `{retired_port}`, which #1940 moved to the application"
+                .any(|(_, l)| declares(l, retired_port)),
+            "{file} re-declares `{retired_port}`, which was moved to the application"
+        );
+        let declared_in: Vec<String> = production_files()
+            .into_iter()
+            .filter(|path| {
+                production_code(path)
+                    .iter()
+                    .any(|(_, l)| declares(l, retired_port))
+            })
+            .collect();
+        assert_eq!(
+            declared_in,
+            vec![new_home.to_string()],
+            "`{retired_port}` must be declared in {new_home} and nowhere else"
         );
     }
     let mut files = Vec::new();

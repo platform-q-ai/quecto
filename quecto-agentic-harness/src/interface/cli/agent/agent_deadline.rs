@@ -2,7 +2,7 @@
 //! (750-line cap).
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::AgentLoop;
+use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::message::Message;
 
 /// Outcome of a deadline-bounded agent run.

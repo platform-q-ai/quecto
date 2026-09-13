@@ -1,9 +1,7 @@
 //! Fake-provider end-to-end run through the real agent loop and swarm tool.
 use quecto::application::agent_loop::AgentLoopImpl;
-use quecto::domain::{
-    agent::AgentLoop,
-    message::{LlmResponse, Message, ToolCall},
-};
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
     registry::ToolRegistryImpl,

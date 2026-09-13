@@ -375,7 +375,7 @@ fn given_loop_failing_provider(world: &mut QuectoWorld, body_len: usize, secret:
 #[when("the agent processes a turn against that provider")]
 fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let body = world.audit_json.take().expect("no provider body");
     let sink = std::sync::Arc::new(LoopRecordingSink::default());

@@ -8,7 +8,7 @@
 
 use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use quecto::domain::agent::AgentLoop;
+use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};

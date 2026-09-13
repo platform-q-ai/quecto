@@ -2,7 +2,7 @@ use super::tests::*;
 #[path = "agent_loop_policy_cov_tests.rs"]
 mod policy_cov_tests;
 use super::*;
-use crate::domain::agent::AgentLoop;
+use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::message::Role;
 use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation,

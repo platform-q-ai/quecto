@@ -1470,7 +1470,7 @@ use quecto::application::context_pruning::messages as msg_pruning;
 /// in-flight prompt) into the world's spill store.
 fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let mock = ensure_mock_llm(world);
@@ -1927,7 +1927,7 @@ impl quecto::domain::audit::AuditSink for RecordingAuditSink {
 #[when("the agent completes a prompt exceeding the budget")]
 fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let max_context_tokens = world
         .context_max_tokens
@@ -2067,7 +2067,7 @@ fn run_prompt_through_loop(
     responses: Vec<quecto::domain::message::LlmResponse>,
 ) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let session_key = session_key_under_test(world);

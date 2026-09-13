@@ -586,7 +586,7 @@ fn test_oauth_expiry_margin_is_five_minutes() {
 // construction, exercised through the real process() path.
 mod context_settings {
     use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use crate::domain::agent::AgentLoop;
+    use crate::application::agent_turn::ports::AgentLoop;
     use crate::domain::message::Message;
     use crate::infrastructure::config::AgentDefaults;
     use crate::infrastructure::tools::registry::ToolRegistryImpl;

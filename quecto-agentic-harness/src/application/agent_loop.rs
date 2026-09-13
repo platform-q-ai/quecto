@@ -2,12 +2,11 @@ use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
+use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
-use crate::domain::agent::{
-    AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
-};
+use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
 use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};

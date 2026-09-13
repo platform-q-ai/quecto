@@ -8,7 +8,8 @@ use super::uds_snapshots::user_visible_messages;
 use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::{AgentLoop, AgentProgressEvent};
+use crate::application::agent_turn::ports::AgentLoop;
+use crate::domain::agent::AgentProgressEvent;
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;

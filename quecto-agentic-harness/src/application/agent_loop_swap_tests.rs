@@ -1,6 +1,6 @@
 use super::tests::{MockProvider, MockRegistry, MockTool};
 use super::*;
-use crate::domain::agent::AgentLoop;
+use crate::application::agent_turn::ports::AgentLoop;
 use std::sync::Arc;
 
 #[test]
