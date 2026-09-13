@@ -263,10 +263,19 @@ async fn an_owned_process_is_concluded_by_the_supervisor_and_an_unowned_one_neve
         error.to_string().contains("not owned by this harness"),
         "{error}"
     );
-    assert!(
-        stranger.try_wait().unwrap().is_none(),
-        "the stranger's pid was never signalled"
-    );
+    // A signal takes time to land: watch the stranger over a bounded
+    // window (a reintroduced pid signal ends a `sleep` well within it).
+    let watched_until = std::time::Instant::now() + Duration::from_millis(300);
+    while std::time::Instant::now() < watched_until {
+        assert!(
+            stranger.try_wait().unwrap().is_none(),
+            "the stranger's pid was signalled"
+        );
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", stranger.id()))
+            .expect("the stranger is still a process");
+        assert!(!stat.contains(") Z"), "the stranger was ended: {stat}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     stranger.kill().unwrap();
     stranger.wait().unwrap();
 }

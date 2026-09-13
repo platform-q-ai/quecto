@@ -335,12 +335,10 @@ fn prune_retires_the_shared_lease_so_removed_clones_cannot_signal() {
         !removed_clone.process_ownership.is_owned(),
         "the clone shares the lease and must be retired with the row"
     );
-    let signalled =
-        crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(&removed_clone);
-    assert!(
-        !signalled,
-        "a retired clone holds no handle and asks nothing"
+    let asked = removed_clone.request_owned_child_termination(
+        crate::domain::subagent_teardown::ShutdownReason::ParentShutdown,
     );
+    assert!(!asked, "a retired clone holds no handle and asks nothing");
 }
 
 /// Legacy snapshots key descendants by `agentId` only (or carry an empty

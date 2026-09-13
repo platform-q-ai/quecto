@@ -426,8 +426,7 @@ fn when_legacy_paths(world: &mut QuectoWorld) {
     let mut requests = Vec::new();
     for entry in &entries {
         requests.push(entry.request_owned_child_termination(ShutdownReason::OperatorRequest));
-        requests
-            .push(quecto::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry));
+        requests.push(entry.request_owned_child_termination(ShutdownReason::ParentShutdown));
     }
     state(world).legacy_requests = requests;
     std::thread::sleep(Duration::from_millis(300));

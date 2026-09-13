@@ -1641,7 +1641,12 @@ impl Drop for QuectoWorld {
                 guard.drain().map(|(_, entry)| entry).collect()
             };
             for entry in &removed {
-                quecto::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
+                if let Some(handle) = &entry.monitor_handle {
+                    handle.abort();
+                }
+                entry.request_owned_child_termination(
+                    quecto::domain::subagent_teardown::ShutdownReason::ParentShutdown,
+                );
             }
         }
         // Also cover rollback and removed registry records: fixture ownership

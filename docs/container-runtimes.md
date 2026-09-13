@@ -75,7 +75,12 @@ commands expose it (use `agent_id: "*"`):
   `cleanup-failed` state naming the member; a failed `kill` script does the
   same. Run `kill_container` again to retry: only the members still
   recorded are asked again, and the retained `kill` never runs twice under
-  one claim.
+  one claim. Latency: a member is asked over its edge with a 5 s
+  acknowledgement bound and, once acknowledged, given up to 15 s for its
+  exit to be observed before it is compensated `unobserved`, so a
+  `kill_container` whose members are unreachable or slow to exit can take
+  up to ~20 s per member before the retained `kill` runs; a member that
+  exits promptly settles in milliseconds.
 
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot

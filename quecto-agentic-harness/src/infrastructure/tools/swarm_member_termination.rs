@@ -60,8 +60,10 @@ impl DelegatedSwarmMemberTermination {
 
     /// The uuid of the delegated agent this harness launched whose endpoint
     /// is the member's registered endpoint, if any. Affirmative: only a row
-    /// carrying a launch generation (launched here) and a live status is a
-    /// candidate; a merged descendant or restored row never is.
+    /// carrying a launch generation (launched here) is a candidate — a
+    /// merged descendant or restored row never is; whether the row is still
+    /// live is the kill's own resolution to make (an exited row answers
+    /// `already ended`, never a signal).
     fn launched_agent_for(&self, member: &Member) -> Option<String> {
         let endpoint = member.endpoint.as_deref().filter(|e| !e.is_empty())?;
         let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());

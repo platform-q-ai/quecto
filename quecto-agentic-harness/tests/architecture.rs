@@ -249,7 +249,7 @@ fn domain_layer_has_no_runtime_io_calls() {
 fn environment_control_orchestration_stays_out_of_interface_handlers() {
     // Environment listing and kill transactions are separate application owners.
     // UDS handlers and the agent_cmd adapter may only decode arguments, delegate
-    // to `ListEnvironmentsQuery` or `EnvironmentControlUseCase`, and encode results —
+    // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
     // kill_container orchestration must never live in `uds_query.rs`.
     let handler_files = [
         "src/interface/cli/uds_query.rs",
@@ -379,9 +379,9 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 ] => true,
                 // The environments capability (#1939): its ports are
                 // implemented here, and its use cases are built beside the
-                // agent-control tools (the `EnvironmentControlUseCase`
-                // precedent) and by the cleanup path that finalizes a
-                // member.
+                // agent-control tools (the precedent of the retired
+                // `EnvironmentControlUseCase`) and by the cleanup path that
+                // finalizes a member.
                 ["crate", "application", "environments", "ports", ..]
                 | [
                     "crate",
