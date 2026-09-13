@@ -125,6 +125,22 @@ impl NotificationStack {
         self.notifications.push(notification);
     }
 
+    /// Replace any notification whose message starts with `prefix` by
+    /// `notification` — a progress notice updated in place (#1956).
+    pub fn replace_prefixed(&mut self, prefix: &str, notification: Notification) {
+        self.dismiss_prefixed(prefix);
+        self.push(notification);
+    }
+
+    /// Dismiss every notification whose message starts with `prefix`.
+    /// Returns whether any was removed.
+    pub fn dismiss_prefixed(&mut self, prefix: &str) -> bool {
+        let before = self.notifications.len();
+        self.notifications
+            .retain(|n| !n.message.starts_with(prefix));
+        self.notifications.len() != before
+    }
+
     /// Remove expired notifications. Returns true if any were removed.
     pub fn gc(&mut self) -> bool {
         let before = self.notifications.len();

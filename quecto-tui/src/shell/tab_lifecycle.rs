@@ -239,7 +239,7 @@ impl super::App {
                 if let Err(err) = conn.transport.clone_sender().try_send_exit_durability(
                     &crate::protocol::client::Command::PersistSession {
                         id: Some(id.clone()),
-                        restore_reason: (self.ordinary_exit_kill_owned
+                        restore_reason: (self.exit_policy.kill_owned
                             && self
                                 .tabs
                                 .get(&tab)
@@ -321,66 +321,30 @@ impl super::App {
         ids
     }
 
-    /// Close `tab`. When `kill_agent`, return its `ChildWatch` so the caller
-    /// can terminate (AC3a). Refuses to close the last remaining tab.
-    #[cfg(test)]
-    pub(crate) fn close_tab(
-        &mut self,
-        tab: TabId,
-        kill_agent: bool,
-    ) -> Result<Option<crate::shell::child_watch::ChildWatch>, &'static str> {
-        if self.tabs.len() <= 1 {
-            return Err("cannot close the last tab");
-        }
-        if !self.tabs.contains_key(&tab) {
-            return Err("unknown tab");
-        }
-        let ids = self.ordered_tab_ids();
-        let idx = ids.iter().position(|t| *t == tab).unwrap_or(0);
-        let fallback = if idx > 0 {
-            ids[idx - 1]
-        } else {
-            ids.get(1).copied().unwrap_or(TabId::MASTER)
-        };
-        // Invalidate in-flight attach outcomes before remove so a recycled id
-        // cannot accept a stale spawn (F2). Feed abort happens via Connection Drop (F1).
-        if let Some(c) = self.conn_mut(tab) {
-            c.attach_generation = 0;
-            c.pending_attach = false;
-            c.transport.abort_feed();
-        }
-        let mut state = self.tabs.remove(&tab).expect("tab present");
-        let watch = state.child_exit_watch.take();
-        if self.active_tab == tab {
-            // Restore fallback draft without parking closed-tab text onto it.
-            self.editor.set_text(
-                &self
-                    .conn_for(fallback)
-                    .map(|c| c.editor_draft.clone())
-                    .unwrap_or_default(),
-            );
-            self.active_tab = fallback;
-            self.subagents.panel_nav_key = None;
-            self.subagents.panel_nav.set_selected(0);
-            self.sync_panel_selection_to_active();
-            self.inference.model_registry.open_pending = false;
-        }
-        self.routing_tab_override = self.routing_tab_override.filter(|t| *t != tab);
-        self.persist_default_durability();
-        Ok(if kill_agent { watch } else { None })
-    }
-
     /// Detach every per-tab `ChildWatch` so ordinary-exit cleanup can terminate them (AC3c).
     pub(crate) fn take_all_child_exit_watches(
         &mut self,
     ) -> Vec<crate::shell::child_watch::ChildWatch> {
+        self.take_all_child_exit_watches_with_rosters()
+            .into_iter()
+            .map(|(watch, _)| watch)
+            .collect()
+    }
+
+    /// Like [`Self::take_all_child_exit_watches`], each watch paired with the
+    /// number of subagents its tab's roster last showed (`None` for a spawn
+    /// still in flight, which has no roster yet) — the input to the
+    /// fleet-derived leader budget (#1956).
+    pub(crate) fn take_all_child_exit_watches_with_rosters(
+        &mut self,
+    ) -> Vec<(crate::shell::child_watch::ChildWatch, Option<usize>)> {
         let mut out = Vec::new();
         if let Ok(mut pending) = self.pending_tab_child_watches.lock() {
-            out.extend(pending.drain(..));
+            out.extend(pending.drain(..).map(|watch| (watch, None)));
         }
         for state in self.tabs.values_mut() {
             if let Some(w) = state.child_exit_watch.take() {
-                out.push(w);
+                out.push((w, Some(state.roster.tracked.len())));
             }
         }
         out

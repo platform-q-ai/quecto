@@ -118,7 +118,7 @@ the 30s deadline instead.
 | `Shift+Enter` or `Alt+Enter` | Insert newline |
 | `Escape` | Abort the active agent run, or clear the editor if idle |
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
-| `Ctrl+D` | Exit immediately |
+| `Ctrl+D` | Exit: persist, then ask each owned agent to settle its subagents and exit |
 | `Ctrl+G` | Jump to the latest conversation output |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
@@ -177,8 +177,9 @@ alias for `/help`.
   `quecto_tui::client`-style shims are intentionally not part of the public API.
 - Auto-discovered socket paths are validated and must be real Unix sockets under
   canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
-- On exit, `quecto-tui` terminates the spawned agent process group so child
-  agents are cleaned up too.
+- On exit, `quecto-tui` sends SIGTERM to the spawned agent's leader process
+  only and waits for it to settle its own subagents (see "Exit, detach, and
+  resume"); it never signals a process group or a descendant.
 
 ### Admission waiting indicators
 
@@ -232,14 +233,35 @@ when that harness exits or loses its connection to it.
 Since epic #1929 the harness owns its own teardown: on SIGTERM it asks every
 direct child to shut down over the protocol, each child settles its own
 subtree the same way, container environments run their retained kill, and the
-harness persists and exits 0 by itself (worst case ≈ 19 s per unresponsive
-direct child; a repeated signal is ignored inside its 45 s budget). The TUI's
-current exit path still predates that: it SIGTERMs the harness process group
-and every descendant it can find, waits 1.5 s, then SIGKILLs the rest. That
-races the harness's own graceful teardown; #1956 is the planned
-simplification (SIGTERM the harness leader only, wait within the harness's
-budget, SIGKILL only that one process after it, and log — never signal — any
-stray process afterwards).
+harness persists and exits 0 by itself. Its fleet teardown settles direct
+children 8 at a time with a 25 s per-child worst case, over at most 3 passes;
+a **repeated** SIGTERM inside that work is ignored, and one arriving after
+45 s forces the harness out. The TUI's exit path (#1956) therefore signals
+**one** process per owned harness and mirrors those numbers:
+
+1. After the snapshots are persisted, SIGTERM to the harness leader pid —
+   never `kill(-pgid)`, never a descendant.
+2. Wait for that process to exit within the *settle* budget: `ceil(n / 8)`
+   batches × 25 s + 5 s to persist and exit, where `n` is the number of
+   subagents the tab's roster last showed (30 s for up to 8, 55 s for 9–16,
+   80 s — the 3-pass worst case — beyond that or when the roster is unknown,
+   e.g. a spawn still in flight).
+3. If it is still running, send a **second** SIGTERM — the repeated signal is
+   what arms the harness's own 45 s force-exit — and wait those 45 s.
+4. Only then SIGKILL that one pid.
+
+If the wait passes ~1 s the TUI shows "waiting for the agent to settle its
+subagents… (Ns)" and keeps it updated; the notice is dismissed as soon as the
+leaders are gone. A leader that needed the SIGKILL is reported after terminal
+cleanup. After each leader exits a read-only canary reads `/proc` once and
+reports — never signals — any process still naming the old pid as parent or
+process group (skipped if the pid has already been recycled); under the
+lifetime binding that list is always empty, and a non-empty one is printed
+after terminal cleanup as the evidence. Swarm members and bash tool children
+that run in their own process group are, by design, outside the canary's
+view. The same leader-only helper serves tab close, `/new` workspace reset
+and startup-failure cleanup (which prints "waiting for the agent to exit…"
+once on stderr if it takes more than a second).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.

@@ -66,7 +66,7 @@ pub struct App {
     notifications: NotificationStack,
     kitty: KittyProtocol,
     should_exit: bool,
-    ordinary_exit_kill_owned: bool,
+    exit_policy: app_ordinary_exit::OrdinaryExitPolicy,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
     /// Global selector-overlay half of the inference flow; per-tab
     /// model/effort state lives on `conn` (#1463).
@@ -180,7 +180,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             should_exit: false,
-            ordinary_exit_kill_owned: true,
+            exit_policy: app_ordinary_exit::OrdinaryExitPolicy::default(),
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
             subagents,
@@ -327,7 +327,7 @@ mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
 #[path = "app_ordinary_exit.rs"]
-mod app_ordinary_exit;
+pub(crate) mod app_ordinary_exit;
 #[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
 #[path = "app_render_helpers.rs"]

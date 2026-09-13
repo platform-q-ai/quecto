@@ -3,6 +3,10 @@
 //! drives the real `spawn_agent` flow with a stand-in shell script.
 
 use super::*;
+use crate::shell::process::{LeaderBudget, LeaderIdentity as Id, terminate_leader};
+async fn terminate_test_child(child: &mut tokio::process::Child) {
+    terminate_leader(child, LeaderBudget::WORST_CASE, Id::capture(child.id())).await;
+}
 
 fn args(s: &str) -> Vec<String> {
     let mut v = vec!["quecto-tui".to_string()];
@@ -326,8 +330,7 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
-        .await;
+    terminate_test_child(&mut child).await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -369,8 +372,7 @@ async fn spawn_agent_parses_the_protocol_version_announcement() {
         "spawn must parse the announced protocol version"
     );
 
-    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
-        .await;
+    terminate_test_child(&mut child).await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 

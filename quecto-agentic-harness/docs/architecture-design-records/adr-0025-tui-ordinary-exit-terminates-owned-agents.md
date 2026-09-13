@@ -178,13 +178,26 @@ The epic closes with one teardown model, ratcheted by
   child; 30 s per remaining hop for a nested target; 45 s before a repeated
   OS signal forces the harness out.
 
-**TUI ordinary exit today and #1956.** The TUI's ordinary exit (`Ctrl+D`,
-`/quit`, `/exit`, tab close, detach) still SIGTERMs the harness process
-group and every descendant it finds, waits 1.5 s and SIGKILLs the rest. That
-predates the harness owning its own fleet teardown and now races it: the
-harness settles its subtree gracefully on SIGTERM and exits 0 by itself.
-#1956 is the planned simplification — SIGTERM the harness leader only, wait
-within the harness's teardown budget, SIGKILL only that one process after
-it, and replace the descendant sweep with a post-exit canary. Until it
-lands, the TUI's pid-tree sweep is a TUI-crate behaviour outside the harness
-allowlist, not a harness contract.
+**TUI ordinary exit — #1956.** The TUI's ordinary exit (`Ctrl+D`, `/quit`,
+`/exit`) and its other owned-harness ends (tab close, `/new` workspace reset,
+startup-failure cleanup) signal the harness **leader only**: after the
+snapshots are persisted, SIGTERM to that one pid (`kill(pid)`, never
+`kill(-pgid)`, never a descendant); a wait for that process to exit within a
+*settle* budget derived from the fleet teardown above — `ceil(n / 8)` batches
+(`DEFAULT_SETTLEMENT_BOUND`) × 25 s (`DEFAULT_COMPENSATION_WAIT`) + 5 s
+persist slack for the `n` subagents the tab's roster last showed, capped at
+the 3-pass (`MAX_PASSES`) worst case of 80 s and used in full when the roster
+is unknown; then a **second** SIGTERM — a repeated signal is what arms the
+harness's own 45 s `FORCE_EXIT_AFTER`, a single one never does — and a wait of
+those 45 s; and only then SIGKILL of that one pid. A "waiting for the agent to
+settle its subagents…" notice appears past ~1 s. The former process-group
+SIGTERM, `/proc` descendant sweep, 1.5 s grace and "leader exit is not proof
+of cleanup" verifier are gone; in their place a read-only post-exit canary
+reads `/proc` once and reports — never signals — any process still naming the
+old leader as parent or process group, skipped when the pid's kernel start
+time shows it has been recycled. Under the lifetime binding that report is
+always empty; a non-empty one is the evidence. Swarm members and bash tool
+children in their own process group are outside its view by design. The
+harness's fleet teardown on SIGTERM is thus the only subagent-ending
+authority, with the TUI a plain SIGTERM sender whose waits are the harness's
+own numbers.

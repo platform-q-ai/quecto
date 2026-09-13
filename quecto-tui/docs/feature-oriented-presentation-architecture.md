@@ -360,13 +360,13 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
 | `shell/connection_state.rs` | `shell` per-connection state bundle behind the `active_conn()` seam (#1463) |
 | `shell/atomic_file.rs` | `shell` atomic temp+rename durability helper (#1465 AC4) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
-| `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
-| `shell/process_owned.rs` | `shell` Linux owned-process verification adapter (#1608) |
+| `shell/process.rs` | `shell` leader-only harness termination + post-exit canary, budget derived from the harness teardown (#1956) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
@@ -386,6 +386,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness_tabs.rs` | `shell` multi-tab paint/activity harness drivers (#1466) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_exit.rs` | `shell` test harness support for the leader-only ordinary exit (#1956) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_panel.rs` | `shell` shared panel-chrome text helpers for test suites (#1369 slice 5) |
 | `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
