@@ -94,6 +94,9 @@ pub(super) struct MultiClientArgs<'a> {
     /// Shared subagent registry for get_subagents / state_changed (#524).
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// The lifecycle cell the spawn tool admits against (#1938).
+    pub harness_lifecycle:
+        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     /// Shared workflow state for auto-nudge injection (#562).
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     /// Workflow config (auto_continue, completion_nudge flags).
@@ -170,6 +173,7 @@ pub(super) async fn multi_client_loop(
     let lifetime = args.lifetime;
     let notification_rx = args.notification_rx;
     let subagent_registry = args.subagent_registry;
+    let harness_lifecycle = args.harness_lifecycle.take();
     let wf_state = args.workflow_state;
     let wf_config = args.workflow_config;
     let pre_broadcast_tx = args.broadcast_tx;
@@ -257,14 +261,10 @@ pub(super) async fn multi_client_loop(
         &cancel_handle,
         crate::interface::tool_runtime::swarm_context(),
     );
-    // SIGTERM/SIGINT: tear down every subagent and container environment
-    // before this process goes away (a container is outside the parent's
-    // process group, so nothing else can reach it), then exit the loop.
-    let shutdown = super::uds_shutdown::ShutdownRequest::install(
-        subagent_registry.clone(),
-        Some(broadcast_tx.clone()),
-        cancel_handle.clone(),
-    );
+    // One loop-exit notification for every shutdown trigger (#1935, #1938):
+    // the teardown graph's exit-readiness adapter fires it once the fleet
+    // has settled and the session is ready to persist.
+    let exit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
         std::sync::Arc::new(context) as std::sync::Arc<dyn crate::domain::swarm::SwarmRunControl>
     });
@@ -276,11 +276,12 @@ pub(super) async fn multi_client_loop(
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
 
-    // Subagent teardown graph (#1935): composition's builder wires the slice
-    // A use cases to this loop's cancel slot, exit notification and registry,
-    // plus the parent control binding every connection is checked against.
-    // A launched child also arms its bind deadline: a launcher that never
-    // presents is presumed gone.
+    // Subagent teardown graph (#1935, #1938): composition's builder wires
+    // the application use cases to this loop's cancel slot, exit
+    // notification, registry and lifecycle cell, plus the parent control
+    // binding every connection is checked against. A launched child also
+    // arms its bind deadline: a launcher that never presents is presumed
+    // gone.
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
@@ -292,15 +293,27 @@ pub(super) async fn multi_client_loop(
                 session_key.clone()
             }),
             registry: subagent_registry.clone(),
+            harness_lifecycle,
+            broadcast_tx: Some(broadcast_tx.clone()),
+            notify_tx: None,
             cancel_handle: cancel_handle.clone(),
             turn_control: turn_control.clone(),
             busy: busy.clone(),
-            exit_notify: shutdown.exit_notify(),
+            exit_notify: exit_notify.clone(),
             binding: parent_control
                 .map(|launch| launch.binding)
                 .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
         })
     });
+    // SIGTERM/SIGINT and the last client's disconnect are delivered to the
+    // same controller as every other trigger; the watcher only delivers.
+    let shutdown = super::uds_shutdown::ShutdownRequest::install(
+        exit_notify,
+        teardown.as_ref().map(|graph| graph.controller.clone()),
+        busy.clone(),
+        cancel_handle.clone(),
+    );
+    let fleet_teardown = teardown.as_ref().map(|graph| graph.fleet.clone());
     let connections = teardown.as_ref().map(|graph| graph.connections.clone());
     if let (Some(connections), Some(deadline)) = (connections.clone(), bind_deadline) {
         super::uds_parent_control::arm_bind_deadline(connections, deadline);
@@ -365,6 +378,7 @@ pub(super) async fn multi_client_loop(
         provider_reload_inputs,
         last_persisted_message_index,
         durable_prefix_dirty: false,
+        fleet_teardown,
     };
 
     run_dispatch_loop(
@@ -435,14 +449,22 @@ async fn run_dispatch_loop(
         let Some(msg) = msg else { break };
         match msg {
             DispatchMsg::Shutdown => {
-                // Subagents and environments are already gone (the watcher
-                // tore them down before notifying); persist an empty roster
-                // rather than reviving killed rows on the next resume.
+                // The common shutdown settled the fleet before signalling
+                // exit readiness; persist an empty roster rather than
+                // reviving torn-down rows on the next resume.
                 ctx.session.killing_exit = true;
                 break;
             }
             DispatchMsg::Client(client_msg) => {
                 if handle_client_msg(ctx, client_msg, lifetime, live_clients).await {
+                    // The last client of a lifetime that ends with it left:
+                    // the same common shutdown runs to completion — fleet
+                    // torn down, turn settled — before the loop returns and
+                    // the final save happens (#1938). The exit-readiness
+                    // notification it fires has no waiter left, which is
+                    // fine: this loop is already leaving.
+                    shutdown.last_client_disconnected().await;
+                    ctx.session.killing_exit = true;
                     break;
                 }
             }

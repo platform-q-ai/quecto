@@ -38,6 +38,9 @@ fn graph(registry: Option<SubagentRegistry>, busy: bool) -> Graph {
     let graph = build_teardown_graph(TeardownGraphInputs {
         owner: AgentUuid::new("me"),
         registry,
+        harness_lifecycle: None,
+        broadcast_tx: None,
+        notify_tx: None,
         cancel_handle: cancel.clone(),
         turn_control: turn_control.clone(),
         busy: Arc::new(std::sync::atomic::AtomicBool::new(busy)),
@@ -112,7 +115,7 @@ async fn lineage_comes_from_the_registry_and_only_launched_rows_are_children() {
             SubagentEntry::new("/tmp/restored.sock".into(), 99),
         );
     }
-    let g = graph(Some(registry), false);
+    let g = graph(Some(registry.clone()), false);
     let outcome = g
         .graph
         .connections
@@ -123,12 +126,16 @@ async fn lineage_comes_from_the_registry_and_only_launched_rows_are_children() {
         panic!("{outcome:?}");
     };
     let outcome = outcome.unwrap();
-    // The launched child was addressed (its endpoint is dead, so it is
-    // recorded as failed rather than ignored); the restored row never was.
-    assert!(outcome.children_shut_down.is_empty());
-    assert_eq!(outcome.children_failed.len(), 1);
-    assert_eq!(outcome.children_failed[0].0, AgentUuid::new("kid"));
+    // The launched child was addressed: its endpoint is dead and no process
+    // is owned, so the fleet teardown (#1938) settles it unobserved and its
+    // row is compensated and pruned; the restored row was never addressed
+    // and, being no delegated agent, is left as a record.
+    assert_eq!(outcome.children_shut_down, [AgentUuid::new("kid")]);
+    assert!(outcome.children_failed.is_empty());
     assert!(!outcome.turn_cancelled);
+    let entries = registry.lock().unwrap();
+    assert!(!entries.contains_key("kid"), "settled and pruned");
+    assert!(entries.contains_key("restored"), "never a direct child");
 }
 
 #[tokio::test]

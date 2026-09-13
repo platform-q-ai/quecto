@@ -224,6 +224,7 @@ fn intent_of(cause: TerminationCause) -> TeardownIntent {
     match cause {
         TerminationCause::Exit(_) => TeardownIntent::Exit,
         TerminationCause::SelectedTermination => TeardownIntent::SelectedTermination,
+        TerminationCause::FleetTeardown => TeardownIntent::FleetTeardown,
         TerminationCause::LaunchRollback { owns_environment } => {
             TeardownIntent::LaunchRollback { owns_environment }
         }
@@ -231,14 +232,17 @@ fn intent_of(cause: TerminationCause) -> TeardownIntent {
 }
 
 /// The cause the compensation honours: an exit observed by the reaper or
-/// the monitor for a row a kill or rollback had already claimed stopping
-/// is that termination's end, not a post-mortem.
+/// the monitor for a row a kill, fleet teardown or rollback had already
+/// claimed stopping is that termination's end, not a post-mortem.
 fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> TerminationCause {
     match (entry.teardown_phase(), cause) {
         (
             TeardownPhase::Compensating(TeardownIntent::SelectedTermination),
             TerminationCause::Exit(_),
         ) => TerminationCause::SelectedTermination,
+        (TeardownPhase::Compensating(TeardownIntent::FleetTeardown), TerminationCause::Exit(_)) => {
+            TerminationCause::FleetTeardown
+        }
         (
             TeardownPhase::Compensating(TeardownIntent::LaunchRollback { owns_environment }),
             TerminationCause::Exit(_),
@@ -253,7 +257,9 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
 fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
     match cause {
         TerminationCause::Exit(_) => FinalizeMode::Exit,
-        TerminationCause::SelectedTermination => FinalizeMode::ParentKill,
+        TerminationCause::SelectedTermination | TerminationCause::FleetTeardown => {
+            FinalizeMode::ParentKill
+        }
         TerminationCause::LaunchRollback {
             owns_environment: true,
         } => FinalizeMode::LaunchRollbackOwned,
@@ -270,9 +276,9 @@ fn exit_kind(cause: TerminationCause) -> ExitSignalKind {
             ExitSignalKind::ConnectionClosed
         }
         TerminationCause::Exit(ExitObservation::NeverReachable) => ExitSignalKind::NeverReachable,
-        TerminationCause::SelectedTermination | TerminationCause::LaunchRollback { .. } => {
-            ExitSignalKind::Terminated
-        }
+        TerminationCause::SelectedTermination
+        | TerminationCause::FleetTeardown
+        | TerminationCause::LaunchRollback { .. } => ExitSignalKind::Terminated,
     }
 }
 
@@ -385,6 +391,32 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                     .map(|(_, entry)| entry.agent_uuid.clone())
                     .collect(),
             }
+        })
+    }
+
+    /// A terminal row is one whose ladder reached `Compensated` or that the
+    /// cascade already marked dead: its terminal effects have run, nothing
+    /// is retained for it, and only its record remains. Live and in-flight
+    /// rows are untouched, so a teardown still settling a child can never
+    /// lose it here. The survivor set does not change (dead rows are not
+    /// listed), so nothing is broadcast.
+    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<crate::domain::ids::AgentUuid>> {
+        Box::pin(async move {
+            let mut entries = self.lock();
+            let mut terminal: Vec<String> = entries
+                .iter()
+                .filter(|(_, entry)| {
+                    entry.teardown_phase() == TeardownPhase::Compensated
+                        || entry.persisted_liveness == SubagentLiveness::Dead
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            terminal.sort();
+            terminal
+                .iter()
+                .filter_map(|key| entries.remove(key))
+                .map(|entry| entry.agent_uuid)
+                .collect()
         })
     }
 }

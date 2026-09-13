@@ -335,14 +335,12 @@ fn prune_retires_the_shared_lease_so_removed_clones_cannot_signal() {
         !removed_clone.process_ownership.is_owned(),
         "the clone shares the lease and must be retired with the row"
     );
-    crate::infrastructure::tools::process_tree::SIGNAL_LOG
-        .with(|log| *log.borrow_mut() = Some(Vec::new()));
     let signalled =
         crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(&removed_clone);
-    let log = crate::infrastructure::tools::process_tree::SIGNAL_LOG
-        .with(|log| log.borrow_mut().take().unwrap());
-    assert!(!signalled);
-    assert!(log.is_empty(), "retired clone dispatched: {log:?}");
+    assert!(
+        !signalled,
+        "a retired clone holds no handle and asks nothing"
+    );
 }
 
 /// Legacy snapshots key descendants by `agentId` only (or carry an empty

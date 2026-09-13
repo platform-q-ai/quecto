@@ -15,9 +15,12 @@ use super::super::teardown_fakes::*;
 struct Rig {
     lifecycle: Arc<FakeLifecycle>,
     routing: Arc<FakeRouting>,
+    fleet: FakeFleet,
     cancellation: Arc<FakeCancellation>,
     persistence: Arc<FakePersistence>,
     exit: Arc<FakeExit>,
+    /// Spawner of the harness run; the fleet run has its own so aborting
+    /// "the latest" run is unambiguous.
     spawner: Arc<FakeSpawner>,
     prepare: PrepareHarnessShutdown,
     execute: Arc<ExecuteHarnessShutdown>,
@@ -29,12 +32,13 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
     let persistence = FakePersistence::new();
     let exit = FakeExit::new();
     let spawner = FakeSpawner::new();
+    let fleet = fake_fleet(lifecycle.clone(), routing.clone(), FakeSpawner::new());
     let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), FakeClock::at(1_000));
     let prepare = PrepareHarnessShutdown::new(transaction.clone());
     let execute = Arc::new(ExecuteHarnessShutdown::new(
         transaction,
         ExecuteHarnessShutdownPorts {
-            routing: routing.clone(),
+            children: fleet.fleet.clone(),
             cancellation: cancellation.clone(),
             persistence: persistence.clone(),
             exit: exit.clone(),
@@ -44,6 +48,7 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
     Rig {
         lifecycle,
         routing,
+        fleet,
         cancellation,
         persistence,
         exit,
@@ -405,11 +410,19 @@ async fn simultaneous_os_parent_and_protocol_triggers_converge_on_one_outcome() 
 #[tokio::test]
 async fn child_and_persistence_failures_are_reported_not_fatal() {
     let rig = rig();
+    // A is unreachable and even the owned-handle fallback does not end it:
+    // it is reported unsettled, the shutdown still completes.
     rig.routing
         .unreachable
         .lock()
         .unwrap()
         .push(AgentUuid::new("A"));
+    rig.fleet.termination.conclude_child_with(
+        "A",
+        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+            "no exit observed".into(),
+        ),
+    );
     *rig.persistence.fail_with.lock().unwrap() = Some("disk full".into());
     let token = rig
         .prepare
@@ -420,7 +433,22 @@ async fn child_and_persistence_failures_are_reported_not_fatal() {
     assert_eq!(outcome.children_shut_down, [AgentUuid::new("D")]);
     assert_eq!(
         outcome.children_failed,
-        [(AgentUuid::new("A"), "unreachable: socket closed".to_owned())]
+        [(AgentUuid::new("A"), "no exit observed".to_owned())]
+    );
+    // The unreachable attempt reached the fallback as a negative outcome.
+    let a_attempt = rig
+        .fleet
+        .termination
+        .calls()
+        .into_iter()
+        .find(|(child, _, _)| child.uuid.as_str() == "A")
+        .map(|(_, attempt, _)| attempt)
+        .unwrap();
+    assert_eq!(
+        a_attempt,
+        crate::application::subagents::ports::ProtocolAttempt::Negative(
+            "unreachable: socket closed".into()
+        )
     );
     assert_eq!(
         outcome.persistence,
@@ -586,16 +614,24 @@ async fn a_run_interrupted_mid_children_never_re_sends_to_a_recorded_child() {
         joiner.await.unwrap(),
         Err(HarnessShutdownError::ExecutionInterrupted)
     );
-    *rig.routing.hold_child.lock().unwrap() = None;
-    let outcome = rig.execute.execute(&token).await.unwrap();
+    // The fleet run is detached from the harness run: it is still parked
+    // on D, and the re-driven shutdown joins it instead of asking again.
+    assert!(rig.fleet.fleet.in_flight());
+    let redrive = tokio::spawn({
+        let execute = rig.execute.clone();
+        let token = token.clone();
+        async move { execute.execute(&token).await }
+    });
+    tokio::task::yield_now().await;
+    rig.routing.gate.notify_one();
+    let outcome = redrive.await.unwrap().unwrap();
     assert_eq!(
         outcome.children_shut_down,
         [AgentUuid::new("A"), AgentUuid::new("D")]
     );
-    // A once, D twice (its first attempt was interrupted before its record);
-    // the port contract makes that second D request a join, not a repeat.
+    // A once and D once: no child is ever asked twice.
     let calls = rig.routing.calls();
-    assert_eq!(calls.len(), 3);
+    assert_eq!(calls.len(), 2);
     assert_eq!(
         calls
             .iter()
@@ -603,6 +639,7 @@ async fn a_run_interrupted_mid_children_never_re_sends_to_a_recorded_child() {
             .count(),
         1
     );
+    assert_eq!(rig.fleet.compensation.calls().len(), 2);
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
     assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
     assert_eq!(rig.exit.signalled().len(), 1);

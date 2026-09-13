@@ -176,6 +176,8 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         registry: registry.clone(),
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
+        harness_lifecycle:
+            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     });
 
     let args = serde_json::json!({
@@ -309,6 +311,8 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         registry: registry.clone(),
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
+        harness_lifecycle:
+            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))

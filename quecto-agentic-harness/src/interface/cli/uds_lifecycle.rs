@@ -40,6 +40,10 @@ pub struct UdsLoopArgs<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// The lifecycle cell the spawn tool admits against (#1938); the
+    /// teardown graph freezes it. `None` builds a private one.
+    pub harness_lifecycle:
+        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -81,6 +85,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         lifetime,
         notification_rx,
         subagent_registry,
+        harness_lifecycle,
         workflow_state,
         workflow_config,
         broadcast_tx,
@@ -169,6 +174,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 lifetime,
                 notification_rx,
                 subagent_registry,
+                harness_lifecycle,
                 workflow_state,
                 workflow_config,
                 broadcast_tx,
@@ -286,6 +292,7 @@ async fn single_client_loop(
             provider_reload_inputs,
             last_persisted_message_index,
             durable_prefix_dirty: false,
+            fleet_teardown: None,
         },
     )
     .await;

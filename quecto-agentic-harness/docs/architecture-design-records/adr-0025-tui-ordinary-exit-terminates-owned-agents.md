@@ -128,16 +128,24 @@ legacy record (migrated on the next save). The identity-verification path
 signal lease are retired. Historical rows are never synthesised into the
 operational roster and nothing restarts automatically.
 
-### Session transitions release the departing session's children — #1937 interim
+### Session transitions tear the departing session's children down — #1938
 
 Because a launched child cannot be readopted, a row merely dropped from the
 operational roster on `new_session` or `resume_session` would strand a live
-child no teardown path can reach until the master exits. The transition
-therefore **releases** each departing row before clearing it: the row's
-monitor task (the owner of the child's bound parent-control connection under
-#1935) and its proxy bridge are aborted, the bound connection closes, and the
-child runs its own parent-loss shutdown (#1946) — graceful, unsignalled and
-not awaited by the dispatch path. This is an interim: #1938 replaces the
-release with the acknowledged session-transition teardown owned by the
-application (and #1939 finalizes a departing child's script-managed
-environments, which parent loss does not).
+child no teardown path can reach until the master exits. The #1937 interim
+released each departing row through parent loss (aborting its monitor task
+so the child observed the loss of its bound connection). #1938 replaces that
+release with the acknowledged, application-owned **fleet teardown**
+(`TerminateAllDelegatedAgents`): before the departing session is saved and
+its roster replaced, every direct child is claimed, asked to shut down over
+its edge, concluded through the supervised owned handle and compensated,
+under a concurrency bound; exited tombstones are pruned. The same use case is
+the direct-children step of every common shutdown (`shutdown` command,
+parent loss, bind deadline, SIGTERM/SIGINT, the last client of the default
+lifetime) and of `delete_all_subagents`, so the harness has one owner of
+whole-fleet ends. A child that cannot be settled within its budget refuses
+the transition explicitly and keeps the current session; the process-exit
+paths report it and exit anyway. A spawn racing an admitted shutdown is
+either registered before the fleet is claimed (and torn down with it) or
+refused, because registration reads the frozen lifecycle inside the
+registry's critical section.

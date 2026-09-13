@@ -84,28 +84,35 @@ async fn shutdown_child_is_idempotent_per_child_across_a_re_drive() {
     }
     harness.spawner.abort_latest().await;
     assert!(joiner.await.unwrap().is_err());
-    *harness.routing.hold_child.lock().unwrap() = None;
-    let outcome = harness.execute.execute(&prepared.token).await.unwrap();
+    // The fleet run is detached from the harness run (#1938): it is still
+    // parked on D, and the re-driven shutdown joins it rather than asking
+    // any child again.
+    assert!(harness.fleet.in_flight());
+    let redrive = tokio::spawn({
+        let token = prepared.token.clone();
+        let execute = harness.execute.clone();
+        async move { execute.execute(&token).await }
+    });
+    tokio::task::yield_now().await;
+    harness.routing.gate.notify_one();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), redrive)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
     assert_eq!(
         outcome.children_shut_down,
         [AgentUuid::new("A"), AgentUuid::new("D")]
     );
-    let to_a = harness
-        .routing
-        .calls()
-        .into_iter()
-        .filter(|call| matches!(call, Call::Shutdown(id, _) if id.uuid.as_str() == "A"))
-        .count();
-    assert_eq!(to_a, 1, "a recorded child is never re-sent");
-    // The port itself tolerates the repeat for D (asked twice, once
-    // interrupted): the fake answers Ok both times.
-    let to_d = harness
-        .routing
-        .calls()
-        .into_iter()
-        .filter(|call| matches!(call, Call::Shutdown(id, _) if id.uuid.as_str() == "D"))
-        .count();
-    assert_eq!(to_d, 2);
+    for child in ["A", "D"] {
+        let asked = harness
+            .routing
+            .calls()
+            .into_iter()
+            .filter(|call| matches!(call, Call::Shutdown(id, _) if id.uuid.as_str() == child))
+            .count();
+        assert_eq!(asked, 1, "{child} is asked exactly once");
+    }
 }
 
 #[tokio::test]

@@ -213,6 +213,7 @@ async fn nested_targets_are_forwarded_through_their_direct_ancestor_only() {
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),
         AgentUuid::new("root"),
+        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     ));
     let lineage = lifecycle.lineage();
     assert_eq!(lineage.records.len(), 4);
@@ -294,6 +295,7 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),
         AgentUuid::new("root"),
+        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     ));
     let kill = KillDelegatedAgent::new(
         Arc::new(TerminateDelegatedAgent::new(

@@ -14,6 +14,8 @@ pub(super) struct ToolRegistryBuild {
         Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub(super) harness_lifecycle:
+        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub(super) workspace: std::path::PathBuf,
 }
@@ -160,6 +162,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         extension_prompt_snippets: runtime.extension_prompt_snippets,
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
+        harness_lifecycle: runtime.harness_lifecycle,
         workflow_state: runtime.workflow_state,
         workspace,
     })

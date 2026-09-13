@@ -9,6 +9,7 @@ pub mod environment_kill;
 pub mod filesystem;
 pub mod find_fd;
 pub mod grep;
+pub mod harness_lifecycle;
 pub(crate) mod inherited_tool_policy;
 #[cfg(test)]
 #[path = "inherited_tool_policy_unit_tests.rs"]

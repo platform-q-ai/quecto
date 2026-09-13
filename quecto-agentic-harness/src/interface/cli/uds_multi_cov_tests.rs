@@ -1,7 +1,9 @@
 use super::*;
 
 fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
-    super::super::uds_shutdown::ShutdownRequest::for_tests().0
+    super::super::uds_shutdown::ShutdownRequest::detached(std::sync::Arc::new(
+        tokio::sync::Notify::new(),
+    ))
 }
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -238,7 +240,6 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
         subagent_registry: None,
-        broadcast_tx: broadcast_tx.clone(),
         teardown: None,
         _guard: ClientGuard {
             live_clients: live.clone(),
@@ -323,7 +324,6 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
         subagent_registry: None,
-        broadcast_tx: tokio::sync::broadcast::channel::<String>(1).0,
         teardown: None,
         _guard: ClientGuard {
             live_clients: live.clone(),

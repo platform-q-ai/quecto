@@ -12,6 +12,7 @@ fn register_and_broadcast_assigns_roster_global_sequence() {
         None,
         "first",
         SubagentEntry::new(PathBuf::from("/tmp/first.sock"), 0),
+        &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     )
     .unwrap();
     let first_sequence = registry
@@ -28,6 +29,7 @@ fn register_and_broadcast_assigns_roster_global_sequence() {
         None,
         "second",
         SubagentEntry::new(PathBuf::from("/tmp/second.sock"), 0),
+        &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     )
     .unwrap();
     let rows = crate::interface::cli::protocol::build_compact_subagent_roster(

@@ -25,6 +25,7 @@ pub fn build_kill_tool(inputs: KillToolWiring) -> Arc<dyn Tool> {
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(inputs.registry.clone()),
         inputs.owner,
+        inputs.harness_lifecycle,
     ));
     let routing = Arc::new(UdsDirectChildRouting::new(inputs.registry.clone()));
     let route = Arc::new(

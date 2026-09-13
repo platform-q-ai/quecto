@@ -29,10 +29,11 @@ pub(super) fn rig_with(lineage: LineageSnapshot, cancellation: Arc<FakeCancellat
     let spawner = FakeSpawner::new();
     let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), FakeClock::at(42));
     let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
+    let fleet = fake_fleet(lifecycle.clone(), routing.clone(), FakeSpawner::new());
     let execute = Arc::new(ExecuteHarnessShutdown::new(
         transaction,
         ExecuteHarnessShutdownPorts {
-            routing: routing.clone(),
+            children: fleet.fleet,
             cancellation: cancellation.clone(),
             persistence: persistence.clone(),
             exit: exit.clone(),

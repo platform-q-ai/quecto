@@ -54,10 +54,8 @@ fn every_accessor_recovers_from_a_poisoned_lease() {
     assert!(ownership.is_owned());
     assert!(!ownership.is_launched());
     assert!(ownership.is_same_namespace());
-    // An unowned dispatch on a poisoned lease still refuses.
     ownership.retire_reported();
-    assert!(!ownership.signal(0, super::super::process_tree::ProcessOwner::DirectPid));
-    assert!(!ownership.dispatch(|| panic!("unowned lease must not dispatch")));
+    assert!(!ownership.is_owned());
 }
 
 #[tokio::test]

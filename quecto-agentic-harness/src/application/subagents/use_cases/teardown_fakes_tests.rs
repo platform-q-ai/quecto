@@ -56,6 +56,11 @@ impl FakeLifecycle {
     pub fn force(&self, state: HarnessLifecycleState) {
         *self.state.lock().unwrap() = state;
     }
+
+    /// A child registered while a run is in flight.
+    pub fn add_record(&self, record: LineageRecord) {
+        self.lineage.lock().unwrap().records.push(record);
+    }
 }
 
 impl SubagentLifecycleRepository for FakeLifecycle {
@@ -305,5 +310,53 @@ impl ShutdownRunSpawner for FakeSpawner {
             return;
         }
         self.handles.lock().unwrap().push(tokio::spawn(run));
+    }
+}
+
+/// The fleet teardown over fakes: a registry seeded with every direct child
+/// of `lineage` (live, not holding a process), a graceful fallback and a
+/// recording compensation. What the harness shutdown rigs drive their
+/// children step through.
+pub struct FakeFleet {
+    pub fleet: Arc<super::TerminateAllDelegatedAgents>,
+    pub registry: Arc<super::lifecycle_fakes::FakeRegistry>,
+    pub termination: Arc<super::lifecycle_fakes::FakeTermination>,
+    pub compensation: Arc<super::lifecycle_fakes::FakeCompensation>,
+}
+
+pub fn fake_fleet(
+    lifecycle: Arc<FakeLifecycle>,
+    routing: Arc<FakeRouting>,
+    spawner: Arc<FakeSpawner>,
+) -> FakeFleet {
+    use super::lifecycle_fakes::{FakeCompensation, FakeRegistry, FakeTermination};
+    let mut registry = FakeRegistry::new();
+    for child in lifecycle.lineage().direct_children() {
+        registry = registry.with_row(
+            child.uuid.as_str(),
+            child.generation.get(),
+            child.uuid.as_str(),
+        );
+    }
+    let termination = FakeTermination::new(
+        registry.clone(),
+        crate::application::subagents::ports::TerminationConclusion::ExitedAfterProtocol,
+    );
+    let compensation = FakeCompensation::new(registry.clone());
+    let fleet = Arc::new(super::TerminateAllDelegatedAgents::new(
+        super::TerminateAllDelegatedAgentsPorts {
+            lifecycle,
+            registry: registry.clone(),
+            routing,
+            termination: termination.clone(),
+            compensation: compensation.clone(),
+            spawner,
+        },
+    ));
+    FakeFleet {
+        fleet,
+        registry,
+        termination,
+        compensation,
     }
 }

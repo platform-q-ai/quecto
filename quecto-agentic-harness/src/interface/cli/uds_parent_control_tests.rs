@@ -39,10 +39,11 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
     let spawner = FakeSpawner::new();
     let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), FakeClock::at(1));
     let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
+    let fleet = fake_fleet(lifecycle.clone(), routing.clone(), FakeSpawner::new());
     let execute = Arc::new(ExecuteHarnessShutdown::new(
         transaction,
         ExecuteHarnessShutdownPorts {
-            routing: routing.clone(),
+            children: fleet.fleet.clone(),
             cancellation: cancellation.clone(),
             persistence: FakePersistence::new(),
             exit: exit.clone(),
@@ -58,6 +59,7 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
         teardown: Arc::new(ConnectionTeardown {
             binding: Arc::new(Mutex::new(binding)),
             controller,
+            fleet: fleet.fleet,
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }),
         cancellation,

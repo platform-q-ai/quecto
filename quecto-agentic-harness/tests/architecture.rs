@@ -2778,7 +2778,7 @@ fn subagent_teardown_ports_are_capability_local() {
 #[test]
 fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
-        "crate::infrastructure::tools::spawn_registry::shutdown_all",
+        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
         "crate::application::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
         "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
@@ -3067,6 +3067,10 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/interface/cli/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_graph.rs",
+    "src/interface/cli/uds_shutdown.rs",
+    "src/interface/cli/uds_delete_all_subagents.rs",
+    "src/interface/cli/uds_busy_subagents.rs",
+    "src/interface/cli/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
 ];
 
@@ -3291,13 +3295,23 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
 
 /// Every termination path converges on the application's claims and the
 /// owned-handle fallback: none of them reads the #1925 reported lease,
-/// signals a pid, or removes a row before the exit was observed. Only the
-/// fleet shutdown (`spawn_registry::shutdown_all`, #1938) and the lease
-/// module itself may still name the scaffolding until #1940 deletes it.
+/// signals a pid, or removes a row before the exit was observed. Since
+/// #1938 no termination path reads the lease at all; only the merge
+/// scaffolding writes it until #1940 deletes the module.
 #[test]
 fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
     for path in [
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
+        "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
+        "src/application/subagents/use_cases/harness_shutdown.rs",
+        "src/infrastructure/tools/spawn_registry.rs",
+        "src/infrastructure/tools/process_tree.rs",
+        "src/interface/cli/uds_delete_all_subagents.rs",
+        "src/interface/cli/uds_busy_subagents.rs",
+        "src/interface/cli/uds_shutdown.rs",
+        "src/interface/cli/uds_dispatch_session.rs",
+        "src/interface/cli/uds_multi.rs",
+        "src/composition/subagent_teardown.rs",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
         "src/application/subagents/use_cases/compensate_failed_launch.rs",
         "src/infrastructure/tools/agent_cmd.rs",
@@ -3422,4 +3436,118 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
             "{path} still presents the #1928 signalled/unsignalled vocabulary"
         );
     }
+}
+
+// ─── Fleet teardown and exit transitions (#1938) ────────────────────────────
+
+/// Every fleet/exit entry point invokes the application's fleet teardown or
+/// the common shutdown and presents the result: no interface module drains
+/// the registry, signals a process, aborts a monitor or runs a cleanup
+/// itself, and the destructive registry policy is gone from infrastructure.
+#[test]
+fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
+    for path in [
+        "src/interface/cli/uds_delete_all_subagents.rs",
+        "src/interface/cli/uds_busy_subagents.rs",
+        "src/interface/cli/uds_shutdown.rs",
+        "src/interface/cli/uds_dispatch_session.rs",
+        "src/interface/cli/uds_multi.rs",
+        "src/interface/cli/uds_multi_client.rs",
+        "src/interface/cli/uds_query.rs",
+    ] {
+        let source = production_source(path);
+        for forbidden in [
+            ".drain()",
+            "shutdown_all",
+            "delete_all_subagents_from_registry",
+            "cleanup_removed_entries",
+            "release_bound_connection",
+            "monitor_handle",
+            "request_owned_child_termination",
+            "cascade_remove",
+            "libc::kill",
+            "exit_signal_tx",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} still orchestrates a teardown ({forbidden}); it must invoke the fleet teardown or the controller and present (#1938)"
+            );
+        }
+    }
+    let registry = production_source("src/infrastructure/tools/spawn_registry.rs");
+    assert!(
+        !registry.contains("fn shutdown_all"),
+        "spawn_registry::shutdown_all was retired by #1938"
+    );
+    assert!(
+        registry.contains("admit_spawn(lifecycle)"),
+        "registration is admitted against the harness lifecycle under the registry lock"
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(
+            !production.contains("shutdown_all(")
+                && !production.contains("shutdown_all_with_count("),
+            "{path} still names the retired registry drain"
+        );
+    }
+    // Signalling a subagent pid is the supervisor's alone: no subagent
+    // module names `libc::kill` (bash/swarm invocation containment and the
+    // signal-0 liveness probe are the epic's allowed effects elsewhere).
+    for path in SUBAGENT_PROCESS_MODULES {
+        assert!(
+            !production_source(path).contains("libc::kill("),
+            "{path} signals a pid directly"
+        );
+    }
+}
+
+/// The fleet teardown is owned by the application and composed once: the
+/// use case is constructed only in composition, and every entry point
+/// reaches it through the teardown graph.
+#[test]
+fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        if production.contains("TerminateAllDelegatedAgents::new(") {
+            assert_eq!(
+                path, "src/composition/subagent_teardown.rs",
+                "only composition builds the fleet teardown"
+            );
+        }
+    }
+    let graph = production_source("src/interface/cli/uds_teardown_graph.rs");
+    assert!(graph.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
+    assert!(graph.contains("pub controller: Arc<SubagentTeardownController>"));
+    let composition = production_source("src/composition/subagent_teardown.rs");
+    assert!(composition.contains("children: fleet.clone()"));
+    // The signal watcher and the last client deliver to the controller.
+    let shutdown = production_source("src/interface/cli/uds_shutdown.rs");
+    assert!(shutdown.contains(".termination_signal("));
+    assert!(shutdown.contains(".last_client_disconnected("));
+    // Session transitions settle the fleet before anything is replaced.
+    let session = production_source("src/interface/cli/uds_dispatch_session.rs");
+    for transition in ["\"new_session\"", "\"resume_session\""] {
+        let settle = session
+            .find(&format!("settle_departing_children(ctx, {transition})"))
+            .unwrap_or_else(|| panic!("{transition} settles the departing children"));
+        let reset = session
+            .find(&format!(
+                "reset_subagent_roster(&ctx.subagent_registry, {transition})"
+            ))
+            .unwrap_or_else(|| panic!("{transition} replaces the roster"));
+        assert!(settle < reset, "{transition} settles before it replaces");
+    }
+    // The spawn tool admits against the shared lifecycle cell.
+    // `spawn.rs` leads with its test-module includes, so read it whole.
+    let spawn = fs::read_to_string("src/infrastructure/tools/spawn.rs").unwrap();
+    assert!(spawn.contains("harness_lifecycle::admit_spawn(&self.harness_lifecycle)"));
+    let native = production_source("src/infrastructure/extensions/native.rs");
+    assert!(native.contains(".with_harness_lifecycle(harness_lifecycle.clone())"));
 }

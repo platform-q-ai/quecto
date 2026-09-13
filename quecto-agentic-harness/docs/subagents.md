@@ -647,14 +647,12 @@ ignores client churn), so a launched child arms a **bind deadline** (30 s by def
 bound by then, the binding is spent and the same common shutdown runs with
 reason `parent_never_bound`.
 
-**Not yet covered (#1939):** the parent-loss / never-bound shutdown runs the
-common teardown only — cancel the turn, ask direct children to shut down
-over the protocol, persist, exit. It does **not** finalize script-managed
-environments the way the SIGTERM path does (which additionally runs
-`delete_all_subagents_from_registry`, i.e. each environment's retained
-`kill`). A child that owns container environments and loses its parent
-therefore leaves those containers running until #1939 moves environment
-finalization into the application-owned teardown.
+Since #1938 the parent-loss / never-bound shutdown is the same common
+shutdown as every other trigger: its direct-children step is the fleet
+teardown (below), whose compensation finalizes a script-managed member's
+environment through the member's retained `kill`. #1939 moves the
+environment-level `kill_container` finalization into the application-owned
+teardown as well.
 
 #### Lifetime and session restore (#1937)
 
@@ -680,20 +678,18 @@ Nothing restarts automatically, and no historical roster row is shown as
 live. Externally attached clients reconnecting to a still-running harness
 see that harness's in-memory registry as before.
 
-**Switching sessions releases the current session's launched children
-through parent loss.** No later session can readopt them, so
-`resume_session` into another session and `new_session` do not merely drop
-their rows: each departing row's monitor task — the owner of the child's
-bound parent-control connection — and its proxy bridge (container
-transport) are aborted *before* the roster is cleared. The child observes
-the loss of its bound parent and runs its own graceful shutdown (the #1935
-parent-loss path: cancel the turn, ask its children to shut down, persist,
-exit, remove its socket). No signal is sent and the dispatch path does not
-wait; the reaper observes the exit and retires the supervisor handle.
-Re-spawn the workers you need in the new session. (Interim until #1938
-replaces this release with the acknowledged session-transition teardown —
-which is also where script-managed environments of a departing child get
-finalized; see #1939.)
+**Switching sessions tears the current session's launched children down
+first (#1938).** No later session can readopt them, so `resume_session`
+into another session and `new_session` run the fleet teardown (below) on
+the departing session's direct children — asked over their edge,
+acknowledged, exit observed, compensated, tombstones pruned — *before* the
+departing session is saved and the roster is replaced; the harness then
+continues serving. The transition is explicit about failure: a child that
+cannot be settled within its budget refuses the switch (`N subagent(s)
+could not be settled; the current session was kept`), leaving the current
+session, its key and its roster as they were, so ownership of a live child
+is never silently dropped. Re-spawn the workers you need in the new
+session.
 
 ### Running
 
@@ -737,17 +733,40 @@ finalized; see #1939.)
   row's compensation, and a failure is reported as `failed` with the row
   left as it was. No descendant pid is ever signalled: a child's subtree
   ends through the child's own teardown and the parent-loss binding
-- **Explicit shutdown**: `shutdown_all()` asks the supervisor to terminate
-  every locally launched child: the `shutdown` protocol command is always
-  attempted first over the child's endpoint; only a negative outcome
-  (unreachable, refused, no ACK within 5 s, or no exit within 10 s after an
-  ACK) authorises SIGTERM to the retained handle (and its own process group
-  where one was created), then SIGKILL after a 2 s grace. Each signal kind
-  is sent at most once per handle and never after the reap. Script and
-  container members hold no local handle and have no host signal fallback.
-  No termination path consults the #1925 *reported* lease any more (the
-  module is deleted by #1940); restored, container-reported and
+- **Fleet teardown** (`TerminateAllDelegatedAgents`, #1938): the one owner
+  of every whole-fleet end — an operator's `delete_all_subagents` (idle or
+  while a turn runs), SIGTERM/SIGINT, the last client of the default
+  lifetime disconnecting, a session transition, and the direct-children
+  step of every common shutdown (`shutdown` command, parent loss, bind
+  deadline). Every direct child is claimed stopping, asked over its one
+  edge (`shutdown`, reason `operator_request` / `parent_shutdown`),
+  concluded through the supervised owned handle (protocol first; only a
+  negative outcome — unreachable, refused, no ACK within 5 s, no exit
+  within 10 s after an ACK — authorises SIGTERM then SIGKILL after 2 s,
+  each at most once per handle and never after the reap) and compensated
+  exactly once, at most 8 children at a time. A script or container member
+  holds no local handle: it is asked, given the bound to exit, then
+  compensated `unobserved` (its environment's retained `kill` runs). A
+  child whose end cannot be settled is reported `unsettled` with its claim
+  lifted; the process exits anyway, a session transition refuses. Concurrent
+  triggers join one detached run (dropping the caller never abandons it),
+  no child is ever asked twice, and exited tombstones are pruned afterwards
+  so no live operational roster is persisted. The response of
+  `delete_all_subagents` reports `removed`, `settled` (`graceful`,
+  `fallback`, `already-exited`, `unobserved`, `joined`) and `unsettled`
+- **Spawn admission**: the common shutdown freezes the harness lifecycle
+  before it claims the fleet, and a registration reads that lifecycle
+  inside the registry's critical section, so a spawn racing a shutdown is
+  either registered before the claim (and torn down with the fleet) or
+  refused (`spawn refused: the harness is Frozen …`). No termination path
+  consults the #1925 *reported* lease (the module is deleted by #1940) and
+  no subagent module signals a pid: restored, container-reported and
   fixture-built rows are never signalled
+- **Harness exit**: a top-level harness of the default lifetime runs the
+  fleet teardown when its last client disconnects and only then persists
+  and returns; SIGTERM/SIGINT do the same (exit 0, never the signal's
+  default action). A top-level `--persist` harness ignores its last client
+  and its children live on until an explicit shutdown
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 

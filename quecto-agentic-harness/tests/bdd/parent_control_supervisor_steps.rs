@@ -429,7 +429,6 @@ fn when_legacy_paths(world: &mut QuectoWorld) {
         requests
             .push(quecto::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry));
     }
-    quecto::infrastructure::tools::spawn::shutdown_all(&registry);
     state(world).legacy_requests = requests;
     std::thread::sleep(Duration::from_millis(300));
 }

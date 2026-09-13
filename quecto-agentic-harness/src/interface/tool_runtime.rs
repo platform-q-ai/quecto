@@ -159,6 +159,9 @@ pub(crate) struct ToolRuntimeBuild {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// The harness lifecycle cell the spawn tool admits against (#1938).
+    pub harness_lifecycle:
+        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
     pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
@@ -306,6 +309,7 @@ pub(crate) fn build_tool_runtime(
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
+    let harness_lifecycle = agent_control.harness_lifecycle;
     if !policy_state.agent_control_default_enabled {
         registry.disable_tool_by_entrypoint_default("spawn");
         registry.disable_tool_by_entrypoint_default("agent_cmd");
@@ -389,6 +393,7 @@ pub(crate) fn build_tool_runtime(
         extension_prompt_snippets,
         notification_rx: Some(notify_rx),
         subagent_registry: Some(subagent_registry_for_protocol),
+        harness_lifecycle: Some(harness_lifecycle),
         workflow_state: wf_state,
         policy_state,
         catalogue_entries,

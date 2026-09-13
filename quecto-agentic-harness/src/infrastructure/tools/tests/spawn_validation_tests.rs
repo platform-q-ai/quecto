@@ -202,17 +202,6 @@ fn test_parse_args_agent_id_not_string_ignored() {
     let cfg_f = tool_false.parse_args(r#"{"task":"a"}"#).unwrap();
 }
 #[test]
-fn test_shutdown_all_clears_registry() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    registry.lock().unwrap().insert(
-        "bot".to_string(),
-        SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0),
-    );
-    assert!(!registry.lock().unwrap().is_empty());
-    shutdown_all(&registry);
-    assert!(registry.lock().unwrap().is_empty());
-}
-#[test]
 fn test_debug_trait() {
     let tool = SpawnTool::new(vec!["bot".to_string()]);
     let debug_str = format!("{:?}", tool);

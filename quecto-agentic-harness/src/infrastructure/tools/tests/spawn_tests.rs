@@ -4,6 +4,12 @@ use super::*;
 fn test_tool() -> SpawnTool {
     SpawnTool::new(vec!["news-bot".to_string(), "weather-bot".to_string()])
 }
+
+/// An always-accepting harness lifecycle: no shutdown admitted.
+fn accepting() -> crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle {
+    crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle()
+}
+
 #[test]
 fn parse_args_accepts_by_value_workflow_spec() {
     let tool = test_tool();
@@ -273,7 +279,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, Some(&tx), "worker", entry).unwrap();
+    super::register_and_broadcast(&registry, Some(&tx), "worker", entry, &accepting()).unwrap();
     assert!(
         registry
             .lock()
@@ -295,7 +301,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
 fn register_and_broadcast_without_channel_still_registers() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, None, "worker", entry).unwrap();
+    super::register_and_broadcast(&registry, None, "worker", entry, &accepting()).unwrap();
     assert!(
         registry
             .lock()
@@ -313,11 +319,11 @@ fn register_and_broadcast_rejects_duplicate_agent_uuid_without_replacing_existin
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let first = SubagentEntry::new(PathBuf::from("/tmp/first.sock"), 1);
     let duplicate_uuid = first.agent_uuid.clone();
-    super::register_and_broadcast(&registry, None, "first", first).unwrap();
+    super::register_and_broadcast(&registry, None, "first", first, &accepting()).unwrap();
 
     let mut second = SubagentEntry::new(PathBuf::from("/tmp/second.sock"), 2);
     second.agent_uuid = duplicate_uuid;
-    let err = super::register_and_broadcast(&registry, None, "second", second)
+    let err = super::register_and_broadcast(&registry, None, "second", second, &accepting())
         .expect_err("duplicate agent UUID must fail registration");
 
     assert!(err.to_string().contains("duplicate subagent registry key"));
@@ -508,7 +514,8 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         environment_ref: None,
         process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
-    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry).unwrap();
+    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry, &accepting())
+        .unwrap();
     let line = rx
         .try_recv()
         .expect("#1049: registration must broadcast state_changed");

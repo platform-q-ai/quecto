@@ -11,9 +11,19 @@ use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 use crate::interface::cli::uds::uds_dispatch_session::{
-    reset_subagent_roster_on_restore, snapshot_subagent_roster,
+    note_persisted_roster_is_history, reset_subagent_roster, snapshot_subagent_roster,
     snapshot_subagent_roster_with_restore_reason,
 };
+
+/// What a resume does with the departing roster once its children have
+/// settled (#1938): note the persisted rows as history, replace the records.
+fn reset_subagent_roster_on_restore(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    persisted: &[PersistedSubagentRosterEntry],
+) {
+    note_persisted_roster_is_history(registry, persisted);
+    reset_subagent_roster(registry, "resume_session").expect("no live delegated row remains");
+}
 
 fn roster_entry(id: &str) -> PersistedSubagentRosterEntry {
     PersistedSubagentRosterEntry {

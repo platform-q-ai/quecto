@@ -31,7 +31,7 @@ fn identity(uuid: &str) -> DelegatedAgentIdentity {
 /// locally launched child.
 #[tokio::test]
 async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
-    use crate::infrastructure::tools::{process_tree::SIGNAL_LOG, subagent_cascade};
+    use crate::infrastructure::tools::subagent_cascade;
     let registry = new_registry();
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
     let supervisor = Arc::new(OwnedChildSupervisor::new());
@@ -68,19 +68,12 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let removed = subagent_cascade::cascade_remove(&registry, "owned");
-    SIGNAL_LOG.with(|log| *log.borrow_mut() = Some(Vec::new()));
     assert!(!subagent_cascade::terminate_removed_entry(&removed[0].1));
-    // A shutdown drain can likewise retain a clone after registry removal.
-    registry
-        .lock()
-        .unwrap()
-        .insert("drained".into(), removed[0].1.clone());
-    super::super::spawn_registry::shutdown_all(&registry);
-    let signals = SIGNAL_LOG.with(|log| log.borrow_mut().take().unwrap());
-    assert!(
-        signals.is_empty(),
-        "stale cleanup dispatched after reap: {signals:?}"
-    );
+    // A retained clone of the removed row asks the supervisor, which has
+    // nothing left to signal.
+    assert!(!removed[0].1.clone().request_owned_child_termination(
+        crate::domain::subagent_teardown::ShutdownReason::OperatorRequest
+    ));
     assert!(supervisor.signals_sent(handle).is_empty());
     assert!(!supervisor.retains(handle));
 }

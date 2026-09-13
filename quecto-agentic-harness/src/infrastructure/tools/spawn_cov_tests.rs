@@ -234,7 +234,14 @@ async fn register_and_broadcast_sends_state_changed_event() {
         process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
-    register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
+    register_and_broadcast(
+        &registry,
+        Some(&tx),
+        "child",
+        entry,
+        &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+    )
+    .unwrap();
 
     assert!(
         registry
@@ -249,21 +256,19 @@ async fn register_and_broadcast_sends_state_changed_event() {
 }
 
 #[test]
-fn shutdown_all_clears_the_registry() {
+fn a_frozen_harness_refuses_registration_under_the_registry_lock() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let handle = rt.spawn(async {
-        std::future::pending::<()>().await;
-    });
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/no-pid.sock"), 0);
-    entry.monitor_handle = Some(Arc::new(handle));
-    registry.lock().unwrap().insert("idle".to_string(), entry);
-
-    shutdown_all(&registry);
-
+    let lifecycle = crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
+    *lifecycle.lock().unwrap() = crate::domain::subagent_teardown::HarnessLifecycleState::Frozen;
+    let refused = register_and_broadcast(
+        &registry,
+        None,
+        "late",
+        SubagentEntry::new(PathBuf::from("/tmp/late.sock"), 0),
+        &lifecycle,
+    )
+    .expect_err("a frozen harness admits no child");
+    assert!(refused.to_string().contains("spawn refused"), "{refused}");
     assert!(registry.lock().unwrap().is_empty());
 }
 
@@ -443,7 +448,14 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
-    register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
+    register_and_broadcast(
+        &registry,
+        Some(&tx),
+        "closed",
+        entry,
+        &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+    )
+    .unwrap();
 
     assert!(
         registry
@@ -480,6 +492,7 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             environment_ref: None,
             process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         }),
+        &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     )
     .unwrap();
     assert!(
@@ -488,14 +501,6 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             .unwrap_or_else(|e| e.into_inner())
             .values()
             .any(|e| e.display_name == "poison")
-    );
-
-    shutdown_all(&registry);
-    assert!(
-        registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
     );
 }
 
@@ -703,8 +708,6 @@ time.sleep(0.2)
         !socket.contains("worker"),
         "socket path must not contain display label: {socket}"
     );
-
-    super::shutdown_all(tool.registry());
 }
 
 #[test]

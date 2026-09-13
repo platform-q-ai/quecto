@@ -1,78 +1,105 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+//! `delete_all_subagents` presents the fleet teardown (#1938): the use case
+//! is invoked once and its outcome mapped onto the wire; nothing is drained
+//! here.
+use std::sync::Arc;
 
-use crate::infrastructure::tools::subagent_registry::{
-    ExitSignalKind, SubagentEntry, SubagentRegistry,
-};
+use crate::application::subagents::use_cases::teardown_fakes::*;
+use crate::application::subagents::use_cases::{TerminateAllDelegatedAgents, lifecycle_fakes};
 
-#[test]
-fn delete_all_subagents_clears_registry() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    registry.lock().unwrap().insert(
-        "worker".into(),
-        SubagentEntry::new(PathBuf::from("/tmp/worker.sock"), 0),
-    );
-    registry.lock().unwrap().insert(
-        "reviewer".into(),
-        SubagentEntry::new(PathBuf::from("/tmp/reviewer.sock"), 0),
-    );
-
-    let removed = super::delete_all_subagents_from_registry(&registry, None);
-
-    assert_eq!(removed, 2);
-    assert!(
-        registry.lock().unwrap().is_empty(),
-        "delete-all-subagents must remove every entry from the harness registry"
-    );
-}
-
-#[test]
-fn delete_all_subagents_signals_awaiters_before_registry_cleanup() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/worker.sock"), 0);
-    let (tx, mut rx) = tokio::sync::watch::channel(None);
-    entry.exit_signal_tx = Some(tx);
-    registry.lock().unwrap().insert("worker".into(), entry);
-
-    let removed = super::delete_all_subagents_from_registry(&registry, None);
-
-    assert_eq!(removed, 1);
-    let signal = rx
-        .borrow_and_update()
-        .clone()
-        .expect("delete-all-subagents should notify awaiters before removing registry entries");
-    assert_eq!(signal.exit_code, None);
-    assert_eq!(signal.signal, Some(15));
-    assert_eq!(signal.kind, ExitSignalKind::ProcessExit);
-    assert!(registry.lock().unwrap().is_empty());
-}
-
-#[test]
-fn delete_all_subagents_returns_zero_for_empty_registry() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-
-    let removed = super::delete_all_subagents_from_registry(&registry, None);
-
-    assert_eq!(removed, 0);
-    assert!(registry.lock().unwrap().is_empty());
+fn fleet_with(
+    lineage: crate::domain::subagent_teardown::LineageSnapshot,
+) -> (
+    Arc<TerminateAllDelegatedAgents>,
+    Arc<lifecycle_fakes::FakeRegistry>,
+) {
+    let lifecycle = FakeLifecycle::new(lineage);
+    let routing = FakeRouting::new();
+    let fleet = fake_fleet(lifecycle, routing, FakeSpawner::new());
+    (fleet.fleet, fleet.registry)
 }
 
 #[tokio::test]
-async fn delete_all_subagents_broadcasts_empty_registry_snapshot() {
-    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    registry.lock().unwrap().insert(
-        "worker".into(),
-        SubagentEntry::new(PathBuf::from("/tmp/worker.sock"), 0),
+async fn presents_every_settled_child_and_the_removed_count() {
+    let (fleet, registry) = fleet_with(root_tree());
+    let event = super::respond(Some(&fleet), Some("del-1")).await;
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["command"], "delete_all_subagents");
+    assert_eq!(value["id"], "del-1");
+    assert_eq!(value["success"], true, "{value}");
+    // A and D settled and their tombstones were pruned: two rows moved.
+    assert_eq!(value["data"]["removed"], 2);
+    assert_eq!(value["data"]["joined"], false);
+    let settled = value["data"]["settled"].as_array().unwrap();
+    assert_eq!(settled.len(), 2);
+    assert_eq!(settled[0]["agent"], "A");
+    assert_eq!(settled[0]["result"], "graceful");
+    assert_eq!(settled[1]["agent"], "D");
+    assert_eq!(value["data"]["unsettled"].as_array().map(Vec::len), Some(0));
+    assert!(registry.rows.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_empty_fleet_reports_nothing_removed() {
+    let (fleet, _) = fleet_with(crate::domain::subagent_teardown::LineageSnapshot {
+        owner: crate::domain::ids::AgentUuid::new("root"),
+        records: Vec::new(),
+    });
+    let event = super::respond(Some(&fleet), None).await;
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["success"], true);
+    assert_eq!(value["data"]["removed"], 0);
+}
+
+#[tokio::test]
+async fn an_unsettled_child_is_presented_with_its_detail() {
+    let lifecycle = FakeLifecycle::new(root_tree());
+    let routing = FakeRouting::new();
+    let fleet = fake_fleet(lifecycle, routing, FakeSpawner::new());
+    fleet.termination.conclude_child_with(
+        "A",
+        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+            "would not die".into(),
+        ),
     );
-    let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+    let event = super::respond(Some(&fleet.fleet), Some("del-2")).await;
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["success"], true);
+    let unsettled = value["data"]["unsettled"].as_array().unwrap();
+    assert_eq!(unsettled.len(), 1);
+    assert_eq!(unsettled[0]["agent"], "A");
+    assert_eq!(unsettled[0]["detail"], "would not die");
+    assert_eq!(value["data"]["removed"], 1, "D settled and was pruned");
+}
 
-    let removed = super::delete_all_subagents_from_registry(&registry, Some(&tx));
+#[tokio::test]
+async fn without_a_fleet_teardown_the_error_is_correlated() {
+    let event = super::respond(None, Some("del-3")).await;
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["success"], false);
+    assert_eq!(value["id"], "del-3");
+    assert!(
+        value["error"]
+            .as_str()
+            .unwrap()
+            .contains("no sub-agent registry"),
+        "{value}"
+    );
+}
 
-    assert_eq!(removed, 1);
-    let event = rx.recv().await.unwrap();
-    let value: serde_json::Value = serde_json::from_str(event.trim()).unwrap();
-    assert_eq!(value["type"], "subagent_state_changed");
-    assert_eq!(value["subagents"].as_array().unwrap().len(), 0);
-    assert!(registry.lock().unwrap().is_empty());
+#[tokio::test]
+async fn an_interrupted_run_is_a_correlated_error() {
+    let lifecycle = FakeLifecycle::new(root_tree());
+    let routing = FakeRouting::new();
+    let spawner = FakeSpawner::new();
+    spawner
+        .drop_next
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let fleet = fake_fleet(lifecycle, routing, spawner);
+    let event = super::respond(Some(&fleet.fleet), Some("del-4")).await;
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["success"], false);
+    assert!(
+        value["error"].as_str().unwrap().contains("interrupted"),
+        "{value}"
+    );
 }

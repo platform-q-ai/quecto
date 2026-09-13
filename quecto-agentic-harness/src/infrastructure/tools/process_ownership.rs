@@ -20,9 +20,6 @@
 #[cfg(test)]
 #[path = "process_ownership_cov_tests.rs"]
 mod cov_tests;
-#[cfg(test)]
-#[path = "process_ownership_tests.rs"]
-mod tests;
 
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
@@ -130,24 +127,6 @@ impl ProcessOwnership {
         let mut lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if matches!(*lease, Lease::Reported { .. }) {
             *lease = Lease::Unowned;
-        }
-    }
-
-    /// Signal the owned process tree. Returns `true` only when a signal was
-    /// actually dispatched; unowned, already-reaped and self/parent-targeting
-    /// leases are skipped.
-    pub(crate) fn signal(&self, pid: u32, owner: super::process_tree::ProcessOwner) -> bool {
-        self.dispatch(|| super::process_tree::terminate_owned_process_tree(pid, owner))
-    }
-
-    fn dispatch(&self, signal: impl FnOnce() -> bool) -> bool {
-        let lease = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if lease.may_signal() {
-            // Reaping cannot run while dispatch is in progress, including both
-            // TERM and KILL of a local group. No existence check proves identity.
-            signal()
-        } else {
-            false
         }
     }
 

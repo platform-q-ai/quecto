@@ -4,7 +4,9 @@
 use super::*;
 
 fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
-    super::super::uds_shutdown::ShutdownRequest::for_tests().0
+    super::super::uds_shutdown::ShutdownRequest::detached(std::sync::Arc::new(
+        tokio::sync::Notify::new(),
+    ))
 }
 use crate::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentNotification, new_notification_channel,

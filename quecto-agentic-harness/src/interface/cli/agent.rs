@@ -6,6 +6,8 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
 use std::{collections::HashMap, sync::Arc};
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -267,16 +269,15 @@ pub(crate) fn cmd_agent(
     admission_startup::shutdown();
     code
 }
-
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     pub extension_prompt_snippets: String,
     pub model: String,
-    pub ext_registry: std::sync::Arc<std::sync::Mutex<ExtensionRegistry>>,
-    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
-    pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub ext_registry: Arc<std::sync::Mutex<ExtensionRegistry>>,
+    pub notification_rx: Option<NotificationRx>,
+    pub subagent_registry: Option<SubagentRegistry>,
+    pub harness_lifecycle: Option<SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
@@ -353,6 +354,7 @@ pub(crate) fn build_agent_from_config(
         extension_prompt_snippets,
         notification_rx,
         subagent_registry,
+        harness_lifecycle,
         workflow_state,
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
@@ -443,9 +445,10 @@ pub(crate) fn build_agent_from_config(
         workflow_config: wf_config,
         extension_prompt_snippets,
         model,
-        ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
+        ext_registry: Arc::new(std::sync::Mutex::new(ext_registry)),
         notification_rx,
         subagent_registry,
+        harness_lifecycle,
         workflow_state,
         provider_reload,
         provider_reload_inputs,
@@ -687,6 +690,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         lifetime,
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
+        harness_lifecycle: build.harness_lifecycle,
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,

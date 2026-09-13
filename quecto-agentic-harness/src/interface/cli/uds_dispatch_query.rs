@@ -141,6 +141,14 @@ pub(super) async fn dispatch_fieldless_command(
         .await;
         return Some(false);
     }
+    // The fleet teardown (#1938): invoked and presented, never orchestrated
+    // here. Idle path only; a busy harness answers from the reader task.
+    if matches!(cmd, AgentCommand::DeleteAllSubagents { .. }) {
+        let fleet = ctx.fleet_teardown.clone();
+        let event = super::super::uds_delete_all_subagents::respond(fleet.as_ref(), id).await;
+        emit_response_or_frame_limit_error(ctx, id, tn, event).await;
+        return Some(false);
+    }
     // Catalogue refresh performs (sequential, bounded) blocking HTTP; running
     // it inline would freeze every other UDS command for the whole run, so it
     // executes on a dedicated blocking worker thread while the dispatch loop

@@ -8,9 +8,10 @@ pub(super) struct ReaderDispatchCtx<'a> {
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub subagent_registry:
         &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    /// Broadcast sender so busy-path `delete_all_subagents` can publish the
-    /// empty survivor set to every client (#1626).
-    pub broadcast_tx: &'a tokio::sync::broadcast::Sender<String>,
+    /// The fleet teardown a busy-path `delete_all_subagents` invokes (#1938).
+    pub fleet: Option<
+        &'a std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
+    >,
     pub client_id: u64,
     pub cmd_tx: &'a tokio::sync::mpsc::Sender<ClientMessage>,
 }
@@ -32,7 +33,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     if super::uds_busy_subagents::intercept(super::uds_busy_subagents::BusySubagentCtx {
         line: &ctx.line,
         subagents: ctx.subagent_registry,
-        broadcast_tx: ctx.broadcast_tx,
+        fleet: ctx.fleet,
         clients: ctx.registry,
         client_id: ctx.client_id,
     })

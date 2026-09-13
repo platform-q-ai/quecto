@@ -72,6 +72,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
+        harness_lifecycle: None,
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,

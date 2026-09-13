@@ -537,6 +537,8 @@ pub enum TeardownIntent {
     Exit,
     /// An operator selected it for termination.
     SelectedTermination,
+    /// The whole fleet is being torn down (#1938).
+    FleetTeardown,
     /// Its launch failed after registration.
     LaunchRollback { owns_environment: bool },
 }
