@@ -320,11 +320,11 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
 
   # --- Kill command (#559) ---
 
-  Scenario: kill command is built correctly
+  Scenario: kill of a row this harness did not launch is refused with no effect
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"kill"}'
-    Then the agent_cmd result should not be an error
-    And the agent_cmd result should contain "killed"
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not a delegated agent"
 
   Scenario: kill unknown agent returns error
     Given an AgentCmdTool with an empty registry

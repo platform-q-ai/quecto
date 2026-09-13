@@ -271,6 +271,9 @@ pub struct CliContext {
     /// binary's `main` through [`run`]'s [`CliComposition`]; a launched child
     /// (one started with `--parent-control`) refuses to start without it.
     pub teardown_graph: Option<uds_teardown_graph::TeardownGraphBuilder>,
+    /// Composition's builder of the `agent_cmd kill` owner (#1936). Without
+    /// it `kill` is unavailable: the interface never composes a lifecycle.
+    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
 }
 
 impl CliContext {
@@ -365,6 +368,7 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
 pub struct CliComposition {
     pub web_fetch_tool_factory: WebFetchToolFactory,
     pub teardown_graph: uds_teardown_graph::TeardownGraphBuilder,
+    pub kill_tool: crate::infrastructure::extensions::native::KillToolBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -383,6 +387,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         stdin_is_tty: Some(stdin_is_tty),
         web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
         teardown_graph: Some(composition.teardown_graph),
+        kill_tool: Some(composition.kill_tool),
         ..Default::default()
     };
 

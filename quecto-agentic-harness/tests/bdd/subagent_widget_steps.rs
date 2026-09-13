@@ -40,6 +40,7 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
             read_only: false,
             execution_backend: "local".to_string(),
             environment: None,
+            launch_generation: None,
         })
         .collect();
     world.widget_subagent_infos = agents;

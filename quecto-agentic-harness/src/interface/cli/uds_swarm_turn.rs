@@ -44,6 +44,13 @@ pub(in crate::interface::cli) async fn arm_swarm_cancel(
     handle: &CancelHandle,
     control: &TurnControlHandle,
 ) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    // A shutdown is executing (#1936): the turn is refused before the slot
+    // is touched, exactly like a pre-fired cancel, so the loop returns to
+    // its exit signal instead of starting a provider call it would then
+    // have to be signalled out of.
+    if control.is_shutting_down() {
+        return None;
+    }
     let scope = if let Some(port) = &control.swarm_control {
         match port
             .apply(crate::domain::swarm::RunControlAction::Status)

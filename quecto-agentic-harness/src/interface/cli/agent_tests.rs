@@ -433,6 +433,7 @@ fn test_build_agent_from_config_no_config_file() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };
@@ -489,6 +490,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };
@@ -530,6 +532,7 @@ fn test_build_agent_from_config_invalid_json() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };
@@ -573,6 +576,7 @@ fn test_build_agent_from_config_no_providers() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };
@@ -616,6 +620,7 @@ fn test_build_agent_from_config_with_model_override() {
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context: None,
         parent_control: None,
     };

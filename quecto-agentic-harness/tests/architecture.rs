@@ -321,6 +321,31 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // Subagent teardown ports are capability-local (#1934); the
                 // process adapters implement them (#1935).
                 ["crate", "application", "subagents", "ports", ..] => true,
+                // The launch-side lifecycle use cases (#1936) are invoked by
+                // the reaper, the monitor and the launch rollback — the
+                // adapters that observe a direct child's end — over the
+                // adapters this layer implements. The operator-facing kill
+                // is composed outside this layer.
+                [
+                    "crate",
+                    "application",
+                    "subagents",
+                    "use_cases",
+                    "ObserveOwnedChildExit"
+                    | "CompensateFailedLaunch"
+                    | "CompensateFailedLaunchPorts",
+                    ..,
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "subagents",
+                    "dto",
+                    "ObserveOwnedChildExitRequest"
+                    | "ObservedExit"
+                    | "CompensateFailedLaunchRequest",
+                    ..,
+                ] => true,
                 [
                     "crate",
                     "application",
@@ -2588,6 +2613,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     "ShutdownClock",
     "CompositionExitReadiness",
     "ShutdownRunSpawner",
+    // Selected termination and lifecycle compensation (#1936).
+    "OwnedChildTermination",
+    "DelegatedAgentRegistry",
+    "TeardownCompensation",
 ];
 
 /// Application teardown code may name the domain, its own capability and
@@ -3028,7 +3057,10 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/tools/subagent_monitor.rs",
     "src/infrastructure/tools/subagent_monitor_exit.rs",
     "src/infrastructure/tools/subagent_monitor_merge.rs",
+    "src/infrastructure/tools/subagent_teardown_registry.rs",
+    "src/infrastructure/tools/subagent_teardown_wiring.rs",
     "src/infrastructure/processes/direct_child_routing.rs",
+    "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/parent_control.rs",
     "src/interface/cli/uds_multi.rs",
     "src/interface/cli/uds_multi_client.rs",
@@ -3252,5 +3284,142 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
                 "{path} exposes parent control material"
             );
         }
+    }
+}
+
+// ─── Selected termination and lifecycle compensation (#1936) ─────────────────
+
+/// Every termination path converges on the application's claims and the
+/// owned-handle fallback: none of them reads the #1925 reported lease,
+/// signals a pid, or removes a row before the exit was observed. Only the
+/// fleet shutdown (`spawn_registry::shutdown_all`, #1938) and the lease
+/// module itself may still name the scaffolding until #1940 deletes it.
+#[test]
+fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
+    for path in [
+        "src/application/subagents/use_cases/kill_delegated_agent.rs",
+        "src/application/subagents/use_cases/observe_owned_child_exit.rs",
+        "src/application/subagents/use_cases/compensate_failed_launch.rs",
+        "src/infrastructure/tools/agent_cmd.rs",
+        "src/infrastructure/tools/subagent_cascade.rs",
+        "src/infrastructure/tools/subagent_teardown_registry.rs",
+        "src/infrastructure/tools/subagent_teardown_wiring.rs",
+        "src/infrastructure/tools/subagent_monitor_exit.rs",
+        "src/infrastructure/tools/spawn_reaper.rs",
+        "src/infrastructure/tools/spawn_prepared.rs",
+        "src/infrastructure/processes/owned_child_termination.rs",
+        "src/interface/tools/agent_cmd_kill.rs",
+        "src/composition/subagent_termination.rs",
+    ] {
+        let source = production_source(path);
+        for forbidden in [
+            "process_ownership",
+            "ProcessOwnership",
+            "is_same_namespace",
+            "retire_reported",
+            "Reported",
+            "libc::kill",
+            "kill_agent(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} still names `{forbidden}`; termination is claim-then-observe-then-compensate (#1936)"
+            );
+        }
+    }
+    let merge = production_source("src/infrastructure/tools/subagent_monitor_merge.rs");
+    assert!(
+        merge.contains("reported_generation"),
+        "the merge carries the reported launch generation for routing"
+    );
+    let cascade = production_source("src/infrastructure/tools/subagent_cascade.rs");
+    assert!(
+        cascade.contains("\"launchGeneration\""),
+        "the reported snapshot carries the launch generation"
+    );
+}
+
+/// `agent_cmd kill` is owned by the composed interface tool: the infrastructure
+/// tool only routes the command there and never decides a lifecycle; the
+/// interface adapter only parses, invokes one use case and presents.
+#[test]
+fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_it() {
+    let agent_cmd = production_source("src/infrastructure/tools/agent_cmd.rs");
+    assert!(agent_cmd.contains("pub fn with_kill_tool("));
+    for forbidden in [
+        "cascade_remove",
+        "cleanup_removed_entries_once",
+        "terminate_removed_entry",
+        "KillDelegatedAgent",
+        "exit_signal_tx",
+    ] {
+        assert!(
+            !agent_cmd.contains(forbidden),
+            "agent_cmd.rs still orchestrates a kill ({forbidden})"
+        );
+    }
+    let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
+    for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
+        let parts: Vec<_> = dep.split("::").collect();
+        let allowed = match parts.as_slice() {
+            ["crate", "domain", ..] | ["crate", "application", "subagents", ..] => true,
+            ["crate", ..] => false,
+            ["tokio" | "libc" | "quecto_line_io", ..] => false,
+            _ => true,
+        };
+        assert!(
+            allowed,
+            "the kill adapter reaches past parse/map/present: {dep}"
+        );
+    }
+    assert!(
+        !adapter.contains("KillDelegatedAgent::new("),
+        "the interface never composes the use case"
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        if production.contains("KillDelegatedAgent::new(") {
+            assert_eq!(
+                path, "src/composition/subagent_termination.rs",
+                "only composition builds the operator kill graph"
+            );
+        }
+        if production.contains("build_kill_tool") {
+            assert!(
+                matches!(
+                    path,
+                    "src/composition/subagent_termination.rs"
+                        | "src/main.rs"
+                        | "src/interface/cli/mod_tests.rs"
+                        | "src/infrastructure/extensions/native.rs"
+                ),
+                "{path} names the kill graph builder; it travels through CliComposition"
+            );
+        }
+    }
+}
+
+/// The #1928 result vocabulary is gone from every surface; the kill reports
+/// graceful / fallback / already-exited / failed.
+#[test]
+fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
+    let dto = fs::read_to_string("src/application/subagents/dto.rs").unwrap();
+    for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
+        assert!(dto.contains(word), "dto lacks {word}");
+    }
+    let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
+    assert!(adapter.contains("\"failed\""));
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(
+            !production.contains("\"unsignalled\"") && !production.contains("\"signalled\""),
+            "{path} still presents the #1928 signalled/unsignalled vocabulary"
+        );
     }
 }

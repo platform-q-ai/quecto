@@ -452,7 +452,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 | `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |
 | `follow_up` | Queue a message for after the current run | Yes |
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
-| `kill` | Terminate the subagent process (SIGTERM) | No |
+| `kill` | Terminate one delegated agent (a direct child or a reported descendant) and its subtree; returns `{"target","result","killed"}` with `result` one of `graceful`, `fallback`, `already-exited`, or an error carrying `"result":"failed"` | No |
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
 | `get_messages` | Default report mode: omit/null `count` and `before`; first call returns the latest substantive assistant message, subsequent calls return unread deltas, or `unchanged` if none. The cursor advances on successful delivery to the parent model. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
@@ -708,8 +708,35 @@ finalized; see #1939.)
   directly (local launches and per-connection proxy bridge processes) is
   spawned and reaped by one `OwnedChildSupervisor` on its own runtime.
   Callers hold an opaque handle, never a pid or a `Child`. The reaper task
-  takes its exit signal from the supervisor and removes the registry entry
-  when the child exits
+  takes its exit signal from the supervisor and hands the exit to the
+  application's `ObserveOwnedChildExit`
+- **One compensation per child** (#1936): a registry row walks
+  `Live → Stopping → Compensating → Compensated`. An operator `kill`, the
+  reaper's exit report, the monitor's EOF, a launch rollback and a
+  reported-snapshot prune all claim their way through those phases, so the
+  terminal effects — environment cleanup and membership removal, monitor and
+  bridge teardown, removal of the row and its reported subtree, one survivor
+  `subagent_state_changed`, one passive note — run exactly once and only
+  after the exit was observed. A monitor EOF for a child whose process this
+  harness still retains defers to the reaper: no row is removed while its
+  process lives
+- **Selected termination** (`agent_cmd kill`, #1936 / #1882): the target is
+  resolved by uuid or live display label (an ambiguous label, an exited row
+  or a row this harness never launched is refused with no effect), claimed
+  stopping, then exactly one edge is routed. A direct child receives the
+  `shutdown` protocol command; a deeper descendant — reported upward with
+  its launch generation — is reached by sending its direct ancestor the
+  authenticated `terminate_delegated_agent` command, each receiver resolving
+  only its next direct edge, so intermediates stay alive and only the direct
+  owner shuts the target down. A directly owned local child is then
+  concluded by the supervisor: an acknowledged child that exits is
+  `graceful`; a negative acknowledgement (unreachable, refused, malformed)
+  or no exit within the budget authorises the TERM/KILL fallback
+  (`fallback`); a child already gone is `already-exited`. A target this
+  harness does not own has no fallback: its end is observed through its
+  row's compensation, and a failure is reported as `failed` with the row
+  left as it was. No descendant pid is ever signalled: a child's subtree
+  ends through the child's own teardown and the parent-loss binding
 - **Explicit shutdown**: `shutdown_all()` asks the supervisor to terminate
   every locally launched child: the `shutdown` protocol command is always
   attempted first over the child's endpoint; only a negative outcome
@@ -718,9 +745,9 @@ finalized; see #1939.)
   where one was created), then SIGKILL after a 2 s grace. Each signal kind
   is sent at most once per handle and never after the reap. Script and
   container members hold no local handle and have no host signal fallback.
-  The #1925 *reported same-namespace* lease still covers descendant rows
-  reported by a host-local child until #1940 retires it; restored,
-  container-reported and fixture-built rows are never signalled
+  No termination path consults the #1925 *reported* lease any more (the
+  module is deleted by #1940); restored, container-reported and
+  fixture-built rows are never signalled
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
   Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 

@@ -138,6 +138,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// The parent agent's own config path, forwarded so container spawns can
     /// fall back to it when the spawn call omits `config` (#1369 follow-up).
     pub parent_config_path: Option<std::path::PathBuf>,
+    /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
+    /// leaves `kill` unavailable.
+    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -197,6 +200,7 @@ pub(crate) fn build_tool_runtime(
         spawned,
         parent_session_name,
         parent_config_path,
+        kill_tool,
         disabled_tools,
         inherited_tool_policy,
         workflow,
@@ -291,6 +295,12 @@ pub(crate) fn build_tool_runtime(
         parent_config_path,
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
+        owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+            "harness".to_string()
+        } else {
+            session_key.clone()
+        }),
+        kill_tool,
     });
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;

@@ -55,6 +55,8 @@ pub(crate) mod subagent_routing;
 #[cfg(test)]
 mod subagent_routing_tests;
 mod subagent_status;
+pub mod subagent_teardown_registry;
+pub mod subagent_teardown_wiring;
 pub mod swarm;
 #[cfg(test)]
 mod swarm_ac_gap_tests;

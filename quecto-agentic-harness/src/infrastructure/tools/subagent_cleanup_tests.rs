@@ -39,8 +39,8 @@ async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     registry.lock().unwrap().insert("child".to_string(), entry);
 
-    let a = cleanup_registered_once(&registry, "child");
-    let b = cleanup_registered_once(&registry, "child");
+    let a = cleanup_registered_once(&registry, "child", FinalizeMode::Exit);
+    let b = cleanup_registered_once(&registry, "child", FinalizeMode::Exit);
     tokio::join!(a, b);
 
     let text = std::fs::read_to_string(&log).unwrap();
@@ -133,7 +133,7 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     // final member's exit claims the environment cleanup exactly once. Script
     // sets without a retained kill fall back to the rollback cleanup plan, and
     // the stopped record stays listed (#1369 slice 2: refs never reused).
-    cleanup_registered_once(&registry, "child").await;
+    cleanup_registered_once(&registry, "child", FinalizeMode::Exit).await;
     let record = environments
         .get(&env_ref)
         .expect("stopped record stays listed");
@@ -142,7 +142,7 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
 
     // Second run is a no-op: the claim was consumed.
-    cleanup_registered_once(&registry, "child").await;
+    cleanup_registered_once(&registry, "child", FinalizeMode::Exit).await;
     assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
 }
 
@@ -210,10 +210,10 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
         .insert("joiner".to_string(), joiner);
 
     // Creator exits first (non-final): no teardown yet.
-    cleanup_registered_once(&registry, "creator").await;
+    cleanup_registered_once(&registry, "creator", FinalizeMode::Exit).await;
     assert!(!log.exists(), "non-final exit must not tear down");
     // Joiner exits last: the record's retained cleanup runs exactly once.
-    cleanup_registered_once(&registry, "joiner").await;
+    cleanup_registered_once(&registry, "joiner", FinalizeMode::Exit).await;
     let record = environments.get(&env_ref).unwrap();
     assert_eq!(
         record.status,

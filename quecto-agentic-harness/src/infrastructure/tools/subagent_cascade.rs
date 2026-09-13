@@ -4,9 +4,13 @@
 //! When an agent exits or is killed its whole sub-tree is dead, and the root
 //! registry (and the TUI panel that mirrors it) must drop the agent AND every
 //! transitive descendant promptly. This module owns the registry-pruning walk,
-//! the orphaned-process cleanup, and the canonical `subagent_state_changed`
-//! serialization shared by the kill/reaper broadcast paths and the descendant
-//! forwarding path (`subagent_monitor`).
+//! the observer teardown of removed rows, and the canonical
+//! `subagent_state_changed` serialization shared by the compensation
+//! broadcast path and the descendant forwarding path (`subagent_monitor`).
+//!
+//! No path here signals a process (#1936): a removed row's process, if this
+//! harness ever held one, was reaped before the row was removed; every
+//! other row belongs to the harness that launched it.
 
 use std::collections::HashMap;
 
@@ -54,10 +58,16 @@ pub fn next_roster_sequence(guard: &HashMap<String, SubagentEntry>) -> u64 {
         .saturating_add(1)
 }
 
+/// A dead row is a compensated row: whoever marks it dead (a cascade, a
+/// reported-snapshot prune) has run or joined its terminal effects, so a
+/// waiter on its teardown phase (#1936) is released here.
 pub fn mark_entry_dead(entry: &mut SubagentEntry, sequence: u64) {
     entry.status = SubagentStatus::Exited;
     entry.persisted_liveness = SubagentLiveness::Dead;
     entry.notification_sequence = sequence;
+    entry
+        .teardown
+        .send_replace(super::subagent_registry::TeardownPhase::Compensated);
 }
 
 pub fn clear_cleanup_ownership(entry: &mut SubagentEntry) {
@@ -105,16 +115,15 @@ pub fn cascade_remove_locked(
     removed
 }
 
-/// Best-effort terminate a cascade-removed entry's OS process and monitor task so
-/// descendants do not linger as orphaned, untracked processes after their
-/// ancestor is killed/exits (#831 security review). Aborts the monitor task (if
-/// any) and SIGTERMs the pid when this harness launched it. Does NOT touch the registry — the entry
-/// has already been removed — and does NOT send await signals (the caller owns
-/// that, as the signal semantics differ between the kill and reaper paths).
-///
-/// Returns `true` when the OS process was actually signalled; `false` when the
-/// entry had no pid or its lease did not authorise a signal (#1925), so
-/// callers can report an unsignalled drop instead of claiming a kill.
+/// Stop observing a cascade-removed entry: abort its monitor task and tear
+/// down its proxy bridge so nothing connects to a dead child's endpoint.
+/// Does NOT touch the registry (the entry has already been removed), does
+/// NOT publish exit signals (the caller owns that), and never signals a
+/// process: a row this harness launched is ended through its owned handle
+/// by the termination that observed its exit, and every other row belongs
+/// to the harness that launched it (#1936). A locally launched child whose
+/// handle is still retained — a member ended by `kill_container` — is asked
+/// through that handle (protocol first, #1935); `true` reports that ask.
 pub fn terminate_removed_entry(entry: &SubagentEntry) -> bool {
     if let Some(ref handle) = entry.monitor_handle {
         handle.abort();
@@ -123,27 +132,11 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) -> bool {
         entry.proxy_bridge_handle.as_ref(),
         entry.proxy_bridge_socket.as_deref(),
     );
-    // A locally launched child goes through its owned handle (#1935):
-    // protocol first, TERM/KILL only after a negative outcome. Only a pid
-    // reported from this harness's own pid namespace may still be signalled
-    // directly (#1925 scaffolding, retired by #1940).
     entry.request_owned_child_termination(
         crate::domain::subagent_teardown::ShutdownReason::ParentShutdown,
-    ) || (entry.pid != 0
-        && entry
-            .process_ownership
-            .signal(entry.pid, entry.process_owner))
+    )
 }
 
-/// Best-effort SIGTERM a pid via a direct syscall. Avoids fork+exec of `kill(1)`
-/// and its blocking `.status()` wait, which would stall a tokio worker for every
-/// subagent in the tree. A stale/dead pid simply yields ESRCH, which we ignore.
-///
-/// `libc` is a unix-only dependency (see Cargo.toml + bash/mod.rs), so this is a
-/// no-op on non-unix hosts, where subagents are not spawned. `i32::try_from`
-/// guards the `u32 -> pid_t` narrowing so an out-of-range pid can never wrap
-/// negative and turn into a process-group signal (Linux pid_max keeps this
-/// unreachable, but the cast is a footgun worth closing).
 /// Cascade-remove `agent_id`'s dead sub-tree from the registry and, if anything
 /// was actually removed, return both the removed entries (for process cleanup)
 /// and a canonical `subagent_state_changed` event carrying the SURVIVORS only —
@@ -213,6 +206,15 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
                     obj.insert("lastError".into(), serde_json::json!(err));
                 }
                 obj.insert("pid".into(), serde_json::json!(entry.pid));
+                // #1936: the generation a selected termination addresses
+                // this row by, so an ancestor can route toward it one edge
+                // at a time. Absent for rows that are not delegated agents.
+                if let Some(generation) = entry.launch_generation.or(entry.reported_generation) {
+                    obj.insert(
+                        "launchGeneration".into(),
+                        serde_json::json!(generation.get()),
+                    );
+                }
                 obj.insert("readOnly".into(), serde_json::json!(entry.read_only));
                 if !entry.socket_path.as_os_str().is_empty() {
                     obj.insert(

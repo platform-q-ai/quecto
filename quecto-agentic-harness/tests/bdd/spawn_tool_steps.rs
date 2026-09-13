@@ -669,7 +669,9 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
             .with_socket_dir(socket_dir)
             .with_registry(registry.clone()),
     );
-    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_tool = Some(crate::agent_cmd_tool_steps::agent_cmd_tool_with_kill(
+        &registry, None,
+    ));
     world.agent_cmd_registry = Some(registry);
     world.config_path = Some(config_path.to_string_lossy().to_string());
     world._wiremock_server_uri = Some(uri);

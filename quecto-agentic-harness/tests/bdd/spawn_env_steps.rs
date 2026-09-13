@@ -185,7 +185,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
             .with_socket_dir(base.join("sockets"))
             .with_registry(subagent_registry_for_spawn)
             .with_notify_tx(notify_tx)
-            .with_event_forwarding(Some(broadcast_tx), None),
+            .with_event_forwarding(Some(broadcast_tx.clone()), None),
     );
     world.notify_rx = Some(notify_rx);
     world.spawn_broadcast_rx = Some(broadcast_rx);
@@ -221,9 +221,12 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         ),
     );
     world.agent_cmd_tool = Some(
-        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry)
-            .with_list_environments(list_environments)
-            .with_environment_control(environment_control),
+        crate::agent_cmd_tool_steps::agent_cmd_tool_with_kill(
+            &subagent_registry,
+            Some(broadcast_tx),
+        )
+        .with_list_environments(list_environments)
+        .with_environment_control(environment_control),
     );
 }
 

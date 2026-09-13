@@ -198,6 +198,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         session_key_override: None,
         cwd_override: None,
         web_fetch_tool_factory: None,
+        kill_tool: None,
         admission_context,
         parent_control,
     };
@@ -218,12 +219,10 @@ pub(crate) fn cmd_agent(
     // any secret that reaches a log line is scrubbed. No-op unless RUST_LOG is set.
     crate::infrastructure::logging::install_redacting_subscriber();
 
-    let mut flags = match parse_agent_flags(args, stderr) {
-        Some(f) => f,
-        None => return 1,
+    let Some(mut flags) = parse_agent_flags(args, stderr) else {
+        return 1;
     };
-    flags.cwd_override = ctx.cwd.clone();
-    flags.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
+    flags.adopt_context(ctx);
     if !swarm_runtime::admit(&mut flags, stderr) {
         return 1;
     }

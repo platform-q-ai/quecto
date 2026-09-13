@@ -8,8 +8,34 @@ use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
 
 // --- Given ---
 
+/// An `AgentCmdTool` wired the way composition wires it (#1936): the
+/// `kill` command is owned by the composed selected-termination tool over
+/// the same registry and event stream.
+pub(crate) fn agent_cmd_tool_with_kill(
+    registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> AgentCmdTool {
+    AgentCmdTool::new(registry.clone()).with_kill_tool(
+        quecto::composition::subagent_termination::build_kill_tool(
+            quecto::infrastructure::extensions::native::KillToolWiring {
+                owner: quecto::domain::ids::AgentUuid::new("root"),
+                registry: registry.clone(),
+                broadcast_tx,
+                notify_tx: None,
+            },
+        ),
+    )
+}
+
 #[given("an AgentCmdTool with an empty registry")]
 fn given_agent_cmd_empty_registry(world: &mut QuectoWorld) {
+    let registry = AgentCmdTool::new_registry();
+    world.agent_cmd_tool = Some(agent_cmd_tool_with_kill(&registry, None));
+    world.agent_cmd_registry = Some(registry);
+}
+
+#[given("an AgentCmdTool without a composed kill owner")]
+fn given_agent_cmd_without_kill(world: &mut QuectoWorld) {
     let registry = AgentCmdTool::new_registry();
     world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
     world.agent_cmd_registry = Some(registry);
@@ -79,7 +105,7 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
         .unwrap()
         .insert(agent_id, SubagentEntry::new(sock_path, 0));
 
-    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_tool = Some(agent_cmd_tool_with_kill(&registry, None));
     world.agent_cmd_registry = Some(registry);
     // Keep tmp dir alive so socket file persists.
     world._agent_cmd_mock_tmp = Some(tmp);

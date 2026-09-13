@@ -10,7 +10,6 @@ use super::*;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use serde_json::json;
 use std::collections::HashMap;
@@ -126,9 +125,8 @@ async fn coordinator_connection_closed_retains_environment_and_pauses_run() {
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -183,9 +181,8 @@ async fn plain_container_child_connection_closed_keeps_the_final_member_kill() {
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -208,9 +205,8 @@ async fn environment_without_a_store_keeps_the_final_member_kill() {
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -240,9 +236,8 @@ async fn coordinator_connection_closed_after_an_orderly_end_retains_without_a_lo
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -283,9 +278,8 @@ async fn unreadable_store_maps_to_unreadable_and_retains_the_environment() {
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -321,9 +315,8 @@ async fn rejected_checkout_keeps_the_final_member_kill(
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -381,9 +374,8 @@ async fn checkout_under_the_workspace_is_opened() {
     notify_child_exited(
         &registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(&registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -426,6 +418,13 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
 
 /// Drive the production death signal and return the retention reason (or
 /// `None` when the record was stopped).
+fn test_observer(
+    registry: &SubagentRegistry,
+) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
+    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(registry.clone(), None, None)
+        .observe_exit
+}
+
 async fn exit_and_reason(
     environments: &EnvironmentRegistry,
     env_ref: &str,
@@ -434,9 +433,8 @@ async fn exit_and_reason(
     notify_child_exited(
         registry,
         "coordinator-1",
-        None,
-        None,
-        ExitSignalKind::ConnectionClosed,
+        &test_observer(registry),
+        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
     let record = environments.get(env_ref).unwrap();
