@@ -140,7 +140,7 @@ impl Rig {
     fn nothing_ran(&self) {
         assert_eq!(self.spawner.spawned.load(Ordering::SeqCst), 0);
         assert_eq!(self.cancellation.calls.load(Ordering::SeqCst), 0);
-        assert!(self.exit.signalled().is_empty());
+        assert!(self.exit.readiness_signals().is_empty());
         assert_eq!(self.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
     }
 
@@ -148,7 +148,7 @@ impl Rig {
         assert_eq!(self.spawner.spawned.load(Ordering::SeqCst), 1);
         assert_eq!(self.cancellation.calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            self.exit.signalled(),
+            self.exit.readiness_signals(),
             [ExitReadiness::Completed(
                 ShutdownReason::ParentConnectionLost
             )]
@@ -455,7 +455,7 @@ async fn the_bind_deadline_ends_an_unbound_launched_harness_exactly_once() {
     assert_eq!(rig.teardown.binding_state(), BindingState::Lost);
     assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 1);
     assert_eq!(
-        rig.exit.signalled(),
+        rig.exit.readiness_signals(),
         [ExitReadiness::Completed(ShutdownReason::ParentNeverBound)]
     );
     // A second expiry and a late parent are both inert/refused.

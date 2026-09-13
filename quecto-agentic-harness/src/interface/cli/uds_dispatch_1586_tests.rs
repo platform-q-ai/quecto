@@ -15,7 +15,7 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
         note_persisted_roster_is_history, reset_subagent_roster,
         snapshot_subagent_roster_with_restore_reason,
     };
-    let reset_subagent_roster_on_restore = |registry: &Option<_>, persisted: &[_]| {
+    let reset_roster_for_restore = |registry: &Option<_>, persisted: &[_]| {
         note_persisted_roster_is_history(registry, persisted);
         reset_subagent_roster(registry, "resume_session").expect("no live delegated row");
     };
@@ -27,7 +27,7 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
             SubagentRestoreReason::OrdinaryTuiExitStopped,
         );
         assert!(snapshot.is_empty());
-        reset_subagent_roster_on_restore(&Some(registry.clone()), &snapshot);
+        reset_roster_for_restore(&Some(registry.clone()), &snapshot);
         assert!(
             build_compact_subagent_roster(&Some(registry.clone()), None)
                 .unwrap()

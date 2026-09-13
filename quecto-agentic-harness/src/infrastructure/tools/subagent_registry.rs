@@ -32,14 +32,14 @@ pub struct SubagentEntry {
     pub display_name: String,
     /// Path to the child's UDS socket.
     pub socket_path: PathBuf,
-    /// Child process PID (0 in stub mode).
+    /// Display-only pid of a child this harness launched itself (0 in stub
+    /// mode and for every merged, restored or fixture row). It carries no
+    /// authority: the only process this harness may signal is one whose
+    /// handle the `OwnedChildSupervisor` retains (`owned_child`), and no
+    /// teardown path reads this number (#1940).
     pub pid: u32,
     /// Owned OS process topology used by infrastructure cleanup paths.
     pub process_owner: ProcessOwner,
-    /// Reported-pid lease scaffolding (#1925, removed by #1940). A locally
-    /// launched child never carries a lease any more: its process is owned
-    /// by the supervisor through `owned_child` (#1935).
-    pub(crate) process_ownership: super::process_ownership::ProcessOwnership,
     /// Launch generation minted by this harness for a child it launched
     /// itself (#1935). `None` for merged descendants, restored rows and
     /// fixtures: they are never direct children of this harness.
@@ -207,36 +207,6 @@ impl SubagentEntry {
         );
     }
 
-    /// Ask the supervisor to terminate the owned child: the `shutdown`
-    /// protocol over this entry's endpoint first, TERM/KILL only after a
-    /// negative outcome. Returns `false`, having done nothing, when this
-    /// harness holds no handle for the entry (a script/container member, a
-    /// merged, restored or fixture row).
-    pub fn request_owned_child_termination(
-        &self,
-        reason: crate::domain::subagent_teardown::ShutdownReason,
-    ) -> bool {
-        let (Some(handle), Some(supervisor)) = (self.owned_child, &self.owned_child_supervisor)
-        else {
-            return false;
-        };
-        if !supervisor.retains(handle) {
-            return false;
-        }
-        let protocol =
-            crate::infrastructure::processes::direct_child_routing::shutdown_protocol_attempt(
-                self.socket_path.clone(),
-                reason,
-                crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT,
-            );
-        supervisor.request_termination(
-            handle,
-            Box::pin(protocol),
-            crate::infrastructure::processes::owned_child_supervisor::TerminationBudget::DEFAULT,
-        );
-        true
-    }
-
     /// Create a new entry with explicit hidden identity and display label.
     pub fn with_identity(
         agent_uuid: AgentUuid,
@@ -250,7 +220,6 @@ impl SubagentEntry {
             socket_path,
             pid,
             process_owner: ProcessOwner::DirectPid,
-            process_ownership: super::process_ownership::ProcessOwnership::unowned(),
             launch_generation: None,
             reported_generation: None,
             teardown: new_teardown_phase(),

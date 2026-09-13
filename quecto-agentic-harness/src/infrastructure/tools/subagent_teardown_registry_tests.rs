@@ -484,9 +484,9 @@ async fn prune_releases_waiters_and_the_cascade_only_after_its_effects() {
         tokio::spawn(async move {
             let observed = port.await_compensated(&identity("C", 1)).await;
             // Woken on `Compensated`: the terminal effects already ran.
-            let signalled = c_exit_tx.borrow().is_some();
+            let exit_signal_set = c_exit_tx.borrow().is_some();
             let status = registry.lock().unwrap()["C"].status.clone();
-            (observed, signalled, status)
+            (observed, exit_signal_set, status)
         })
     };
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -507,12 +507,12 @@ async fn prune_releases_waiters_and_the_cascade_only_after_its_effects() {
     );
     port.compensate(&identity("A", 1), TerminationCause::SelectedTermination)
         .await;
-    let (observed, signalled, status) = tokio::time::timeout(Duration::from_secs(5), joiner)
+    let (observed, exit_signal_set, status) = tokio::time::timeout(Duration::from_secs(5), joiner)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(observed, CompensationObservation::Compensated);
-    assert!(signalled, "the exit signal preceded the release");
+    assert!(exit_signal_set, "the exit signal preceded the release");
     assert_eq!(status, SubagentStatus::Exited);
     for key in ["A", "C"] {
         assert_eq!(
@@ -629,9 +629,9 @@ async fn a_joiner_woken_on_compensated_finds_the_cleanup_and_exit_signal_already
             // Recorded at wake time, before the compensation task can
             // progress any further on its own worker.
             let cleaned = marker.exists() && descendant_marker.exists();
-            let signalled = exit_tx.borrow().is_some();
+            let exit_signal_set = exit_tx.borrow().is_some();
             let status = registry.lock().unwrap()["A"].status.clone();
-            (observed, cleaned, signalled, status)
+            (observed, cleaned, exit_signal_set, status)
         })
     };
     // Let the joiner subscribe before the compensation starts.
@@ -644,14 +644,14 @@ async fn a_joiner_woken_on_compensated_finds_the_cleanup_and_exit_signal_already
         started.elapsed() >= Duration::from_millis(550),
         "the compensation waited for both retained cleanups"
     );
-    let (observed, cleaned, signalled, status) =
+    let (observed, cleaned, exit_signal_set, status) =
         tokio::time::timeout(Duration::from_secs(5), joiner)
             .await
             .unwrap()
             .unwrap();
     assert_eq!(observed, CompensationObservation::Compensated);
     assert!(cleaned, "both retained cleanups ran before the release");
-    assert!(signalled, "the exit signal fired before the release");
+    assert!(exit_signal_set, "the exit signal fired before the release");
     assert_eq!(status, SubagentStatus::Exited);
     let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_file(&descendant_marker);

@@ -272,7 +272,7 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 - **Agent running:** Returns `success: false` with error `"cannot resume a session while agent is running"`
 - Invalid session names are rejected using the same rules as `quecto agent --session`
 - Missing sessions return `success: false` with `"session not found: <name>"`
-- **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, nothing readopted or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
+- **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, no child row re-created or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
 
 **Example:**
 

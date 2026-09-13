@@ -154,7 +154,7 @@ async fn dropping_the_task_after_the_ack_still_completes_the_shutdown() {
     assert_eq!(rig.cancellation.calls.load(Ordering::SeqCst), 1);
     assert_eq!(rig.routing.calls().len(), 2);
     assert_eq!(rig.persistence.calls.lock().unwrap().len(), 1);
-    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.readiness_signals.lock().unwrap().len(), 1);
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
 }
 
@@ -180,10 +180,10 @@ async fn an_interrupted_run_is_re_driven_until_the_shutdown_completes() {
     ));
     assert_eq!(rig.spawner.spawned.load(Ordering::SeqCst), 3);
     assert_eq!(
-        rig.exit.signalled(),
+        rig.exit.readiness_signals(),
         [ExitReadiness::Completed(ShutdownReason::ParentShutdown)]
     );
-    assert_eq!(rig.exit.signalled.lock().unwrap().len(), 1);
+    assert_eq!(rig.exit.readiness_signals.lock().unwrap().len(), 1);
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Terminated);
 }
 
@@ -215,7 +215,7 @@ async fn re_driving_is_bounded_when_the_spawner_never_runs_anything() {
     // The parent was ACKed, so composition is told to exit anyway with the
     // failure recorded; the admission is intact for a later trigger.
     assert_eq!(
-        rig.exit.signalled(),
+        rig.exit.readiness_signals(),
         [ExitReadiness::Abandoned {
             reason: ShutdownReason::ParentShutdown,
             detail: "shutdown run interrupted 5 times after its ACK was flushed".into(),

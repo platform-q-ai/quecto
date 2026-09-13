@@ -223,28 +223,25 @@ returning to the tail restores following.
 ### Exit, detach, and resume
 
 Ordinary Ctrl-D, `/exit`, and `/quit` persist the conversation before terminating
-TUI-owned agents and their owned children. Resuming restores transcript history;
-it does **not** recreate killed children as operational agent-panel rows. Old spawn
-and tool messages remain history, not evidence that their processes are alive.
+TUI-owned agents. Resuming restores transcript history; it does **not** recreate
+old children as operational agent-panel rows. Old spawn and tool messages remain
+history, not evidence that their processes are alive: a harness-launched
+subagent is lifetime-bound to the harness that launched it and ends by itself
+when that harness exits or loses its connection to it.
 
-Container environments are outside the TUI's process group, so their teardown
-is the harness's job: on the exit signal it runs every environment's retained
-kill before it exits, so container agents do not outlive the session either.
-The SIGTERM-to-SIGKILL window is 1.5 seconds to cover that work, and it ends
-as soon as the leader and every owned descendant have exited.
+Since epic #1929 the harness owns its own teardown: on SIGTERM it asks every
+direct child to shut down over the protocol, each child settles its own
+subtree the same way, container environments run their retained kill, and the
+harness persists and exits 0 by itself (worst case ≈ 19 s per unresponsive
+direct child; a repeated signal is ignored inside its 45 s budget). The TUI's
+current exit path still predates that: it SIGTERMs the harness process group
+and every descendant it can find, waits 1.5 s, then SIGKILLs the rest. That
+races the harness's own graceful teardown; #1956 is the planned
+simplification (SIGTERM the harness leader only, wait within the harness's
+budget, SIGKILL only that one process after it, and log — never signal — any
+stray process afterwards).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
-Reconnecting to a running harness uses its live registry. Recovery in a new harness
-only restores children whose sockets verify the expected session identity; dead or
-unreachable children are not automatically restarted. Exit durability and cleanup
-errors are reported separately.
-
-On Linux, cleanup retains the owned leader until escalation and uses pidfds for
-observed descendants, including tools in separate process groups. Cleanup success
-is acknowledged only after these processes have exited (zombies count as exited,
-not executing survivors). This is not a sandbox containment guarantee: a process
-that double-forks into a separate session and loses all observable ancestry before
-the watcher samples it can escape discovery. Other Unix platforms receive owned
-process-group escalation but currently report cleanup as unverified, rather than
-claiming complete separate-group cleanup without a supported verifier.
+Reconnecting to a running harness uses its live registry. Exit durability and
+cleanup errors are reported separately.

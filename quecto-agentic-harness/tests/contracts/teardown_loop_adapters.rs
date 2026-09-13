@@ -84,7 +84,7 @@ async fn parent_loss_runs_the_common_shutdown_through_the_loop_adapters() {
         .await
         .expect("the dispatch loop is woken");
     assert_eq!(
-        g.graph.exit.signalled(),
+        g.graph.exit.readiness_signalled(),
         Some(ExitReadiness::Completed(
             ShutdownReason::ParentConnectionLost
         ))
@@ -176,7 +176,7 @@ async fn the_binding_and_lifecycle_are_the_graphs_single_source_of_truth() {
     };
     assert_eq!(first, second);
     assert_eq!(
-        g.graph.exit.signalled(),
+        g.graph.exit.readiness_signalled(),
         Some(ExitReadiness::Completed(
             ShutdownReason::ParentConnectionLost
         ))

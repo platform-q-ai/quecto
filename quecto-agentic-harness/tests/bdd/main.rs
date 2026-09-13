@@ -289,6 +289,8 @@ pub struct QuectoWorld {
     pub restore_lifetime: restore_lifetime_steps::RestoreLifetimeState,
     /// #1938 fleet teardown state.
     pub fleet_teardown: fleet_teardown_steps::FleetTeardownState,
+    /// #1940 real root → child → grandchild delegation / parent-loss state.
+    pub delegated_subtree: delegated_subtree_steps::DelegatedSubtreeState,
     /// #1936 operator-selected termination state (root registry, fake
     /// direct-child endpoints, owned fixture processes, composed kill).
     pub selected_termination: selected_termination_steps::SelectedTerminationState,
@@ -1406,6 +1408,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_steps;
 mod context_pruning_steps;
+mod delegated_subtree_steps;
 mod e2e_steps;
 mod edit_tool_steps;
 mod embedded_docs_steps;
@@ -1616,6 +1619,33 @@ fn run_cucumber() {
     );
 }
 
+/// World teardown for a child this world's spawn tool launched: the
+/// `shutdown` protocol over its endpoint, then the supervisor's owned-handle
+/// fallback. A row without a retained handle (a fixture, a merged or
+/// restored row, a script/container member) is left alone: nothing is
+/// signalled by pid.
+fn ask_owned_child_to_stop(
+    entry: &quecto::infrastructure::tools::subagent_registry::SubagentEntry,
+) {
+    use quecto::infrastructure::processes::direct_child_routing::{
+        PROTOCOL_ACK_TIMEOUT, shutdown_protocol_attempt,
+    };
+    use quecto::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+    let (Some(handle), Some(supervisor)) = (entry.owned_child, &entry.owned_child_supervisor)
+    else {
+        return;
+    };
+    if !supervisor.retains(handle) {
+        return;
+    }
+    let protocol = shutdown_protocol_attempt(
+        entry.socket_path.clone(),
+        quecto::domain::subagent_teardown::ShutdownReason::ParentShutdown,
+        PROTOCOL_ACK_TIMEOUT,
+    );
+    supervisor.request_termination(handle, Box::pin(protocol), TerminationBudget::DEFAULT);
+}
+
 impl Drop for QuectoWorld {
     fn drop(&mut self) {
         // Scenario-scoped cleanup for script-managed environment fixtures. The
@@ -1644,9 +1674,7 @@ impl Drop for QuectoWorld {
                 if let Some(handle) = &entry.monitor_handle {
                     handle.abort();
                 }
-                entry.request_owned_child_termination(
-                    quecto::domain::subagent_teardown::ShutdownReason::ParentShutdown,
-                );
+                ask_owned_child_to_stop(entry);
             }
         }
         // Also cover rollback and removed registry records: fixture ownership

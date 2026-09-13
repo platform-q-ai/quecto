@@ -230,7 +230,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry.clone())
             .with_kill_tool(owners.kill_tool)
             .with_list_environments(list_environments)
-            .with_environment_control(kill_environment),
+            .with_kill_environment(kill_environment),
     );
 }
 

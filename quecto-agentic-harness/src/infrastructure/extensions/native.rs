@@ -257,7 +257,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
                 environment_registry,
             ),
         ))
-        .with_environment_control(kill_environment);
+        .with_kill_environment(kill_environment);
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(

@@ -188,9 +188,9 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
     And a registry entry copied from a reaped owned child
     And a restored registry row carrying the fixture pid
     And a container member row carrying the fixture pid
-    When every legacy teardown path runs against those rows
+    When the fleet teardown and the operator kill run against those rows
     Then the fixture process is still alive
-    And no row requested an owned-child termination
+    And no row was settled or killed
     And terminating an unknown handle reports no retained handle
     And the supervisor sent no signals at all
 
@@ -217,7 +217,7 @@ Feature: Launch-bound parent control and the owned-child supervisor (#1935)
     Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
     When I live-spawn subagent "protocol-worker" with initial task "say hello"
     Then the spawn result should not be an error
-    When the owned child termination of "protocol-worker" is requested
+    When the operator kill of "protocol-worker" is requested
     Then the child process of "protocol-worker" exits within 15 seconds
     And the supervisor sent no signals to "protocol-worker"
     And the child socket of "protocol-worker" was removed by a graceful exit

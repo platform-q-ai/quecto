@@ -32,7 +32,7 @@ pub struct AgentCmdTool {
     /// Side-effect-free environment inventory query and kill owner.
     list_environments:
         Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
-    environment_control:
+    kill_environment:
         Option<std::sync::Arc<crate::application::environments::use_cases::KillEnvironment>>,
 }
 
@@ -68,7 +68,7 @@ impl AgentCmdTool {
             registry,
             kill: KillToolSlot::default(),
             list_environments: None,
-            environment_control: None,
+            kill_environment: None,
         }
     }
 
@@ -82,13 +82,13 @@ impl AgentCmdTool {
     }
 
     /// Attach the existing kill owner; listing does not depend on this effectful use case.
-    pub fn with_environment_control(
+    pub fn with_kill_environment(
         mut self,
-        environment_control: std::sync::Arc<
+        kill_environment: std::sync::Arc<
             crate::application::environments::use_cases::KillEnvironment,
         >,
     ) -> Self {
-        self.environment_control = Some(environment_control);
+        self.kill_environment = Some(kill_environment);
         self
     }
 
@@ -427,7 +427,7 @@ impl Tool for AgentCmdTool {
                 if super::agent_cmd_containers::is_container_command(value) {
                     return Ok(super::agent_cmd_containers::execute_container_command(
                         self.list_environments.as_ref(),
-                        self.environment_control.as_ref(),
+                        self.kill_environment.as_ref(),
                         value,
                     )
                     .await);

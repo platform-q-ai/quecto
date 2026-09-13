@@ -93,7 +93,7 @@ impl LoopExitReadiness {
         }
     }
 
-    pub fn signalled(&self) -> Option<ExitReadiness> {
+    pub fn readiness_signalled(&self) -> Option<ExitReadiness> {
         self.readiness
             .lock()
             .unwrap_or_else(|e| e.into_inner())

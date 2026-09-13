@@ -17,7 +17,7 @@ use crate::interface::cli::uds::uds_dispatch_session::{
 
 /// What a resume does with the departing roster once its children have
 /// settled (#1938): note the persisted rows as history, replace the records.
-fn reset_subagent_roster_on_restore(
+fn reset_roster_for_restore(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
@@ -289,7 +289,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
     );
 
     let registry = new_registry();
-    reset_subagent_roster_on_restore(&Some(registry.clone()), &loaded.subagent_roster);
+    reset_roster_for_restore(&Some(registry.clone()), &loaded.subagent_roster);
 
     assert_never_connected(&live_listener, "live row");
     assert_never_connected(&detached_listener, "detached row");
@@ -323,7 +323,7 @@ fn legacy_rows_are_not_sendable_or_running_after_restore() {
     let stale_socket = dir.path().join("stale.sock");
     let listener = listener_that_must_stay_silent(&stale_socket);
     let registry = new_registry();
-    reset_subagent_roster_on_restore(
+    reset_roster_for_restore(
         &Some(registry.clone()),
         &[legacy_row("restored", &stale_socket, "live", "running")],
     );
@@ -367,7 +367,7 @@ fn restore_clears_the_registry_and_a_respawn_gets_a_fresh_identity() {
         SubagentEntry::new("/tmp/stale.sock".into(), 0),
     );
     let legacy = roster_entry("legacy-uuid");
-    reset_subagent_roster_on_restore(&Some(registry.clone()), &[legacy]);
+    reset_roster_for_restore(&Some(registry.clone()), &[legacy]);
     assert!(registry.lock().unwrap().is_empty());
 
     // The explicit re-spawn registers through the normal path with a
@@ -390,7 +390,7 @@ fn restore_clears_the_registry_and_a_respawn_gets_a_fresh_identity() {
 
 #[test]
 fn restore_with_no_registry_is_a_noop() {
-    reset_subagent_roster_on_restore(&None, &[roster_entry("ignored")]);
+    reset_roster_for_restore(&None, &[roster_entry("ignored")]);
 }
 
 #[test]
@@ -423,7 +423,7 @@ fn ordinary_exit_resume_cycles_stay_empty_of_old_children() {
         );
         assert!(snapshot.is_empty());
         let restored = new_registry();
-        reset_subagent_roster_on_restore(&Some(restored.clone()), &snapshot);
+        reset_roster_for_restore(&Some(restored.clone()), &snapshot);
         for _ in 0..3 {
             let roster = build_compact_subagent_roster(&Some(restored.clone()), None).unwrap();
             assert!(roster.subagents.is_empty());
@@ -431,7 +431,7 @@ fn ordinary_exit_resume_cycles_stay_empty_of_old_children() {
                 &Some(restored.clone()),
                 SubagentRestoreReason::OrdinaryTuiExitStopped,
             );
-            reset_subagent_roster_on_restore(&Some(restored.clone()), &next);
+            reset_roster_for_restore(&Some(restored.clone()), &next);
         }
         assert!(restored.lock().unwrap().is_empty());
     }
@@ -456,7 +456,7 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
         SubagentRestoreReason::LegacyUnspecified,
     );
     assert_eq!(roster.len(), 1);
-    reset_subagent_roster_on_restore(&Some(registry.clone()), &roster);
+    reset_roster_for_restore(&Some(registry.clone()), &roster);
     assert!(
         registry
             .lock()

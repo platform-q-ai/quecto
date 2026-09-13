@@ -45,7 +45,11 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
         guard["grand"].lifecycle,
         crate::infrastructure::tools::subagent_lifecycle::SubagentLifecycleState::Busy
     );
-    assert_eq!(guard["grand"].pid, 42);
+    assert_eq!(
+        guard["grand"].pid,
+        super::REPORTED_DESCENDANT_PID,
+        "a reported pid is dropped (#1940)"
+    );
     assert_eq!(guard["grand"].workflow.as_ref().unwrap().steps_total, 2);
 }
 

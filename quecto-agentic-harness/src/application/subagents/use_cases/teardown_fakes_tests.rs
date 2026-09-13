@@ -262,7 +262,7 @@ impl ShutdownClock for FakeClock {
 /// persistence and the exit signal.
 #[derive(Default)]
 pub struct FakeExit {
-    pub signalled: Mutex<Vec<ExitReadiness>>,
+    pub readiness_signals: Mutex<Vec<ExitReadiness>>,
     pub attempts: AtomicU64,
     pub hold: AtomicBool,
     pub gate: tokio::sync::Notify,
@@ -273,8 +273,8 @@ impl FakeExit {
         Arc::new(Self::default())
     }
 
-    pub fn signalled(&self) -> Vec<ExitReadiness> {
-        self.signalled.lock().unwrap().clone()
+    pub fn readiness_signals(&self) -> Vec<ExitReadiness> {
+        self.readiness_signals.lock().unwrap().clone()
     }
 }
 
@@ -285,7 +285,7 @@ impl CompositionExitReadiness for FakeExit {
             if self.hold.load(Ordering::SeqCst) {
                 self.gate.notified().await;
             }
-            self.signalled.lock().unwrap().push(readiness);
+            self.readiness_signals.lock().unwrap().push(readiness);
         })
     }
 }

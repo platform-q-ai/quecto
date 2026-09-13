@@ -76,17 +76,36 @@ commands expose it (use `agent_id: "*"`):
   same. Run `kill_container` again to retry: only the members still
   recorded are asked again, and the retained `kill` never runs twice under
   one claim. Latency: a member is asked over its edge with a 5 s
-  acknowledgement bound and, once acknowledged, given up to 15 s for its
-  exit to be observed before it is compensated `unobserved`, so a
-  `kill_container` whose members are unreachable or slow to exit can take
-  up to ~20 s per member before the retained `kill` runs; a member that
-  exits promptly settles in milliseconds.
+  acknowledgement bound and, once acknowledged, given up to 25 s (the
+  owned-handle ladder plus slack) for its exit to be observed before it is
+  compensated `unobserved`, so a `kill_container` whose members are
+  unreachable or slow to exit can take up to ~30 s per member before the
+  retained `kill` runs; a member that exits promptly settles in
+  milliseconds.
 
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot
 double-kill). Script sets without a configured `kill` fall back to the
 retained `cleanup` argv for final-member teardown; `kill_container` itself
 refuses such environments up front, leaving every member untouched.
+
+### No host signal ever enters a container
+
+A container member's harness — and everything it launches inside the box —
+is ended over the protocol only: the host asks it to `shutdown`, observes
+the exit through its snapshots, and lets the retained `kill` argv end the
+box. The host holds no process handle for anything inside a container and
+records no pid for a descendant reported from inside one (a merged row's pid
+is always `0`), so pids 1 and 2 inside a box — `podman-init` and the
+coordinator — can never be targeted from outside. This is ratcheted by
+`quecto-agentic-harness/tests/architecture/teardown_authority.rs` (the
+process-effect allowlist) and proven by running the harness's own full BDD
+suite inside a `quecto-box:local` container whose pid 2 blocks and logs every
+signal it receives (see the #1940 record below).
+
+#### In-container proof record (#1925 method, #1940 run)
+
+PROOF_RECORD_PLACEHOLDER
 
 ### Swarm environments are retained (#1924)
 

@@ -188,7 +188,7 @@ Feature: Selected termination of a delegated agent (#1936, #1882)
     When I execute agent_cmd with '{"agent_id":"A","command":"kill"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain "graceful"
-    And the agent_cmd result should not contain "signalled"
+    And the agent_cmd result should contain "killed"
 
   Scenario: An AgentCmdTool without a composed owner refuses kill
     Given an AgentCmdTool without a composed kill owner

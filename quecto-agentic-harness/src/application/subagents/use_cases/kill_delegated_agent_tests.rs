@@ -716,5 +716,6 @@ fn errors_render_their_vocabulary() {
     ] {
         assert_eq!(TerminationResult::parse(result.as_str()), Some(result));
     }
-    assert_eq!(TerminationResult::parse("signalled"), None);
+    assert_eq!(TerminationResult::parse("killed"), None);
+    assert_eq!(TerminationResult::parse(""), None);
 }

@@ -16,7 +16,6 @@ pub(crate) mod inherited_tool_policy;
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
-mod process_ownership;
 mod process_tree;
 pub mod recall;
 pub mod registration;

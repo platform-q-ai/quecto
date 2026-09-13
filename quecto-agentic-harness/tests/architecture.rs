@@ -17,6 +17,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
+/// retired-name sweep, single owners and whole-crate layer baselines.
+#[path = "architecture/teardown_authority.rs"]
+mod teardown_authority;
+#[path = "architecture/teardown_layers.rs"]
+mod teardown_layers;
+
 /// Recursively collect all .rs files under a directory.
 fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     if !dir.exists() {
@@ -246,7 +253,7 @@ fn domain_layer_has_no_runtime_io_calls() {
 }
 
 #[test]
-fn environment_control_orchestration_stays_out_of_interface_handlers() {
+fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // Environment listing and kill transactions are separate application owners.
     // UDS handlers and the agent_cmd adapter may only decode arguments, delegate
     // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
@@ -3180,25 +3187,11 @@ fn owned_child_supervisor_is_the_one_child_owner_and_signaller() {
     }
 }
 
-/// The retained #1925 scaffolding may still signal *reported* pids until
-/// #1940, but no production path publishes a launched lease any more: the
-/// launched-child authority lives exclusively in the supervisor's handle.
+/// A local launch records the supervisor's opaque handle and a launch
+/// generation: the launched-child authority lives exclusively in the
+/// supervisor's handle (#1935); no lease of any kind exists since #1940.
 #[test]
-fn local_launch_publishes_no_signal_lease() {
-    let mut files = Vec::new();
-    collect_rs_files(Path::new("src"), &mut files);
-    for file in &files {
-        let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/infrastructure/tools/process_ownership.rs" {
-            continue;
-        }
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
-        assert!(
-            !production.contains("ProcessOwnership::launched"),
-            "{path} publishes a launched signal lease; launched children are \
-             owned through the supervisor (#1935)"
-        );
-    }
+fn local_launch_records_the_owned_handle_and_generation() {
     let launch = production_source("src/infrastructure/tools/spawn_launch_ports.rs");
     assert!(launch.contains("entry.owned_child = prepared.owned_child;"));
     assert!(launch.contains("entry.launch_generation ="));
@@ -3309,12 +3302,10 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
 // ─── Selected termination and lifecycle compensation (#1936) ─────────────────
 
 /// Every termination path converges on the application's claims and the
-/// owned-handle fallback: none of them reads the #1925 reported lease,
-/// signals a pid, or removes a row before the exit was observed. Since
-/// #1938 no termination path reads the lease at all; only the merge
-/// scaffolding writes it until #1940 deletes the module.
+/// owned-handle fallback: none of them names a lease (deleted by #1940),
+/// signals a pid, or removes a row before the exit was observed.
 #[test]
-fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
+fn termination_paths_never_consult_a_lease_or_a_pid() {
     for path in [
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",

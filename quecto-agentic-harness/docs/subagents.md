@@ -674,8 +674,8 @@ carries no `--persist`; the harness resolves one lifetime at startup:
 | Top-level `--persist` (user-started, e.g. the TUI's tab agent or `quecto agent --mode uds --persist`) | Stays alive across client churn until SIGTERM/SIGINT or a protocol shutdown — unchanged |
 | Launcher-created (`--parent-control`) | Ignores client churn; ends on loss of the bound parent connection or at the bind deadline. `--persist` is refused at startup (after the sidecar is consumed) |
 
-Because a child cannot outlive its launcher, **session restore never
-readopts children**. `resume_session` (and a new harness loading a saved
+Because a child cannot outlive its launcher, **session restore is history
+only and creates no operational child row**. `resume_session` (and a new harness loading a saved
 session) restores the transcript, the workflow run and past child messages,
 and resets the operational roster to empty: persisted roster rows — live,
 detached, dead, explicitly killed or malformed — are read only to be
@@ -688,7 +688,7 @@ live. Externally attached clients reconnecting to a still-running harness
 see that harness's in-memory registry as before.
 
 **Switching sessions tears the current session's launched children down
-first (#1938).** No later session can readopt them, so `resume_session`
+first (#1938).** No later session can reach them, so `resume_session`
 into another session and `new_session` run the fleet teardown (below) on
 the departing session's direct children — asked over their edge,
 acknowledged, exit observed, compensated, tombstones pruned — *before* the
@@ -707,103 +707,125 @@ session.
 - The parent interacts with children via `agent_cmd` (native UDS, no subprocess)
 - Multiple children can run concurrently
 
-### Cleanup
+### Teardown
 
-- **Owned-child supervisor** (#1935): every process this harness spawns
-  directly (local launches and per-connection proxy bridge processes) is
-  spawned and reaped by one `OwnedChildSupervisor` on its own runtime.
-  Callers hold an opaque handle, never a pid or a `Child`. The reaper task
-  takes its exit signal from the supervisor and hands the exit to the
-  application's `ObserveOwnedChildExit`
-- **One compensation per child** (#1936): a registry row walks
-  `Live → Stopping → Compensating → Compensated`. An operator `kill`, the
-  reaper's exit report, the monitor's EOF, a launch rollback and a
-  reported-snapshot prune all claim their way through those phases, so the
-  terminal effects — environment cleanup and membership removal, monitor and
-  bridge teardown, removal of the row and its reported subtree, one survivor
-  `subagent_state_changed`, one passive note — run exactly once and only
-  after the exit was observed. A monitor EOF for a child whose process this
-  harness still retains defers to the reaper: no row is removed while its
-  process lives
-- **Selected termination** (`agent_cmd kill`, #1936 / #1882): the target is
-  resolved by uuid or live display label (an ambiguous label, a row this
-  harness never launched, or an exited row — a retained dead row answers
-  `already exited`, never `not found` — is refused with no effect), claimed
-  stopping, then exactly one edge is routed with the depth the lineage says
-  the route needs. **The direct owner of the target concludes it**: the
-  `shutdown` protocol first, the exit observed within a bound, and — only
-  when the protocol did not suffice (unreachable, refused, malformed or
-  mismatched acknowledgement, or an acknowledged child that does not exit
-  within its budget) and only for a directly owned local handle — the
-  supervisor's TERM/KILL fallback; then the row's compensation. That is
-  the same whether the kill started at this harness or arrived as a
-  forwarded `terminate_delegated_agent`: a deeper descendant — reported
-  upward with its launch generation — is reached by sending its direct
-  ancestor the authenticated command, each receiver resolving only its
-  next direct edge, and the receiver that owns the target runs the whole
-  conclusion before it answers. Intermediates stay alive, lift their own
-  claim on every downstream answer (result, refusal or timeout), and relay
-  the answer: the owner's result (`graceful`, `fallback`,
-  `already-exited`) or the refusal's kind (`unknown_target`,
-  `stale_generation`, `already_exited`, `rejected`, `not_accepting`,
-  `unreachable`, `failed`) on the response's `error_kind`, so the root
-  presents the owner's truth. The per-hop acknowledgement bound grows
-  with the remaining depth (`PER_HOP_CONCLUSION_BOUND` per hop), so a
-  slow deep conclusion is not misreported as unreachable. A target this
-  harness does not own and cannot reach has no fallback: `failed`, with
-  the row left as it was. A failure *after* effects reached the child
-  (an acknowledged shutdown whose exit was not observed, a fallback that
-  signalled without an observed exit, or such a failure relayed from
-  downstream) keeps the row claimed stopping, so the eventual exit is
-  compensated as this kill; the claim is recorded as *returned* (attempt
-  n), so a later trigger — a retried `kill`, `kill_container`, the fleet
-  teardown — is not refused forever but re-takes it and re-attempts the
-  protocol, while a termination still *executing* on the row is joined.
-  Only a refusal before anything reached the child lifts the claim. No
-  descendant pid is ever signalled: a child's subtree ends through the
-  child's own teardown and the parent-loss binding
+The model since epic #1929: **a harness owns only the children it launched,
+as process handles, and ends everything else over the protocol.** No
+teardown — of a subagent, an environment member or a swarm member — takes
+its authority from a pid, whether that pid was registered, forwarded in a
+snapshot, restored from a session or read from a coordination store.
+
+- **Protocol shutdown with ACK, owned-handle fallback**: a child is asked
+  to end with the authenticated `shutdown` command over its own edge (or a
+  deeper descendant with `terminate_delegated_agent`, routed one edge at a
+  time through its ancestors). The child acknowledges, cancels its turn,
+  closes turn admission, settles its own children the same way, persists
+  and exits. Only for a child **this** harness launched locally does a
+  fallback exist: the `OwnedChildSupervisor` retains the direct unreaped
+  `Child` and sends TERM, then KILL, each at most once and only after the
+  protocol did not suffice (unreachable, refused, no ACK, or no exit after
+  an ACK within the budget). Script and container members hold no handle:
+  they are asked, given the bound to exit, then compensated `unobserved`;
+  their environment's retained `kill` is what ends the box.
+- **Parent lifetime binding and bind deadline** (#1935): a launched child
+  is lifetime-scoped to its launcher. It ends itself when the bound parent
+  control connection is lost (EOF/reset — a crashed or SIGKILLed parent
+  included) and at the bind deadline (30 s, `QUECTO_PARENT_BIND_DEADLINE_MS`)
+  if no parent ever bound. A whole subtree therefore falls when any
+  ancestor dies, without anyone above knowing a grandchild's pid.
+- **A merged descendant carries no pid**: a grandchild reported in a
+  child's `subagent_state_changed` snapshot is stored with its uuid,
+  launch generation and parent (so a kill can be routed toward it) and pid
+  `0`. The snapshot's pid — whatever it names: this process, pid 1 or 2
+  inside a container, a reused number — is dropped at the hop. The only
+  pid a registry row ever shows is the display-only pid of a child this
+  harness launched, and no teardown path reads it.
+- **One compensation per child** (#1936): a row walks
+  `Live → Stopping → Compensating → Compensated`; kill, reaper, monitor
+  EOF, rollback and reported-snapshot prune claim their way through it so
+  cleanup, cascade, one survivor broadcast and one note run exactly once,
+  after the exit was observed. A monitor EOF for a process this harness
+  still retains defers to the reaper.
+- **Selected termination** (`agent_cmd kill`): resolve by uuid or live
+  label (ambiguous, never-launched or exited rows are refused with no
+  effect; a retained dead row answers `already exited`), claim stopping,
+  route one edge; the direct owner of the target concludes it and answers
+  `graceful` / `fallback` / `already-exited`, or a refusal kind
+  (`unknown_target`, `stale_generation`, `already_exited`, `rejected`,
+  `not_accepting`, `unreachable`, `failed`) is relayed. A failure after
+  effects reached the child keeps the claim (recorded as *returned*) so
+  the eventual exit is compensated as that kill and a retry re-attempts.
 - **Fleet teardown** (`TerminateAllDelegatedAgents`, #1938): the one owner
-  of every whole-fleet end — an operator's `delete_all_subagents` (idle or
-  while a turn runs), SIGTERM/SIGINT, the last client of the default
-  lifetime disconnecting, a session transition, and the direct-children
+  of every whole-fleet end — `delete_all_subagents` (idle or busy),
+  SIGTERM/SIGINT, the last client of the default lifetime, a session
+  transition (`new_session`, `resume_session` away) and the direct-children
   step of every common shutdown (`shutdown` command, parent loss, bind
-  deadline). Every direct child is claimed stopping, asked over its one
-  edge (`shutdown`, reason `operator_request` / `parent_shutdown`),
-  concluded through the supervised owned handle (protocol first; only a
-  negative outcome — unreachable, refused, no ACK within 5 s, no exit
-  within 10 s after an ACK — authorises SIGTERM then SIGKILL after 2 s,
-  each at most once per handle and never after the reap) and compensated
-  exactly once, at most 8 children at a time. A script or container member
-  holds no local handle: it is asked, given the bound to exit, then
-  compensated `unobserved` (its environment's retained `kill` runs). A
-  child whose end cannot be settled is reported `unsettled` with its claim
-  lifted; the process exits anyway, a session transition refuses. Concurrent
-  triggers join one detached run (dropping the caller never abandons it),
-  no child is ever asked twice, and exited tombstones are pruned afterwards
-  so no live operational roster is persisted. The response of
-  `delete_all_subagents` reports `removed`, `settled` (`graceful`,
-  `fallback`, `already-exited`, `unobserved`, `joined`) and `unsettled`
+  deadline). Children settle concurrently (8 at a time), concurrent
+  triggers join one run, no child is asked twice, tombstones are pruned so
+  no live roster is persisted. A child that cannot be settled is reported
+  `unsettled` with its claim lifted: a process exit continues, a session
+  transition refuses and keeps the current session.
 - **Spawn admission**: the common shutdown freezes the harness lifecycle
-  before it claims the fleet, and a registration reads that lifecycle
-  inside the registry's critical section, so a spawn racing a shutdown is
-  either registered before the claim (and torn down with the fleet) or
-  refused (`spawn refused: the harness is Frozen …`). No termination path
-  consults the #1925 *reported* lease (the module is deleted by #1940) and
-  no subagent module signals a pid: restored, container-reported and
-  fixture-built rows are never signalled
-- **Harness exit**: a top-level harness of the default lifetime runs the
-  fleet teardown when its last client disconnects and only then persists
-  and returns; SIGTERM/SIGINT do the same (exit 0, never the signal's
-  default action). A shutdown that joins a fleet run an operator had
-  already started sweeps the fleet once more afterwards, so a child
-  registered between that run's lineage read and the freeze is still
-  settled. A **repeated** SIGTERM/SIGINT while the shutdown is in progress
-  is logged and ignored inside the 45 s teardown budget (a double Ctrl-C
-  never skips the teardown); past it the repeat forces the process exit
-  (status 130). A top-level `--persist` harness ignores its last client
-  and its children live on until an explicit shutdown
-- **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
-  Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
+  before it claims the fleet; a registration reads that lifecycle inside
+  the registry lock, so a spawn racing a shutdown is either torn down with
+  the fleet or refused (`spawn refused: the harness is Frozen …`).
+- **Harness exit**: a default-lifetime harness runs the fleet teardown on
+  its last client's disconnect and on SIGTERM/SIGINT, then persists and
+  exits 0. A repeated signal inside the 45 s teardown budget is ignored;
+  past it the repeat forces exit 130. A top-level `--persist` harness
+  ignores its last client and keeps its children until an explicit
+  shutdown or signal.
+- **Restore is history only** (#1937, #1534): `resume_session` and a new
+  harness loading a saved session restore the transcript, workflow run and
+  past child messages, and reset the operational roster to empty. No
+  socket is probed, no pid compared, no child row re-created. The master
+  re-spawns the workers it needs with fresh identities. Session
+  transitions settle the departing session's children first.
+- **Retained environment exception** (#1924): when a swarm container's
+  coordinator connection is lost spontaneously, the environment is
+  *retained* (`metadata.retained` records the loss) rather than destroyed,
+  so the run can be inspected; only an explicit `kill_container` ends it.
+  `kill_container` asks every member to shut down first and runs the
+  retained `kill` argv exactly once, only once all members settled.
+
+#### Kill latency bounds
+
+| Path | Bound |
+| --- | --- |
+| Graceful protocol end of an idle child | milliseconds |
+| ACK wait (`PROTOCOL_ACK_TIMEOUT`) | 5 s |
+| Exit after ACK before the owned-handle fallback | 10 s |
+| TERM grace, then KILL grace (owned handle only) | 2 s + 2 s |
+| Worst case for a directly owned child before `fallback` / `failed` | ≈ 19 s |
+| Compensation wait for a child this harness does not own (`DEFAULT_COMPENSATION_WAIT`) | 25 s (ladder + slack) |
+| Per-hop conclusion bound for a nested target (`PER_HOP_CONCLUSION_BOUND`, × remaining hops) | 30 s |
+| Fleet teardown: children settled concurrently, 8 at a time | per-child bounds above |
+| Repeated SIGTERM/SIGINT ignored while the shutdown runs (`FORCE_EXIT_AFTER`) | 45 s, then exit 130 |
+| Bind deadline of a launched child whose parent never binds | 30 s |
+
+#### The allowlist boundary
+
+The architecture tests (`tests/architecture/teardown_authority.rs`, layer ratchets in
+`teardown_layers.rs`) enumerate
+the only process effects in the harness crate, by file and vocabulary;
+any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
+`/proc` traversal fails the build:
+
+| Effect | Owner |
+| --- | --- |
+| TERM/KILL of a directly launched, unreaped child | `infrastructure/processes/owned_child_supervisor.rs` |
+| `PR_SET_PDEATHSIG` armed on a spawned process | `infrastructure/processes/parent_death_signal.rs` |
+| Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
+| Python `ExecutionScope` job containment | `infrastructure/tools/swarm_process.rs`, `swarm_scope.rs`, the job cancel in `swarm.rs` |
+| Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |
+| Retained-environment command adapter (its own script child) | `infrastructure/tools/environment_commands.rs` |
+| Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep.rs`, `find_fd.rs` |
+| `/proc` observation (member start time, own executable, socket table) | `swarm_bridge.rs`, `runtime_identity.rs`, `interface/cli/uds_socket.rs` |
+
+- **Socket cleanup**: socket files are removed by the child's UDS server on
+  a graceful exit. Dead auto-generated sockets are reaped by liveness check
+  on next agent startup; the 24h age threshold is a fallback when liveness
+  cannot be determined
 
 ### Duplicate prevention
 
