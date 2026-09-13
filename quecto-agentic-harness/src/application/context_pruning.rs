@@ -9,7 +9,7 @@
 // content spills to disk at creation time, so `recall()` can retrieve
 // collapsed or dropped content.
 //
-// Depends on: domain::message, domain::session (ContextSpillStore).
+// Depends on: domain::message, application::session::ports (ContextSpillStore).
 // Never imports infrastructure.
 
 // #1046: conversation-message collapse, demotion ladder, creation-time spill.

@@ -1,8 +1,7 @@
 use crate::application::session::ports::SessionStore;
-use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionSummary};
-use crate::domain::workflow::WorkflowRunPersisted;
+use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;

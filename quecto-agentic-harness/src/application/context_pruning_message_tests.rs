@@ -2,12 +2,12 @@
 //! and creation-time message spilling. Split from `context_pruning.rs` to
 //! respect the 750-line source cap.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::{future::Future, pin::Pin};
 
 use super::messages::*;
 use super::*;
+use crate::application::session::ports::SpillIndexList;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{SpillEntry, SpillIndex};
 
@@ -49,10 +49,7 @@ impl ContextSpillStore for MemStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(
-        &self,
-        _session_key: &str,
-    ) -> crate::application::session::ports::SpillIndexList<'_> {
+    fn list_entries(&self, _session_key: &str) -> SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()

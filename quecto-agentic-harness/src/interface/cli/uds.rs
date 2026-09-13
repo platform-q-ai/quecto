@@ -16,8 +16,7 @@ use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
-use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::session::ports::SessionStore;
+use crate::application::{agent_loop::AgentLoopImpl, session::ports::SessionStore};
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;

@@ -1,7 +1,6 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::application::agent_turn::ports::AgentLoop;
-use crate::application::session::ports::SessionStore;
+use crate::application::{agent_turn::ports::AgentLoop, session::ports::SessionStore};
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 use crate::infrastructure::config::Config;
