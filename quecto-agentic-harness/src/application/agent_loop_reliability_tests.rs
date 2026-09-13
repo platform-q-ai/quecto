@@ -98,7 +98,7 @@ async fn terminal_report_cannot_execute_mutating_tools() {
 struct RetryAccounting {
     records: Mutex<Vec<String>>,
 }
-impl crate::domain::request_observation::RequestAccounting for RetryAccounting {
+impl crate::application::providers::ports::RequestAccounting for RetryAccounting {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
@@ -140,7 +140,7 @@ async fn failed_accounting_is_retried_with_original_observation_id() {
 struct RejectingAccounting {
     records: Mutex<Vec<String>>,
 }
-impl crate::domain::request_observation::RequestAccounting for RejectingAccounting {
+impl crate::application::providers::ports::RequestAccounting for RejectingAccounting {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,

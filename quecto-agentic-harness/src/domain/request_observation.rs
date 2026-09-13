@@ -1,4 +1,7 @@
 //! Request diagnostics contain measurements and availability, never prompt content or billing claims.
+//!
+//! The accounting port a completed observation is recorded through is the
+//! application's (`application::providers::ports::RequestAccounting`, #1960).
 use super::attempt_diagnostics::AttemptDiagnostics;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -70,13 +73,6 @@ pub struct RequestObservation {
     pub harness_prefix_sha256: String,
     pub harness_prefix_bytes: usize,
     pub harness_prefix_unchanged: Option<bool>,
-}
-
-pub trait RequestAccounting: Send + Sync {
-    fn record<'a>(
-        &'a self,
-        observation: &'a RequestObservation,
-    ) -> super::subagent_launch::LaunchFuture<'a, Result<(), super::error::DomainError>>;
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

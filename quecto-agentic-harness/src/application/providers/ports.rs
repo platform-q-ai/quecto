@@ -14,7 +14,7 @@ use crate::domain::message::{LlmResponse, Message};
 use crate::domain::provider::{
     CancelFlag, EffortLevel, RequestMetadata, StreamEvent, ThinkingLevel, ToolChoice,
 };
-use crate::domain::request_observation::RequestTrace;
+use crate::domain::request_observation::{RequestObservation, RequestTrace};
 use crate::domain::tool::ToolDefinition;
 
 /// Parameters for a chat request to an LLM provider.
@@ -121,6 +121,16 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 /// consult durable execution state without exposing its storage to the agent.
 pub trait RequestAdmission: std::fmt::Debug + Send + Sync {
     fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
+}
+
+/// Port: durable accounting of one completed request observation, recorded
+/// by the agent turn after each logical request (the swarm's usage ledger
+/// implements it).
+pub trait RequestAccounting: Send + Sync {
+    fn record<'a>(
+        &'a self,
+        observation: &'a RequestObservation,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + 'a>>;
 }
 
 #[cfg(test)]

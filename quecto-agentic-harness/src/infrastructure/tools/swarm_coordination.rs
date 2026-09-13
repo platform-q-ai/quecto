@@ -236,7 +236,7 @@ impl SwarmContext {
 #[path = "swarm_coordination_tests.rs"]
 mod tests;
 
-impl crate::domain::request_observation::RequestAccounting for SwarmContext {
+impl crate::application::providers::ports::RequestAccounting for SwarmContext {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,

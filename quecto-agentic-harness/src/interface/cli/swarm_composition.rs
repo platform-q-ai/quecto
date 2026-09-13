@@ -11,7 +11,7 @@ pub(super) fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) ->
         }))
         .with_request_accounting(
             context.clone().map(|value| {
-                value as Arc<dyn crate::domain::request_observation::RequestAccounting>
+                value as Arc<dyn crate::application::providers::ports::RequestAccounting>
             }),
         )
         .with_request_admission(

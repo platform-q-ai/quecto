@@ -28,7 +28,8 @@ fn only_store_contention_keeps_a_diagnostic_pending() {
 /// Accounting state survives a panic under any of its locks.
 #[tokio::test]
 async fn poisoned_accounting_locks_are_recovered() {
-    use crate::domain::request_observation::{RequestAccounting, RequestObservation};
+    use crate::application::providers::ports::RequestAccounting;
+    use crate::domain::request_observation::RequestObservation;
     let (agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
     #[derive(Default)]
     struct Ok_;

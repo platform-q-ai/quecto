@@ -75,7 +75,7 @@ impl AgentLoopImpl {
     }
     pub fn with_request_accounting(
         mut self,
-        accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
+        accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     ) -> Self {
         self.request_accounting = accounting;
         self
