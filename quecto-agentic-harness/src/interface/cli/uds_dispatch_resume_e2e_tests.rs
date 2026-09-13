@@ -273,98 +273,166 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     );
 }
 
-// ── Session switch releases the departing session's children (#1937 interim) ─
+// ── Session switches settle the departing session's children (#1938) ─────────
 
 use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
-use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use std::sync::{Arc, Mutex};
 
-const RELEASE_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+const SWITCH_BOUND: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// A fake child: a listener the production monitor task connects to, exactly
-/// as it connects to a launched child's socket. The accepted stream is the
-/// child's view of its bound parent connection; its EOF is parent loss.
-struct BoundChild {
-    accepted: tokio::net::UnixStream,
+/// A fake launched child: a listener the production monitor task connects
+/// to, exactly as it connects to a launched child's socket, and that
+/// acknowledges a `shutdown` sent over the same socket by closing every
+/// connection it holds — the child's graceful exit as its parent sees it
+/// (monitor EOF). Records every request.
+struct AckingChild {
     entry: SubagentEntry,
+    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+    monitor: Arc<tokio::task::JoinHandle<()>>,
 }
 
-async fn bound_child(
+async fn acking_child(
     dir: &std::path::Path,
     name: &str,
-    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
-) -> BoundChild {
+    registry: &SubagentRegistry,
+) -> AckingChild {
     let socket_path = dir.join(format!("{name}.sock"));
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let requests: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+    type Held = (
+        tokio::io::BufReader<tokio::io::ReadHalf<tokio::net::UnixStream>>,
+        tokio::io::WriteHalf<tokio::net::UnixStream>,
+    );
+    let held: Arc<Mutex<Vec<Held>>> = Arc::new(Mutex::new(Vec::new()));
+    let accepted = Arc::new(tokio::sync::Notify::new());
+    let (seen, streams, first) = (requests.clone(), held.clone(), accepted.clone());
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            first.notify_one();
+            let (read, mut write) = tokio::io::split(stream);
+            let mut reader = tokio::io::BufReader::new(read);
+            // A monitor connection opens with an empty hello frame and is
+            // held; a command connection carries one JSON request.
+            let Ok(Some(incoming)) =
+                quecto_line_io::read_frame_or_legacy_line(&mut reader, 64 * 1024).await
+            else {
+                continue;
+            };
+            let bytes = match incoming {
+                quecto_line_io::Incoming::Frame(b) | quecto_line_io::Incoming::LegacyLine(b) => b,
+            };
+            let Ok(request) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                streams.lock().unwrap().push((reader, write));
+                continue;
+            };
+            seen.lock().unwrap().push(request.clone());
+            if request["type"] == "shutdown" {
+                use tokio::io::AsyncWriteExt;
+                let reply = serde_json::json!({
+                    "type": "response", "id": request["id"], "command": "shutdown", "success": true,
+                });
+                let _ = write.write_all(format!("{reply}\n").as_bytes()).await;
+                let _ = write.shutdown().await;
+                // The child exits: every connection it held closes.
+                streams.lock().unwrap().clear();
+                return;
+            }
+        }
+    });
     let mut entry = SubagentEntry::new(socket_path.clone(), 0);
     entry.display_name = name.to_string();
-    let monitor = spawn_monitor_task_unbound(
+    entry.launch_generation =
+        Some(crate::infrastructure::processes::parent_control::next_launch_generation());
+    let monitor = Arc::new(spawn_monitor_task_unbound(
         entry.agent_uuid.as_str().to_string(),
         socket_path,
         registry.clone(),
         None,
         None,
         None,
-    );
-    entry.monitor_handle = Some(std::sync::Arc::new(monitor));
-    let (accepted, _) = tokio::time::timeout(RELEASE_BOUND, listener.accept())
+    ));
+    entry.monitor_handle = Some(monitor.clone());
+    tokio::time::timeout(SWITCH_BOUND, accepted.notified())
         .await
-        .expect("the monitor connects within the bound")
-        .unwrap();
-    BoundChild { accepted, entry }
+        .expect("the monitor connects within the bound");
+    AckingChild {
+        entry,
+        requests,
+        monitor,
+    }
 }
 
-/// The child's side of the bound connection reaches EOF within the bound:
-/// the parent side was closed, which is what a launch-bound child reacts to.
-async fn assert_parent_lost(mut accepted: tokio::net::UnixStream, what: &str) {
-    use tokio::io::AsyncReadExt;
-    let mut sink = [0u8; 1024];
-    let eof = tokio::time::timeout(RELEASE_BOUND, async {
-        loop {
-            match accepted.read(&mut sink).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {} // the monitor's framed hello
-            }
-        }
-    })
-    .await;
-    assert!(
-        eof.is_ok(),
-        "{what}: the bound parent connection stayed open"
-    );
+fn production_fleet(
+    registry: &SubagentRegistry,
+) -> Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents> {
+    crate::composition::subagent_teardown::build_fleet_teardown(
+        crate::composition::subagent_teardown::FleetTeardownWiring {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle:
+                crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
+    )
 }
 
-/// #1937 review: `new_session` must not strand the current session's live
-/// launched child. Its monitor task — the owner of the bound parent
-/// connection — is aborted before the row is cleared, so the child observes
-/// parent loss and ends itself; no signal is sent and nothing is awaited.
-#[tokio::test]
-async fn e2e_new_session_releases_the_departing_childs_bound_connection() {
+/// #1938: `new_session` settles the current session's live launched child
+/// through the fleet teardown before the roster is replaced: the child is
+/// asked to shut down over its edge, its exit is observed through its
+/// monitor, its row is compensated and pruned, and the harness continues.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_new_session_settles_the_departing_child_before_the_roster_is_replaced() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
     let registry = new_registry();
-    let child = bound_child(dir.path(), "departing", &registry).await;
+    let child = acking_child(dir.path(), "departing", &registry).await;
     registry.lock().unwrap().insert(
         child.entry.agent_uuid.as_str().to_string(),
         child.entry.clone(),
     );
+    let fleet = production_fleet(&registry);
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
-        assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
+        ctx.fleet_teardown = Some(fleet.clone());
+        let switched = tokio::time::timeout(
+            SWITCH_BOUND,
+            super::handle_new_session(&mut ctx, Some("new"), "new_session"),
+        )
+        .await
+        .expect("bounded");
+        assert!(!switched);
+        // A second switch finds nothing left to settle.
+        assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
     }
-    assert!(registry.lock().unwrap().is_empty());
-    assert_parent_lost(child.accepted, "new_session").await;
+    assert_ne!(fx.session_key, "cli:test");
+    let requests = child.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0]["type"], "shutdown");
+    assert_eq!(requests[0]["reason"], "operator_request");
     assert!(
-        child.entry.monitor_handle.unwrap().is_finished(),
-        "the monitor task was aborted, not merely dropped"
+        registry.lock().unwrap().is_empty(),
+        "settled and pruned before the roster was replaced"
     );
+    tokio::time::timeout(SWITCH_BOUND, async {
+        while !child.monitor.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the compensation ends the monitor task");
 }
 
-/// #1937 review: resuming away from a session with a live launched child
-/// releases that child the same way and restores the target session with an
-/// empty roster; the target's legacy rows are still never probed.
-#[tokio::test]
-async fn e2e_resume_away_releases_the_departing_childs_bound_connection() {
+/// #1938: resuming away from a session with a live launched child settles
+/// that child the same way and restores the target session with an empty
+/// roster; the target's legacy rows are still never probed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_resume_away_settles_the_departing_child_and_probes_no_legacy_socket() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
     let legacy_socket = dir.path().join("legacy.sock");
@@ -377,66 +445,110 @@ async fn e2e_resume_away_releases_the_departing_childs_bound_connection() {
     )
     .await;
     let registry = new_registry();
-    let child = bound_child(dir.path(), "departing", &registry).await;
+    let child = acking_child(dir.path(), "departing", &registry).await;
     registry.lock().unwrap().insert(
         child.entry.agent_uuid.as_str().to_string(),
         child.entry.clone(),
     );
+    let fleet = production_fleet(&registry);
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
-        assert!(
-            !super::handle_resume_session(
+        ctx.fleet_teardown = Some(fleet);
+        let switched = tokio::time::timeout(
+            SWITCH_BOUND,
+            super::handle_resume_session(
                 &mut ctx,
                 Some("away"),
                 "resume_session",
-                "elsewhere".into()
-            )
-            .await
-        );
+                "elsewhere".into(),
+            ),
+        )
+        .await
+        .expect("bounded");
+        assert!(!switched);
     }
     assert_eq!(fx.session_key, "cli:elsewhere");
+    assert_eq!(child.requests.lock().unwrap().len(), 1);
     assert!(registry.lock().unwrap().is_empty());
-    assert_parent_lost(child.accepted, "resume_session").await;
     assert_never_probed(&legacy_listener, "legacy row of the resumed session");
 }
 
-/// A proxy-transport child's bridge accept loop and socket go with the row:
-/// nothing can connect to the released child's bridge afterwards.
+/// #1938: a departing child that cannot be settled refuses the transition
+/// explicitly — the current session, its key and its roster are kept — so
+/// ownership of a live child is never silently dropped.
 #[tokio::test]
-async fn e2e_session_switch_tears_down_a_departing_childs_proxy_bridge() {
+async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settled() {
+    use crate::application::subagents::use_cases::teardown_fakes::*;
     let mut fx = Fixture::new();
-    let dir = tempfile::tempdir().unwrap();
-    let bridge_socket = dir.path().join("bridge.sock");
-    let listener = tokio::net::UnixListener::bind(&bridge_socket).unwrap();
-    let accept_loop = tokio::spawn(async move {
-        loop {
-            let _ = listener.accept().await;
-        }
-    });
-    let mut member = SubagentEntry::new(dir.path().join("member.sock"), 0);
-    member.proxy_bridge_handle = Some(std::sync::Arc::new(accept_loop));
-    member.proxy_bridge_socket = Some(bridge_socket.clone());
+    let lifecycle = FakeLifecycle::new(root_tree());
+    let routing = FakeRouting::new();
+    let fleet = fake_fleet(lifecycle, routing, FakeSpawner::new());
+    fleet.termination.conclude_child_with(
+        "A",
+        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+            "ignores TERM and KILL".into(),
+        ),
+    );
     let registry = new_registry();
-    registry
-        .lock()
-        .unwrap()
-        .insert("member".into(), member.clone());
+    registry.lock().unwrap().insert(
+        "A".into(),
+        SubagentEntry::new(std::path::PathBuf::from("/tmp/a.sock"), 0),
+    );
+    fx.messages.push(Message::user("kept"));
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry.clone());
+        ctx.fleet_teardown = Some(fleet.fleet.clone());
+        assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
+        assert!(
+            !super::handle_resume_session(&mut ctx, Some("away"), "resume_session", "x".into())
+                .await
+        );
+    }
+    assert_eq!(fx.session_key, "cli:test", "the current session is kept");
+    assert_eq!(fx.messages.len(), 1, "nothing was cleared");
+    assert_eq!(
+        registry.lock().unwrap().len(),
+        1,
+        "the roster was not touched"
+    );
+    // The unsettled child keeps its row with the claim lifted: D settled.
+    assert_eq!(
+        fleet.registry.phase("A"),
+        crate::application::subagents::use_cases::lifecycle_fakes::Phase::Live
+    );
+}
+
+/// A loop without a fleet teardown (no teardown graph) refuses to switch
+/// away from live delegated rows rather than dropping them, and replaces a
+/// roster of records only.
+#[tokio::test]
+async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
+    let mut fx = Fixture::new();
+    let registry = new_registry();
+    let mut live = SubagentEntry::new(std::path::PathBuf::from("/tmp/live.sock"), 0);
+    live.launch_generation =
+        Some(crate::infrastructure::processes::parent_control::next_launch_generation());
+    registry.lock().unwrap().insert("live".into(), live);
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
-        // A second switch finds nothing left to release.
-        assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
     }
+    assert_eq!(fx.session_key, "cli:test");
+    assert_eq!(registry.lock().unwrap().len(), 1);
+    // A record-only row (no launch generation) is replaced.
+    registry.lock().unwrap().clear();
+    registry.lock().unwrap().insert(
+        "record".into(),
+        SubagentEntry::new(std::path::PathBuf::from("/tmp/record.sock"), 0),
+    );
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry.clone());
+        assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
+    }
+    assert_ne!(fx.session_key, "cli:test");
     assert!(registry.lock().unwrap().is_empty());
-    assert!(!bridge_socket.exists(), "the bridge socket is removed");
-    let handle = member.proxy_bridge_handle.unwrap();
-    tokio::time::timeout(RELEASE_BOUND, async {
-        while !handle.is_finished() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the accept loop is aborted");
 }

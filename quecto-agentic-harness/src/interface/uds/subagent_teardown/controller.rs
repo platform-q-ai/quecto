@@ -209,7 +209,48 @@ impl SubagentTeardownController {
         .await
     }
 
+    /// SIGTERM/SIGINT reached the process (#1938): composition's signal
+    /// watcher delivers it here and nothing else. No ACK exists for a
+    /// signal, so the holder moves straight to execution; a signal arriving
+    /// while another trigger's shutdown runs joins that run.
+    pub async fn termination_signal(&self, delivery: DeliveryState) -> ControllerOutcome {
+        self.triggered_without_ack(
+            delivery,
+            PrepareShutdownRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::TerminationSignal,
+                trigger: crate::application::subagents::dto::ShutdownTrigger::TerminationSignal,
+            },
+        )
+        .await
+    }
+
+    /// The last client of a top-level harness whose lifetime ends with it
+    /// disconnected (#1938): the operator is gone, so the fleet is torn down
+    /// and the session persisted before the process returns. The dispatch
+    /// loop calls this only for that lifetime; `--persist` and launch-bound
+    /// harnesses never reach it.
+    pub async fn last_client_disconnected(&self, delivery: DeliveryState) -> ControllerOutcome {
+        self.triggered_without_ack(
+            delivery,
+            PrepareShutdownRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                trigger:
+                    crate::application::subagents::dto::ShutdownTrigger::LastClientDisconnected,
+            },
+        )
+        .await
+    }
+
     async fn parent_gone(
+        &self,
+        delivery: DeliveryState,
+        request: PrepareShutdownRequest,
+    ) -> ControllerOutcome {
+        self.triggered_without_ack(delivery, request).await
+    }
+
+    /// A trigger with no one to ACK to: admit (or join) and execute.
+    async fn triggered_without_ack(
         &self,
         delivery: DeliveryState,
         request: PrepareShutdownRequest,

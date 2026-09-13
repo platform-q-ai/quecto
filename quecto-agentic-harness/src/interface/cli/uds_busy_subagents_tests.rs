@@ -14,19 +14,20 @@ use super::uds_ext_protocol::{
 
 const CLIENT_ID: u64 = 7;
 
-/// Run one line through the interceptor as client `CLIENT_ID`. Tests that do
-/// not observe the broadcast pass `None` and get a private channel.
+/// Run one line through the interceptor as client `CLIENT_ID`, with the
+/// fleet teardown a busy-path `delete_all_subagents` invokes (#1938).
 async fn run(
     line: &str,
     subagents: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    fleet: Option<
+        &std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
+    >,
     clients: &ClientToolRegistry,
 ) -> bool {
-    let fallback = tokio::sync::broadcast::channel::<String>(8);
     intercept(BusySubagentCtx {
         line,
         subagents,
-        broadcast_tx: broadcast_tx.unwrap_or(&fallback.0),
+        fleet,
         clients,
         client_id: CLIENT_ID,
     })
@@ -206,30 +207,57 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
 
 // ─── delete_all_subagents on the busy path (#1626) ───────────────────────────
 
-fn registry_with_entries(
+/// Rows this harness launched (a launch generation, keyed by uuid) whose
+/// sockets never existed: the protocol attempt is negative at once and no
+/// process is owned, so the fleet compensates them unobserved.
+fn delegated_registry(
     names: &[&str],
 ) -> crate::infrastructure::tools::subagent_registry::SubagentRegistry {
     use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
-    for name in names {
-        registry.lock().unwrap().insert(
+    for (index, name) in names.iter().enumerate() {
+        let uuid = crate::domain::ids::AgentUuid::mint();
+        let mut entry = SubagentEntry::with_identity(
+            uuid.clone(),
             (*name).to_string(),
-            SubagentEntry::new(std::path::PathBuf::from(format!("/tmp/{name}.sock")), 0),
+            std::path::PathBuf::from(format!("/nonexistent/{name}.sock")),
+            0,
         );
+        entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(
+            index as u64 + 1,
+        ));
+        registry.lock().unwrap().insert(uuid.into_string(), entry);
     }
     registry
 }
 
+fn fleet_over(
+    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents> {
+    crate::composition::subagent_teardown::build_fleet_teardown(
+        crate::composition::subagent_teardown::FleetTeardownWiring {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx,
+            notify_tx: None,
+            harness_lifecycle:
+                crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
+    )
+}
+
 #[tokio::test]
-async fn delete_all_subagents_is_served_from_the_reader_task_and_drains_the_registry() {
+async fn delete_all_subagents_is_served_from_the_reader_task_and_settles_the_fleet() {
     let (clients, mut rx) = registry_with_writer();
-    let registry = registry_with_entries(&["worker", "reviewer"]);
+    let registry = delegated_registry(&["worker", "reviewer"]);
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
+    let fleet = fleet_over(&registry, Some(broadcast_tx.clone()));
 
     let handled = run(
         r#"{"type":"delete_all_subagents","id":"del-1"}"#,
         &Some(registry.clone()),
-        Some(&broadcast_tx),
+        Some(&fleet),
         &clients,
     )
     .await;
@@ -238,20 +266,34 @@ async fn delete_all_subagents_is_served_from_the_reader_task_and_drains_the_regi
         handled,
         "delete_all_subagents must not queue behind a running turn (#1626)"
     );
-    assert!(
-        registry.lock().unwrap().is_empty(),
-        "the registry must be drained synchronously, before the turn ends"
-    );
     let response = recv_response(&mut rx).await;
     assert_eq!(response["command"], "delete_all_subagents");
     assert_eq!(response["id"], "del-1");
-    assert_eq!(response["success"], true);
+    assert_eq!(response["success"], true, "{response}");
     assert_eq!(response["data"]["removed"], 2);
+    assert_eq!(
+        response["data"]["settled"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        response["data"]["unsettled"].as_array().map(Vec::len),
+        Some(0)
+    );
+    for settled in response["data"]["settled"].as_array().unwrap() {
+        assert_eq!(settled["result"], "unobserved", "{settled}");
+    }
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "the fleet settled and the tombstones were pruned"
+    );
 
     // Every client receives the authoritative empty survivor set so no
     // later roster refresh can resurrect the deleted agents.
-    let broadcast = broadcast_rx.try_recv().expect("state_changed broadcast");
-    let event: serde_json::Value = serde_json::from_str(&broadcast).unwrap();
+    let mut last = None;
+    while let Ok(broadcast) = broadcast_rx.try_recv() {
+        last = Some(broadcast);
+    }
+    let event: serde_json::Value = serde_json::from_str(&last.expect("state_changed")).unwrap();
     assert_eq!(event["type"], "subagent_state_changed");
     assert_eq!(event["subagents"].as_array().map(Vec::len), Some(0));
 
@@ -260,7 +302,7 @@ async fn delete_all_subagents_is_served_from_the_reader_task_and_drains_the_regi
         run(
             r#"{"type":"get_subagents","id":"gs-after"}"#,
             &Some(registry),
-            Some(&broadcast_tx),
+            Some(&fleet),
             &clients,
         )
         .await
@@ -268,6 +310,38 @@ async fn delete_all_subagents_is_served_from_the_reader_task_and_drains_the_regi
     let after = recv_response(&mut rx).await;
     assert_eq!(after["id"], "gs-after");
     assert_eq!(after["data"]["subagents"].as_array().map(Vec::len), Some(0));
+}
+
+/// Two deletes racing each other join one run: one fleet, one outcome.
+#[tokio::test]
+async fn concurrent_busy_path_deletes_join_one_fleet_run() {
+    let (clients, mut rx) = registry_with_writer();
+    let registry = delegated_registry(&["worker"]);
+    let fleet = fleet_over(&registry, None);
+    for id in ["del-a", "del-b"] {
+        assert!(
+            run(
+                &format!(r#"{{"type":"delete_all_subagents","id":"{id}"}}"#),
+                &Some(registry.clone()),
+                Some(&fleet),
+                &clients,
+            )
+            .await
+        );
+    }
+    let first = recv_response(&mut rx).await;
+    let second = recv_response(&mut rx).await;
+    let joined: Vec<bool> = [&first, &second]
+        .iter()
+        .map(|r| r["data"]["joined"].as_bool().unwrap())
+        .collect();
+    assert_eq!(joined.iter().filter(|j| **j).count(), 1, "{first} {second}");
+    let removed: usize = [&first, &second]
+        .iter()
+        .map(|r| r["data"]["removed"].as_u64().unwrap() as usize)
+        .sum();
+    assert_eq!(removed, 2, "both see the one run's outcome");
+    assert!(registry.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

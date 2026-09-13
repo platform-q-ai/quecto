@@ -461,6 +461,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
+        fleet_teardown: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-1"), &tools).await;
@@ -556,6 +557,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
+        fleet_teardown: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;

@@ -245,6 +245,10 @@ pub enum TerminationCause {
     Exit(ExitObservation),
     /// An operator selected the agent for termination.
     SelectedTermination,
+    /// The whole fleet of direct children is being torn down (#1938):
+    /// delete-all, a session transition, or the harness's own shutdown.
+    /// Death by the parent's hand: no post-mortem, environment kill runs.
+    FleetTeardown,
     /// A launch failed after registration; `owns_environment` says whether
     /// the launch created the environment it joined.
     LaunchRollback { owns_environment: bool },
@@ -321,4 +325,9 @@ pub trait TeardownCompensation: Send + Sync {
         target: &'a DelegatedAgentIdentity,
         cause: TerminationCause,
     ) -> PortFuture<'a, Compensated>;
+
+    /// Discard the record of every row whose terminal effects have already
+    /// run (an exited tombstone), returning the discarded identities. Never
+    /// touches a live or in-flight row and never signals anything (#1938).
+    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<AgentUuid>>;
 }

@@ -74,18 +74,15 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
     roster
 }
 
-/// Reset the operational child roster for a restored session (#1937).
+/// Log what a restored session's persisted rows are: history only (#1937).
 ///
 /// A launcher-created child is lifetime-scoped to the harness that launched
 /// it, so no persisted record can describe a live child of *this* harness.
-/// Restore therefore creates **no** operational row from the persisted
-/// roster: no socket probe, no pid compare, no monitor, no readoption. Legacy
-/// rows — live, detached, dead or malformed alike — are read only to be
-/// ignored; the transcript, workflow and past child messages are restored by
-/// the caller, and the master explicitly re-spawns the workers it needs with
-/// a fresh identity and launch generation. The children the departing
-/// session still held are released first (see [`reset_subagent_roster`]).
-pub(crate) fn reset_subagent_roster_on_restore(
+/// Restore creates **no** operational row from the persisted roster: no
+/// socket probe, no pid compare, no monitor, no readoption. The master
+/// explicitly re-spawns the workers it needs with a fresh identity and
+/// launch generation.
+pub(crate) fn note_persisted_roster_is_history(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
@@ -95,70 +92,146 @@ pub(crate) fn reset_subagent_roster_on_restore(
             "session restore: persisted subagent rows are history only; no child readopted"
         );
     }
-    reset_subagent_roster(registry, "resume_session");
 }
 
-/// Reset the operational roster on a session transition (`new_session`,
-/// `resume_session`), releasing the departing session's live children
-/// through parent loss (#1937 interim, replaced by #1938).
-///
-/// A launcher-created child can never be readopted (restore creates no
-/// operational row), so a row merely dropped here would leave its child an
-/// orphan no teardown path can reach until the master exits. Each departing
-/// row's monitor task **owns the child's bound parent-control connection**
-/// (#1935): aborting it closes that connection, and a launch-bound child
-/// then runs its own parent-loss shutdown (#1946) — no signal, no fleet
-/// teardown and no waiting on this dispatch path. The proxy bridge of a
-/// container-transport child is aborted the same way so the loss propagates
-/// through the proxy. Both happen BEFORE the row is cleared. #1938 replaces
-/// this release with the acknowledged session-transition teardown.
-///
-/// Returns the number of rows released.
+/// Why a session transition was refused before the roster was touched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TransitionRefused {
+    /// The fleet teardown left children unsettled: their rows keep their
+    /// claims lifted and the current session stays as it is.
+    Unsettled(Vec<(crate::domain::ids::AgentUuid, String)>),
+    /// The teardown run was interrupted; nothing was replaced.
+    Interrupted,
+    /// Live delegated rows exist but this harness has no fleet teardown to
+    /// settle them with (a loop built without a teardown graph).
+    NoFleetTeardown(usize),
+    /// Live delegated rows remain after the fleet settled (a registration
+    /// the run did not see): the roster is not replaced under them.
+    LiveRowsRemain(usize),
+}
+
+impl std::fmt::Display for TransitionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsettled(children) => {
+                let names: Vec<String> = children
+                    .iter()
+                    .map(|(uuid, detail)| format!("{uuid}: {detail}"))
+                    .collect();
+                write!(
+                    f,
+                    "{} subagent(s) could not be settled; the current session was kept: {}",
+                    children.len(),
+                    names.join("; ")
+                )
+            }
+            Self::Interrupted => {
+                f.write_str("subagent teardown was interrupted; the current session was kept")
+            }
+            Self::NoFleetTeardown(live) => write!(
+                f,
+                "{live} live subagent(s) but no fleet teardown is available; the current session was kept"
+            ),
+            Self::LiveRowsRemain(live) => write!(
+                f,
+                "{live} live subagent(s) remain after the teardown; the current session was kept"
+            ),
+        }
+    }
+}
+
+/// Settle the current session's direct children before its roster is
+/// replaced (#1938): the fleet teardown claims each one, asks it to shut
+/// down over its edge, concludes it through the owned handle and
+/// compensates it, under a bound. A child that does not settle aborts the
+/// transition explicitly — the roster is left as it was and the caller
+/// reports why — so ownership of a live child is never silently dropped.
+/// Returns how many rows left the roster.
+pub(crate) async fn settle_departing_children(
+    ctx: &DispatchCtx<'_>,
+    transition: &str,
+) -> Result<usize, TransitionRefused> {
+    let Some(fleet) = ctx.fleet_teardown.clone() else {
+        let live = live_delegated_rows(&ctx.subagent_registry);
+        return if live == 0 {
+            Ok(0)
+        } else {
+            Err(TransitionRefused::NoFleetTeardown(live))
+        };
+    };
+    let outcome = fleet
+        .execute(
+            crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+            },
+        )
+        .await
+        .map_err(|_| TransitionRefused::Interrupted)?;
+    if !outcome.is_settled() {
+        tracing::warn!(
+            transition,
+            unsettled = outcome.unsettled.len(),
+            "session switch refused: departing children did not settle"
+        );
+        return Err(TransitionRefused::Unsettled(outcome.unsettled));
+    }
+    tracing::info!(
+        transition,
+        settled = outcome.settled.len(),
+        pruned = outcome.pruned.len(),
+        joined = outcome.joined,
+        "session switch: departing children settled before the roster is replaced"
+    );
+    Ok(outcome.removed_count())
+}
+
+/// Live rows this harness addresses as delegated agents.
+fn live_delegated_rows(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> usize {
+    let Some(registry) = registry else { return 0 };
+    registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|entry| {
+            entry.delegated_identity().is_some()
+                && entry.persisted_liveness == crate::domain::session::SubagentLiveness::Live
+                && entry.status
+                    != crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+        })
+        .count()
+}
+
+/// Replace the operational roster once the fleet has settled: every row
+/// left is a record only. A live delegated row here would be a child the
+/// teardown did not own, so it is refused rather than dropped.
 pub(crate) fn reset_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     transition: &str,
-) -> usize {
-    let Some(registry) = registry else { return 0 };
-    let departing: Vec<_> = registry
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .drain()
-        .collect();
-    for (key, entry) in &departing {
-        release_departing_entry(key, entry, transition);
+) -> Result<usize, TransitionRefused> {
+    let Some(registry) = registry else {
+        return Ok(0);
+    };
+    let live = live_delegated_rows(&Some(registry.clone()));
+    if live > 0 {
+        return Err(TransitionRefused::LiveRowsRemain(live));
     }
-    let released = departing.len();
-    // The rows are dropped only after every bound connection was released.
-    drop(departing);
-    if released > 0 {
-        tracing::warn!(
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let dropped = entries.len();
+    entries.clear();
+    if dropped > 0 {
+        tracing::info!(
             transition,
-            released,
-            "session switch: the departing session's children were released via parent loss"
+            dropped,
+            "session switch: roster records replaced"
         );
     }
-    released
-}
-
-/// Close what keeps one departing child bound to this harness: its monitor
-/// task (the bound parent-control connection) and, for a proxy-transport
-/// child, the bridge accept loop and socket.
-fn release_departing_entry(
-    key: &str,
-    entry: &crate::infrastructure::tools::subagent_registry::SubagentEntry,
-    transition: &str,
-) {
-    entry.release_bound_connection();
-    tracing::info!(
-        transition,
-        agent = %key,
-        bound = entry.monitor_handle.is_some(),
-        "session switch: released departing child; it cannot be readopted"
-    );
+    Ok(dropped)
 }
 
 /// Tell every connected client the survivor set is empty after a roster
-/// reset, so no panel keeps a released child.
+/// reset, so no panel keeps a departed child.
 fn broadcast_roster_reset(ctx: &DispatchCtx<'_>) {
     if let (Some(registry), Some(tx)) = (&ctx.subagent_registry, &ctx.broadcast_tx) {
         let _ = tx.send(
@@ -263,6 +336,14 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    // The departing session's children are settled BEFORE its final save
+    // and before anything is replaced (#1938); a child that does not settle
+    // keeps the current session.
+    if let Err(refused) = settle_departing_children(ctx, "new_session").await {
+        let ev = AgentEvent::err(id, type_name, refused.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(
             id,
@@ -272,13 +353,17 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "new_session") {
+        let ev = AgentEvent::err(id, type_name, refused.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let old_key = ctx.session_key.to_string();
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
-    reset_subagent_roster(&ctx.subagent_registry, "new_session");
     broadcast_roster_reset(ctx);
     let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
@@ -362,6 +447,14 @@ pub(super) async fn handle_resume_session(
     } else {
         Session::build_key("cli", name)
     };
+    // The departing session's children are settled BEFORE its final save
+    // and before the target session is opened (#1938); a child that does
+    // not settle keeps the current session.
+    if let Err(refused) = settle_departing_children(ctx, "resume_session").await {
+        let ev = AgentEvent::err(id, type_name, refused.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(
             id,
@@ -393,6 +486,17 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    // The departing children settled above; what remains are records. The
+    // persisted rows of the resumed session are history, never readopted.
+    // Replaced BEFORE the session key moves: a refusal here keeps the
+    // current session whole and only releases the claim just taken.
+    note_persisted_roster_is_history(&ctx.subagent_registry, &loaded.subagent_roster);
+    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "resume_session") {
+        ctx.session_store.release(&new_key);
+        let ev = AgentEvent::err(id, type_name, refused.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);
@@ -409,9 +513,6 @@ pub(super) async fn handle_resume_session(
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     let workflow_run = loaded.workflow_run;
-    // The session we are leaving cannot readopt its children later, and no
-    // other session can: release them before the roster is reset.
-    reset_subagent_roster_on_restore(&ctx.subagent_registry, &loaded.subagent_roster);
     broadcast_roster_reset(ctx);
     *ctx.messages = loaded.messages;
     ctx.last_persisted_message_index = ctx.messages.len();

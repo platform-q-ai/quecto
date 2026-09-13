@@ -10,13 +10,16 @@ use quecto::application::subagents::dto::{
     PrepareShutdownRequest, PreparedShutdown, ShutdownTrigger,
 };
 use quecto::application::subagents::ports::{
-    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, ExitReadiness, PortFuture,
-    ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
-    SubagentLifecycleRepository, TurnCancellation,
+    ChildRoutingError, Compensated, CompensationObservation, CompositionExitReadiness,
+    ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting, ExitReadiness,
+    OwnedChildTermination, PortFuture, ProtocolAttempt, ResolutionError, ShutdownClock,
+    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
+    StoppingClaimError, SubagentLifecycleRepository, TeardownCompensation, TerminalClaim,
+    TerminationCause, TerminationConclusion, TurnCancellation,
 };
 use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
-    PrepareHarnessShutdown,
+    PrepareHarnessShutdown, TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
 };
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::subagent_teardown::{
@@ -283,10 +286,201 @@ impl ShutdownRunSpawner for Spawner {
     }
 }
 
-/// A fully wired two-phase transaction over the fakes above.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowPhase {
+    Live,
+    Stopping(TerminationCause),
+    Compensating,
+    Compensated,
+}
+
+/// In-memory rows of one harness with the per-row claim ladder the fleet
+/// teardown relies on (#1938); doubles as the compensation and, with a
+/// scripted conclusion, the owned-handle fallback.
+#[derive(Default)]
+pub struct Rows {
+    pub phases: Mutex<std::collections::BTreeMap<String, (DelegatedAgentIdentity, RowPhase)>>,
+    pub changed: tokio::sync::Notify,
+    pub conclusion: Mutex<Option<TerminationConclusion>>,
+    /// Per-child overrides of `conclusion`.
+    pub conclusion_for: Mutex<std::collections::BTreeMap<String, TerminationConclusion>>,
+    pub compensated: Mutex<Vec<(DelegatedAgentIdentity, TerminationCause)>>,
+    pub concluded: Mutex<Vec<(DelegatedAgentIdentity, ProtocolAttempt)>>,
+}
+
+impl Rows {
+    /// One live row per direct child of `lineage`.
+    pub fn for_lineage(lineage: &LineageSnapshot) -> Arc<Self> {
+        let rows = Arc::new(Self::default());
+        for child in lineage.direct_children() {
+            rows.phases.lock().unwrap().insert(
+                child.uuid.as_str().to_owned(),
+                (child.clone(), RowPhase::Live),
+            );
+        }
+        rows
+    }
+
+    pub fn phase(&self, uuid: &str) -> Option<RowPhase> {
+        self.phases
+            .lock()
+            .unwrap()
+            .get(uuid)
+            .map(|(_, phase)| *phase)
+    }
+
+    pub fn set(&self, uuid: &str, phase: RowPhase) {
+        if let Some(row) = self.phases.lock().unwrap().get_mut(uuid) {
+            row.1 = phase;
+        }
+        self.changed.notify_waiters();
+    }
+}
+
+impl DelegatedAgentRegistry for Rows {
+    fn resolve(&self, reference: &str) -> Result<DelegatedAgentIdentity, ResolutionError> {
+        self.phases
+            .lock()
+            .unwrap()
+            .get(reference)
+            .map(|(identity, _)| identity.clone())
+            .ok_or(ResolutionError::Unknown)
+    }
+
+    fn claim_stopping(
+        &self,
+        target: &DelegatedAgentIdentity,
+        cause: TerminationCause,
+    ) -> Result<(), StoppingClaimError> {
+        let mut phases = self.phases.lock().unwrap();
+        let row = phases
+            .get_mut(target.uuid.as_str())
+            .filter(|(identity, _)| identity == target)
+            .ok_or(StoppingClaimError::Unknown)?;
+        match row.1 {
+            RowPhase::Live => {
+                row.1 = RowPhase::Stopping(cause);
+                Ok(())
+            }
+            RowPhase::Stopping(_) => Err(StoppingClaimError::AlreadyStopping),
+            RowPhase::Compensating | RowPhase::Compensated => Err(StoppingClaimError::Exited),
+        }
+    }
+
+    fn release_stopping(&self, target: &DelegatedAgentIdentity) {
+        if matches!(
+            self.phase(target.uuid.as_str()),
+            Some(RowPhase::Stopping(_))
+        ) {
+            self.set(target.uuid.as_str(), RowPhase::Live);
+        }
+    }
+
+    fn claim_terminal(&self, target: &DelegatedAgentIdentity) -> TerminalClaim {
+        let mut phases = self.phases.lock().unwrap();
+        let Some(row) = phases.get_mut(target.uuid.as_str()) else {
+            return TerminalClaim::AlreadyClaimed;
+        };
+        match row.1 {
+            RowPhase::Live | RowPhase::Stopping(_) => {
+                row.1 = RowPhase::Compensating;
+                TerminalClaim::Claimed
+            }
+            RowPhase::Compensating | RowPhase::Compensated => TerminalClaim::AlreadyClaimed,
+        }
+    }
+
+    fn holds_process(&self, _target: &DelegatedAgentIdentity) -> bool {
+        false
+    }
+
+    fn terminal_claimed(&self, target: &DelegatedAgentIdentity) -> bool {
+        matches!(
+            self.phase(target.uuid.as_str()),
+            Some(RowPhase::Compensating | RowPhase::Compensated)
+        )
+    }
+
+    fn await_compensated<'a>(
+        &'a self,
+        target: &'a DelegatedAgentIdentity,
+    ) -> PortFuture<'a, CompensationObservation> {
+        Box::pin(async move {
+            loop {
+                let notified = self.changed.notified();
+                match self.phase(target.uuid.as_str()) {
+                    None => return CompensationObservation::Unknown,
+                    Some(RowPhase::Compensated) => return CompensationObservation::Compensated,
+                    Some(_) => {}
+                }
+                notified.await;
+            }
+        })
+    }
+}
+
+impl OwnedChildTermination for Rows {
+    fn conclude<'a>(
+        &'a self,
+        child: &'a DelegatedAgentIdentity,
+        attempt: ProtocolAttempt,
+        _budget: ConclusionBudget,
+    ) -> PortFuture<'a, TerminationConclusion> {
+        self.concluded
+            .lock()
+            .unwrap()
+            .push((child.clone(), attempt));
+        let conclusion = self
+            .conclusion_for
+            .lock()
+            .unwrap()
+            .get(child.uuid.as_str())
+            .cloned()
+            .or_else(|| self.conclusion.lock().unwrap().clone())
+            .unwrap_or(TerminationConclusion::ExitedAfterProtocol);
+        Box::pin(async move { conclusion })
+    }
+}
+
+impl TeardownCompensation for Rows {
+    fn compensate<'a>(
+        &'a self,
+        target: &'a DelegatedAgentIdentity,
+        cause: TerminationCause,
+    ) -> PortFuture<'a, Compensated> {
+        self.compensated
+            .lock()
+            .unwrap()
+            .push((target.clone(), cause));
+        self.set(target.uuid.as_str(), RowPhase::Compensated);
+        Box::pin(async move {
+            Compensated {
+                removed: vec![target.uuid.clone()],
+            }
+        })
+    }
+
+    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<AgentUuid>> {
+        Box::pin(async move {
+            let mut phases = self.phases.lock().unwrap();
+            let pruned: Vec<AgentUuid> = phases
+                .values()
+                .filter(|(_, phase)| *phase == RowPhase::Compensated)
+                .map(|(identity, _)| identity.uuid.clone())
+                .collect();
+            phases.retain(|_, (_, phase)| *phase != RowPhase::Compensated);
+            pruned
+        })
+    }
+}
+
+/// A fully wired two-phase transaction over the fakes above, with the
+/// fleet teardown as its children step.
 pub struct Harness {
     pub lifecycle: Arc<Lifecycle>,
     pub routing: Arc<Routing>,
+    pub rows: Arc<Rows>,
+    pub fleet: Arc<TerminateAllDelegatedAgents>,
     pub cancellation: Arc<Cancellation>,
     pub persistence: Arc<Persistence>,
     pub clock: Arc<Clock>,
@@ -298,6 +492,7 @@ pub struct Harness {
 
 impl Harness {
     pub fn new(lineage: LineageSnapshot) -> Self {
+        let rows = Rows::for_lineage(&lineage);
         let lifecycle = Lifecycle::new(lineage);
         let routing = Routing::new();
         let cancellation = Cancellation::with_turn();
@@ -305,12 +500,22 @@ impl Harness {
         let clock = Arc::new(Clock(AtomicU64::new(1_000)));
         let exit = Arc::new(Exit::default());
         let spawner = Arc::new(Spawner::default());
+        let fleet = Arc::new(TerminateAllDelegatedAgents::new(
+            TerminateAllDelegatedAgentsPorts {
+                lifecycle: lifecycle.clone(),
+                registry: rows.clone(),
+                routing: routing.clone(),
+                termination: rows.clone(),
+                compensation: rows.clone(),
+                spawner: Arc::new(Spawner::default()),
+            },
+        ));
         let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), clock.clone());
         let prepare = PrepareHarnessShutdown::new(transaction.clone());
         let execute = Arc::new(ExecuteHarnessShutdown::new(
             transaction,
             ExecuteHarnessShutdownPorts {
-                routing: routing.clone(),
+                children: fleet.clone(),
                 cancellation: cancellation.clone(),
                 persistence: persistence.clone(),
                 exit: exit.clone(),
@@ -320,6 +525,8 @@ impl Harness {
         Self {
             lifecycle,
             routing,
+            rows,
+            fleet,
             cancellation,
             persistence,
             clock,

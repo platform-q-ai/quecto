@@ -21,6 +21,7 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,
 };
+use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};
 use crate::interface::uds::subagent_teardown::wire::TeardownResponse;
@@ -142,19 +143,34 @@ impl ShutdownClock for MonotonicShutdownClock {
 /// reported with its launch generation is a deeper record parented by the
 /// row that reported it (#1936), reachable only by forwarding. Restored rows
 /// and fixtures carry no generation and are not this harness's to address.
+///
+/// The lifecycle state lives in the harness's shared cell (#1938): the
+/// spawn tool reads it under the registry lock when it registers a child,
+/// so a freeze recorded here is what refuses a spawn racing the shutdown.
 pub struct RegistryLifecycleRepository {
-    state: Mutex<HarnessLifecycleState>,
+    state: SharedHarnessLifecycle,
     registry: Option<SubagentRegistry>,
     owner: AgentUuid,
 }
 
 impl RegistryLifecycleRepository {
-    pub fn new(registry: Option<SubagentRegistry>, owner: AgentUuid) -> Self {
+    /// Over the given shared cell, which the spawn tool of the same harness
+    /// must read for admission.
+    pub fn new(
+        registry: Option<SubagentRegistry>,
+        owner: AgentUuid,
+        state: SharedHarnessLifecycle,
+    ) -> Self {
         Self {
-            state: Mutex::new(HarnessLifecycleState::Accepting),
+            state,
             registry,
             owner,
         }
+    }
+
+    /// The shared cell, for a caller that must read it under another lock.
+    pub fn shared_state(&self) -> SharedHarnessLifecycle {
+        self.state.clone()
     }
 }
 

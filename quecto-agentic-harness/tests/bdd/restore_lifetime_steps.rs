@@ -25,14 +25,14 @@ use crate::QuectoWorld;
 #[derive(Default)]
 pub(crate) struct RestoreLifetimeState {
     lifetime: Option<Result<HarnessLifetime, HarnessLifetimeError>>,
-    harness: Option<RestoringHarness>,
+    pub(crate) harness: Option<RestoringHarness>,
     /// Sockets named by legacy roster rows; a probe would be accepted here.
     silent_listeners: Vec<(String, UnixListener)>,
     legacy_uuids: Vec<String>,
     legacy_session_key: Option<String>,
     /// The re-spawned child as registered, captured before any session
     /// switch removes its row.
-    respawned: Option<SubagentEntry>,
+    pub(crate) respawned: Option<SubagentEntry>,
 }
 
 impl std::fmt::Debug for RestoreLifetimeState {
@@ -43,19 +43,19 @@ impl std::fmt::Debug for RestoreLifetimeState {
 
 /// A top-level in-process harness (default lifetime: exits when its last
 /// client disconnects) with a subagent registry the scenario can inspect.
-struct RestoringHarness {
-    socket_path: PathBuf,
-    handle: Option<std::thread::JoinHandle<i32>>,
-    client: Option<UnixStream>,
-    registry: SubagentRegistry,
-    resume_ack: Option<serde_json::Value>,
+pub(crate) struct RestoringHarness {
+    pub(crate) socket_path: PathBuf,
+    pub(crate) handle: Option<std::thread::JoinHandle<i32>>,
+    pub(crate) client: Option<UnixStream>,
+    pub(crate) registry: SubagentRegistry,
+    pub(crate) resume_ack: Option<serde_json::Value>,
 }
 
-fn state(world: &mut QuectoWorld) -> &mut RestoreLifetimeState {
+pub(crate) fn state(world: &mut QuectoWorld) -> &mut RestoreLifetimeState {
     &mut world.restore_lifetime
 }
 
-fn base(world: &QuectoWorld) -> PathBuf {
+pub(crate) fn base(world: &QuectoWorld) -> PathBuf {
     world.cli_context.base_dir.clone().expect("temp base dir")
 }
 
@@ -272,6 +272,17 @@ fn given_plain_session(world: &mut QuectoWorld, session_name: String) {
 
 #[given("a restoring UDS harness with a subagent registry")]
 fn given_restoring_harness(world: &mut QuectoWorld) {
+    start_restoring_harness(world, HarnessLifetime::UntilLastClientDisconnects);
+}
+
+/// The same harness started as top-level `--persist` (#1938): client churn,
+/// the last client included, never ends it.
+#[given("a persistent restoring UDS harness with a subagent registry")]
+fn given_persistent_restoring_harness(world: &mut QuectoWorld) {
+    start_restoring_harness(world, HarnessLifetime::Persistent);
+}
+
+fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
     world.session_name = Some("restoring-master".into());
     world.no_session = false;
     world._workflow_enabled = true;
@@ -309,11 +320,10 @@ fn given_restoring_harness(world: &mut QuectoWorld) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            // Top-level default: the scenario's client keeps it alive and
-            // its disconnect ends it.
-            lifetime: HarnessLifetime::UntilLastClientDisconnects,
+            lifetime,
             notification_rx: None,
             subagent_registry: Some(registry_for_loop),
+            harness_lifecycle: None,
             workflow_state,
             workflow_config,
             broadcast_tx,
@@ -355,7 +365,7 @@ fn given_stale_row(world: &mut QuectoWorld) {
 }
 
 /// Read newline-delimited JSON until one matches, or EOF/timeout.
-fn read_until(
+pub(crate) fn read_until(
     stream: &mut UnixStream,
     want: impl Fn(&serde_json::Value) -> bool,
 ) -> Option<serde_json::Value> {
@@ -379,7 +389,7 @@ fn read_until(
     }
 }
 
-fn send(world: &mut QuectoWorld, line: &str, id: &str) -> serde_json::Value {
+pub(crate) fn send(world: &mut QuectoWorld, line: &str, id: &str) -> serde_json::Value {
     let harness = state(world).harness.as_mut().unwrap();
     let client = harness.client.as_mut().expect("client connected");
     client.write_all(format!("{line}\n").as_bytes()).unwrap();
@@ -623,19 +633,21 @@ fn then_fresh_identity(world: &mut QuectoWorld, agent_id: String) {
     assert!(!entries.keys().any(|key| legacy.contains(key)));
 }
 
-fn process_alive(pid: u32) -> bool {
+pub(crate) fn process_alive(pid: u32) -> bool {
     // Nothing is delivered with signal 0.
     // SAFETY: signal 0 only probes the existence of the pid this scenario spawned.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-/// The session switch released the re-spawned child through parent loss:
-/// its bound connection closed, it ran the common shutdown by itself (a
-/// graceful exit removes its socket), the supervisor sent it no signal and,
-/// once the reaper observed the exit, no longer retains its handle. The exit
-/// is read from the row's exit-signal channel, which the reaper fills with
-/// the real status before it retires the handle.
-#[then(expr = "the re-spawned {string} exits gracefully via parent loss within {int} seconds")]
+/// The fleet teardown (#1938) ended the re-spawned child: it was asked to
+/// shut down over its edge and acknowledged (a graceful exit removes its
+/// socket), the supervisor sent it no signal and, once the reaper observed
+/// the exit, no longer retains its handle. The exit is read from the row's
+/// exit-signal channel, which the reaper fills with the real status before
+/// it retires the handle.
+#[then(
+    expr = "the re-spawned {string} exits gracefully via the fleet teardown within {int} seconds"
+)]
 fn then_respawned_released(world: &mut QuectoWorld, agent_id: String, seconds: u64) {
     let entry = state(world)
         .respawned
@@ -665,11 +677,11 @@ fn then_respawned_released(world: &mut QuectoWorld, agent_id: String, seconds: u
     assert_eq!(
         (exit.exit_code, exit.signal),
         (Some(0), None),
-        "parent loss runs the common shutdown, a graceful exit: {exit:?}"
+        "the acknowledged shutdown is a graceful exit: {exit:?}"
     );
     assert!(
         supervisor.signals_sent(handle).is_empty(),
-        "released via parent loss, not signalled: {:?}",
+        "asked over its edge, never signalled: {:?}",
         supervisor.signals_sent(handle)
     );
     let deadline = Instant::now() + Duration::from_secs(5);

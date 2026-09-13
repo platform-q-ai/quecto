@@ -287,6 +287,8 @@ pub struct QuectoWorld {
     pub parent_control: parent_control_steps::ParentControlState,
     /// #1937 launcher lifetime and restore-without-readoption state.
     pub restore_lifetime: restore_lifetime_steps::RestoreLifetimeState,
+    /// #1938 fleet teardown state.
+    pub fleet_teardown: fleet_teardown_steps::FleetTeardownState,
     /// #1936 operator-selected termination state (root registry, fake
     /// direct-child endpoints, owned fixture processes, composed kill).
     pub selected_termination: selected_termination_steps::SelectedTerminationState,
@@ -1407,6 +1409,8 @@ mod embedded_docs_steps;
 mod exec_tool_steps;
 mod extension_steps;
 mod find_steps;
+mod fleet_entry_point_steps;
+mod fleet_teardown_steps;
 mod grep_steps;
 mod harness_efficiency_steps;
 mod ls_steps;

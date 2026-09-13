@@ -452,3 +452,56 @@ async fn prune_and_cascade_release_waiters_through_the_ladder() {
         CompensationObservation::Compensated
     );
 }
+
+/// Review of #1938: a row is pruned only once its ladder reached
+/// `Compensated`. A row marked exited/dead while its compensation is still
+/// in flight (`Compensating`) stays, so the compensation finds it, and a
+/// joiner waiting on it observes `Compensated`, never `Unknown`.
+#[tokio::test]
+async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("a".into(), launched("a", "a", 1));
+    registry
+        .lock()
+        .unwrap()
+        .insert("b".into(), launched("b", "b", 2));
+    let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
+        .with_compensation_wait(Duration::from_secs(5));
+    let a = DelegatedAgentIdentity::new("a", LaunchGeneration::new(1));
+    let b = DelegatedAgentIdentity::new("b", LaunchGeneration::new(2));
+    // A is mid-compensation: claimed, terminal-claimed and marked exited.
+    port.claim_stopping(&a, TerminationCause::FleetTeardown)
+        .unwrap();
+    assert_eq!(port.claim_terminal(&a), TerminalClaim::Claimed);
+    {
+        let mut entries = registry.lock().unwrap();
+        super::super::subagent_monitor::mark_exited(entries.get_mut("a").unwrap());
+        assert_eq!(entries["a"].persisted_liveness, SubagentLiveness::Dead);
+    }
+    // B finished its compensation.
+    port.claim_stopping(&b, TerminationCause::FleetTeardown)
+        .unwrap();
+    assert_eq!(port.claim_terminal(&b), TerminalClaim::Claimed);
+    port.compensate(&b, TerminationCause::FleetTeardown).await;
+
+    let pruned = port.prune_terminal_rows().await;
+    assert_eq!(pruned, [AgentUuid::new("b")]);
+    assert!(
+        registry.lock().unwrap().contains_key("a"),
+        "mid-compensation row kept"
+    );
+
+    // The compensation in flight completes and a joiner sees it.
+    let joiner = tokio::spawn({
+        let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
+            .with_compensation_wait(Duration::from_secs(5));
+        let a = a.clone();
+        async move { port.await_compensated(&a).await }
+    });
+    port.compensate(&a, TerminationCause::FleetTeardown).await;
+    assert_eq!(joiner.await.unwrap(), CompensationObservation::Compensated);
+    assert_eq!(port.prune_terminal_rows().await, [AgentUuid::new("a")]);
+}

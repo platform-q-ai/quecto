@@ -346,6 +346,47 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let _ = built.notification_rx;
 }
 
+/// #1938: the spawn tool the composition builds admits against the same
+/// lifecycle cell the builder hands back for the teardown graph, so a
+/// shutdown that freezes that cell refuses every later spawn.
+#[tokio::test]
+async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_context: None,
+        parent_config_path: None,
+        owned_child_supervisor: std::sync::Arc::new(
+            crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(),
+        ),
+        base_dir: tmp.path().to_path_buf(),
+        socket_dir: tmp.path().to_path_buf(),
+        broadcast_tx: None,
+        parent_session_name: Some("parent".into()),
+        inherited_tool_policy: None,
+        owner: crate::domain::ids::AgentUuid::new("harness"),
+        kill_tool: None,
+    });
+    let spawn = built.extensions[0]
+        .tools()
+        .into_iter()
+        .find(|tool| tool.definition().name == "spawn")
+        .expect("spawn tool");
+    *built.harness_lifecycle.lock().unwrap() =
+        crate::domain::subagent_teardown::HarnessLifecycleState::Frozen;
+    let result = spawn
+        .execute(r#"{"agent_id":"late","task":"wait"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("spawn refused"),
+        "{}",
+        result.content
+    );
+    assert!(built.subagent_registry.lock().unwrap().is_empty());
+}
+
 /// #1276 Phase 3: workflow provider wraps an existing engine handle.
 #[test]
 fn build_workflow_tool_extension_supplies_workflow() {

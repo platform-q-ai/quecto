@@ -457,6 +457,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.broadcast_tx.as_ref(),
                 &identity.session_name,
                 entry,
+                &self.tool.harness_lifecycle,
             )?;
             // Slice 2 (#1369): every registered environment child — creator or
             // joiner — becomes a member of its environment; the registry key is

@@ -38,6 +38,8 @@ use super::uds_wire::ConnectionWireMode;
 pub struct ConnectionTeardown {
     pub binding: Arc<Mutex<ParentControlBinding>>,
     pub controller: Arc<SubagentTeardownController>,
+    /// The fleet teardown (#1938) a busy-path `delete_all_subagents` invokes.
+    pub fleet: Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
     pub busy: BusyFlag,
 }
 

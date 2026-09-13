@@ -136,10 +136,18 @@ fn lifecycle_repository_lists_only_launched_children_as_direct() {
         merged.parent_id = Some("child-a".into());
         entries.insert("grandchild".into(), merged);
     }
-    let repository = RegistryLifecycleRepository::new(Some(registry), AgentUuid::new("me"));
+    let shared = crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
+    let repository =
+        RegistryLifecycleRepository::new(Some(registry), AgentUuid::new("me"), shared.clone());
     assert_eq!(repository.lifecycle(), HarnessLifecycleState::Accepting);
     repository.set_lifecycle(HarnessLifecycleState::Frozen);
     assert_eq!(repository.lifecycle(), HarnessLifecycleState::Frozen);
+    // The freeze is what the spawn tool observes under the registry lock.
+    assert_eq!(
+        crate::infrastructure::tools::harness_lifecycle::current(&shared),
+        HarnessLifecycleState::Frozen
+    );
+    assert!(std::sync::Arc::ptr_eq(&repository.shared_state(), &shared));
     let lineage = repository.lineage();
     assert_eq!(lineage.owner, AgentUuid::new("me"));
     assert_eq!(
@@ -155,7 +163,11 @@ fn lifecycle_repository_lists_only_launched_children_as_direct() {
             },
         ]
     );
-    let without = RegistryLifecycleRepository::new(None, AgentUuid::new("solo"));
+    let without = RegistryLifecycleRepository::new(
+        None,
+        AgentUuid::new("solo"),
+        crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+    );
     assert!(without.lineage().records.is_empty());
 }
 

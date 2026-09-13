@@ -12,7 +12,8 @@ async fn completed_shutdown_is_observed_before_pending_client_messages() {
         }))
         .await
         .unwrap();
-    let (shutdown, notify) = super::super::uds_shutdown::ShutdownRequest::for_tests();
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let shutdown = super::super::uds_shutdown::ShutdownRequest::detached(notify.clone());
     notify.notify_one();
     let mut no_notifications = None;
     assert!(matches!(
@@ -29,7 +30,8 @@ async fn completed_shutdown_is_observed_before_pending_client_messages() {
 
 #[tokio::test]
 async fn shutdown_requested_before_the_loop_waits_is_not_lost() {
-    let (shutdown, notify) = super::super::uds_shutdown::ShutdownRequest::for_tests();
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let shutdown = super::super::uds_shutdown::ShutdownRequest::detached(notify.clone());
     notify.notify_one();
     let (_cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(1);
     let (_notif_tx, notif_rx) = tokio::sync::mpsc::channel(1);

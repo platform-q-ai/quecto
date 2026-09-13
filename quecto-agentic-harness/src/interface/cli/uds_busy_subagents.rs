@@ -13,12 +13,14 @@
 //! the #1197 busy-serve pattern for `sync`/`get_message`.
 //!
 //! `delete_all_subagents` is the one MUTATING command served here (#1626). It
-//! only needs the registry mutex and the broadcast sender: the drain is
-//! synchronous and lock-safe. Queued behind a running turn it executed only
-//! once the parent went idle, while the busy-path `get_subagents` refreshes
-//! and child-monitor broadcasts kept re-filling the TUI roster from the
-//! untouched registry. Because this interceptor runs before the dispatch
-//! channel, multi-client connections never reach the dispatch-path arm.
+//! invokes the fleet teardown (#1938), which is detached and bounded, so it
+//! runs on its own task and answers this client when the fleet has settled:
+//! the reader stays responsive for abort/steer, and the run never queues
+//! behind the in-flight turn. Because this interceptor runs before the
+//! dispatch channel, multi-client connections never reach the dispatch-path
+//! arm.
+
+use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 
 use super::protocol::AgentEvent;
 
@@ -29,9 +31,9 @@ type SubagentRegistry = crate::infrastructure::tools::subagent_registry::Subagen
 pub(super) struct BusySubagentCtx<'a> {
     pub line: &'a str,
     pub subagents: &'a Option<SubagentRegistry>,
-    /// Shared event fan-out, so a busy-path delete can publish the empty
-    /// survivor set to every client (#1626).
-    pub broadcast_tx: &'a tokio::sync::broadcast::Sender<String>,
+    /// The fleet teardown a busy-path `delete_all_subagents` invokes
+    /// (#1938); `None` on a harness with no teardown graph.
+    pub fleet: Option<&'a std::sync::Arc<TerminateAllDelegatedAgents>>,
     pub clients: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub client_id: u64,
 }
@@ -43,7 +45,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
     let BusySubagentCtx {
         line,
         subagents,
-        broadcast_tx,
+        fleet,
         clients,
         client_id,
     } = ctx;
@@ -85,22 +87,23 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             true
         }
         Some("delete_all_subagents") => {
-            // Drain + signal + broadcast the empty survivor set synchronously
-            // (#1626): the TUI cleared its roster optimistically at send time,
-            // so the response must not wait for the in-flight turn.
-            let ev = super::uds_delete_all_subagents::busy_response(
-                subagents.as_ref(),
-                broadcast_tx,
-                id.as_deref(),
-            );
-            write_event(
-                clients,
-                client_id,
-                id.as_deref(),
-                "delete_all_subagents",
-                &ev,
-            )
-            .await;
+            // The fleet teardown is bounded but not instant (protocol ACK,
+            // exit budget, fallback): answer from a detached task so the
+            // reader stays responsive, and never behind the in-flight turn.
+            let fleet = fleet.cloned();
+            let clients = clients.clone();
+            tokio::spawn(async move {
+                let ev =
+                    super::uds_delete_all_subagents::respond(fleet.as_ref(), id.as_deref()).await;
+                write_event(
+                    &clients,
+                    client_id,
+                    id.as_deref(),
+                    "delete_all_subagents",
+                    &ev,
+                )
+                .await;
+            });
             true
         }
         Some("get_report" | "get_state") if value.get("agent_id").is_some() => {

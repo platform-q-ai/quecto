@@ -152,13 +152,12 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
     // The dispatch-loop channel: anything landing here would have queued
     // behind an in-flight parent/child turn.
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
-    let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
     uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
         line: line.to_string(),
         snapshot: &snapshot,
         registry: &clients,
         subagent_registry: &None,
-        broadcast_tx: &broadcast_tx,
+        fleet: None,
         client_id: 1,
         cmd_tx: &cmd_tx,
         cancel_handle: &std::sync::Arc::new(std::sync::Mutex::new(uds_cancel::CancelSlot::Idle)),
@@ -180,7 +179,11 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
 #[cfg(any(test, feature = "test-support"))]
 mod uds_busy_test_support;
 #[cfg(any(test, feature = "test-support"))]
-pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_registry};
+pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_fleet};
+/// Drive an in-process harness through the termination-signal path (#1938)
+/// without signalling the test process.
+#[cfg(any(test, feature = "test-support"))]
+pub use uds_shutdown::test_support::deliver_termination_signal;
 
 #[cfg(test)]
 mod uds_execution_state_tests;

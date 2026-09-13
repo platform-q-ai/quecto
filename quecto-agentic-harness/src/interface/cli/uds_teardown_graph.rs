@@ -1,4 +1,5 @@
-//! Inputs and outputs of the per-harness subagent teardown graph (#1935).
+//! Inputs and outputs of the per-harness subagent teardown graph (#1935,
+//! #1938).
 //!
 //! The interface owns the shape of what it needs; composition owns the
 //! concrete graph (`composition::subagent_teardown::build_teardown_graph`)
@@ -9,10 +10,14 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::application::subagents::use_cases::HarnessShutdownTransaction;
+use crate::application::subagents::use_cases::{
+    HarnessShutdownTransaction, TerminateAllDelegatedAgents,
+};
 use crate::domain::ids::AgentUuid;
 use crate::domain::parent_control::ParentControlBinding;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::subagent_registry::{NotificationTx, SubagentRegistry};
+use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
 use super::uds_cancel::{CancelHandle, TurnControlHandle};
 use super::uds_multi::BusyFlag;
@@ -51,6 +56,15 @@ pub struct TeardownGraphInputs {
     /// This harness's own identity, the `owner` of its lineage.
     pub owner: AgentUuid,
     pub registry: Option<SubagentRegistry>,
+    /// The lifecycle cell the spawn tool admits registrations against
+    /// (#1938): the graph's lifecycle repository freezes it. `None` builds
+    /// a private one (a harness without a spawn tool).
+    pub harness_lifecycle: Option<SharedHarnessLifecycle>,
+    /// Event stream the fleet compensation broadcasts survivor sets on.
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Passive-note channel of the dispatch loop, for exits the fleet
+    /// compensation joins.
+    pub notify_tx: Option<NotificationTx>,
     pub cancel_handle: CancelHandle,
     pub turn_control: TurnControlHandle,
     pub busy: BusyFlag,
@@ -65,6 +79,11 @@ pub struct TeardownGraphInputs {
 /// tests and the loop observe.
 pub struct TeardownGraph {
     pub connections: Arc<ConnectionTeardown>,
+    /// The one controller every trigger without a wire — termination
+    /// signal, last client — drives the common shutdown through.
+    pub controller: Arc<SubagentTeardownController>,
+    /// The fleet teardown (#1938): delete-all and session transitions.
+    pub fleet: Arc<TerminateAllDelegatedAgents>,
     pub transaction: Arc<HarnessShutdownTransaction>,
     pub exit: Arc<LoopExitReadiness>,
     pub persistence: Arc<DeferredLoopPersistence>,

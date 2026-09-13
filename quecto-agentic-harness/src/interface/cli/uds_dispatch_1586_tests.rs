@@ -12,7 +12,12 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
     use crate::domain::session::SubagentRestoreReason;
     use crate::interface::cli::protocol::build_compact_subagent_roster;
     use crate::interface::cli::uds::uds_dispatch_session::{
-        reset_subagent_roster_on_restore, snapshot_subagent_roster_with_restore_reason,
+        note_persisted_roster_is_history, reset_subagent_roster,
+        snapshot_subagent_roster_with_restore_reason,
+    };
+    let reset_subagent_roster_on_restore = |registry: &Option<_>, persisted: &[_]| {
+        note_persisted_roster_is_history(registry, persisted);
+        reset_subagent_roster(registry, "resume_session").expect("no live delegated row");
     };
 
     let registry = new_registry();

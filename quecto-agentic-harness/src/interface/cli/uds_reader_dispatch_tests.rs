@@ -26,7 +26,6 @@ async fn rejected_queue(closed: bool) {
         drop(_receiver);
     }
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-    let (broadcast, _) = tokio::sync::broadcast::channel(4);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -35,7 +34,7 @@ async fn rejected_queue(closed: bool) {
         line: r#"{"type":"prompt","streamingBehavior":"steer","message":"Approved: use schema v2","ack":"accept","id":"approval-1"}"#.into(),
         cancel_handle: &cancel, turn_control: &control,
         snapshot: &snapshot, registry: &registry, subagent_registry: &None,
-        broadcast_tx: &broadcast, client_id: 1, cmd_tx: &commands,
+        fleet: None, client_id: 1, cmd_tx: &commands,
     });
     let receive = async {
         let line = replies.recv().await.unwrap();
@@ -64,7 +63,6 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
         let registry = super::super::uds_ext_protocol::new_client_tool_registry();
         let (commands, mut received) = tokio::sync::mpsc::channel(1);
         let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-        let (broadcast, _) = tokio::sync::broadcast::channel(4);
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
         let cancel = std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Armed(cancel_tx),
@@ -78,7 +76,7 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
                 snapshot: &snapshot,
                 registry: &registry,
                 subagent_registry: &None,
-                broadcast_tx: &broadcast,
+                fleet: None,
                 client_id: 1,
                 cmd_tx: &commands,
             })
@@ -140,7 +138,6 @@ async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt()
         .await
         .unwrap();
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-    let (broadcast, _) = tokio::sync::broadcast::channel(4);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -157,7 +154,7 @@ async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt()
             snapshot: &snapshot,
             registry: &registry,
             subagent_registry: &None,
-            broadcast_tx: &broadcast,
+            fleet: None,
             client_id: 1,
             cmd_tx: &commands,
         }),
@@ -187,7 +184,6 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
         .await
         .unwrap();
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-    let (broadcast, _) = tokio::sync::broadcast::channel(4);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -198,7 +194,7 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
     let completed = tokio::time::timeout(std::time::Duration::from_millis(250), dispatch(ReaderDispatchCtx {
         line: r#"{"type":"swarm_control","action":"pause","agent_id":"missing-descendant","id":"pause-42"}"#.into(),
         cancel_handle: &cancel, turn_control: &control, snapshot: &snapshot,
-        registry: &registry, subagent_registry: &None, broadcast_tx: &broadcast,
+        registry: &registry, subagent_registry: &None, fleet: None,
         client_id: 1, cmd_tx: &commands,
     })).await;
     assert!(
@@ -222,7 +218,6 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
     super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
     let (commands, _receiver) = tokio::sync::mpsc::channel(1);
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-    let (broadcast, _) = tokio::sync::broadcast::channel(4);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -255,7 +250,7 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
                 snapshot: &snapshot,
                 registry: &registry,
                 subagent_registry: &None,
-                broadcast_tx: &broadcast,
+                fleet: None,
                 client_id: 1,
                 cmd_tx: &commands,
             })
@@ -313,7 +308,6 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
     super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
     let (commands, _receiver) = tokio::sync::mpsc::channel(1);
     let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
-    let (broadcast, _) = tokio::sync::broadcast::channel(4);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -328,7 +322,7 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
             snapshot: &snapshot,
             registry: &registry,
             subagent_registry: &None,
-            broadcast_tx: &broadcast,
+            fleet: None,
             client_id: 1,
             cmd_tx: &commands,
         })
@@ -357,7 +351,7 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
             snapshot: &snapshot,
             registry: &registry,
             subagent_registry: &None,
-            broadcast_tx: &broadcast,
+            fleet: None,
             client_id: 1,
             cmd_tx: &commands,
         })

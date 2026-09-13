@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::spawn_entry::{InitialRegistryEntrySpec, child_socket_path, initial_registry_entry};
-pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
+pub use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::NotificationTx;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
@@ -161,6 +161,11 @@ pub struct SpawnTool {
     /// tool ever owns a throwaway supervisor whose drop abandons reaps.
     pub(super) supervisor:
         Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
+    /// The harness lifecycle this tool admits registrations against (#1938):
+    /// a frozen harness (shutdown admitted) refuses every new child, decided
+    /// under the registry lock so no spawn can race the fleet claim. A tool
+    /// built without composition's cell owns an always-accepting one.
+    pub(super) harness_lifecycle: super::harness_lifecycle::SharedHarnessLifecycle,
 }
 
 impl SpawnTool {
@@ -204,6 +209,7 @@ impl SpawnTool {
             container_config_roster: EMPTY_ROSTER.to_string(),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
+            harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
         }
     }
 
@@ -225,6 +231,7 @@ impl SpawnTool {
             container_config_roster: EMPTY_ROSTER.to_string(),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
+            harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
         }
     }
 
@@ -236,6 +243,15 @@ impl SpawnTool {
         self.container_config_roster =
             container_config_roster(parent_config_path.as_deref(), &self.base_dir);
         self.parent_config_path = parent_config_path;
+        self
+    }
+
+    /// Share the harness lifecycle cell the teardown graph freezes (#1938).
+    pub fn with_harness_lifecycle(
+        mut self,
+        lifecycle: super::harness_lifecycle::SharedHarnessLifecycle,
+    ) -> Self {
+        self.harness_lifecycle = lifecycle;
         self
     }
 
@@ -588,6 +604,17 @@ impl Tool for SpawnTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
+            // Fail fast before any process exists: a frozen harness admits
+            // no child. The authoritative check is repeated under the
+            // registry lock at registration (#1938).
+            if let Err(refused) = super::harness_lifecycle::admit_spawn(&self.harness_lifecycle) {
+                return Ok(ToolResult {
+                    content: format!("Failed to spawn subagent: {refused}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
             match self.parse_args(&args) {
                 Ok(config) => {
                     if self.base_dir.as_os_str().is_empty() {
@@ -636,6 +663,7 @@ impl Tool for SpawnTool {
                             self.broadcast_tx.as_ref(),
                             session_name,
                             stub_entry,
+                            &self.harness_lifecycle,
                         ) {
                             return Ok(ToolResult {
                                 content: format!("Failed to spawn subagent: {e}"),

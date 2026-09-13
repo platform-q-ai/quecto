@@ -108,18 +108,47 @@ fn registry_holds(world: &mut QuectoWorld, a: String, b: String) {
     world.subagent_liveness_registry_names = vec![a, b];
 }
 
+/// The rows are children this harness launched (a launch generation, keyed
+/// by uuid) whose sockets never existed: the busy-path delete invokes the
+/// fleet teardown (#1938), which settles them unobserved and prunes them.
 #[when(expr = "a client sends delete_all_subagents with correlation id {string}")]
 fn send_delete_all(world: &mut QuectoWorld, id: String) {
-    let names: Vec<&str> = world
-        .subagent_liveness_registry_names
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let (handled, response, remaining) = rt.block_on(cli::busy_reader_intercept_with_registry(
+    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    let registry = new_registry();
+    for (index, name) in world.subagent_liveness_registry_names.iter().enumerate() {
+        let uuid = quecto::domain::ids::AgentUuid::mint();
+        let mut entry = SubagentEntry::with_identity(
+            uuid.clone(),
+            name.clone(),
+            std::path::PathBuf::from(format!("/nonexistent/{name}.sock")),
+            0,
+        );
+        entry.launch_generation = Some(quecto::domain::subagent_teardown::LaunchGeneration::new(
+            index as u64 + 1,
+        ));
+        registry.lock().unwrap().insert(uuid.into_string(), entry);
+    }
+    let fleet = quecto::composition::subagent_teardown::build_fleet_teardown(
+        quecto::composition::subagent_teardown::FleetTeardownWiring {
+            owner: quecto::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle:
+                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
+    );
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let (handled, response) = rt.block_on(cli::busy_reader_intercept_with_fleet(
         &format!(r#"{{"type":"delete_all_subagents","id":"{id}"}}"#),
-        &names,
+        registry.clone(),
+        Some(fleet),
     ));
+    let remaining = registry.lock().unwrap().len();
     world.subagent_liveness_intercept = Some((handled, response));
     world.subagent_liveness_registry_remaining = Some(remaining);
 }
@@ -142,7 +171,7 @@ fn registry_empty(world: &mut QuectoWorld) {
     assert_eq!(
         world.subagent_liveness_registry_remaining,
         Some(0),
-        "delete_all_subagents must drain the registry synchronously, before the turn ends"
+        "delete_all_subagents must settle the fleet off the dispatch loop, before the turn ends"
     );
 }
 

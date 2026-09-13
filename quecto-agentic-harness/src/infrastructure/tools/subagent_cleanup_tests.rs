@@ -71,21 +71,54 @@ fn cleanup_removed_entries_runs_pid_zero_script_plan_before_discard() {
     assert!(removed[0].1.cleanup_argv.is_empty());
 }
 
-#[test]
-fn teardown_all_claims_pid_zero_cleanup_before_registry_clear() {
+/// A script-managed member this harness launched (a launch generation, no
+/// owned process, no reachable socket) is finalized by the fleet teardown:
+/// its retained cleanup runs exactly once through the compensation and the
+/// row leaves the roster (#1938).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
     let temp = tempfile::tempdir().unwrap();
     let log = temp.path().join("cleanup.log");
     let script = cleanup_script(&log);
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/script.sock"), 0);
+    let mut entry = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::new("child"),
+        "child".into(),
+        temp.path().join("never.sock"),
+        0,
+    );
+    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
     entry.cleanup_environment_id = Some("env-teardown".into());
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     registry.lock().unwrap().insert("child".to_string(), entry);
 
-    let removed = super::spawn_registry::shutdown_all_with_count(&registry);
+    let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
+        crate::composition::subagent_teardown::FleetTeardownWiring {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
+    );
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        fleet.execute(
+            crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+            },
+        ),
+    )
+    .await
+    .expect("bounded")
+    .expect("the fleet run completed");
 
-    assert_eq!(removed, 1);
+    assert_eq!(outcome.removed_count(), 1, "{outcome:?}");
+    assert_eq!(
+        outcome.settled[0].result,
+        crate::application::subagents::dto::FleetChildResult::Unobserved
+    );
     assert!(registry.lock().unwrap().is_empty());
     let text = std::fs::read_to_string(&log).unwrap();
     assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-teardown"]);

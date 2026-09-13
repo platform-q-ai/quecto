@@ -18,6 +18,13 @@
 //! the wire. Progress is recorded step by step; if the spawned run is ever
 //! dropped, the next `Execute` resumes at the first incomplete step and no
 //! effect runs twice. No ACK is written here and no wire type is named here.
+//!
+//! The direct-children step is the fleet teardown
+//! ([`TerminateAllDelegatedAgents`], #1938): every direct child is claimed,
+//! asked over its edge, concluded through the owned-handle fallback and
+//! compensated under a concurrency bound, so the harness exits only once its
+//! subtree has settled. The fleet run is itself detached and joinable, so a
+//! re-driven shutdown joins it rather than asking any child twice.
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -29,19 +36,20 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::super::dto::{
-    HarnessShutdownError, PersistenceOutcome, PrepareShutdownRequest, PreparedShutdown,
-    ReleaseOutcome, ShutdownOutcome, ShutdownToken, ShutdownTrigger,
+    FleetTeardownError, FleetTeardownOutcome, HarnessShutdownError, PersistenceOutcome,
+    PrepareShutdownRequest, PreparedShutdown, ReleaseOutcome, ShutdownOutcome, ShutdownToken,
+    ShutdownTrigger, TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
-    CompositionExitReadiness, DirectChildRouting, ExitReadiness, ShutdownClock, ShutdownRunSpawner,
+    CompositionExitReadiness, ExitReadiness, ShutdownClock, ShutdownRunSpawner,
     ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
 };
+use super::terminate_all_delegated_agents::TerminateAllDelegatedAgents;
 
 type Outcome = Result<ShutdownOutcome, HarnessShutdownError>;
 
 /// Steps of the common teardown that have already produced their effect.
-/// A re-driven run skips every recorded step, and within the children step
-/// every child already recorded.
+/// A re-driven run skips every recorded step.
 #[derive(Debug, Clone, Default)]
 struct Progress {
     /// A run was polled at least once: some port may already have been
@@ -50,6 +58,10 @@ struct Progress {
     turn_cancelled: Option<bool>,
     children_shut_down: Vec<AgentUuid>,
     children_failed: Vec<(AgentUuid, String)>,
+    /// The fleet teardown ran to completion (its per-child outcomes are
+    /// recorded above). An interrupted fleet run leaves this unset so a
+    /// re-drive of the admission runs it again; the claim ladder makes
+    /// that safe.
     children_complete: bool,
     persistence: Option<PersistenceOutcome>,
     exit_signalled: bool,
@@ -65,14 +77,6 @@ impl Progress {
             || self.children_complete
             || self.persistence.is_some()
             || self.exit_signalled
-    }
-
-    fn child_recorded(&self, uuid: &AgentUuid) -> bool {
-        self.children_shut_down.contains(uuid)
-            || self
-                .children_failed
-                .iter()
-                .any(|(failed, _)| failed == uuid)
     }
 }
 
@@ -303,7 +307,8 @@ impl PrepareHarnessShutdown {
 
 /// Concrete collaborators of [`ExecuteHarnessShutdown`], named once.
 pub struct ExecuteHarnessShutdownPorts {
-    pub routing: Arc<dyn DirectChildRouting>,
+    /// The direct-children step: the fleet teardown (#1938).
+    pub children: Arc<TerminateAllDelegatedAgents>,
     pub cancellation: Arc<dyn TurnCancellation>,
     pub persistence: Arc<dyn ShutdownSessionPersistence>,
     pub exit: Arc<dyn CompositionExitReadiness>,
@@ -423,25 +428,24 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
         transaction.with_progress(admission_id, |p| p.turn_cancelled = Some(cancelled));
     }
     if !done.children_complete {
-        let lineage = transaction.lifecycle.lineage();
-        for child in lineage.direct_children() {
-            // Each child is recorded as soon as it is addressed, so a run
-            // interrupted mid-loop never re-sends to a recorded child.
-            if done.child_recorded(&child.uuid) {
-                continue;
+        let fleet = settle_fleet(&ports).await;
+        transaction.with_progress(admission_id, |p| match fleet {
+            Ok(outcome) => {
+                p.children_shut_down = outcome
+                    .settled
+                    .iter()
+                    .map(|settled| settled.child.uuid.clone())
+                    .collect();
+                p.children_failed = outcome.unsettled;
+                p.children_complete = true;
             }
-            let outcome = ports
-                .routing
-                .shutdown_child(child, ShutdownReason::ParentShutdown)
-                .await;
-            transaction.with_progress(admission_id, |p| match outcome {
-                Ok(()) => p.children_shut_down.push(child.uuid.clone()),
-                Err(error) => p
-                    .children_failed
-                    .push((child.uuid.clone(), error.to_string())),
-            });
-        }
-        transaction.with_progress(admission_id, |p| p.children_complete = true);
+            // The fleet run was dropped by its runtime: nothing is
+            // recorded (the outcome reports no child settled) and the
+            // shutdown still persists and signals exit, so an ACKed parent
+            // never sees silence; a re-drive of an interrupted admission
+            // runs the fleet again before finishing.
+            Err(FleetTeardownError::Interrupted) => {}
+        });
     }
     if done.persistence.is_none() {
         let persistence = match ports.persistence.persist_for_shutdown(reason).await {
@@ -485,6 +489,44 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
     });
     complete(&transaction, outcome);
     guard.disarm();
+}
+
+/// The fleet step. The fleet run is detached and joinable: a re-driven
+/// shutdown joins the one in flight, and the claim ladder guarantees no
+/// child is asked twice even when a fresh fleet run starts. A run this
+/// shutdown merely **joined** was started by an operator (delete-all, a
+/// session transition) while the harness was still accepting, and may have
+/// read its lineage before a child that the freeze then closed off was
+/// registered; so after a joined run the fleet is settled once more. The
+/// lineage is closed post-freeze, so that pass is an empty read whenever
+/// nothing slipped in, and its results are merged.
+async fn settle_fleet(
+    ports: &ExecuteHarnessShutdownPorts,
+) -> Result<FleetTeardownOutcome, FleetTeardownError> {
+    let request = || TerminateAllDelegatedAgentsRequest {
+        reason: ShutdownReason::ParentShutdown,
+    };
+    let mut outcome = ports.children.execute(request()).await?;
+    if outcome.joined {
+        let sweep = ports.children.execute(request()).await?;
+        for settled in sweep.settled {
+            if !outcome.settled.contains(&settled) {
+                outcome.settled.push(settled);
+            }
+        }
+        for unsettled in sweep.unsettled {
+            if !outcome.unsettled.contains(&unsettled) {
+                outcome.unsettled.push(unsettled);
+            }
+        }
+        // A child settled by the sweep is no longer unsettled.
+        let settled = outcome.settled.clone();
+        outcome
+            .unsettled
+            .retain(|(uuid, _)| !settled.iter().any(|s| &s.child.uuid == uuid));
+        outcome.pruned.extend(sweep.pruned);
+    }
+    Ok(outcome)
 }
 
 fn complete(transaction: &HarnessShutdownTransaction, outcome: Outcome) {
@@ -566,6 +608,9 @@ impl Future for JoinOutcome<'_> {
     }
 }
 
+#[cfg(test)]
+#[path = "harness_shutdown_sweep_tests.rs"]
+mod sweep_tests;
 #[cfg(test)]
 #[path = "harness_shutdown_tests.rs"]
 mod tests;

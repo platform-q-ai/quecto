@@ -7,10 +7,8 @@ use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 #[derive(Debug, Default)]
 pub(super) struct MemSpillStore {
     entries: Mutex<HashMap<(String, String), SpillEntry>>,
@@ -214,6 +212,7 @@ impl Fixture {
             provider_reload_inputs: None,
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
+            fleet_teardown: None,
         }
     }
 }

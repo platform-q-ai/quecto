@@ -308,13 +308,40 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("busy-delete.sock");
 
-    let mut entry = SubagentEntry::new("/tmp/worker.sock".into(), 0);
+    // A child this harness launched (a launch generation, keyed by uuid)
+    // whose socket never existed: the fleet teardown's protocol attempt is
+    // negative at once, nothing is owned, and it is compensated unobserved.
+    let uuid = crate::domain::ids::AgentUuid::mint();
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        "/nonexistent/worker.sock".into(),
+        0,
+    );
     entry.status = SubagentStatus::Running;
+    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
     let registry = crate::infrastructure::tools::subagent_registry::new_registry();
-    registry.lock().unwrap().insert("worker".to_string(), entry);
+    registry.lock().unwrap().insert(uuid.into_string(), entry);
 
-    let (args, _bcast, _cmd_tx, mut cmd_rx) =
+    let (mut args, bcast, _cmd_tx, mut cmd_rx) =
         make_args(&socket_path, /* busy */ true, Some(registry.clone()));
+    // The composed teardown graph is what carries the fleet teardown to
+    // every connection (#1938).
+    let graph = crate::composition::subagent_teardown::build_teardown_graph(
+        crate::interface::cli::uds_teardown_graph::TeardownGraphInputs {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: Some(registry.clone()),
+            harness_lifecycle: None,
+            broadcast_tx: Some(bcast.clone()),
+            notify_tx: None,
+            cancel_handle: args.cancel_handle.clone(),
+            turn_control: args.turn_control.clone(),
+            busy: args.busy.clone(),
+            exit_notify: Arc::new(tokio::sync::Notify::new()),
+            binding: crate::domain::parent_control::ParentControlBinding::unlaunched(),
+        },
+    );
+    args.teardown = Some(graph.connections.clone());
     let handle = spawn_accept_loop(args);
 
     let mut client = tokio::net::UnixStream::connect(&socket_path)
@@ -327,7 +354,16 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
         .write_all(b"{\"type\":\"delete_all_subagents\",\"id\":\"del-live\"}\n")
         .await
         .expect("send delete");
-    let received = read_available(&mut client, std::time::Duration::from_millis(500)).await;
+    // The fleet settles within its bound (a negative attempt against a
+    // missing socket is immediate); wait for the correlated response.
+    let mut received = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !received.contains("\"command\":\"delete_all_subagents\"")
+        && std::time::Instant::now() < deadline
+    {
+        received
+            .push_str(&read_available(&mut client, std::time::Duration::from_millis(500)).await);
+    }
     handle.abort();
 
     let response = received
@@ -338,11 +374,12 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
             panic!("delete response must not wait for the dispatch loop: {received}")
         });
     assert_eq!(response["id"], "del-live");
-    assert_eq!(response["success"], true);
+    assert_eq!(response["success"], true, "{response}");
     assert_eq!(response["data"]["removed"], 1);
+    assert_eq!(response["data"]["settled"][0]["result"], "unobserved");
     assert!(
         registry.lock().unwrap().is_empty(),
-        "registry drained while the dispatch loop is still blocked"
+        "the fleet settled while the dispatch loop is still blocked"
     );
 
     // The authoritative empty survivor set reaches the client on the same

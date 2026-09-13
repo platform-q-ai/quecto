@@ -222,13 +222,14 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
     assert!(!args3.iter().any(|a| a == "--config"));
 }
 
-/// #1935: the local launch path is the ONLY place a spawned child becomes
-/// owned. Registering a real child must record the supervisor handle and a
-/// launch generation (never a signal lease), and a later `shutdown_all`
-/// must terminate that child through the supervisor: the protocol attempt
-/// against its (never bound) socket is negative, so TERM follows.
+/// #1935/#1938: the local launch path is the ONLY place a spawned child
+/// becomes owned. Registering a real child must record the supervisor
+/// handle and a launch generation (never a signal lease), and the fleet
+/// teardown must terminate that child through the supervisor: the protocol
+/// attempt against its (never bound) socket is negative, so TERM follows and
+/// the child is reported as a fallback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_child() {
+async fn register_and_monitor_claims_launched_lease_and_fleet_teardown_terminates_child() {
     let tool = tool();
     let mut ports = SpawnLaunchPorts::new(&tool);
     let cfg = config();
@@ -273,7 +274,34 @@ async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_chil
         assert!(entry.launch_generation.is_some());
     }
 
-    super::super::spawn_registry::shutdown_all(&tool.registry);
+    let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
+        crate::composition::subagent_teardown::FleetTeardownWiring {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: tool.registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle: tool.harness_lifecycle.clone(),
+        },
+    );
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        fleet.execute(
+            crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
+                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+            },
+        ),
+    )
+    .await
+    .expect("bounded")
+    .expect("the fleet run completed");
+    assert!(outcome.is_settled(), "{outcome:?}");
+    assert_eq!(outcome.settled.len(), 1);
+    assert_eq!(
+        outcome.settled[0].result,
+        crate::application::subagents::dto::FleetChildResult::Fallback,
+        "a child that never binds cannot ACK: TERM ends it"
+    );
+    assert!(tool.registry.lock().unwrap().is_empty(), "tombstone pruned");
 
     // The reaper task owns the child handle; once the SIGTERM lands it reaps,
     // and /proc/<pid> disappears. A skipped signal leaves sleep alive.
@@ -296,7 +324,7 @@ async fn register_and_monitor_claims_launched_lease_and_shutdown_terminates_chil
             libc::kill(pid as libc::pid_t, libc::SIGKILL);
         }
     }
-    assert!(gone, "shutdown_all must terminate the launched child");
+    assert!(gone, "the fleet teardown must terminate the launched child");
 }
 
 fn poison<T: Send + 'static>(mutex: &std::sync::Arc<std::sync::Mutex<T>>) {

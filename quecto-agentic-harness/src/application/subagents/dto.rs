@@ -17,6 +17,9 @@ pub enum ShutdownTrigger {
     ParentNeverBound,
     /// SIGTERM/SIGINT delivered by the operating system.
     TerminationSignal,
+    /// The last client of a top-level harness whose lifetime ends with it
+    /// disconnected (#1938).
+    LastClientDisconnected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,3 +316,112 @@ pub struct FailedLaunchCompensated {
     pub conclusion: super::ports::TerminationConclusion,
     pub removed: Vec<AgentUuid>,
 }
+
+// ─── Fleet teardown (#1938) ──────────────────────────────────────────────────
+
+/// Tear down every direct child of this harness at once, telling each the
+/// given reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminateAllDelegatedAgentsRequest {
+    pub reason: ShutdownReason,
+}
+
+/// How one direct child settled under the fleet teardown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FleetChildResult {
+    /// Acknowledged the protocol and its exit was observed; no signal.
+    Graceful,
+    /// The owned handle's fallback produced the exit.
+    Fallback,
+    /// Already exited when the teardown reached it.
+    AlreadyExited,
+    /// Compensated without an observed exit: this harness held no process
+    /// for the child and no exit was observed within the bound. Its
+    /// environment finalization ran as part of the compensation.
+    Unobserved,
+    /// Another termination of the same child was already in flight and
+    /// completed; this teardown joined it.
+    Joined,
+}
+
+impl FleetChildResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Graceful => "graceful",
+            Self::Fallback => "fallback",
+            Self::AlreadyExited => "already-exited",
+            Self::Unobserved => "unobserved",
+            Self::Joined => "joined",
+        }
+    }
+}
+
+impl fmt::Display for FleetChildResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledChild {
+    pub child: DelegatedAgentIdentity,
+    pub result: FleetChildResult,
+}
+
+/// Result of one fleet teardown run. Every direct child is either settled
+/// (its row's terminal effects ran, or were joined) or reported unsettled
+/// with its claim lifted, so no child is ever silently dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FleetTeardownOutcome {
+    pub reason: ShutdownReason,
+    /// `true` when this caller joined a run another trigger had started.
+    pub joined: bool,
+    /// Settled children, in identity order.
+    pub settled: Vec<SettledChild>,
+    /// Children whose end could not be settled within the bound. Their
+    /// rows stay live with the stopping claim lifted for a later trigger.
+    pub unsettled: Vec<(AgentUuid, String)>,
+    /// Terminal rows discarded from the roster once the fleet settled.
+    pub pruned: Vec<AgentUuid>,
+}
+
+impl FleetTeardownOutcome {
+    /// Every direct child settled: the roster holds no live delegated agent.
+    pub fn is_settled(&self) -> bool {
+        self.unsettled.is_empty()
+    }
+
+    /// Distinct rows this run moved out of the roster: every settled child
+    /// (whose tombstone is then pruned) plus every other pruned terminal
+    /// row.
+    pub fn removed_count(&self) -> usize {
+        self.settled.len()
+            + self
+                .pruned
+                .iter()
+                .filter(|uuid| {
+                    !self
+                        .settled
+                        .iter()
+                        .any(|settled| &settled.child.uuid == *uuid)
+                })
+                .count()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetTeardownError {
+    /// The detached run was dropped by its runtime before it completed;
+    /// the claims it still held were lifted, so a later trigger may retry.
+    Interrupted,
+}
+
+impl fmt::Display for FleetTeardownError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interrupted => f.write_str("fleet teardown was interrupted"),
+        }
+    }
+}
+
+impl std::error::Error for FleetTeardownError {}

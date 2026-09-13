@@ -42,9 +42,6 @@ pub(crate) struct ClientHandlerArgs {
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(crate) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    /// Broadcast sender for busy-path `delete_all_subagents`, which must
-    /// publish the empty survivor set without waiting for the dispatcher (#1626).
-    pub(crate) broadcast_tx: tokio::sync::broadcast::Sender<String>,
     /// Launch-bound parent control and teardown edge (#1935). `None` only
     /// for test rigs that exercise the plain reader path.
     pub(crate) teardown: Option<Arc<ConnectionTeardown>>,
@@ -64,7 +61,6 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         client_tool_registry,
         conversation_snapshot,
         subagent_registry,
-        broadcast_tx,
         teardown,
         _guard,
     } = args;
@@ -163,7 +159,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 snapshot: &conversation_snapshot,
                 registry: &client_tool_registry,
                 subagent_registry: &subagent_registry,
-                broadcast_tx: &broadcast_tx,
+                fleet: teardown.as_deref().map(|teardown| &teardown.fleet),
                 client_id,
                 cmd_tx: &cmd_tx,
                 cancel_handle: &cancel_handle,

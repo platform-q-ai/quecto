@@ -1,17 +1,25 @@
 use std::collections::hash_map::Entry;
 
-use super::subagent_registry::{ExitSignal, SubagentEntry, SubagentRegistry};
+use super::harness_lifecycle::{SharedHarnessLifecycle, admit_spawn};
+use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 /// Insert a freshly-spawned child entry into the registry and immediately
 /// broadcast the full survivor set, so connected TUIs learn of the new agent at
 /// once instead of waiting for the next GetSubagents poll or a terminal event
 /// (#866). The broadcast is best-effort: a missing/closed channel just means no
 /// client is listening, which is fine.
+///
+/// Admission against the harness lifecycle (#1938) is decided **inside the
+/// registry critical section**: a shutdown freezes the lifecycle and then
+/// claims the direct children under this same lock, so a registration is
+/// either inserted before that claim — and torn down with the fleet — or
+/// observes the freeze and is refused. Never both, never neither.
 pub fn register_and_broadcast(
     registry: &SubagentRegistry,
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     session_name: &str,
     entry: SubagentEntry,
+    lifecycle: &SharedHarnessLifecycle,
 ) -> Result<(), crate::domain::error::DomainError> {
     // Insert and serialize the survivor set in ONE critical section. Locking
     // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
@@ -20,6 +28,11 @@ pub fn register_and_broadcast(
     // the immediate-visibility guarantee #866 adds (review).
     let event = {
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        admit_spawn(lifecycle).map_err(|refused| {
+            crate::domain::error::DomainError::Other(format!(
+                "{refused} while registering {session_name}"
+            ))
+        })?;
         let mut entry = entry;
         entry.display_name = session_name.to_string();
         entry.notification_sequence = guard
@@ -50,57 +63,3 @@ pub fn register_and_broadcast(
     }
     Ok(())
 }
-
-/// Send SIGTERM to all tracked subagent processes and clear the registry.
-/// Also aborts all monitor tasks (#522).
-pub fn shutdown_all(registry: &SubagentRegistry) {
-    let _ = shutdown_all_with_count(registry);
-}
-
-/// Like [`shutdown_all`], returning the number of registry entries removed.
-pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
-    // Drain in the SAME critical section that decides who gets signalled, so
-    // an agent registering concurrently can never be drained (and cleaned up)
-    // without having been signalled, and the returned count matches the
-    // drained set exactly.
-    let mut removed: Vec<_> = {
-        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        entries.drain().collect()
-    };
-    for (name, entry) in removed.iter() {
-        if let Some(ref tx) = entry.exit_signal_tx {
-            let _ = tx.send(Some(ExitSignal {
-                exit_code: None,
-                signal: Some(15),
-                kind: Default::default(),
-            }));
-        }
-        // Abort monitor task if running (#522).
-        if let Some(ref handle) = entry.monitor_handle {
-            handle.abort();
-            tracing::info!(agent = %name, "aborted monitor task");
-        }
-        // A locally launched child is terminated through its owned handle:
-        // protocol first, TERM/KILL only after a negative outcome (#1935).
-        // Everything else keeps the reported-pid lease scaffolding (#1925)
-        // until #1940 retires it.
-        if entry.request_owned_child_termination(
-            crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
-        ) {
-            tracing::info!(agent = %name, "requested owned child termination");
-        } else if entry.pid != 0
-            && entry
-                .process_ownership
-                .signal(entry.pid, entry.process_owner)
-        {
-            tracing::info!(agent = %name, pid = entry.pid, "sent termination to subagent process tree");
-        }
-    }
-    let count = removed.len();
-    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
-    count
-}
-
-#[cfg(test)]
-#[path = "spawn_registry_ownership_tests.rs"]
-mod ownership_tests;

@@ -529,6 +529,7 @@ fn then_lineage(world: &mut QuectoWorld, child: String, generation: u64, parent:
     let lifecycle = quecto::composition::subagent_teardown::LifecycleAdapter::new(
         s.registry.clone(),
         AgentUuid::new("root"),
+        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     );
     let lineage = lifecycle.lineage();
     assert!(

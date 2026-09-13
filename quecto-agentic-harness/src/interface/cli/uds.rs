@@ -160,7 +160,11 @@ pub(crate) struct DispatchCtx<'a> {
     pub last_persisted_message_index: usize,
     /// The agent changed history that existed before its latest run.
     pub durable_prefix_dirty: bool,
+    /// Fleet teardown (#1938) of delete-all and session transitions.
+    pub fleet_teardown: Option<FleetTeardown>,
 }
+type FleetTeardown =
+    std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
 
 impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
@@ -170,10 +174,9 @@ impl<'a> DispatchCtx<'a> {
     }
 }
 
-/// Build an [`EventSink`] from a dispatch context's sink fields. Free function
-/// (rather than only a `DispatchCtx` method) so callers that also need
-/// disjoint borrows of other `DispatchCtx` fields (e.g. `run_agent_message`)
-/// can split the borrow (#994).
+/// Build an [`EventSink`] from a dispatch context's sink fields. A free
+/// function so callers that also need disjoint borrows of other `DispatchCtx`
+/// fields (e.g. `run_agent_message`) can split the borrow (#994).
 fn make_event_sink<'s>(
     broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
     stdout: &'s mut Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,

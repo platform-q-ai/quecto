@@ -242,6 +242,7 @@ impl Fixture {
             provider_reload_inputs: self.provider_reload_inputs.as_ref(),
             last_persisted_message_index: self.last_persisted_message_index,
             durable_prefix_dirty: false,
+            fleet_teardown: None,
         }
     }
 }

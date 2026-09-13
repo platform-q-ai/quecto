@@ -79,6 +79,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
+        fleet_teardown: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
@@ -142,6 +143,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
+        fleet_teardown: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
@@ -206,6 +208,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
+        fleet_teardown: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;

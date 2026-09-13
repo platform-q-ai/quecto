@@ -150,8 +150,9 @@ pub(super) async fn cleanup_removed_entries_once(
     run_cleanup_jobs(drain_cleanup_jobs(removed, mode)).await;
 }
 
-/// Synchronous teardown for the process-shutdown path only, where no runtime
-/// is guaranteed and blocking the caller is acceptable.
+/// Synchronous per-entry cleanup, kept for the cleanup tests that exercise
+/// the exactly-once claim without a runtime.
+#[cfg(test)]
 pub(super) fn cleanup_removed_entries_sync(
     removed: &mut [(String, super::subagent_registry::SubagentEntry)],
 ) {

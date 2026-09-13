@@ -92,6 +92,7 @@ impl AckWriter for Writer {
 pub(crate) struct Rig {
     pub(crate) lifecycle: Arc<Lifecycle>,
     pub(crate) routing: Arc<Routing>,
+    pub(crate) rows: Arc<crate::common::teardown_fixture::Rows>,
     pub(crate) cancellation: Arc<Cancellation>,
     pub(crate) persistence: Arc<Persistence>,
     pub(crate) exit: Arc<Exit>,
@@ -113,10 +114,23 @@ impl Rig {
         let clock = Arc::new(Clock(std::sync::atomic::AtomicU64::new(1_000)));
         let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), clock);
         let prepare = Arc::new(PrepareHarnessShutdown::new(transaction.clone()));
+        let rows = crate::common::teardown_fixture::Rows::for_lineage(&lifecycle.lineage());
+        let fleet = Arc::new(
+            quecto::application::subagents::use_cases::TerminateAllDelegatedAgents::new(
+                quecto::application::subagents::use_cases::TerminateAllDelegatedAgentsPorts {
+                    lifecycle: lifecycle.clone(),
+                    registry: rows.clone(),
+                    routing: routing.clone(),
+                    termination: rows.clone(),
+                    compensation: rows.clone(),
+                    spawner: Arc::new(Spawner::default()),
+                },
+            ),
+        );
         let execute = Arc::new(ExecuteHarnessShutdown::new(
             transaction.clone(),
             ExecuteHarnessShutdownPorts {
-                routing: routing.clone(),
+                children: fleet,
                 cancellation: cancellation.clone(),
                 persistence: persistence.clone(),
                 exit: exit.clone(),
@@ -135,6 +149,7 @@ impl Rig {
         Self {
             lifecycle,
             routing,
+            rows,
             cancellation,
             persistence,
             exit,
@@ -382,6 +397,9 @@ fn given_holding_cancellation(world: &mut QuectoWorld) {
     rig(world).cancellation.hold.store(true, Ordering::SeqCst);
 }
 
+/// The child's edge is unreachable and, since #1938 concludes every direct
+/// child through the owned-handle fallback, even that does not end it: the
+/// fleet teardown reports it unsettled and the shutdown still completes.
 #[given(expr = "child {string} is unreachable")]
 fn given_unreachable(world: &mut QuectoWorld, child: String) {
     rig(world)
@@ -389,7 +407,13 @@ fn given_unreachable(world: &mut QuectoWorld, child: String) {
         .unreachable
         .lock()
         .unwrap()
-        .push(AgentUuid::new(child));
+        .push(AgentUuid::new(&child));
+    rig(world).rows.conclusion_for.lock().unwrap().insert(
+        child,
+        quecto::application::subagents::ports::TerminationConclusion::StillRunning(
+            "unreachable and the fallback did not end it".into(),
+        ),
+    );
 }
 
 #[given(expr = "a harness lifecycle of {string}")]

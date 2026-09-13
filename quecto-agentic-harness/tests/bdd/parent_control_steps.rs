@@ -401,6 +401,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::LaunchBound,
             notification_rx: None,
             subagent_registry: None,
+            harness_lifecycle: None,
             workflow_state,
             workflow_config,
             broadcast_tx: None,

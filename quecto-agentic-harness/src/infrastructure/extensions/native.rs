@@ -210,6 +210,9 @@ pub struct KillToolWiring {
     pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
+    /// The harness lifecycle cell (#1938): a frozen harness refuses new
+    /// control commands; shared with the spawn tool and the teardown graph.
+    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
 }
 
 pub type KillToolBuilder = fn(KillToolWiring) -> Arc<dyn Tool>;
@@ -217,12 +220,16 @@ pub type KillToolBuilder = fn(KillToolWiring) -> Arc<dyn Tool>;
 pub struct AgentControlToolBuild {
     pub extensions: Vec<Arc<dyn Extension>>,
     pub subagent_registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    /// The one lifecycle cell this composition's spawn admission reads (#1938).
+    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
     pub notification_tx: crate::infrastructure::tools::subagent_registry::NotificationTx,
     pub notification_rx: crate::infrastructure::tools::subagent_registry::NotificationRx,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
     let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let harness_lifecycle =
+        crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
 
@@ -233,7 +240,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path)
-            .with_owned_child_supervisor(deps.owned_child_supervisor);
+            .with_owned_child_supervisor(deps.owned_child_supervisor)
+            .with_harness_lifecycle(harness_lifecycle.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }
@@ -266,6 +274,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             registry: registry.clone(),
             broadcast_tx: deps.broadcast_tx,
             notify_tx: Some(notification_tx.clone()),
+            harness_lifecycle: harness_lifecycle.clone(),
         }));
     }
 
@@ -276,6 +285,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             vec![Arc::new(spawn), Arc::new(agent_cmd)],
         ))],
         subagent_registry: registry,
+        harness_lifecycle,
         notification_tx,
         notification_rx,
     }

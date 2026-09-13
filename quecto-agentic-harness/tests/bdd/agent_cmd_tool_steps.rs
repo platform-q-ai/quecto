@@ -22,6 +22,7 @@ pub(crate) fn agent_cmd_tool_with_kill(
                 registry: registry.clone(),
                 broadcast_tx,
                 notify_tx: None,
+                harness_lifecycle: quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
             },
         ),
     )

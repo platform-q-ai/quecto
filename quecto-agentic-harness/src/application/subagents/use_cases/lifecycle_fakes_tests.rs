@@ -222,6 +222,12 @@ impl DelegatedAgentRegistry for FakeRegistry {
 /// a graceful outcome never consulted it for a signal.
 pub struct FakeTermination {
     pub conclusion: Mutex<TerminationConclusion>,
+    /// Per-child overrides of the scripted conclusion.
+    pub per_child: Mutex<BTreeMap<String, TerminationConclusion>>,
+    /// Hold these children's conclusions open until `gate` fires, to model
+    /// a slow child under a bounded fleet teardown.
+    pub hold: Mutex<Vec<String>>,
+    pub gate: tokio::sync::Notify,
     pub calls: Mutex<Vec<(DelegatedAgentIdentity, ProtocolAttempt, ConclusionBudget)>>,
     pub registry: Arc<FakeRegistry>,
     /// Mark the row compensated by "the reaper" while concluding, to model
@@ -233,6 +239,9 @@ impl FakeTermination {
     pub fn new(registry: Arc<FakeRegistry>, conclusion: TerminationConclusion) -> Arc<Self> {
         Arc::new(Self {
             conclusion: Mutex::new(conclusion),
+            per_child: Mutex::new(BTreeMap::new()),
+            hold: Mutex::new(Vec::new()),
+            gate: tokio::sync::Notify::new(),
             calls: Mutex::new(Vec::new()),
             registry,
             reaper_compensates: Mutex::new(false),
@@ -241,6 +250,13 @@ impl FakeTermination {
 
     pub fn calls(&self) -> Vec<(DelegatedAgentIdentity, ProtocolAttempt, ConclusionBudget)> {
         self.calls.lock().unwrap().clone()
+    }
+
+    pub fn conclude_child_with(&self, uuid: &str, conclusion: TerminationConclusion) {
+        self.per_child
+            .lock()
+            .unwrap()
+            .insert(uuid.to_owned(), conclusion);
     }
 }
 
@@ -255,9 +271,24 @@ impl OwnedChildTermination for FakeTermination {
             .lock()
             .unwrap()
             .push((child.clone(), attempt, budget));
-        let conclusion = self.conclusion.lock().unwrap().clone();
+        let conclusion = self
+            .per_child
+            .lock()
+            .unwrap()
+            .get(child.uuid.as_str())
+            .cloned()
+            .unwrap_or_else(|| self.conclusion.lock().unwrap().clone());
         let reaper = *self.reaper_compensates.lock().unwrap();
+        let held = self
+            .hold
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|uuid| uuid == child.uuid.as_str());
         Box::pin(async move {
+            if held {
+                self.gate.notified().await;
+            }
             if reaper {
                 // The reaper observed the exit first and ran the compensation.
                 assert_eq!(
@@ -281,6 +312,11 @@ pub struct FakeCompensation {
     pub registry: Mutex<Option<Arc<FakeRegistry>>>,
     /// Descendants reported as removed together with each target.
     pub descendants: Mutex<Vec<AgentUuid>>,
+    /// Hold the prune open (the fleet run is past its last lineage read)
+    /// until `prune_gate` fires; `prunes` counts entries.
+    pub hold_prune: std::sync::atomic::AtomicBool,
+    pub prune_gate: tokio::sync::Notify,
+    pub prunes: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeCompensation {
@@ -289,6 +325,9 @@ impl FakeCompensation {
             calls: Mutex::new(Vec::new()),
             registry: Mutex::new(Some(registry)),
             descendants: Mutex::new(Vec::new()),
+            hold_prune: std::sync::atomic::AtomicBool::new(false),
+            prune_gate: tokio::sync::Notify::new(),
+            prunes: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -312,6 +351,31 @@ impl TeardownCompensation for FakeCompensation {
                 registry.set_phase(target.uuid.as_str(), Phase::Compensated);
             }
             Compensated { removed }
+        })
+    }
+
+    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<AgentUuid>> {
+        Box::pin(async move {
+            self.prunes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.hold_prune.load(std::sync::atomic::Ordering::SeqCst) {
+                self.prune_gate.notified().await;
+            }
+            let Some(registry) = self.registry.lock().unwrap().clone() else {
+                return Vec::new();
+            };
+            let mut rows = registry.rows.lock().unwrap();
+            let pruned: Vec<AgentUuid> = rows
+                .values()
+                .filter(|row| row.phase == Phase::Compensated)
+                .map(|row| row.identity.uuid.clone())
+                .collect();
+            rows.retain(|_, row| row.phase != Phase::Compensated);
+            drop(rows);
+            for uuid in &pruned {
+                registry.record(format!("pruned {uuid}"));
+            }
+            pruned
         })
     }
 }
