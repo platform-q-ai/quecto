@@ -37,7 +37,7 @@ mod spawn_input;
 mod spawn_launch_args;
 mod spawn_launch_ports;
 mod spawn_proxy_bridge;
-mod spawn_reaper;
+pub mod spawn_reaper;
 mod spawn_registry;
 pub mod subagent_cascade;
 mod subagent_cleanup;

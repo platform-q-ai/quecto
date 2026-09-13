@@ -235,6 +235,9 @@ fn merge_descendants(
             }
             super::subagent_cascade::mark_entry_dead(entry, next_sequence);
             super::subagent_cascade::clear_cleanup_ownership(entry);
+            // The forwarding child already ran this descendant's teardown;
+            // pruning it here is the whole of its compensation.
+            super::subagent_cascade::mark_entry_compensated(entry);
             // The forwarding child already reaped this descendant; its pid is
             // free for reuse, so the reported lease is retired IN PLACE so a
             // cascade-removed clone sharing it loses authority too (#1925).

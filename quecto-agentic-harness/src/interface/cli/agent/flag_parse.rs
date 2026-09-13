@@ -46,7 +46,7 @@ pub(crate) struct AgentFlags {
     /// Opaque constructor injected by the executable bootstrap.
     pub(crate) web_fetch_tool_factory: Option<super::super::WebFetchToolFactory>,
     /// Composition's `agent_cmd kill` owner builder (#1936), from CliContext.
-    pub(crate) kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub(crate) kill_tool: Option<crate::interface::cli::KillToolBuilder>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,

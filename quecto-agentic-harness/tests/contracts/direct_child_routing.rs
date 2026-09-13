@@ -128,6 +128,7 @@ async fn root_targeting_b_forwards_via_a_and_never_shuts_a_or_its_siblings_down(
         TerminationRouted::Forwarded {
             via: identity("A", 1),
             remaining_depth: depth(1),
+            result: None,
         }
     );
     assert_eq!(
@@ -149,7 +150,8 @@ async fn root_targeting_b_forwards_via_a_and_never_shuts_a_or_its_siblings_down(
     assert_eq!(
         routed,
         TerminationRouted::ShutdownRequested {
-            child: identity("B", 1)
+            child: identity("B", 1),
+            result: None,
         }
     );
     assert_eq!(
@@ -168,7 +170,8 @@ async fn root_targeting_a_uses_self_shutdown_on_a() {
     assert_eq!(
         routed,
         TerminationRouted::ShutdownRequested {
-            child: identity("A", 1)
+            child: identity("A", 1),
+            result: None,
         }
     );
     assert_eq!(

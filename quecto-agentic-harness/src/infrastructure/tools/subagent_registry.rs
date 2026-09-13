@@ -518,15 +518,51 @@ impl ExitSignalKind {
 pub enum TeardownPhase {
     #[default]
     Live,
-    /// A termination claimed the row and its effects are in flight; the
-    /// process (if any) may still be alive. The intent is what the
-    /// compensation honours even when another path (the reaper) observes
-    /// the exit first: a kill is not a post-mortem and posts no note.
-    Stopping(TeardownIntent),
+    /// A termination claimed the row; the process (if any) may still be
+    /// alive. The claim's intent is what the compensation honours even
+    /// when another path (the reaper) observes the exit first: a kill is
+    /// not a post-mortem and posts no note. While the claim's owner is
+    /// executing, a later trigger joins it; once the owner has returned
+    /// without observing the end, a later trigger may re-take the claim.
+    Stopping(StoppingClaim),
     /// The exit was observed and one path claimed the terminal effects.
     Compensating(TeardownIntent),
     /// The terminal effects ran: cleanup, membership, removal, broadcast.
     Compensated,
+}
+
+/// A stopping claim: its intent, how many attempts have held it, and
+/// whether the holder is still executing (#1936 review). A returned owner
+/// dispatched effects toward the child but did not observe its end within
+/// its bound: the claim is kept so the eventual exit is compensated as
+/// that termination, and recorded as returned so a later trigger is not
+/// refused forever but re-takes it and re-attempts the protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoppingClaim {
+    pub intent: TeardownIntent,
+    /// 1 for the first claim; each re-take increments it.
+    pub attempt: u32,
+    pub owner: ClaimOwner,
+}
+
+impl StoppingClaim {
+    pub const fn first(intent: TeardownIntent) -> Self {
+        Self {
+            intent,
+            attempt: 1,
+            owner: ClaimOwner::Executing,
+        }
+    }
+}
+
+/// Whether the holder of a stopping claim is still executing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimOwner {
+    /// The termination that took the claim has not returned: joiners join.
+    Executing,
+    /// The termination returned after effects were dispatched, without
+    /// observing the end; a later trigger may re-take the claim.
+    Returned,
 }
 
 /// Why a row was claimed stopping (#1936).

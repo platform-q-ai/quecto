@@ -402,6 +402,30 @@ pub fn resolve_termination_route(
     }
 }
 
+/// The number of edges between the owner and `target`: the exact routing
+/// depth a selected termination needs, so every per-hop bound can be sized
+/// to the real route instead of the maximum. Shares every refusal of
+/// [`resolve_termination_route`] that concerns the walk itself.
+pub fn route_length(
+    snapshot: &LineageSnapshot,
+    target: &DelegatedAgentIdentity,
+) -> Result<u32, TerminationRouteError> {
+    if target.uuid == snapshot.owner {
+        return Err(TerminationRouteError::TargetIsSelf);
+    }
+    let record = snapshot
+        .unique_record(&target.uuid)?
+        .ok_or_else(|| TerminationRouteError::UnknownTarget(target.uuid.clone()))?;
+    if record.identity.generation != target.generation {
+        return Err(TerminationRouteError::StaleGeneration {
+            target: target.uuid.clone(),
+            requested: target.generation,
+            current: record.identity.generation,
+        });
+    }
+    direct_child_toward(snapshot, record).map(|(_, edges)| edges)
+}
+
 /// Walk parent pointers from `record` up to a direct child of the owner,
 /// returning that child and the number of edges between owner and target.
 fn direct_child_toward(

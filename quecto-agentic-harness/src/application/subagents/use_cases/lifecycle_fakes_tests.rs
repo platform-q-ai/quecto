@@ -19,6 +19,8 @@ use super::teardown_fakes::identity;
 pub enum Phase {
     Live,
     Stopping(TerminationCause),
+    /// The claim's owner returned after effects; a later claim re-takes it.
+    StoppingReturned(TerminationCause),
     Compensating,
     Compensated,
 }
@@ -145,6 +147,11 @@ impl DelegatedAgentRegistry for FakeRegistry {
                 self.record(format!("claim-stopping {}", target.uuid));
                 Ok(())
             }
+            Phase::StoppingReturned(_) => {
+                row.phase = Phase::Stopping(cause);
+                self.record(format!("re-take-stopping {}", target.uuid));
+                Ok(())
+            }
             Phase::Stopping(_) => Err(StoppingClaimError::AlreadyStopping),
             Phase::Compensating | Phase::Compensated => Err(StoppingClaimError::Exited),
         }
@@ -153,9 +160,19 @@ impl DelegatedAgentRegistry for FakeRegistry {
     fn release_stopping(&self, target: &DelegatedAgentIdentity) {
         let mut rows = self.rows.lock().unwrap();
         if let Some(row) = rows.get_mut(target.uuid.as_str()) {
-            if matches!(row.phase, Phase::Stopping(_)) {
+            if matches!(row.phase, Phase::Stopping(_) | Phase::StoppingReturned(_)) {
                 row.phase = Phase::Live;
                 self.record(format!("release-stopping {}", target.uuid));
+            }
+        }
+    }
+
+    fn retain_stopping(&self, target: &DelegatedAgentIdentity) {
+        let mut rows = self.rows.lock().unwrap();
+        if let Some(row) = rows.get_mut(target.uuid.as_str()) {
+            if let Phase::Stopping(cause) = row.phase {
+                row.phase = Phase::StoppingReturned(cause);
+                self.record(format!("retain-stopping {}", target.uuid));
             }
         }
     }
@@ -166,7 +183,7 @@ impl DelegatedAgentRegistry for FakeRegistry {
             return TerminalClaim::AlreadyClaimed;
         };
         match row.phase {
-            Phase::Live | Phase::Stopping(_) => {
+            Phase::Live | Phase::Stopping(_) | Phase::StoppingReturned(_) => {
                 row.phase = Phase::Compensating;
                 self.record(format!("claim-terminal {}", target.uuid));
                 TerminalClaim::Claimed
@@ -175,20 +192,20 @@ impl DelegatedAgentRegistry for FakeRegistry {
         }
     }
 
-    fn holds_process(&self, target: &DelegatedAgentIdentity) -> bool {
-        self.rows
-            .lock()
-            .unwrap()
-            .get(target.uuid.as_str())
-            .is_some_and(|row| row.holds_process)
-    }
-
     fn terminal_claimed(&self, target: &DelegatedAgentIdentity) -> bool {
         self.rows
             .lock()
             .unwrap()
             .get(target.uuid.as_str())
             .is_some_and(|row| matches!(row.phase, Phase::Compensating | Phase::Compensated))
+    }
+
+    fn holds_process(&self, target: &DelegatedAgentIdentity) -> bool {
+        self.rows
+            .lock()
+            .unwrap()
+            .get(target.uuid.as_str())
+            .is_some_and(|row| row.holds_process)
     }
 
     fn await_compensated<'a>(

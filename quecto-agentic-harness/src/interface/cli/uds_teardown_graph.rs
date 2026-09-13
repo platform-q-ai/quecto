@@ -60,7 +60,9 @@ pub struct TeardownGraphInputs {
     /// (#1938): the graph's lifecycle repository freezes it. `None` builds
     /// a private one (a harness without a spawn tool).
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
-    /// Event stream the fleet compensation broadcasts survivor sets on.
+    /// This loop's event stream, on which the fleet compensation and a
+    /// selected termination's owner conclusion (#1936) broadcast the
+    /// survivor roster.
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// Passive-note channel of the dispatch loop, for exits the fleet
     /// compensation joins.

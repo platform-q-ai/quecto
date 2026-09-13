@@ -20,14 +20,14 @@ use crate::infrastructure::processes::owned_child_supervisor::{
 
 use super::subagent_registry::{ExitSignal, ExitSignalTx};
 
-pub(super) struct ReaperContext {
+pub struct ReaperContext {
     pub exit_tx: ExitSignalTx,
     pub child: DelegatedAgentIdentity,
     pub observer: Arc<ObserveOwnedChildExit>,
     pub swarm_context: Option<super::swarm_bridge::SwarmContext>,
 }
 
-pub(super) fn spawn_reaper_task(
+pub fn spawn_reaper_task(
     handle: ChildHandleId,
     supervisor: Arc<OwnedChildSupervisor>,
     context: ReaperContext,

@@ -9,7 +9,9 @@
 //! through the same transport as every other command.
 use std::time::Duration;
 
-use crate::application::subagents::ports::{ChildRoutingError, DirectChildRouting, PortFuture};
+use crate::application::subagents::ports::{
+    ChildRoutingError, DirectChildRouting, DownstreamRejection, PortFuture, TerminationResult,
+};
 use crate::domain::subagent_teardown::{DelegatedAgentIdentity, RoutingDepth, ShutdownReason};
 use crate::infrastructure::tools::subagent_registry::{
     SubagentRegistry, send_subagent_uds_command_with_timeout,
@@ -20,6 +22,14 @@ use super::owned_child_supervisor::ProtocolOutcome;
 /// Bound on connect + request + ACK for one edge.
 pub const PROTOCOL_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// What one hop of a forwarded termination may take before it answers: the
+/// owner's protocol attempt, the acknowledged child's exit budget, TERM and
+/// KILL grace, and the compensation observation of a member it does not
+/// hold (`DEFAULT_COMPENSATION_WAIT`), with slack. The bound of a forward
+/// grows by this per remaining hop, so a slow deep hop is not misreported
+/// as unreachable while the termination proceeds.
+pub const PER_HOP_CONCLUSION_BOUND: Duration = Duration::from_secs(30);
+
 /// Send `shutdown` to the harness at `socket_path` and wait for its ACK.
 /// Shared by the port adapter and by the supervisor's protocol attempts for
 /// callers that only hold a socket path.
@@ -29,7 +39,9 @@ pub async fn shutdown_over_socket(
     timeout: Duration,
 ) -> Result<(), ChildRoutingError> {
     let command = serde_json::json!({"type": "shutdown", "reason": reason.as_str()});
-    request_ack(socket_path, &command.to_string(), timeout).await
+    request_ack(socket_path, &command.to_string(), timeout)
+        .await
+        .map(|_| ())
 }
 
 /// [`shutdown_over_socket`] in the supervisor's vocabulary.
@@ -44,11 +56,15 @@ pub async fn shutdown_protocol_attempt(
     }
 }
 
+/// One correlated request; the child's acknowledgement is the parsed
+/// response object. A refusal the child answered is relayed as
+/// [`ChildRoutingError::Downstream`] when it names its kind; a transport
+/// failure or an unparseable answer is [`ChildRoutingError::Unreachable`].
 async fn request_ack(
     socket_path: &std::path::Path,
     command: &str,
     timeout: Duration,
-) -> Result<(), ChildRoutingError> {
+) -> Result<serde_json::Value, ChildRoutingError> {
     if socket_path.as_os_str().is_empty() {
         return Err(ChildRoutingError::Unreachable("no endpoint".into()));
     }
@@ -58,20 +74,35 @@ async fn request_ack(
     let parsed: serde_json::Value = serde_json::from_str(response.trim())
         .map_err(|e| ChildRoutingError::Unreachable(format!("unparseable ack: {e}")))?;
     if parsed.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
-        return Ok(());
+        return Ok(parsed);
     }
     let detail = parsed
         .get("error")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("command refused")
         .to_owned();
-    Err(ChildRoutingError::Unreachable(detail))
+    match parsed.get("error_kind").and_then(serde_json::Value::as_str) {
+        Some(kind) => Err(ChildRoutingError::Downstream(
+            DownstreamRejection::from_kind(kind, &detail),
+        )),
+        None => Err(ChildRoutingError::Unreachable(detail)),
+    }
+}
+
+/// The result an owner relayed in a successful answer, when it named one.
+fn relayed_result(response: &serde_json::Value) -> Option<TerminationResult> {
+    response
+        .get("data")
+        .and_then(|data| data.get("result"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(TerminationResult::parse)
 }
 
 /// The port adapter: resolves identities through the registry.
 pub struct UdsDirectChildRouting {
     registry: SubagentRegistry,
     timeout: Duration,
+    per_hop: Duration,
 }
 
 impl UdsDirectChildRouting {
@@ -79,12 +110,26 @@ impl UdsDirectChildRouting {
         Self {
             registry,
             timeout: PROTOCOL_ACK_TIMEOUT,
+            per_hop: PER_HOP_CONCLUSION_BOUND,
         }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Override the per-hop conclusion bound (tests shorten it).
+    pub fn with_per_hop_bound(mut self, per_hop: Duration) -> Self {
+        self.per_hop = per_hop;
+        self
+    }
+
+    /// The bound of a forward with `remaining_depth` hops still to take
+    /// after this edge: the edge's own acknowledgement bound plus one
+    /// conclusion bound for the owner and one per hop in between.
+    pub fn forward_timeout(&self, remaining_depth: RoutingDepth) -> Duration {
+        self.timeout + self.per_hop * remaining_depth.hops().saturating_add(1)
     }
 
     /// Affirmative resolution: the uuid must name an entry this harness
@@ -123,7 +168,7 @@ impl DirectChildRouting for UdsDirectChildRouting {
         via: &'a DelegatedAgentIdentity,
         target: &'a DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
-    ) -> PortFuture<'a, Result<(), ChildRoutingError>> {
+    ) -> PortFuture<'a, Result<Option<TerminationResult>, ChildRoutingError>> {
         Box::pin(async move {
             let endpoint = self.endpoint(via)?;
             let command = serde_json::json!({
@@ -132,7 +177,13 @@ impl DirectChildRouting for UdsDirectChildRouting {
                 "target_generation": target.generation.get(),
                 "remaining_depth": remaining_depth.hops(),
             });
-            request_ack(&endpoint, &command.to_string(), self.timeout).await
+            let response = request_ack(
+                &endpoint,
+                &command.to_string(),
+                self.forward_timeout(remaining_depth),
+            )
+            .await?;
+            Ok(relayed_result(&response))
         })
     }
 }

@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
-    PrepareHarnessShutdown, TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
-    TerminateDelegatedAgent,
+    OwnerConclusionPorts, PrepareHarnessShutdown, TerminateAllDelegatedAgents,
+    TerminateAllDelegatedAgentsPorts, TerminateDelegatedAgent,
 };
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
@@ -27,6 +27,8 @@ use crate::interface::cli::uds_teardown_adapters::{
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
 pub use crate::interface::cli::uds_parent_control::{ConnectionRole, ConnectionTeardown};
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::interface::cli::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
 pub use crate::interface::cli::uds_teardown_adapters::{
     DeferredLoopPersistence as LoopPersistenceAdapter, LoopExitReadiness as LoopExitAdapter,
     RegistryLifecycleRepository as LifecycleAdapter,
@@ -125,15 +127,25 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
             spawner: Arc::new(TokioShutdownRunSpawner),
         },
     ));
-    // The receiver claims a selected target stopping before routing its
-    // edge (#1936), so its reaper honours the intent when the child exits.
+    // The receiver of a selected termination is the direct owner of the
+    // target it shuts down (#1936): it claims the row stopping before the
+    // edge, observes the exit — the owned-handle fallback when the protocol
+    // does not suffice — and runs the row's compensation, broadcasting the
+    // survivor roster on this loop's event stream.
     let agents = Arc::new(RegistryDelegatedAgents::new(
-        registry_for_claims,
+        registry_for_claims.clone(),
         inputs.broadcast_tx,
         inputs.notify_tx,
     ));
-    let terminate =
-        Arc::new(TerminateDelegatedAgent::new(lifecycle, routing).with_registry(agents));
+    let terminate = Arc::new(
+        TerminateDelegatedAgent::new(lifecycle, routing).with_owner_conclusion(
+            OwnerConclusionPorts {
+                registry: agents.clone(),
+                termination: Arc::new(SupervisedChildTermination::new(registry_for_claims)),
+                compensation: agents,
+            },
+        ),
+    );
     let controller = Arc::new(SubagentTeardownController::new(prepare, execute, terminate));
     TeardownGraph {
         connections: Arc::new(ConnectionTeardown {

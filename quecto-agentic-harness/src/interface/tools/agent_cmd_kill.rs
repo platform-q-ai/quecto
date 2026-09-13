@@ -75,7 +75,7 @@ pub fn present_outcome(outcome: &KillDelegatedAgentOutcome) -> ToolResult {
 
 pub fn present_error(reference: &str, error: &KillDelegatedAgentError) -> ToolResult {
     match error {
-        KillDelegatedAgentError::Failed { detail } => result(
+        KillDelegatedAgentError::Failed { detail, .. } => result(
             serde_json::json!({
                 "result": "failed",
                 "target": reference,
@@ -91,7 +91,8 @@ pub fn present_error(reference: &str, error: &KillDelegatedAgentError) -> ToolRe
         KillDelegatedAgentError::AlreadyStopping
         | KillDelegatedAgentError::Rejected(_)
         | KillDelegatedAgentError::NotAccepting
-        | KillDelegatedAgentError::RouteUnreachable { .. } => {
+        | KillDelegatedAgentError::RouteUnreachable { .. }
+        | KillDelegatedAgentError::DownstreamRejected { .. } => {
             result(format!("agent_cmd error: {error}"), true)
         }
     }

@@ -71,12 +71,34 @@ Feature: Selected termination of a delegated agent (#1936, #1882)
 
   # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
   @serial
-  Scenario: An acknowledged remote member whose exit is never observed fails within the bound
+  Scenario: An acknowledged remote member whose exit is never observed fails within the bound and stays claimed
     Given a root harness whose launched child "E" acknowledges commands
     When the operator kills "E"
     Then the kill result is "failed"
-    And "E" remains live
+    And "E" stays claimed stopping
     And no survivor broadcast went out
+    And a retry of the kill of "E" re-takes the claim and sends a second shutdown
+
+  # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
+  @serial
+  Scenario: The eventual exit of a child whose kill failed after effects is compensated as that kill
+    Given a root harness whose launched child "E" acknowledges commands
+    When the operator kills "E"
+    Then the kill result is "failed"
+    And "E" stays claimed stopping
+    When the monitor of "E" observes its connection closed
+    Then the observation compensated "E" as a selected termination, not a natural exit
+    And exactly one survivor broadcast went out, listing nothing
+
+  # Timing-bound: a blocking wait must not drift a co-scheduled fixture.
+  @serial
+  Scenario: A child whose reaper wins during the protocol attempt is already exited
+    Given a root harness whose launched child "A" ends its process on shutdown and then refuses and holds a sleeping process
+    And the reaper of "A" is running
+    When the operator kills "A"
+    Then the kill result is "already-exited" and removed "A"
+    And the owned process of "A" was never signalled
+    And exactly one survivor broadcast went out, listing nothing
 
   # ── Stable no-effect refusals ────────────────────────────────────────────
 
@@ -141,10 +163,13 @@ Feature: Selected termination of a delegated agent (#1936, #1882)
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM will delay its response by 20 seconds
     And a launch-bound UDS harness launched with a parent control credential
+    And the launched harness owns a direct child that acknowledges shutdown slowly and exits when told
     When the parent connects and presents its credential
     And an ordinary client sends a prompt that the harness starts working on
     And the parent sends shutdown "selected_termination" with id "k-1"
     Then the parent receives a shutdown acknowledgement for "k-1" with reason "selected_termination"
+    When a subagent completion note reaches the harness
+    Then the note's turn is refused before it starts
     And the launched harness exits within 3 seconds
 
   # ── Interface and wire ───────────────────────────────────────────────────

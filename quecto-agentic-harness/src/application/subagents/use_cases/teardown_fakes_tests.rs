@@ -8,10 +8,11 @@ use crate::domain::subagent_teardown::{
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
 
+use crate::application::subagents::dto::TerminationResult;
 use crate::application::subagents::ports::{
-    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, ExitReadiness, PortFuture,
-    ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
-    SubagentLifecycleRepository, TurnCancellation,
+    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, DownstreamRejection,
+    ExitReadiness, PortFuture, ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner,
+    ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
 };
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
@@ -96,6 +97,11 @@ pub struct FakeRouting {
     pub unreachable: Mutex<Vec<AgentUuid>>,
     pub hold_child: Mutex<Option<AgentUuid>>,
     pub gate: tokio::sync::Notify,
+    /// What a forwarded hop relays back (`None`: it only routed the edge).
+    pub forward_result: Mutex<Option<TerminationResult>>,
+    /// Refusals scripted per child: what a forwarded hop through it, or a
+    /// `shutdown` sent to it, answers.
+    pub downstream: Mutex<Vec<(AgentUuid, DownstreamRejection)>>,
 }
 
 impl FakeRouting {
@@ -104,6 +110,15 @@ impl FakeRouting {
     }
 
     fn outcome(&self, child: &AgentUuid) -> Result<(), ChildRoutingError> {
+        if let Some((_, rejection)) = self
+            .downstream
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(uuid, _)| uuid == child)
+        {
+            return Err(ChildRoutingError::Downstream(rejection.clone()));
+        }
         if self.unreachable.lock().unwrap().contains(child) {
             Err(ChildRoutingError::Unreachable("socket closed".into()))
         } else {
@@ -141,13 +156,23 @@ impl DirectChildRouting for FakeRouting {
         via: &'a DelegatedAgentIdentity,
         target: &'a DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
-    ) -> PortFuture<'a, Result<(), ChildRoutingError>> {
+    ) -> PortFuture<'a, Result<Option<TerminationResult>, ChildRoutingError>> {
         self.calls.lock().unwrap().push(RoutingCall::Forward {
             via: via.clone(),
             target: target.clone(),
             remaining_depth,
         });
-        let outcome = self.outcome(&via.uuid);
+        let scripted = self
+            .downstream
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(uuid, _)| uuid == &via.uuid)
+            .map(|(_, rejection)| rejection.clone());
+        let _ = scripted;
+        let outcome = self
+            .outcome(&via.uuid)
+            .map(|()| *self.forward_result.lock().unwrap());
         Box::pin(async move { outcome })
     }
 }

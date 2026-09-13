@@ -60,6 +60,12 @@ struct Harness {
     client: Option<UnixStream>,
     exit_code: Option<i32>,
     bind_trigger: Option<Arc<tokio::sync::Notify>>,
+    /// The harness's subagent note channel and launcher registry, so a
+    /// scenario can give it a direct child and deliver a note.
+    notes: quecto::infrastructure::tools::subagent_registry::NotificationTx,
+    registry: quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    child_runtime: Option<tokio::runtime::Runtime>,
+    child_endpoint: Option<crate::selected_termination_steps::fixture::Endpoint>,
 }
 
 pub(crate) struct SupervisorRig {
@@ -370,6 +376,10 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
     let binding = ParentControlBinding::launched(credential.clone());
     let base_dir = base.clone();
     let sp = socket_path.clone();
+    let (notes, notification_rx) =
+        quecto::infrastructure::tools::subagent_registry::new_notification_channel();
+    let registry = quecto::infrastructure::tools::subagent_registry::new_registry();
+    let registry_for_loop = registry.clone();
     let handle = std::thread::spawn(move || {
         let crate::uds_steps::UdsAgentContext {
             agent,
@@ -399,8 +409,8 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             // A launcher-created child is launch-bound (#1937): ordinary
             // client churn must never end it, and it never persists.
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::LaunchBound,
-            notification_rx: None,
-            subagent_registry: None,
+            notification_rx: Some(notification_rx),
+            subagent_registry: Some(registry_for_loop),
             harness_lifecycle: None,
             workflow_state,
             workflow_config,
@@ -428,6 +438,10 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
         client: None,
         exit_code: None,
         bind_trigger: None,
+        notes,
+        registry,
+        child_runtime: None,
+        child_endpoint: None,
     });
 }
 
@@ -548,7 +562,108 @@ fn when_client_prompts(world: &mut QuectoWorld) {
         .write_all(b"{\"type\":\"prompt\",\"message\":\"work\"}\n")
         .unwrap();
     assert!(read_until(&mut stream, |v| v["type"] == "agent_start").is_some());
+    // Past the turn's own `turn_start`, so anything read later belongs to a
+    // turn that started after it.
+    assert!(read_until(&mut stream, |v| v["type"] == "turn_start").is_some());
     harness.client = Some(stream);
+}
+
+/// A direct child whose own teardown takes a while: the harness's "shut
+/// down children" phase stays open long enough for a note to arrive at an
+/// idle boundary after the cancelled turn.
+/// A direct child this harness owns the process of (a real `sleep` under a
+/// supervisor), whose endpoint acknowledges `shutdown` only after a pause
+/// and then ends its process: the fleet teardown's "shut down children"
+/// phase stays open for the slow acknowledgement, and the owner then
+/// observes the exit through its retained handle (protocol first, no
+/// signal) instead of waiting out the compensation bound of a handle-less
+/// row.
+#[given(
+    "the launched harness owns a direct child that acknowledges shutdown slowly and exits when told"
+)]
+fn given_slow_child(world: &mut QuectoWorld) {
+    use crate::selected_termination_steps::fixture::{Behaviour, serve};
+    use quecto::infrastructure::processes::owned_child_supervisor::ProcessGroup;
+    let harness = state(world).harness.as_mut().unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let exit_pid = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let endpoint = serve(&runtime, Behaviour::AcknowledgeSlowly, exit_pid.clone());
+    let supervisor = Arc::new(OwnedChildSupervisor::new());
+    let mut command = tokio::process::Command::new("sleep");
+    command
+        .arg("300")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let spawned = runtime
+        .block_on(supervisor.spawn(command, ProcessGroup::Inherited))
+        .expect("spawn the slow child's process");
+    exit_pid.store(
+        u64::from(spawned.display_pid.0),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    let mut entry = quecto::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
+        quecto::domain::ids::AgentUuid::new("slow-child"),
+        "slow".into(),
+        endpoint.path.clone(),
+        spawned.display_pid.0,
+    );
+    entry.launch_generation = Some(LaunchGeneration::new(1));
+    entry.owned_child = Some(spawned.handle);
+    entry.owned_child_supervisor = Some(supervisor);
+    let (exit_tx, _exit_rx) =
+        quecto::infrastructure::tools::subagent_registry::new_exit_signal_channel();
+    entry.exit_signal_tx = Some(exit_tx);
+    harness
+        .registry
+        .lock()
+        .unwrap()
+        .insert("slow-child".into(), entry);
+    harness.child_runtime = Some(runtime);
+    harness.child_endpoint = Some(endpoint);
+}
+
+/// A subagent completion note reaching the harness while its shutdown is
+/// executing: at the idle boundary the cancelled turn left, the note would
+/// nudge a fresh turn — a 20 s provider call — unless turn admission was
+/// closed by the shutdown (`mark_shutting_down`).
+#[when("a subagent completion note reaches the harness")]
+fn when_note_arrives(world: &mut QuectoWorld) {
+    use quecto::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentNotification,
+    };
+    let harness = state(world).harness.as_mut().unwrap();
+    harness
+        .notes
+        .try_send(SequencedSubagentNotification::new_for_agent(
+            1,
+            SubagentNotification::Completed {
+                agent_id: "slow".into(),
+            },
+            quecto::domain::ids::AgentUuid::new("slow-child"),
+        ))
+        .expect("the note is accepted");
+}
+
+/// The note's turn is refused before it starts (pre-cancelled): no further
+/// `turn_start` — the mark of a provider call — reaches the client before
+/// the harness closes the connection.
+#[then("the note's turn is refused before it starts")]
+fn then_note_turn_refused(world: &mut QuectoWorld) {
+    let harness = state(world).harness.as_mut().unwrap();
+    let stream = harness.client.as_mut().expect("the working client");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    let started = read_until(stream, |v| v["type"] == "turn_start");
+    assert!(
+        started.is_none(),
+        "a turn ran after the shutdown was acknowledged: {started:?}"
+    );
 }
 
 #[when(expr = "the parent sends shutdown {string} with id {string}")]
