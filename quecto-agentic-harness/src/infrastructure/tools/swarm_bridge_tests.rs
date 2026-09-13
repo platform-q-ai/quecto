@@ -259,12 +259,13 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
 }
 
 #[tokio::test]
-async fn ready_failure_retains_launched_scope_after_child_rollback() {
+async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_running() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 2);
     let mut reservation =
         super::swarm_admission::LaunchReservation::reserve(context.clone()).unwrap();
+    let member = reservation.member().to_owned();
     let mut command = tokio::process::Command::new("sleep");
     command.arg("30");
     let mut prepared =
@@ -273,12 +274,27 @@ async fn ready_failure_retains_launched_scope_after_child_rollback() {
     prepared.swarm_reservation = Some(reservation);
     assert_eq!(context.summary().unwrap()["usage"], 2);
     prepared.rollback_once().await;
-    assert_eq!(context.summary().unwrap()["usage"], 2);
-    // A lost harness ends the run as a pause holding `failed` (#1729).
+    // The rollback observed the child's exit through the owned handle: that
+    // is a confirmed death (#1961), never a lost-harness pause. The slot is
+    // free again and the run keeps running.
     let summary = context.summary().unwrap();
-    assert_eq!(
-        (summary["status"].as_str(), summary["outcome"].as_str()),
-        (Some("paused"), Some("failed"))
+    assert_eq!(summary["usage"], 1, "{summary}");
+    assert_eq!(summary["status"], "running", "{summary}");
+    let rolled_back = summary["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == member)
+        .unwrap();
+    assert_eq!(rolled_back["status"], "dead", "{summary}");
+    let events = context.events(0, 100).unwrap();
+    assert!(
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["action"] == "death_confirmed"),
+        "{events}"
     );
 }
 

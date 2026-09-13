@@ -53,7 +53,7 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
             exit_tx,
             child: identity("owned"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     tokio::time::timeout(std::time::Duration::from_secs(5), exit_rx.changed())
@@ -107,7 +107,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
             exit_tx,
             child: identity("gone"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
 
@@ -138,7 +138,7 @@ async fn reaper_reports_the_supervisors_exit_status() {
             exit_tx,
             child: identity("code3"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     exit_rx.changed().await.unwrap();

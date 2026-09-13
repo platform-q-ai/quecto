@@ -152,7 +152,14 @@ pub trait CoordinationPort {
         process: &ProcessIdentity,
     ) -> Result<(), DomainError>;
     fn confirm_unlaunched(&self, member: &str) -> Result<(), DomainError>;
+    /// A member's harness vanished without an authoritative exit observation
+    /// (or the coordinator was lost, #1924): ownership is retained and the
+    /// run pauses holding `failed`.
     fn quarantine(&self, member: &str) -> Result<(), DomainError>;
+    /// The launching harness reaped the member's owned process (#1961): the
+    /// member is dead, its active tasks block for the coordinator's
+    /// `recover`, and the run keeps going.
+    fn confirm_dead(&self, member: &str) -> Result<(), DomainError>;
 }
 
 #[derive(Clone, Debug)]

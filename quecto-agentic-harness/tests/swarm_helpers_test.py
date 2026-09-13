@@ -789,6 +789,134 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent._extend_deadline(3600)
         self.assertGreater(self.parent.summary()['deadline'], time.time() + 3000)
 
+    def other_worker(self):
+        self.parent._admit('other', 'reservation-o')
+        self.parent._activate('other', 'reservation-o', 12346, 'start-o', '/tmp/o.sock')
+        return self.client('other')
+
+    def test_revoke_is_coordinator_only(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        other = self.other_worker()
+        for actor in (self.worker, other):
+            with self.assertRaisesRegex(SwarmError, 'only the designated coordinator'):
+                actor.revoke(task['id'], 'not mine to take')
+        self.assertEqual(self.worker.task(task['id'])['token'], claim['token'])
+
+    def test_revoke_reopens_work_drops_reservations_and_tells_the_previous_owner(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.reserve(task['id'], claim['token'], ['src/a.rs'])
+        self.worker.block(task['id'], claim['token'], 'awaiting provider')
+        with self.assertRaisesRegex(SwarmError, 'stale or unowned'):
+            self.parent.release(task['id'], claim['token'])
+        with self.assertRaisesRegex(SwarmError, 'confirmed worker death'):
+            self.parent.recover(task['id'])
+        reopened = self.parent.revoke(task['id'], 'member suspended by provider')
+        self.assertEqual((reopened['status'], reopened['owner'], reopened['token'], reopened['blocker'], reopened['evidence']),
+                         ('ready', None, None, None, []))
+        self.assertEqual(self.parent.file_owners(), [])
+        event = [e for e in self.parent.events()['events'] if e['action'] == 'revoked'][-1]
+        self.assertEqual(json.loads(event['detail']),
+                         {'task': task['id'], 'reason': 'member suspended by provider', 'previous_owner': 'worker'})
+        inbox = self.worker.inbox()
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]['sender'], 'coordinator')
+        self.assertIn(f"task {task['id']} revoked", inbox[0]['body'])
+        self.assertIn('member suspended by provider', inbox[0]['body'])
+        other = self.other_worker()
+        fresh = other.claim(task['id'])
+        self.assertNotEqual(fresh['token'], claim['token'])
+        other.submit(task['id'], fresh['token'], [{'artifact': 'a.log', 'revision': 'r2'}])
+        self.parent.verify_task(task['id'], fresh['token'], 'r2')
+        self.assertEqual(self.parent.task(task['id'])['status'], 'completed')
+
+    def test_revoked_token_cannot_submit_release_reserve_or_verify(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.submit(task['id'], claim['token'], [{'artifact': 'a.log', 'revision': 'r1'}])
+        self.parent.revoke(task['id'], 'stale submission from a hung member')
+        for call in (lambda: self.worker.submit(task['id'], claim['token'], [{'artifact': 'a.log', 'revision': 'r1'}]),
+                     lambda: self.worker.release(task['id'], claim['token']),
+                     lambda: self.worker.reserve(task['id'], claim['token'], ['src/a.rs']),
+                     lambda: self.worker.block(task['id'], claim['token'], 'x'),
+                     lambda: self.worker.release_files(task['id'], claim['token'], 'r')):
+            with self.assertRaisesRegex(SwarmError, 'stale or unowned claim'):
+                call()
+        with self.assertRaisesRegex(SwarmError, 'stale claim'):
+            self.parent.verify_task(task['id'], claim['token'], 'r1')
+        self.assertEqual(self.parent.task(task['id'])['status'], 'ready')
+
+    def test_revoke_is_idempotent_and_refuses_unclaimed_or_completed_work(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.parent.revoke(task['id'], 'first')
+        events = len(self.parent.events(limit=100)['events'])
+        again = self.parent.revoke(task['id'], 'second')
+        self.assertEqual((again['status'], again['owner']), ('ready', None))
+        self.assertEqual(len(self.parent.events(limit=100)['events']), events)
+        self.assertEqual(len(self.worker.inbox()), 1)
+        with self.assertRaisesRegex(SwarmError, 'must be nonempty'):
+            self.parent.revoke(task['id'], '')
+        done = self.worker.claim(task['id'])
+        self.worker.submit(task['id'], done['token'], [{'artifact': 'a.log', 'revision': 'r'}])
+        self.parent.verify_task(task['id'], done['token'], 'r')
+        with self.assertRaisesRegex(SwarmError, 'only claimed, blocked or submitted'):
+            self.parent.revoke(task['id'], 'too late')
+        self.assertNotEqual(claim['token'], done['token'])
+
+    def test_revoke_after_confirmed_death_records_the_audit_without_a_message(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.parent._confirmed_dead('worker')
+        self.assertEqual(self.parent.task(task['id'])['status'], 'blocked')
+        reopened = self.parent.revoke(task['id'], 'reassign after death')
+        self.assertEqual(reopened['status'], 'ready')
+        actions = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertIn('revoked', actions)
+        self.assertEqual(actions.count('message_accepted'), 0)
+
+    def test_a_lost_member_is_recorded_once_and_never_pauses_a_resumed_run_again(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.parent._quarantine('worker')
+        summary = self.parent.summary()
+        self.assertEqual((summary['status'], summary['outcome']), ('paused', 'failed'))
+        self.parent._resume_external()
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        # The stale observation of the same vanished harness replays on every
+        # later reconcile: it must not re-pause the run.
+        self.parent._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        actions = [e['action'] for e in self.parent.events(limit=100)['events']]
+        self.assertEqual(actions.count('scope_unknown'), 1)
+        # Nor does a later confirmed death: it only blocks the work for recovery.
+        self.parent._confirmed_dead('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.assertEqual(self.parent.task(task['id'])['status'], 'blocked')
+        self.parent._quarantine('worker')
+        self.assertEqual(self.parent.summary()['status'], 'running')
+        self.parent.recover(task['id'])
+        self.assertEqual(self.parent.claim(task['id'])['owner'], 'coordinator')
+
+    def test_a_confirmed_member_death_keeps_the_run_running_and_blocks_its_work(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.reserve(task['id'], claim['token'], ['src/a.rs'])
+        self.parent._confirmed_dead('worker')
+        summary = self.parent.summary()
+        self.assertEqual(summary['status'], 'running')
+        self.assertEqual(summary['files'], [])
+        blocked = self.parent.task(task['id'])
+        self.assertEqual((blocked['status'], blocked['owner'], blocked['blocker']),
+                         ('blocked', 'worker', 'worker death confirmed; coordinator recovery required'))
+        self.assertEqual(self.parent._control_status()['resume_blockers'], [])
+        batch = self.parent._notifications(True)
+        self.assertEqual([m['id'] for m in batch['members']], [])
+        self.parent.recover(task['id'])
+        other = self.other_worker()
+        self.assertEqual(other.claim(task['id'])['owner'], 'other')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -81,6 +81,10 @@ impl CoordinationPort for Board {
         self.0.lock().unwrap().push(member.into());
         Ok(())
     }
+    fn confirm_dead(&self, member: &str) -> Result<(), DomainError> {
+        self.0.lock().unwrap().push(format!("dead:{member}"));
+        Ok(())
+    }
 }
 
 #[tokio::test]

@@ -24,7 +24,9 @@ pub struct ReaperContext {
     pub exit_tx: ExitSignalTx,
     pub child: DelegatedAgentIdentity,
     pub observer: Arc<ObserveOwnedChildExit>,
-    pub swarm_context: Option<super::swarm_bridge::SwarmContext>,
+    /// The swarm this launch reserved a member in, with that member's id
+    /// (#1961): the reaped exit is the authoritative death of the member.
+    pub swarm_member: Option<(super::swarm_bridge::SwarmContext, String)>,
 }
 
 pub fn spawn_reaper_task(
@@ -36,7 +38,7 @@ pub fn spawn_reaper_task(
         exit_tx,
         child,
         observer,
-        swarm_context,
+        swarm_member,
     } = context;
     tokio::spawn(async move {
         let exit = supervisor.wait_exit(handle).await;
@@ -60,10 +62,10 @@ pub fn spawn_reaper_task(
                 debug_assert!(false, "a process exit is never deferred to itself");
             }
         }
-        if let Some(context) = swarm_context {
+        if let Some((context, member)) = swarm_member {
             let _ = tokio::task::spawn_blocking(move || {
-                if let Err(error) = super::swarm_lifecycle::reconcile(&context) {
-                    tracing::error!(%error, "swarm reaper reconciliation failed; capacity retained");
+                if let Err(error) = super::swarm_lifecycle::member_exited(&context, &member) {
+                    tracing::error!(%error, member, "swarm reaper could not confirm the member's death; capacity retained");
                 }
             })
             .await;

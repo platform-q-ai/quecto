@@ -221,9 +221,11 @@ class Workbench(Tasks):
             self.store.event(db, 'launch_abandoned', {'member': member})
 
     def _confirmed_dead(self, member):
-        # Reserved for a lifecycle adapter that can prove the entire execution
-        # scope stopped. The current adapter quarantines harness-only death
-        # instead; idle, timeout and self-report never confer this authority.
+        # Harness-only (#1961): the harness that launched `member` reaped its
+        # owned process, so the member's whole process group is gone. Its
+        # active tasks block for `recover`; idle time, a lost socket, a
+        # timeout or a self-report never confer this authority (those stay
+        # `_quarantine`).
         with self.store.operation(active=False) as (db, run):
             current = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
             if not current or current['status'] == 'dead':
@@ -347,10 +349,28 @@ class Workbench(Tasks):
     def _quarantine(self, member):
         # A missing harness is not proof that its independent execution groups
         # stopped. Keep all ownership until the environment is discarded.
+        # Idempotent per member (#1961): the same vanished pid is seen by every
+        # later reconcile, and a member already recorded lost (or confirmed
+        # dead) must not pause the run again after the supervisor resumed it.
         with self.store.operation(active=False) as (db, run):
+            if self._lost(db, member):
+                return
             self.store.event(db, 'scope_unknown', {'member': member,
                 'reason': 'harness exited; execution scope unconfirmed; discard environment'})
             self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
+
+    @staticmethod
+    def _lost(db, member):
+        """Whether `member` is dead, or was quarantined after its latest activation."""
+        row = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
+        if row is not None and row['status'] == 'dead':
+            return True
+        latest = {'scope_unknown': 0, 'activated': 0}
+        for event in db.execute(
+                "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
+            if json.loads(event['detail']).get('member') == member:
+                latest[event['action']] = event['id']
+        return latest['scope_unknown'] > latest['activated']
 
     def _lose_coordinator(self):
         """Harness-only (#1924): the supervising session outside the container

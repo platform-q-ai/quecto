@@ -534,7 +534,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                             launch_generation,
                         ),
                         observer: lifecycle.observe_exit,
-                        swarm_context: self.tool.swarm_context.clone(),
+                        swarm_member: prepared
+                            .swarm_reservation
+                            .as_ref()
+                            .zip(self.tool.swarm_context.clone())
+                            .map(|(reservation, context)| {
+                                (context, reservation.member().to_owned())
+                            }),
                     },
                 );
             }

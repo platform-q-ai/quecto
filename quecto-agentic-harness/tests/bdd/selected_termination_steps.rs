@@ -165,7 +165,7 @@ fn given_reaper(world: &mut QuectoWorld, uuid: String) {
             exit_tx,
             child,
             observer,
-            swarm_context: None,
+            swarm_member: None,
         },
     );
 }

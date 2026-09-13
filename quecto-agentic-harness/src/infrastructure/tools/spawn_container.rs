@@ -279,9 +279,13 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
                     TerminationBudget::DEFAULT,
                 )
                 .await;
+            // Only an exit the owned handle observed confirms the member's
+            // death (#1961); a child still running (or no longer retained)
+            // keeps its reservation for reconciliation.
+            use super::super::processes::owned_child_supervisor::TerminationOutcome;
             if !matches!(
                 outcome,
-                super::super::processes::owned_child_supervisor::TerminationOutcome::StillRunning { .. }
+                TerminationOutcome::StillRunning { .. } | TerminationOutcome::NoRetainedHandle
             ) {
                 reservation.rolled_back()?;
             }

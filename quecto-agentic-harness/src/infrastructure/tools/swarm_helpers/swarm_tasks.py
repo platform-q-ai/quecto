@@ -167,16 +167,57 @@ class Tasks:
             self.store.event(db, 'verified', {'task': task_id, 'revision': revision})
 
     def recover(self, task_id):
+        """Coordinator only: reopen work whose owner's death the harness confirmed
+        (its owned process exited, #1961); `revoke` covers a live owner."""
         with self.store.operation(coordinator=True) as (db, _):
             task = self._task(db, task_id)
             if task['status'] not in ('claimed', 'blocked', 'submitted'):
                 raise SwarmError('only abandoned active work can be recovered')
             member = db.execute('SELECT status FROM members WHERE id=?', (task['owner'],)).fetchone()
             if not member or member['status'] != 'dead':
-                raise SwarmError('recovery requires confirmed worker death')
-            db.execute('DELETE FROM files WHERE task=?', (task_id,))
-            db.execute("UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?", (task_id,))
+                raise SwarmError('recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner')
+            self._reopen(db, task_id)
             self.store.event(db, 'recovered', {'task': task_id})
+
+    def revoke(self, task_id, reason):
+        """Coordinator only (#1961): take a claim back from an owner that will
+        not finish (suspended, hung, silent), whether or not it is alive. The
+        task returns to `ready` without owner, token, blocker or evidence, its
+        file reservations go, the audit records the reason and previous owner,
+        and the previous owner gets a board message so it learns on its next
+        wake (its owned calls with the old token fail as stale). Revoking an
+        unowned task is a no-op returning the task as it stands."""
+        bounded(reason, 'revocation reason')
+        with self.store.operation(coordinator=True) as (db, _):
+            task = self._task(db, task_id)
+            if task['owner'] is None and task['status'] in ('ready', 'blocked'):
+                return task
+            if task['owner'] is None or task['status'] not in ('claimed', 'blocked', 'submitted'):
+                raise SwarmError('only claimed, blocked or submitted work can be revoked')
+            previous = task['owner']
+            self._reopen(db, task_id)
+            self.store.event(db, 'revoked', {'task': task_id, 'reason': reason, 'previous_owner': previous})
+            self._notify_revoked(db, previous, task_id, reason)
+            return self._task(db, task_id)
+
+    @staticmethod
+    def _reopen(db, task_id):
+        db.execute('DELETE FROM files WHERE task=?', (task_id,))
+        db.execute("UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?", (task_id,))
+
+    def _notify_revoked(self, db, previous, task_id, reason):
+        """Best effort inside the revoke transaction: a dead owner or a full
+        inbox loses the message, never the revocation; the event is the audit."""
+        target = db.execute('SELECT status FROM members WHERE id=?', (previous,)).fetchone()
+        if not target or target['status'] == 'dead':
+            return
+        count = db.execute("SELECT count(*) FROM messages WHERE recipient=? AND status='accepted'", (previous,)).fetchone()[0]
+        if count >= 100:
+            return
+        body = f'claim on task {task_id} revoked by the coordinator: {reason}'
+        cursor = db.execute("INSERT INTO messages(sender,recipient,body,status) VALUES(?,?,?,'accepted')",
+                            (self.member, previous, body))
+        self.store.event(db, 'message_accepted', {'message': cursor.lastrowid, 'recipient': previous, 'revision': None})
 
     def reserve(self, task_id: int, token: str, paths: list[str]):
         """Atomically reserve 1–100 paths inside the checkout for this claim."""

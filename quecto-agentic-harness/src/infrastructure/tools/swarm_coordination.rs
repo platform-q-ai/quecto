@@ -111,6 +111,9 @@ impl CoordinationPort for SwarmContext {
     fn quarantine(&self, member: &str) -> Result<(), DomainError> {
         self.rpc("_quarantine", json!([member])).map(|_| ())
     }
+    fn confirm_dead(&self, member: &str) -> Result<(), DomainError> {
+        self.rpc("_confirmed_dead", json!([member])).map(|_| ())
+    }
 }
 impl SwarmContext {
     pub fn inference_snapshot(&self) -> Result<Snapshot, DomainError> {

@@ -94,10 +94,22 @@ run pauses holding `failed` (a paused run keeps its pause clock and any verdict
 the coordinator had already proposed), membership and file ownership stay
 reserved, and replacement claims are rejected. Close and discard that container
 environment before starting a fresh run.
-The current adapter cannot safely recover an abruptly exited worker in place;
-`recover` requires independently confirmed execution-scope death, which ordinary
-harness reconciliation deliberately does not assert. Post-launch rollback is also
-conservative. Neither idle time nor a worker's completion message frees a slot.
+That loss is recorded once per member: a later reconcile seeing the same
+vanished pid (after the master resumed the run) does not pause it again, and
+`revoke` reassigns the lost member's work.
+
+A member exit the launching harness observed itself is different (#1961): the
+harness that spawned a member owns its process, and when that process exits
+(on its own, or because the coordinator ended it with `agent_cmd kill`, or a
+launch was rolled back after the child exited) the exit is authoritative for
+the member's whole process group. The member is confirmed dead, its active
+tasks block with `worker death confirmed; coordinator recovery required`, its
+file reservations are released, and the run keeps running; the coordinator
+reopens the work with `recover(task_id)`. Only a harness death nobody observed
+this way (a socket loss, a vanished pid of a member this harness did not
+launch) is the conservative quarantine above; a socket loss alone never
+confirms a death. Neither idle time nor a worker's completion message frees a
+slot.
 
 ## Packaged API
 
@@ -132,9 +144,16 @@ submission and verification retries do not repeat their transitions.
 File sets are reserved all at once or not at all. Paths resolve inside the shared
 checkout, including symlink aliases and not-yet-created files.
 `release_files(task_id, claim_token, reservation_token)` cannot remove a newer
-owner's reservation. Only the coordinator may `recover(task_id)`, after the
-entire execution scope is confirmed stopped. A harness exit alone cannot grant
-that permission in the current adapter. There are no expiring ownership leases.
+owner's reservation. Only the coordinator may `recover(task_id)`, once the
+owner's death is confirmed by the harness that launched it (above), and only
+the coordinator may `revoke(task_id, reason)`: it takes a claim back from an
+owner that will not finish, alive or not, on a claimed, blocked or submitted
+task. The task returns to `ready` with no owner, token, blocker or evidence,
+its file reservations go, a `revoked` event records the reason and previous
+owner, and the previous owner receives a board message so a member that wakes
+later learns its claim is gone (its next owned call fails with `stale or
+unowned claim`). Revoking an unowned task is a no-op returning the task. There
+are no expiring ownership leases.
 
 These are **cooperative reservations**, not mandatory locks: Bash and arbitrary
 Python can bypass them. The container is the external containment boundary,
@@ -453,7 +472,14 @@ alone; poll connections do not consume that capacity (#1720). Do not pause a
 run because one member failed: pause is a whole-run wait. Resume the run (the
 parent may send `swarm_control` `resume` to the coordinator's socket at any
 time; it is
-handled below the model) and, only if a member is still stuck, steer it. A run paused because a
+handled below the model) and, only if a member is still stuck, steer it. When a
+member holds a claim it will not finish, the coordinator has three tools and
+no prescribed order: an explicit `agent_cmd` `steer` or `follow_up` re-arms a
+member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
+it off a failing provider; `board.revoke(task_id, reason)` reassigns its work
+so another member can claim it. `recover(task_id)` applies once the member's
+death is confirmed (its harness exited under the coordinator's own
+observation, for instance after `agent_cmd kill`). A run paused because a
 strict budget saw an answered request without usage re-pauses on the next
 admission until `strict_unknown` is disabled (or the budget removed); raising
 the limit alone does not clear it. Cancelled and rejected attempts never count

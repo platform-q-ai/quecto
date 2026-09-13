@@ -114,10 +114,10 @@ def notification_targets(run, actor, members, events, state):
         elif action in ('submitted', 'blocked'):
             if tasks.get(detail['task'], {}).get('status') == action:
                 targets.add(run['coordinator'])
-        elif action == 'evidence':
+        elif action in ('evidence', 'death_confirmed'):
             targets.add(run['coordinator'])
         elif action == 'amended' or (ready and action in (
-                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered')):
+                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked')):
             targets.update(live)
     return [live[identity] for identity in sorted(targets) if identity in live]
 

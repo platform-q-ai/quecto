@@ -157,3 +157,29 @@ Feature: Container swarm coordination
     When the supervisor pauses active work then delivers approval and exports evidence
     Then the swarm approval has a completed receipt and a retained terminal report
     And the observed usage budget pauses the run and request accounting is available
+
+  Scenario: The coordinator revokes a claim its suspended owner will not finish
+    When a suspended member holds a claimed task with a reserved file
+    And the coordinator revokes that claim as "member suspended by provider"
+    Then the revoked task is ready without owner, reservation or evidence
+    And the revocation is audited with its reason and previous owner
+    And the previous owner is told its claim was revoked
+    When another member claims and completes the revoked task
+    Then the swarm task status is "completed"
+    And the revoked owner's stale token can no longer act on the task
+
+  Scenario: Only the coordinator can revoke a claim
+    When a suspended member holds a claimed task with a reserved file
+    And a member other than the coordinator tries to revoke that claim
+    Then the swarm result should be an error
+    And the swarm result should contain "only the designated coordinator"
+
+  @done @swarm-supervision
+  Scenario: A member the coordinator kills is confirmed dead and its work recovered without pausing the run
+    When a member the coordinator launched is killed while holding a claim
+    Then the run kept running, the member is dead and another member takes over its recovered work
+
+  @done @swarm-supervision
+  Scenario: An unobserved member loss is recorded once and never re-pauses a resumed run
+    When an unobserved member loss pauses the run and the supervisor resumes it
+    Then the stale loss never pauses the run again and the work is revoked and reclaimed

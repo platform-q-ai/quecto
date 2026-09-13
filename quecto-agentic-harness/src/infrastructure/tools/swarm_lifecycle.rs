@@ -61,6 +61,15 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
     context.summary()
 }
 
+/// The reaper of a member this harness launched observed its exit (#1961):
+/// confirm the member dead (its tasks block for `recover`) and reconcile.
+pub fn member_exited(context: &SwarmContext, member: &str) -> Result<Value, DomainError> {
+    context
+        .lifecycle
+        .member_exited(context, &LinuxProcesses, member)?;
+    context.summary()
+}
+
 /// Durable messages remain authoritative when a wake hint fails.
 pub async fn notify(context: &SwarmContext) -> Vec<String> {
     let ctx = context.clone();

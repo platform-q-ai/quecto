@@ -721,6 +721,8 @@ pub struct QuectoWorld {
     pub swarm_job_id: Option<String>,
     /// Pid a background swarm program recorded for itself
     pub swarm_pid: Option<i32>,
+    /// Claim token a swarm member held before the coordinator revoked it
+    pub swarm_claim_token: Option<String>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,
