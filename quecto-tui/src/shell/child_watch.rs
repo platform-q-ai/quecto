@@ -8,15 +8,20 @@
 //! human-readable exit description on a watch channel that the disconnect
 //! notification surfaces.
 //!
-//! Exit diagnosis uses waitid(WNOWAIT): the leader stays unreaped until cleanup
-//! or detach drops the watcher. This pins the owned PGID even after leader exit.
-//! Linux descendants in separate groups are retained by exact pidfd handles.
+//! The watcher reaps the child in the background (`Child::wait`) and records
+//! its exit diagnosis. Termination (#1956) signals the harness **leader
+//! only**: SIGTERM, a bounded wait derived from the harness's fleet-teardown
+//! budgets, SIGKILL of that one pid past the budget, then a read-only canary
+//! over `/proc` — see [`crate::shell::process`]. No process group and no
+//! descendant is ever signalled; the harness owns its subagent tree.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
+
+pub use crate::shell::process::{LeaderEnd, LeaderTermination};
 
 pub(crate) type ChildWatchRegistry = std::sync::Arc<std::sync::Mutex<Vec<ChildWatch>>>;
 
@@ -87,11 +92,14 @@ impl StderrTail {
     }
 }
 
+/// A termination request: the leader-exit budget and where to report.
+type TerminationRequest = (Duration, oneshot::Sender<LeaderTermination>);
+
 /// Cloneable handle to the background watcher owning a spawned agent child.
 #[derive(Debug, Clone)]
 pub struct ChildWatch {
     exit_rx: watch::Receiver<Option<String>>,
-    term_tx: mpsc::Sender<oneshot::Sender<()>>,
+    term_tx: mpsc::Sender<TerminationRequest>,
     stderr_tail: StderrTail,
     /// OS pid of the watched child at spawn time (registry durability, #1465).
     pid: Option<u32>,
@@ -105,40 +113,33 @@ pub struct ChildWatch {
 /// [`ChildWatch::stderr_tail_lines`] to diagnose a panic-abort.
 pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) -> ChildWatch {
     let (exit_tx, exit_rx) = watch::channel(None);
-    let (term_tx, mut term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
+    let (term_tx, mut term_rx) = mpsc::channel::<TerminationRequest>(1);
     let pid = child.id();
-    #[cfg(target_os = "linux")]
-    let mut owned = crate::shell::process::OwnedProcesses::new(
-        pid.and_then(|pid| crate::shell::process::checked_pid(pid).ok())
-            .unwrap_or(-1),
-    );
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_millis(50));
-        let mut observed = false;
+        let mut exited = false;
         loop {
             tokio::select! {
-                _ = tick.tick() => {
-                    #[cfg(target_os = "linux")]
-                    owned.refresh();
-                    if !observed && let Some(pid) = pid
-                        && let Ok(Some(status)) = crate::shell::process::observed_exit(pid)
-                    {
-                        observed = true;
+                // `Child::wait` is cancel-safe: a termination request arriving
+                // mid-wait leaves the handle intact for `terminate_leader`.
+                status = child.wait(), if !exited => {
+                    exited = true;
+                    if let Ok(status) = status {
                         let _ = exit_tx.send(Some(describe_exit(status)));
                     }
                 }
                 request = term_rx.recv() => {
-                    let Some(done) = request else { break; };
-                    let cleaned = crate::shell::process::terminate_owned(
-                        &mut child, crate::shell::process::TERMINATE_GRACE_MS,
-                        #[cfg(target_os = "linux")] &mut owned,
-                    ).await;
-                    if cleaned { let _ = done.send(()); }
+                    let Some((budget, done)) = request else { break; };
+                    let outcome = if exited {
+                        crate::shell::process::already_exited(pid)
+                    } else {
+                        crate::shell::process::terminate_leader(&mut child, budget).await
+                    };
+                    let _ = done.send(outcome);
                     break;
                 }
             }
         }
-        // Drop leaves live children alone (detach); Tokio reaps exited children.
+        // Drop leaves a live child alone (detach); Tokio reaps exited children.
     });
     ChildWatch {
         exit_rx,
@@ -161,9 +162,9 @@ impl ChildWatch {
     #[cfg(any(test, feature = "test-harness"))]
     pub fn for_tests_with_termination_probe(
         pid: Option<u32>,
-    ) -> (Self, mpsc::Receiver<oneshot::Sender<()>>) {
+    ) -> (Self, mpsc::Receiver<TerminationRequest>) {
         let (_exit_tx, exit_rx) = watch::channel(None);
-        let (term_tx, term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
+        let (term_tx, term_rx) = mpsc::channel::<TerminationRequest>(1);
         (
             ChildWatch {
                 exit_rx,
@@ -216,23 +217,30 @@ impl ChildWatch {
         }
     }
 
-    /// Request owned cleanup and wait for the watcher. Use the bounded variant
-    /// when the caller must distinguish verified success from cleanup failure.
-    pub async fn terminate(&self) {
-        let _ = self.terminate_with_timeout(Duration::MAX).await;
+    /// Terminate the leader with the default [`LEADER_EXIT_BUDGET`]
+    /// (`crate::shell::process`) and wait for the watcher's report.
+    pub async fn terminate(&self) -> Option<LeaderTermination> {
+        self.terminate_with_budget(crate::shell::process::LEADER_EXIT_BUDGET)
+            .await
     }
 
-    /// Request termination and wait up to `timeout` for the watcher ack.
-    /// Returns `false` when the request cannot be delivered or the watcher does
-    /// not acknowledge within the caller's bounded cleanup window.
-    pub async fn terminate_with_timeout(&self, timeout: Duration) -> bool {
-        tokio::time::timeout(timeout, async {
+    /// SIGTERM the leader, wait up to `budget` for its exit, SIGKILL that
+    /// one pid past the budget, run the canary and report. `None` when the
+    /// watcher is gone (the request cannot be delivered) or it never
+    /// answers inside the budget plus the KILL grace — the caller is never
+    /// held longer than that.
+    pub async fn terminate_with_budget(&self, budget: Duration) -> Option<LeaderTermination> {
+        let outer = budget
+            .saturating_add(crate::shell::process::HARNESS_KILL_GRACE)
+            .saturating_add(Duration::from_secs(1));
+        tokio::time::timeout(outer, async {
             let (done_tx, done_rx) = oneshot::channel();
-            self.term_tx.send(done_tx).await.map_err(|_| ())?;
-            done_rx.await.map_err(|_| ())
+            self.term_tx.send((budget, done_tx)).await.ok()?;
+            done_rx.await.ok()
         })
         .await
-        .is_ok_and(|ack| ack.is_ok())
+        .ok()
+        .flatten()
     }
 }
 

@@ -304,8 +304,9 @@ pub(crate) async fn spawn_agent_program_watched_for_tab(
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
-        // Create a new process group so ordinary exit can kill the tab agent
-        // and any TUI-owned descendants without touching unrelated agents.
+        // Own process group: terminal signals never reach the harness, and
+        // the post-exit canary (#1956) can recognise a stray by pgid. The
+        // group itself is never signalled — only the leader pid is.
         .process_group(0)
         .spawn()
         .map_err(|e| format!("failed to spawn {program}: {e}"))?;
@@ -412,7 +413,9 @@ async fn spawn_agent_program(
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
-        // Create a new process group so we can kill the agent + all its subagents.
+        // Own process group: terminal signals never reach the harness, and
+        // the post-exit canary (#1956) can recognise a stray by pgid. The
+        // group itself is never signalled — only the leader pid is.
         .process_group(0)
         .spawn()
         .map_err(|e| format!("failed to spawn {program}: {e}"))?;
@@ -493,7 +496,9 @@ async fn spawn_agent_program(
 }
 
 async fn terminate_spawned_agent(child: &mut tokio::process::Child) {
-    crate::shell::process::terminate_child(child, crate::shell::process::TERMINATE_GRACE_MS).await;
+    let _ =
+        crate::shell::process::terminate_leader(child, crate::shell::process::LEADER_EXIT_BUDGET)
+            .await;
 }
 
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;

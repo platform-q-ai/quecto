@@ -68,3 +68,22 @@ fn stack_limits_size() {
     }
     assert!(stack.notifications.len() <= MAX_NOTIFICATIONS);
 }
+
+/// #1956: a progress notice is updated in place and dismissed by prefix.
+#[test]
+fn replace_and_dismiss_prefixed_update_one_progress_notice() {
+    let mut stack = NotificationStack::new();
+    stack.push(Notification::new("unrelated", NotifyLevel::Info));
+    stack.replace_prefixed(
+        "waiting",
+        Notification::new("waiting (1s)", NotifyLevel::Info),
+    );
+    stack.replace_prefixed(
+        "waiting",
+        Notification::new("waiting (2s)", NotifyLevel::Info),
+    );
+    assert_eq!(stack.messages(), vec!["unrelated", "waiting (2s)"]);
+    assert!(stack.dismiss_prefixed("waiting"));
+    assert!(!stack.dismiss_prefixed("waiting"));
+    assert_eq!(stack.messages(), vec!["unrelated"]);
+}

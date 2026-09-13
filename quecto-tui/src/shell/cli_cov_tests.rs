@@ -326,7 +326,7 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
+    crate::shell::process::terminate_leader(&mut child, crate::shell::process::LEADER_EXIT_BUDGET)
         .await;
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -369,7 +369,7 @@ async fn spawn_agent_parses_the_protocol_version_announcement() {
         "spawn must parse the announced protocol version"
     );
 
-    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
+    crate::shell::process::terminate_leader(&mut child, crate::shell::process::LEADER_EXIT_BUDGET)
         .await;
     let _ = std::fs::remove_dir_all(&dir);
 }

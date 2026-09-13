@@ -85,6 +85,10 @@ If `quecto` is on `PATH`, the TUI can spawn the kernel automatically:
 quecto-tui
 ```
 
+`Ctrl+D`, `/exit` or `/quit` persists the session, then sends SIGTERM to each
+TUI-owned agent (that one process only) and waits up to 30 s for it to settle
+its subagents and exit; see [quecto-tui/README.md](quecto-tui/README.md).
+
 Workflow-driven launch:
 
 ```bash

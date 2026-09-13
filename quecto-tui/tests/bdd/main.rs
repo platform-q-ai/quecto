@@ -168,6 +168,8 @@ pub struct TuiWorld {
     pub tui_subagent_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     /// Last master attach-backfill (user, assistant) pair for re-delivery steps (#1050).
     pub tui_last_master_backfill: Option<(String, String)>,
+    // ── TUI ordinary-exit leader termination BDD (#1956) ───────────────
+    pub tui_exit: Option<tui_ctrl_d_exit_steps::ExitFixture>,
     // ── TUI PID-safety BDD (`tui_pid_safety.feature`) ──────────────────
     pub tui_pid_input: Option<u32>,
     pub tui_pid_result: Option<Result<i32, String>>,

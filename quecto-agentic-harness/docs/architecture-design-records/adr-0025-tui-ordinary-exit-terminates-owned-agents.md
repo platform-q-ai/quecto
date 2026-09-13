@@ -178,13 +178,18 @@ The epic closes with one teardown model, ratcheted by
   child; 30 s per remaining hop for a nested target; 45 s before a repeated
   OS signal forces the harness out.
 
-**TUI ordinary exit today and #1956.** The TUI's ordinary exit (`Ctrl+D`,
-`/quit`, `/exit`, tab close, detach) still SIGTERMs the harness process
-group and every descendant it finds, waits 1.5 s and SIGKILLs the rest. That
-predates the harness owning its own fleet teardown and now races it: the
-harness settles its subtree gracefully on SIGTERM and exits 0 by itself.
-#1956 is the planned simplification — SIGTERM the harness leader only, wait
-within the harness's teardown budget, SIGKILL only that one process after
-it, and replace the descendant sweep with a post-exit canary. Until it
-lands, the TUI's pid-tree sweep is a TUI-crate behaviour outside the harness
-allowlist, not a harness contract.
+**TUI ordinary exit — #1956.** The TUI's ordinary exit (`Ctrl+D`, `/quit`,
+`/exit`) and its other owned-harness ends (tab close, `/new` workspace reset,
+startup-failure cleanup) signal the harness **leader only**: after the
+snapshots are persisted, SIGTERM to that one pid (`kill(pid)`, never
+`kill(-pgid)`, never a descendant), a wait for that process to exit within a
+30 s budget (the fleet's 25 s per-child worst case plus 5 s persist-and-exit
+slack, under the harness's own 45 s force-exit), a "waiting for the agent to
+settle its subagents…" notice past ~1 s, and SIGKILL of only that pid past
+the budget. The former process-group SIGTERM, `/proc` descendant sweep, 1.5 s
+grace and "leader exit is not proof of cleanup" verifier are gone; in their
+place a read-only post-exit canary reads `/proc` once and reports — never
+signals — any process still naming the old leader as parent or process group.
+Under the lifetime binding that report is always empty; a non-empty one is
+the evidence. The harness's fleet teardown on SIGTERM is thus the only
+subagent-ending authority, with the TUI a plain SIGTERM sender.

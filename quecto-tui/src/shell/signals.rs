@@ -3,8 +3,8 @@
 //! SIGTSTP requires special handling: the terminal must be restored to
 //! cooked mode before suspending, and re-entered into raw mode on resume.
 //!
-//! For outgoing signal management (SIGTERM/SIGKILL to child process groups),
-//! see the [`crate::shell::process`] module.
+//! For outgoing signal management (SIGTERM/SIGKILL to the owned harness
+//! leader, one pid only), see the [`crate::shell::process`] module.
 
 /// Suspend the process (Ctrl+Z behavior).
 ///

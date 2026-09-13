@@ -118,7 +118,7 @@ the 30s deadline instead.
 | `Shift+Enter` or `Alt+Enter` | Insert newline |
 | `Escape` | Abort the active agent run, or clear the editor if idle |
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
-| `Ctrl+D` | Exit immediately |
+| `Ctrl+D` | Exit: persist, then ask each owned agent to settle its subagents and exit |
 | `Ctrl+G` | Jump to the latest conversation output |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
@@ -232,14 +232,21 @@ when that harness exits or loses its connection to it.
 Since epic #1929 the harness owns its own teardown: on SIGTERM it asks every
 direct child to shut down over the protocol, each child settles its own
 subtree the same way, container environments run their retained kill, and the
-harness persists and exits 0 by itself (worst case ≈ 19 s per unresponsive
+harness persists and exits 0 by itself (worst case ≈ 25 s per unresponsive
 direct child; a repeated signal is ignored inside its 45 s budget). The TUI's
-current exit path still predates that: it SIGTERMs the harness process group
-and every descendant it can find, waits 1.5 s, then SIGKILLs the rest. That
-races the harness's own graceful teardown; #1956 is the planned
-simplification (SIGTERM the harness leader only, wait within the harness's
-budget, SIGKILL only that one process after it, and log — never signal — any
-stray process afterwards).
+exit path (#1956) therefore signals **one** process per owned harness: after
+the snapshots are persisted it sends SIGTERM to the harness leader pid — never
+`kill(-pgid)`, never a descendant — and waits for that process to exit within
+a 30 s budget (the harness's 25 s per-child worst case plus 5 s to persist and
+exit, deliberately under its own 45 s force-exit). If the wait passes ~1 s the
+TUI shows "waiting for the agent to settle its subagents… (Ns)" and keeps it
+updated; the notice is dismissed as soon as the leaders are gone. Only a
+leader that outlives the budget is SIGKILLed, and only that one pid. After
+each leader exits a read-only canary reads `/proc` once and reports — never
+signals — any process still naming the old pid as parent or process group;
+under the lifetime binding that list is always empty, and a non-empty one is
+printed after terminal cleanup as the evidence. The same leader-only helper
+serves tab close, `/new` workspace reset and startup-failure cleanup.
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.

@@ -1,11 +1,11 @@
 //! Steps for `tui_pid_safety.feature`.
 //!
-//! Exercises the REAL checked PID conversion used by the TUI's process-group
-//! cleanup: `quecto_tui::shell::process::checked_pid`. Production
-//! signals a process group with `libc::kill(-pid, sig)`, so the group target is
-//! the *negated* checked pid — we assert that relationship rather than sending a
-//! real signal. `kill_process_group` is `pub(crate)` and cannot be called from
-//! this external crate; the live SIGTERM→grace→SIGKILL sequence is `@pending`.
+//! Exercises the REAL checked PID conversion used by the TUI's leader-only
+//! exit signal (#1956): `quecto_tui::shell::process::checked_pid`. Production
+//! signals exactly one process with `libc::kill(pid, sig)` — never a group —
+//! so the target is the checked pid itself; we assert that relationship
+//! rather than sending a real signal. The live SIGTERM → budget → SIGKILL
+//! sequence is covered by `tui_ctrl_d_exit.feature`.
 
 use super::*;
 use quecto_tui::shell::process::checked_pid;
@@ -22,8 +22,8 @@ fn given_spawns_child(world: &mut TuiWorld) {
 
 #[given("the child process runs in its own process group")]
 fn given_own_group(world: &mut TuiWorld) {
-    // The child is spawned in its own group (setsid/setpgid in production); the
-    // conversion under test turns its PID into the negated group signal target.
+    // The child is spawned in its own group (setpgid in production) so the
+    // post-exit canary can recognise a stray; the group is never signalled.
     world.tui_pid_group_target = None;
 }
 
@@ -36,14 +36,14 @@ fn given_child_pid(world: &mut TuiWorld, pid: u32) {
 
 // ── Conversion ────────────────────────────────────────────────────────────
 
-#[when("the TUI converts the PID for process group kill")]
+#[when("the TUI converts the PID for the leader signal")]
 fn when_convert(world: &mut TuiWorld) {
     let pid = world.tui_pid_input.expect("PID under test");
     match checked_pid(pid) {
         Ok(checked) => {
             world.tui_pid_result = Some(Ok(checked));
-            // Production targets the group via `libc::kill(-pid, sig)`.
-            world.tui_pid_group_target = Some(-checked);
+            // Production targets the one process via `libc::kill(pid, sig)`.
+            world.tui_pid_group_target = Some(checked);
         }
         Err(e) => {
             world.tui_pid_result = Some(Err(e.to_string()));
@@ -64,13 +64,14 @@ fn then_converted_pid(world: &mut TuiWorld, expected: i32) {
     );
 }
 
-#[then(regex = r"^SIGTERM should be sent to process group (-\d+)$")]
-fn then_group_target(world: &mut TuiWorld, group: i32) {
+#[then(regex = r"^SIGTERM should be sent to the single process (\d+)$")]
+fn then_group_target(world: &mut TuiWorld, pid: i32) {
     assert_eq!(
         world.tui_pid_group_target,
-        Some(group),
-        "the process-group signal target must be the negated checked pid"
+        Some(pid),
+        "the signal target must be the checked pid itself, never a group"
     );
+    assert!(pid > 0, "a group target would be non-positive");
 }
 
 #[then("the conversion should fail")]
@@ -109,8 +110,8 @@ fn then_error_mentions_pid(world: &mut TuiWorld) {
 
 #[then("SIGTERM must NOT be sent to PID 1")]
 fn then_not_pid_1(world: &mut TuiWorld) {
-    // The naive `u32::MAX as i32` wraps to -1, whose group target `-(-1)` is 1
-    // (init). The checked path rejects it instead of ever producing that.
+    // The naive `u32::MAX as i32` wraps to -1: `kill(-1)` addresses every
+    // process. The checked path rejects it instead of ever producing that.
     let pid = world.tui_pid_input.expect("PID under test");
     assert_eq!(pid as i32, -1, "u32::MAX casts to -1 without the guard");
     assert!(
@@ -120,6 +121,6 @@ fn then_not_pid_1(world: &mut TuiWorld) {
     assert_ne!(
         world.tui_pid_group_target,
         Some(1),
-        "the group target must never be PID 1 (init)"
+        "the target must never be PID 1 (init)"
     );
 }

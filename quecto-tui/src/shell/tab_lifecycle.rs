@@ -239,7 +239,7 @@ impl super::App {
                 if let Err(err) = conn.transport.clone_sender().try_send_exit_durability(
                     &crate::protocol::client::Command::PersistSession {
                         id: Some(id.clone()),
-                        restore_reason: (self.ordinary_exit_kill_owned
+                        restore_reason: (self.exit_policy.kill_owned
                             && self
                                 .tabs
                                 .get(&tab)

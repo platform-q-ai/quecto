@@ -1,19 +1,67 @@
-//! Ownership-scoped cleanup. A watched leader is not reaped until cleanup, so
-//! its PID/PGID cannot be recycled while we signal the group. Linux descendants
-//! in other groups are pinned and signalled individually, never by guessed PGID.
+//! Leader-only termination of a TUI-owned harness (#1956).
+//!
+//! After epic #1929 the harness owns its subagent tree: on SIGTERM it tears
+//! the fleet down (bounded), persists, then exits, and every launcher-created
+//! child is lifetime-bound to it. The TUI therefore signals **one** process —
+//! the harness leader — with `kill(pid)` (never `kill(-pgid)`, never a
+//! descendant), waits for that process to exit within a budget derived from
+//! the harness's own teardown numbers, and SIGKILLs only that process after
+//! the budget. A post-exit canary then reads `/proc` once and reports (never
+//! signals) anything still naming the old leader as parent or group.
 
-/// SIGTERM-to-SIGKILL window. The harness tears down its subagents and
-/// container environments on SIGTERM (running each environment's kill
-/// script, which can take on the order of a second per environment), so the
-/// window must cover that work; it ends early once the tree has exited.
-pub const TERMINATE_GRACE_MS: u64 = 1500;
-const TERMINATE_POLL_TICK_MS: u64 = 10;
+use std::time::Duration;
 
-#[cfg(target_os = "linux")]
-#[path = "process_owned.rs"]
-mod owned;
-#[cfg(target_os = "linux")]
-pub(crate) use owned::OwnedProcesses;
+// ── Budget derivation ───────────────────────────────────────────────────
+//
+// The numbers below mirror the harness's documented teardown budgets
+// (`quecto-agentic-harness`): `PROTOCOL_ACK_TIMEOUT` in
+// `infrastructure/processes/direct_child_routing.rs`,
+// `TerminationBudget::DEFAULT` in `infrastructure/processes/owned_child_supervisor.rs`,
+// `COMPENSATION_WAIT_SLACK` / `DEFAULT_COMPENSATION_WAIT` in
+// `infrastructure/tools/subagent_teardown_registry.rs`, and
+// `FORCE_EXIT_AFTER` in `interface/cli/uds_shutdown.rs`. The TUI does not
+// depend on the harness crate, so they are restated here and pinned against
+// the harness sources by `budget_tests.rs`.
+
+/// Harness: bound on a child's protocol shutdown ACK.
+pub const HARNESS_PROTOCOL_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Harness: how long an acknowledged child gets to exit before the fallback.
+pub const HARNESS_EXIT_AFTER_ACK: Duration = Duration::from_secs(10);
+/// Harness: TERM grace of the owned-handle fallback.
+pub const HARNESS_TERM_GRACE: Duration = Duration::from_secs(2);
+/// Harness: KILL grace of the owned-handle fallback.
+pub const HARNESS_KILL_GRACE: Duration = Duration::from_secs(2);
+/// Harness: slack a compensation observer allows past the ladder.
+pub const HARNESS_COMPENSATION_WAIT_SLACK: Duration = Duration::from_secs(6);
+/// Harness: the full owned-handle ladder (ACK + exit + TERM + KILL = 19 s).
+pub const HARNESS_OWNED_HANDLE_LADDER: Duration = HARNESS_PROTOCOL_ACK_TIMEOUT
+    .saturating_add(HARNESS_EXIT_AFTER_ACK)
+    .saturating_add(HARNESS_TERM_GRACE)
+    .saturating_add(HARNESS_KILL_GRACE);
+/// Harness: per-child worst case of the fleet teardown — the ladder plus the
+/// compensation slack (`DEFAULT_COMPENSATION_WAIT` = 25 s). The fleet settles
+/// children concurrently, so this is also the batch worst case.
+pub const HARNESS_COMPENSATION_WAIT: Duration =
+    HARNESS_OWNED_HANDLE_LADDER.saturating_add(HARNESS_COMPENSATION_WAIT_SLACK);
+/// Harness: a repeated SIGTERM past this point forces the harness out
+/// (`FORCE_EXIT_AFTER` = 45 s). The TUI's budget must never exceed it — the
+/// harness's own escape hatch is the outer bound, not the TUI's.
+pub const HARNESS_FORCE_EXIT_AFTER: Duration = Duration::from_secs(45);
+/// Room, past the fleet's worst case, for the harness to persist its session
+/// and exit after the fleet settled.
+pub const LEADER_PERSIST_SLACK: Duration = Duration::from_secs(5);
+
+/// How long the TUI waits for the harness leader to exit after SIGTERM
+/// before SIGKILLing that one process: the fleet's per-child worst case
+/// (25 s) plus persist-and-exit slack (5 s) = 30 s. Above the fleet worst
+/// case so a child mid-turn is never cut off before the harness can settle
+/// it, and below the harness's own 45 s force-exit.
+pub const LEADER_EXIT_BUDGET: Duration =
+    HARNESS_COMPENSATION_WAIT.saturating_add(LEADER_PERSIST_SLACK);
+
+/// Show the "waiting for the agent to settle its subagents…" notice once the
+/// exit has taken this long.
+pub const SETTLING_NOTICE_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Debug, PartialEq)]
 pub enum QuectodError {
@@ -35,135 +83,153 @@ pub fn checked_pid(pid: u32) -> Result<i32, QuectodError> {
     }
     i32::try_from(pid).map_err(|_| QuectodError::Overflow(pid))
 }
-pub(crate) fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
+
+/// Send `signal` to exactly one process. A non-positive pid is refused
+/// (`kill(0)` / `kill(-n)` would address a group), so this can never widen
+/// into a group signal.
+pub(crate) fn signal_leader(pid: i32, signal: libc::c_int) -> libc::c_int {
     if pid <= 0 {
         return -1;
     }
-    // SAFETY: a positive identifier is required; callers own the unreaped leader.
-    unsafe { libc::kill(-pid, signal) }
+    // SAFETY: positive pid; the caller holds the unreaped child, so no recycled pid.
+    unsafe { libc::kill(pid, signal) }
 }
 
-/// Observe exit without reaping: retain the leader's identity until cleanup.
-pub(crate) fn observed_exit(pid: u32) -> std::io::Result<Option<std::process::ExitStatus>> {
-    use std::os::unix::process::ExitStatusExt;
-    // SAFETY: zero is a valid initial siginfo_t representation for waitid.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    // SAFETY: waitid writes to a valid siginfo_t; WNOWAIT deliberately retains the child.
-    let rc = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            pid,
-            &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: successful waitid initializes the child fields of siginfo_t.
-    if unsafe { info.si_pid() } == 0 {
-        return Ok(None);
-    }
-    // SAFETY: the child-status field is initialized by successful waitid.
-    let status = unsafe { info.si_status() };
-    let raw = if info.si_code == libc::CLD_EXITED {
-        status << 8
-    } else {
-        status
-    };
-    Ok(Some(std::process::ExitStatus::from_raw(raw)))
+/// How the leader ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaderEnd {
+    /// The leader had already exited before termination was requested.
+    AlreadyExited,
+    /// The leader exited on its own after SIGTERM, inside the budget.
+    ExitedAfterTerm,
+    /// The leader outlived the budget and was SIGKILLed (that one pid only).
+    Killed,
+    /// The handle carried no pid; nothing was signalled.
+    NoPid,
 }
 
-/// Terminate a child whose identity has not been reaped. Success requires
-/// bounded verification, not merely observing the leader exit.
-pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) -> bool {
-    let Some(pid) = child.id().and_then(|pid| checked_pid(pid).ok()) else {
-        return false;
-    };
-    #[cfg(target_os = "linux")]
-    let mut owned = OwnedProcesses::new(pid);
-    terminate_owned(
-        child,
-        grace_ms,
-        #[cfg(target_os = "linux")]
-        &mut owned,
-    )
-    .await
+/// Outcome of one leader termination: how it ended, how long the wait took,
+/// and what the post-exit canary found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderTermination {
+    pub pid: Option<u32>,
+    pub end: LeaderEnd,
+    pub waited: Duration,
+    /// Pids still naming the old leader as parent or process group after it
+    /// exited. Reported, never signalled. Always empty under the lifetime
+    /// binding — a non-empty list is the evidence that it was not upheld.
+    pub strays: Vec<i32>,
 }
 
-/// The unreaped leader has exited and (on Linux) so has every observed
-/// descendant. Without the descendant verifier, leader exit is all we can see.
-fn tree_exited(pid: i32, #[cfg(target_os = "linux")] owned: &OwnedProcesses) -> bool {
-    let Ok(pid) = u32::try_from(pid) else {
-        return false;
-    };
-    let leader_exited = matches!(observed_exit(pid), Ok(Some(_)));
-    #[cfg(target_os = "linux")]
-    {
-        leader_exited && owned.all_exited()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        leader_exited
-    }
-}
-
-pub(crate) async fn terminate_owned(
+/// SIGTERM the leader, await its exit within `budget`, SIGKILL it past the
+/// budget, then run the canary. Only `child`'s own pid is ever signalled.
+pub async fn terminate_leader(
     child: &mut tokio::process::Child,
-    grace_ms: u64,
-    #[cfg(target_os = "linux")] owned: &mut OwnedProcesses,
-) -> bool {
-    let Some(pid) = child.id().and_then(|pid| checked_pid(pid).ok()) else {
-        return false;
+    budget: Duration,
+) -> LeaderTermination {
+    let started = tokio::time::Instant::now();
+    let Some(raw_pid) = child.id() else {
+        return LeaderTermination {
+            pid: None,
+            end: LeaderEnd::NoPid,
+            waited: Duration::ZERO,
+            strays: Vec::new(),
+        };
     };
-    #[cfg(target_os = "linux")]
-    owned.refresh();
-    kill_process_group(pid, libc::SIGTERM);
-    #[cfg(target_os = "linux")]
-    owned.signal(libc::SIGTERM);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
-    while tokio::time::Instant::now() < deadline {
-        #[cfg(target_os = "linux")]
-        owned.refresh();
-        // Leader exit alone is not proof of cleanup (#1608), but leader exit
-        // plus every owned descendant exited is: stop waiting out the grace
-        // and go straight to the (now no-op) escalation and verification.
-        if tree_exited(
-            pid,
-            #[cfg(target_os = "linux")]
-            owned,
-        ) {
-            break;
+    let pid = checked_pid(raw_pid).ok();
+    let end = match child.try_wait() {
+        Ok(Some(_)) => LeaderEnd::AlreadyExited,
+        _ => {
+            if let Some(pid) = pid {
+                signal_leader(pid, libc::SIGTERM);
+            }
+            match tokio::time::timeout(budget, child.wait()).await {
+                Ok(_) => LeaderEnd::ExitedAfterTerm,
+                Err(_) => {
+                    // Tokio signals the unreaped handle's own pid only.
+                    let _ = child.start_kill();
+                    // Bounded so the TUI can never hang on an unreapable
+                    // (D-state) leader; an unreaped handle is reaped by tokio
+                    // later.
+                    let _ = tokio::time::timeout(HARNESS_KILL_GRACE, child.wait()).await;
+                    LeaderEnd::Killed
+                }
+            }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
+    };
+    let strays = pid.map(stray_processes_of).unwrap_or_default();
+    if !strays.is_empty() {
+        tracing::warn!(
+            leader = raw_pid,
+            ?strays,
+            "processes still name the exited harness as parent or group; not signalled (#1956 canary)"
+        );
     }
-    // No try_wait before this signal: even an exited leader still pins its PGID.
-    kill_process_group(pid, libc::SIGKILL);
-    // The leader might not have been a group leader. Kill the owned Child too.
-    let _ = child.start_kill();
-    #[cfg(target_os = "linux")]
-    let complete = {
-        let deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms.max(200));
-        loop {
-            owned.refresh();
-            owned.signal(libc::SIGKILL);
-            if owned.all_exited() {
-                break true;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                break false;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
-        }
-    };
-    // Other Unix platforms still receive owned-group escalation, but lack this
-    // Linux exact-descendant verifier: do not claim a verified tree cleanup.
-    #[cfg(not(target_os = "linux"))]
-    let complete = false;
-    child.wait().await.is_ok() && complete
+    LeaderTermination {
+        pid: Some(raw_pid),
+        end,
+        waited: started.elapsed(),
+        strays,
+    }
 }
 
+/// The leader was already observed exited (and reaped) before termination
+/// was requested: nothing to signal, only the canary to run.
+pub fn already_exited(pid: Option<u32>) -> LeaderTermination {
+    let strays = pid
+        .and_then(|pid| checked_pid(pid).ok())
+        .map(stray_processes_of)
+        .unwrap_or_default();
+    LeaderTermination {
+        pid,
+        end: if pid.is_some() {
+            LeaderEnd::AlreadyExited
+        } else {
+            LeaderEnd::NoPid
+        },
+        waited: Duration::ZERO,
+        strays,
+    }
+}
+
+/// Post-exit canary: one pass over `/proc` for processes whose parent or
+/// process group is `leader`. Read-only — nothing is signalled.
+pub fn stray_processes_of(leader: i32) -> Vec<i32> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut strays: Vec<i32> = dir
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|pid| *pid != leader)
+        .filter(|pid| names_leader(*pid, leader))
+        .collect();
+    strays.sort_unstable();
+    strays
+}
+
+/// Whether `/proc/<pid>/stat` names `leader` as ppid (field 4) or pgrp
+/// (field 5). A process that vanished mid-read is not a stray.
+fn names_leader(pid: i32, leader: i32) -> bool {
+    let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    parse_parent_and_group(&text).is_some_and(|(parent, group)| parent == leader || group == leader)
+}
+
+/// `(ppid, pgrp)` from a `/proc/<pid>/stat` line; the comm field may contain
+/// spaces and parentheses, so fields are taken after the last `)`.
+pub(crate) fn parse_parent_and_group(stat: &str) -> Option<(i32, i32)> {
+    let rest = stat.get(stat.rfind(')')? + 2..)?;
+    let mut fields = rest.split_whitespace().skip(1);
+    let parent = fields.next()?.parse().ok()?;
+    let group = fields.next()?.parse().ok()?;
+    Some((parent, group))
+}
+
+#[cfg(test)]
+#[path = "process_budget_tests.rs"]
+mod budget_tests;
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
