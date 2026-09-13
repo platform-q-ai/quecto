@@ -109,6 +109,52 @@ printf '{"environment_id":"env-1","workspace_path":"%s","metadata":{},"socket_pr
     path
 }
 
+/// The launcher role for `a_launched_childs_refusal_reason_reaches_its_launcher`
+/// (#1937 review): the child binary is a wrapper that appends `--persist` to
+/// the real binary's argv, so the real child refuses at startup; the
+/// launcher runs the production `SpawnTool` and publishes the result.
+fn persist_refused_launcher(base: &Path) {
+    let config = write_config(base, "direct");
+    let sockets = base.join("sockets");
+    std::fs::create_dir_all(&sockets).unwrap();
+    let wrapper = base.join("quecto-with-persist.sh");
+    write_executable(
+        &wrapper,
+        &format!(
+            "#!/usr/bin/env bash\nexec '{}' \"$@\" --persist\n",
+            env!("CARGO_BIN_EXE_quecto")
+        ),
+    );
+    // SAFETY: single-threaded at this point, so the env write cannot race.
+    unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &wrapper) };
+    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let tool =
+        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.to_path_buf())
+            .with_socket_dir(sockets)
+            .with_registry(registry.clone())
+            .with_parent_config_path(Some(config.clone()));
+    let args = serde_json::json!({
+        "agent_id": "refused-child",
+        "task": "wait",
+        "config": config,
+        "read_only": true,
+    });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    // A launch failure is the tool's `Err`; a refusal is never a success.
+    let (is_error, content) = match runtime.block_on(quecto::domain::tool::Tool::execute(
+        &tool,
+        &args.to_string(),
+    )) {
+        Ok(result) => (result.is_error, result.content),
+        Err(error) => (true, error.to_string()),
+    };
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "a refused child is never registered"
+    );
+    std::fs::write(base.join("spawn.result"), format!("{is_error}\n{content}")).unwrap();
+}
+
 /// The launcher role: launch one child through the production `SpawnTool`,
 /// publish what the test needs, then wait to be killed.
 #[test]
@@ -117,6 +163,10 @@ fn launcher_role() {
         return;
     };
     let base = PathBuf::from(std::env::var(BASE_ENV).expect("launcher base dir"));
+    if transport == "persist-refused" {
+        persist_refused_launcher(&base);
+        return;
+    }
     let config = write_config(&base, &transport);
     let sockets = base.join("sockets");
     std::fs::create_dir_all(&sockets).unwrap();
@@ -356,6 +406,45 @@ fn a_child_whose_parent_never_binds_exits_at_the_bind_deadline() {
         "the child must wait for the deadline, not exit at once"
     );
     assert!(!socket_path.exists(), "a graceful exit removes the socket");
+}
+
+/// #1937 review: the reason a launched child refused to start reaches the
+/// launcher's spawn result, not only "exited before socket ready".
+#[test]
+fn a_launched_childs_refusal_reason_reaches_its_launcher() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "launcher_role",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(ROLE_ENV, "persist-refused")
+        .env(BASE_ENV, &base)
+        .env("QUECTO_BASE_DIR", &base)
+        .output()
+        .expect("re-exec launcher");
+    assert!(
+        output.status.success(),
+        "launcher failed ({}):\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = std::fs::read_to_string(base.join("spawn.result")).unwrap();
+    let (is_error, content) = result.split_once('\n').unwrap();
+    assert_eq!(is_error, "true", "the spawn must fail: {content}");
+    assert!(
+        content.contains("subagent exited before socket ready with Code(1)"),
+        "{content}"
+    );
+    assert!(
+        content.contains("--persist is refused with --parent-control"),
+        "the child's refusal reason must reach the launcher: {content}"
+    );
 }
 
 #[test]

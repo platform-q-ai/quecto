@@ -27,6 +27,7 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["true".into()],
         environments: Some(registry.clone()),
+        stderr_tail: None,
     };
     prepared.rollback_once().await;
     assert!(prepared.cleanup_argv.is_empty());

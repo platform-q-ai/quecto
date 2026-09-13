@@ -127,3 +127,17 @@ legacy record (migrated on the next save). The identity-verification path
 (`verify_persisted_live_subagent`), the restore-time pid confirmation and its
 signal lease are retired. Historical rows are never synthesised into the
 operational roster and nothing restarts automatically.
+
+### Session transitions release the departing session's children — #1937 interim
+
+Because a launched child cannot be readopted, a row merely dropped from the
+operational roster on `new_session` or `resume_session` would strand a live
+child no teardown path can reach until the master exits. The transition
+therefore **releases** each departing row before clearing it: the row's
+monitor task (the owner of the child's bound parent-control connection under
+#1935) and its proxy bridge are aborted, the bound connection closes, and the
+child runs its own parent-loss shutdown (#1946) — graceful, unsignalled and
+not awaited by the dispatch path. This is an interim: #1938 replaces the
+release with the acknowledged session-transition teardown owned by the
+application (and #1939 finalizes a departing child's script-managed
+environments, which parent loss does not).

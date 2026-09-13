@@ -289,6 +289,17 @@ impl OwnedChildSupervisor {
             .expect("the supervisor runtime outlives every spawn")
     }
 
+    /// Drain a child's piped stderr on the supervisor's runtime for the
+    /// child's whole life — where the reap task lives, so no launcher
+    /// runtime can close the pipe under the child — retaining a bounded tail
+    /// for the launch failure report (#1937 review).
+    pub fn retain_stderr_tail(
+        &self,
+        stderr: tokio::process::ChildStderr,
+    ) -> super::child_stderr_tail::StderrTail {
+        super::child_stderr_tail::StderrTail::pump(&self.handle, stderr)
+    }
+
     /// Record signals instead of sending them (tests with fake pids).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_dry_run(&self, dry_run: bool) {

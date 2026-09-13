@@ -158,6 +158,23 @@ impl SubagentEntry {
         }
     }
 
+    /// Release what keeps this child bound to this harness (#1937): abort
+    /// the monitor task, which owns the child's bound parent-control
+    /// connection (#1935), and the proxy bridge accept loop and socket of a
+    /// container-transport child. The connection closes when the task is
+    /// dropped by its runtime, and a launch-bound child then runs its own
+    /// parent-loss shutdown. Sends no signal and touches no registry row;
+    /// callers use it on a row they have already taken out of the registry.
+    pub fn release_bound_connection(&self) {
+        if let Some(monitor) = &self.monitor_handle {
+            monitor.abort();
+        }
+        super::spawn_proxy_bridge::teardown_entry_bridge(
+            self.proxy_bridge_handle.as_ref(),
+            self.proxy_bridge_socket.as_deref(),
+        );
+    }
+
     /// Ask the supervisor to terminate the owned child: the `shutdown`
     /// protocol over this entry's endpoint first, TERM/KILL only after a
     /// negative outcome. Returns `false`, having done nothing, when this

@@ -680,14 +680,20 @@ Nothing restarts automatically, and no historical roster row is shown as
 live. Externally attached clients reconnecting to a still-running harness
 see that harness's in-memory registry as before.
 
-**Switching sessions ends the current session's launched children.** Because
-no later session can readopt them, `resume_session` into another session and
-`new_session` first run the registry-driven teardown on the children the
-harness holds — protocol-first supervisor termination for locally launched
-children, the environment kill plan for container members — and wait (bounded,
-20 s) for the owned children to exit before the roster is reset. Re-spawn the
-workers you need in the new session. (Interim until #1938 moves the
-session-transition exit into the application-owned teardown.)
+**Switching sessions releases the current session's launched children
+through parent loss.** No later session can readopt them, so
+`resume_session` into another session and `new_session` do not merely drop
+their rows: each departing row's monitor task — the owner of the child's
+bound parent-control connection — and its proxy bridge (container
+transport) are aborted *before* the roster is cleared. The child observes
+the loss of its bound parent and runs its own graceful shutdown (the #1935
+parent-loss path: cancel the turn, ask its children to shut down, persist,
+exit, remove its socket). No signal is sent and the dispatch path does not
+wait; the reaper observes the exit and retires the supervisor handle.
+Re-spawn the workers you need in the new session. (Interim until #1938
+replaces this release with the acknowledged session-transition teardown —
+which is also where script-managed environments of a departing child get
+finalized; see #1939.)
 
 ### Running
 

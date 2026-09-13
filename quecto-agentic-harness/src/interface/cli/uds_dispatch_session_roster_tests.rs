@@ -184,38 +184,102 @@ fn legacy_reader_ignores_pid_and_socket_and_tolerates_malformed_rows() {
     );
 }
 
+/// A session file exactly as a pre-#1937 harness wrote it: the roster rows
+/// carry the children's socket paths and pids as recovery authority. Only
+/// this on-disk shape still names a socket — the in-memory row type does
+/// not — so the "never probed" assertion is made on what the real store
+/// loads from it.
+async fn legacy_session_on_disk(
+    dir: &std::path::Path,
+    key: &str,
+    rows: serde_json::Value,
+) -> crate::domain::session::Session {
+    use crate::domain::session::SessionStore;
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(dir);
+    let path = dir.join("sessions").join(format!(
+        "{}.json",
+        crate::infrastructure::persistence::filename::sanitize_session_key(key)
+    ));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let snapshot = serde_json::json!({
+        "type": "snapshot",
+        "key": key,
+        "messages": [{"role":"user","content":"history"}],
+        "workflow_run": null,
+        "subagent_roster": rows,
+    });
+    std::fs::write(&path, format!("{snapshot}\n")).unwrap();
+    store
+        .load(key)
+        .await
+        .unwrap()
+        .expect("the store loads the legacy file")
+}
+
+fn legacy_row_json(
+    id: &str,
+    socket: &std::path::Path,
+    liveness: &str,
+    status: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agentUuid": id,
+        "displayName": format!("worker-{id}"),
+        "sessionKey": id,
+        "socketPath": socket,
+        "pid": std::process::id(),
+        "liveness": liveness,
+        "status": status,
+        "parentId": "parent",
+        "readOnly": true
+    })
+}
+
 /// #1937: no persisted row of any kind — live, detached, dead, explicitly
 /// killed, unknown-reason or malformed — becomes an operational child, and
-/// the sockets they name are never probed.
-#[test]
-fn restore_creates_no_operational_row_and_probes_nothing() {
+/// the sockets the legacy file names are never probed. The rows come from a
+/// real legacy session file through the real store, the only path on which
+/// a socket string still exists.
+#[tokio::test]
+async fn restore_creates_no_operational_row_and_probes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let live_socket = dir.path().join("live.sock");
     let detached_socket = dir.path().join("detached.sock");
     let live_listener = listener_that_must_stay_silent(&live_socket);
     let detached_listener = listener_that_must_stay_silent(&detached_socket);
-
-    let mut killed = roster_entry("killed");
-    killed.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
-    let mut stopped = roster_entry("stopped");
-    stopped.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
-    let mut unknown = roster_entry("unknown");
-    unknown.restore_reason = SubagentRestoreReason::Unknown;
-    let malformed: PersistedSubagentRosterEntry =
-        serde_json::from_value(serde_json::json!({"displayName": "no identity"})).unwrap();
-    let rows = vec![
-        legacy_row("live", &live_socket, "live", "idle"),
-        legacy_row("detached", &detached_socket, "detached", "idle"),
-        legacy_row("dead", &dir.path().join("dead.sock"), "dead", "exited"),
-        legacy_row("gone", &dir.path().join("gone.sock"), "live", "running"),
-        killed,
-        stopped,
-        unknown,
-        malformed,
-    ];
+    let raw = serde_json::to_string(&serde_json::json!([
+        legacy_row_json("live", &live_socket, "live", "idle"),
+        legacy_row_json("detached", &detached_socket, "detached", "idle"),
+        legacy_row_json("dead", &dir.path().join("dead.sock"), "dead", "exited"),
+        legacy_row_json("gone", &dir.path().join("gone.sock"), "live", "running"),
+        {"agentUuid": "killed", "restoreReason": "explicitly_killed", "liveness": "live"},
+        {"agentUuid": "stopped", "restoreReason": "ordinary_tui_exit_stopped", "liveness": "live"},
+        {"agentUuid": "unknown", "restoreReason": "future_reason", "liveness": "live"},
+        {"displayName": "no identity"},
+    ]))
+    .unwrap();
+    assert!(raw.contains(&live_socket.display().to_string()));
+    let loaded = legacy_session_on_disk(
+        dir.path(),
+        "cli:legacy",
+        serde_json::from_str(&raw).unwrap(),
+    )
+    .await;
+    assert_eq!(
+        loaded.subagent_roster.len(),
+        8,
+        "every row is read, none dropped"
+    );
+    assert!(
+        loaded
+            .subagent_roster
+            .iter()
+            .any(|row| row.liveness == SubagentLiveness::Live),
+        "a live legacy row is exactly what readoption would have probed"
+    );
 
     let registry = new_registry();
-    reset_subagent_roster_on_restore(&Some(registry.clone()), &rows);
+    reset_subagent_roster_on_restore(&Some(registry.clone()), &loaded.subagent_roster);
 
     assert_never_connected(&live_listener, "live row");
     assert_never_connected(&detached_listener, "detached row");

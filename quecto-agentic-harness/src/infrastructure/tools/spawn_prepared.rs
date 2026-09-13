@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::subagent_launch::ParentEndpoint;
+use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 #[cfg(test)]
 use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
 use crate::infrastructure::processes::owned_child_supervisor::{
@@ -42,7 +43,15 @@ pub(in crate::infrastructure::tools) struct PreparedChild {
     /// Session registry the environment was committed to, so rollback can
     /// uncommit the entry it created.
     pub(in crate::infrastructure::tools) environments: Option<EnvironmentRegistry>,
+    /// Bounded tail of a locally spawned child's stderr, for the launch
+    /// failure report (#1937 review). `None` for script-managed launches.
+    pub stderr_tail: Option<StderrTail>,
 }
+
+/// How long a launch failure report waits for the child's stderr to reach
+/// EOF after its exit was observed; a descendant holding the pipe open
+/// cannot stall the report beyond this.
+const STDERR_REPORT_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl PreparedChild {
     #[cfg(test)]
@@ -52,15 +61,19 @@ impl PreparedChild {
         endpoint: Option<ParentEndpoint>,
     ) -> Self {
         let supervisor = Arc::new(OwnedChildSupervisor::new());
-        let (owned_child, display_pid) = match command {
-            Some(command) => {
+        let (owned_child, display_pid, stderr_tail) = match command {
+            Some(mut command) => {
+                command.stderr(std::process::Stdio::piped());
                 let spawned = supervisor
                     .spawn(command, ProcessGroup::Inherited)
                     .await
                     .expect("test child spawns");
-                (Some(spawned.handle), spawned.display_pid.0)
+                let tail = spawned
+                    .stderr
+                    .map(|stderr| supervisor.retain_stderr_tail(stderr));
+                (Some(spawned.handle), spawned.display_pid.0, tail)
             }
-            None => (None, 0),
+            None => (None, 0, None),
         };
         Self {
             swarm_reservation: None,
@@ -74,6 +87,7 @@ impl PreparedChild {
             cleanup_environment_id: None,
             cleanup_argv: vec![],
             environments: None,
+            stderr_tail,
         }
     }
 
@@ -88,6 +102,17 @@ impl PreparedChild {
             self.cleanup_environment_id.clone(),
             self.cleanup_argv.clone(),
         )
+    }
+
+    /// The child's last stderr output for a launch failure report; empty
+    /// when nothing was captured. Waits (bounded) for the pipe's EOF so the
+    /// refusal a child printed just before exiting is included.
+    pub async fn stderr_tail_report(&self) -> String {
+        let Some(tail) = &self.stderr_tail else {
+            return String::new();
+        };
+        tail.wait_eof(STDERR_REPORT_GRACE).await;
+        tail.snapshot()
     }
 
     /// Wait for the launched process to exit; `None` when this launch holds
