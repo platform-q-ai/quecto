@@ -51,11 +51,11 @@ content in artifacts, not messages or evidence fields.
 
 | Call | Input and behavior |
 |---|---|
-| `summary(since=None)` | Current goal, members, counts, first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response |
+| `summary(since=None)` | Current goal, members, counts (task statuses plus `members_without_claim` and `members_dead`), first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response; an owner turning idle by clock alone since that cursor yields a full summary instead, and `next_liveness_check_at` says when the next one would |
 | `events(after=0, limit=25)` | Explicit chronological history; limit 1–100 |
 | `tasks(offset=0, limit=50)` / `file_owners(offset=0, limit=50)` | Integer offset ≥0; integer limit 1–100 |
 | `task_create(request, title, acceptance, dependencies=None)` | Stable request string, title string, **nonempty `list[str]` acceptance**, optional `list[int]` dependency IDs; returns a task |
-| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming |
+| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming. A claimed, blocked or submitted row (also from `tasks()` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown`. An active or idle owner is named in `contact` (`board.send(request, '<owner id>', body)`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
 | `claim(id)` | Returns owned task with a new claim `token`; unmet dependencies reject |
 | `block(id, token, reason)` | Nonempty string reason |
 | `unblock(id, token, reason)` | Resume your blocked claim, preserving token and reservations; submitted work cannot be reopened |
@@ -63,7 +63,7 @@ content in artifacts, not messages or evidence fields.
 | `submit(id, token, evidence)` | Submit `Evidence` for coordinator verification; submission is not completion |
 | `reserve(id, token, paths)` | `list[str]`, 1–100 checkout-contained paths, all-or-nothing; returns reservation token |
 | `release_files(id, token, reservation)` | Release that reservation token for this claim |
-| `send(request, recipient, body, revision=None, supersedes=None)` | Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
+| `send(request, recipient, body, revision=None, supersedes=None)` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
 | `withdraw(message_id)` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
 | `inbox(include_consumed=False)` / `ack(message_id)` | Read at most 100 own unread messages (`revision`, `supersedes`, `superseded_by` included); `include_consumed=True` adds consumed, superseded and withdrawn history; acknowledge after reading |
 | `evidence(criterion, artifact, revision, kind, passed)` | Strings plus `passed: bool`; workers record proposals with **accepted=0**. Only coordinator calls with `passed=True` accept evidence |

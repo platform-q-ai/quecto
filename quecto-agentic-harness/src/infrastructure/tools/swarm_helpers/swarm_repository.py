@@ -3,16 +3,38 @@ import json
 from swarm_policy import SwarmError
 
 
-def lost_after_activation(connection, member):
-    """Whether `member`'s harness was quarantined (`scope_unknown`) after its
-    latest `activated` event; shared by the coordinator-loss blocker (#1924)
-    and the per-member loss record (#1961)."""
-    latest = {'scope_unknown': 0, 'activated': 0}
+def lost_members(connection, members):
+    """The subset of `members` whose harness was quarantined (`scope_unknown`)
+    after their latest `activated` event, in one ordered scan of those two
+    event kinds; shared by the coordinator-loss blocker (#1924), the
+    per-member loss record (#1961) and the owner view (#1969)."""
+    wanted = set(members)
+    latest = {}
     for row in connection.execute(
             "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
-        if json.loads(row['detail']).get('member') == member:
-            latest[row['action']] = row['id']
-    return latest['scope_unknown'] > latest['activated']
+        member = json.loads(row['detail']).get('member')
+        if member in wanted:
+            latest.setdefault(member, {'scope_unknown': 0, 'activated': 0})[row['action']] = row['id']
+    return {member for member, seen in latest.items() if seen['scope_unknown'] > seen['activated']}
+
+
+def lost_after_activation(connection, member):
+    return member in lost_members(connection, [member])
+
+
+ACTIVE_CLAIM = "('claimed','blocked','submitted')"
+
+
+def member_claim_counts(connection, coordinator):
+    """Read-side membership counts (#1969): admitted members (live or
+    reserved, the coordinator excluded because it never claims by role) that
+    hold no active claim, and members whose death the harness confirmed."""
+    without_claim = connection.execute(
+        "SELECT count(*) FROM members m WHERE m.status IN ('live','reserved') AND m.id IS NOT ? "
+        "AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner=m.id AND t.status IN " + ACTIVE_CLAIM + ")",
+        (coordinator,)).fetchone()[0]
+    dead = connection.execute("SELECT count(*) FROM members WHERE status='dead'").fetchone()[0]
+    return {'members_without_claim': without_claim, 'members_dead': dead}
 
 
 class Transaction:

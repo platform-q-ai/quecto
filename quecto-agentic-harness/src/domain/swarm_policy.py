@@ -122,6 +122,55 @@ def notification_targets(run, actor, members, events, state):
     return [live[identity] for identity in sorted(targets) if identity in live]
 
 
+OWNER_STATES = ('active', 'idle', 'reserved', 'lost', 'dead', 'unknown')
+# A live task owner with no board event for this long reads as `idle` (#1969).
+# Board activity is the only liveness the store can see: an idle owner may be
+# mid-turn running a long command; the value is a prompt to look, not a stall.
+OWNER_IDLE_AFTER = 300.0
+# Owner states `send` accepts as a recipient; the others get `recovery` instead.
+ADDRESSABLE_OWNER_STATES = ('active', 'idle')
+
+
+def owner_state(member_status, lost, last_activity, now, idle_after=OWNER_IDLE_AFTER):
+    """The store's affirmative view of a task owner (#1969), read-side only.
+
+    Authoritative store signals first: `dead` (the launcher's harness confirmed
+    the exit), `lost` (a `scope_unknown` record newer than the member's latest
+    activation), `reserved` (admitted, never launched). Only a `live` launched
+    member reads `active`/`idle` from its most recent board event against the
+    store clock. Every other status, and a live member without an event, is
+    `unknown`. A provider suspension is a harness fact the store cannot see
+    and is never claimed: `agent_cmd status` (get_state's
+    `automaticTurnsSuspended`) is the source for that."""
+    if member_status == 'dead':
+        return 'dead'
+    if member_status in ('live', 'reserved') and lost is True:
+        return 'lost'
+    if member_status == 'reserved':
+        return 'reserved'
+    if member_status == 'live' and isinstance(last_activity, (int, float)):
+        return 'idle' if now - last_activity >= idle_after else 'active'
+    return 'unknown'
+
+
+def owner_recovery(state):
+    """How the coordinator moves work off an owner `send` cannot reach."""
+    if state == 'dead':
+        return 'recover(task) or revoke(task, reason)'
+    if state == 'lost':
+        return 'resume the run (agent_cmd swarm_control resume), then revoke(task, reason)'
+    return 'revoke(task, reason)'
+
+
+def idle_transition(last_activity, now, idle_after=OWNER_IDLE_AFTER):
+    """When a live owner last active at `last_activity` turns idle; None once
+    it already has (read side; nothing schedules anything on it)."""
+    if not isinstance(last_activity, (int, float)):
+        return None
+    at = last_activity + idle_after
+    return at if at > now else None
+
+
 def require_unsubmitted(task):
     if task['status'] == 'submitted':
         raise SwarmError('submitted evidence is immutable; release and reclaim before revising')

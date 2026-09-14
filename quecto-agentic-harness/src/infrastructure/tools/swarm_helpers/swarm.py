@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from swarm_repository import lost_after_activation
+from swarm_policy import OWNER_IDLE_AFTER, idle_transition
+from swarm_repository import lost_after_activation, member_claim_counts
 from swarm_store import Store, SwarmError, bounded, encode
 from swarm_tasks import Tasks
 from swarm_use_cases import Coordination
@@ -130,14 +131,17 @@ class Workbench(Tasks):
             raise SwarmError('summary cursor must be a nonnegative integer')
         with self.store.operation(active=False, read_only=True) as (db, run):
             cursor = db.execute('SELECT coalesce(max(id),0) FROM events').fetchone()[0]
-            if since == cursor:
-                return {'unchanged': True, 'event_cursor': cursor, 'status': run['status']}
+            next_check, crossed = self._liveness_watch(db, cursor)
+            if since == cursor and not crossed:
+                return {'unchanged': True, 'event_cursor': cursor, 'status': run['status'],
+                        'next_liveness_check_at': next_check}
+            run['next_liveness_check_at'] = next_check
             for key in ('constraints', 'criteria'):
                 run[key] = json.loads(run[key])
             run['members'] = [dict(r) for r in db.execute('SELECT * FROM members')]
             run['usage'] = sum(m['status'] in ('live', 'reserved') for m in run['members'])
             run['task_count'] = db.execute('SELECT count(*) FROM tasks').fetchone()[0]
-            run['tasks'] = [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks ORDER BY id LIMIT 50')]
+            run['tasks'] = self._with_owner_liveness(db, [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks ORDER BY id LIMIT 50')])
             run['file_count'] = db.execute('SELECT count(*) FROM files').fetchone()[0]
             run['files'] = [dict(r) for r in db.execute('SELECT * FROM files ORDER BY path LIMIT 50')]
             run['evidence'] = [dict(r) for r in db.execute('SELECT * FROM evidence')]
@@ -150,7 +154,32 @@ class Workbench(Tasks):
                 if status == 'ready' and any(states[d]['status'] != 'completed' for d in json.loads(task['dependencies'])):
                     status = 'blocked'
                 run['counts'][status] += 1
+            run['counts'].update(member_claim_counts(db, run['coordinator']))
             return run
+
+    def _liveness_watch(self, db, cursor):
+        """Read side (#1969): `(next_liveness_check_at, crossed)` over every
+        owned task. `next_liveness_check_at` is the store-clock instant the
+        earliest still-active owner turns idle (None when no owner will), so a
+        cursor caller knows when to look again. `crossed` is whether an owner
+        is idle now but was not at the time of event `cursor`: the transition
+        happened by clock alone, with no event to move the cursor, so an
+        unchanged fast path must not hide it. Nothing is written."""
+        owned = [dict(r) for r in db.execute(
+            "SELECT id, owner, status FROM tasks WHERE owner IS NOT NULL AND status IN ('claimed','blocked','submitted')")]
+        if not owned:
+            return None, False
+        now = self.store.clock()
+        row = db.execute('SELECT time FROM events WHERE id=?', (cursor,)).fetchone()
+        cursor_time = row['time'] if row else 0.0
+        next_check, crossed = None, False
+        for last, state in self._owner_views(db, owned, now):
+            if state == 'idle' and last + OWNER_IDLE_AFTER > cursor_time:
+                crossed = True
+            elif state == 'active':
+                at = idle_transition(last, now)
+                next_check = at if next_check is None else min(next_check, at)
+        return next_check, crossed
 
     def events(self, after=0, limit=25):
         """Read immutable audit history explicitly, using durable event IDs."""
@@ -165,12 +194,14 @@ class Workbench(Tasks):
 
     def _status(self):
         """Harness-only, membership-free: has a run been created in this container?
-        The bootstrap placeholder carries deadline 0; `create` requires a future one."""
+        The bootstrap placeholder carries deadline 0; `create` requires a future one.
+        Carries the #1969 membership counts (`members_without_claim`, `members_dead`)."""
         with self.store.transaction() as db:
             row = db.execute('SELECT status, deadline, coordinator, outcome FROM run').fetchone()
-        return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0,
-                'coordinator': row['coordinator'] if row else None,
-                'outcome': row['outcome'] if row else None}
+            counts = member_claim_counts(db, row['coordinator'] if row else None)
+        return dict(counts, status=row['status'] if row else 'setup', deadline=row['deadline'] if row else 0,
+                    coordinator=row['coordinator'] if row else None,
+                    outcome=row['outcome'] if row else None)
 
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:
