@@ -1,8 +1,13 @@
 use super::*;
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 #[derive(Debug, Default)]
 struct FailingSpillStore {
@@ -14,7 +19,7 @@ struct FailingSpillStore {
 impl ContextSpillStore for FailingSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         _entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
@@ -22,19 +27,23 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         if self.fail_recall {
             return Box::pin(async { Err(DomainError::Session("spill read failed".into())) });
         }
-        let found = self.entries.iter().find(|entry| entry.id == id).cloned();
+        let found = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id.as_str())
+            .cloned();
         Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         if self.fail_list {
             return Box::pin(async { Err(DomainError::Session("spill index failed".into())) });
@@ -54,7 +63,7 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
@@ -178,17 +187,17 @@ async fn failing_spill_store_trait_surface_defaults_are_exercised() {
     };
 
     let appended = entry("turn2:bash:0", "echo add", 3, "add");
-    store.append("session", &appended).await.unwrap();
-    assert!(store.has_entries("session").await.unwrap());
+    store.append(&id("session"), &appended).await.unwrap();
+    assert!(store.has_entries(&id("session")).await.unwrap());
     assert_eq!(
         store
-            .recall("session", "turn1:bash:0")
+            .recall(&id("session"), &SpillId::new("turn1:bash:0"))
             .await
             .unwrap()
             .unwrap()
             .content,
         "ok"
     );
-    assert_eq!(store.list_entries("session").await.unwrap().len(), 1);
-    store.clear("session").await.unwrap();
+    assert_eq!(store.list_entries(&id("session")).await.unwrap().len(), 1);
+    store.clear(&id("session")).await.unwrap();
 }

@@ -9,7 +9,12 @@ use super::{dispatch_command, handle_resume_session, persist_current_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
+use crate::domain::session_identity::SessionIdentity;
+
+fn id(key: impl Into<String>) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
@@ -61,7 +66,7 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
             .unwrap();
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "run after spawn");
     assert_eq!(loaded.subagent_roster.len(), 1);
@@ -87,14 +92,14 @@ async fn prompt_persists_user_message_before_assistant_reply() {
         ctx.messages.push(prompt);
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].role, crate::domain::message::Role::User);
     assert_eq!(loaded.messages[0].content, "first only");
 
     fx.store
         .save(&Session {
-            key: Session::build_key("cli", "saved-one"),
+            key: id(Session::build_key("cli", "saved-one")),
             messages: loaded.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -184,7 +189,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
 
             let loaded = ctx
                 .session_store
-                .load(ctx.session_key)
+                .load(&id(ctx.session_key.as_str()))
                 .await
                 .unwrap()
                 .expect("session must be on disk after multi-turn prompts");
@@ -217,7 +222,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
             };
             ctx.session_store
                 .save(&Session {
-                    key: Session::build_key("cli", resume_name),
+                    key: id(Session::build_key("cli", resume_name)),
                     messages: loaded.messages.clone(),
                     workflow_run: None,
                     subagent_roster: Vec::new(),
@@ -307,7 +312,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
         let loaded = ctx
             .session_store
-            .load(ctx.session_key)
+            .load(&id(ctx.session_key.as_str()))
             .await
             .unwrap()
             .expect("session on disk");
@@ -347,7 +352,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
         let loaded = ctx
             .session_store
-            .load(ctx.session_key)
+            .load(&id(ctx.session_key.as_str()))
             .await
             .unwrap()
             .expect("session on disk");
@@ -622,12 +627,8 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     // End-state: load agrees with raw chain; tool turn landed; tip matches.
     let raw = std::fs::read_to_string(&session_path).expect("final session JSONL");
     let chain = assert_jsonl_start_index_chain(&raw, 1);
-    let loaded = fx
-        .store
-        .load("cli:test")
-        .await
-        .unwrap()
-        .expect("session must be on disk after multi-turn prompts");
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap();
+    let loaded = loaded.expect("session must be on disk after multi-turn prompts");
     assert_eq!(
         loaded.messages.len(),
         chain.len(),
@@ -665,7 +666,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     // Optional resume path (mirrors #1324): full chain survives resume.
     fx.store
         .save(&Session {
-            key: Session::build_key("cli", "saved-jsonl-chain"),
+            key: id(Session::build_key("cli", "saved-jsonl-chain")),
             messages: loaded.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -706,13 +707,13 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
 
 #[tokio::test]
 async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentLiveness};
 
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
-            key: "cli:test".into(),
+            key: id("cli:test"),
             messages: vec![Message::user("old")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -739,7 +740,7 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
         persist_current_session(&mut ctx).await.unwrap();
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert!(
         loaded.subagent_roster.is_empty(),
         "stale roster was not cleared: {:?}",

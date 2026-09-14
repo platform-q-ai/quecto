@@ -1,7 +1,9 @@
 use super::*;
 
+use quecto::domain::session_identity::SessionIdentity;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_ownership::{
-    SessionOwnershipGuard, open_stamp_file, ownership_stamp_path,
+    SessionOwnershipGuard, open_stamp_file,
 };
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::interface::cli::uds::reap_stale_sockets;
@@ -273,7 +275,7 @@ fn given_session_owned_by_live_process(world: &mut QuectoWorld, key: String) {
     // exactly as another process would hold it), stamped with the parent's
     // (test runner's) pid so refusals name a pid that is not the claimant.
     let owner_pid = other_live_pid();
-    let file = hold_stamp_as(&dir, &key, owner_pid);
+    let file = hold_stamp_as(&FlatSessionLayout::new(&dir), &key, owner_pid);
     world.hardening.own_foreign_lock = Some(file);
     world.hardening.own_owner_pid = Some(owner_pid);
     world.hardening.own_key = Some(key);
@@ -284,9 +286,11 @@ fn given_session_owned_by_live_process(world: &mut QuectoWorld, key: String) {
 // std file locks stabilized in 1.89 (real toolchain floor; clippy.toml
 // MSRV bump is pending).
 #[expect(clippy::incompatible_msrv)]
-fn hold_stamp_as(sessions_dir: &std::path::Path, key: &str, owner_pid: u32) -> std::fs::File {
+fn hold_stamp_as(layout: &FlatSessionLayout, key: &str, owner_pid: u32) -> std::fs::File {
     use std::io::Write;
-    let file = open_stamp_file(sessions_dir, key).expect("open ownership stamp");
+    std::fs::create_dir_all(layout.sessions_dir()).expect("create sessions dir");
+    let file = open_stamp_file(layout, &SessionIdentity::from_persisted_key(key))
+        .expect("open ownership stamp");
     file.try_lock().expect("foreign owner lock must succeed");
     file.set_len(0).expect("truncate stamp");
     (&file)
@@ -298,7 +302,9 @@ fn hold_stamp_as(sessions_dir: &std::path::Path, key: &str, owner_pid: u32) -> s
 #[given(expr = "session key {string} is stamped as owned by a dead process")]
 fn given_session_stamped_by_dead_process(world: &mut QuectoWorld, key: String) {
     let dir = own_dir(world);
-    let stamp = ownership_stamp_path(&dir, &key);
+    let layout = FlatSessionLayout::new(&dir);
+    std::fs::create_dir_all(layout.sessions_dir()).expect("create sessions dir");
+    let stamp = layout.ownership_stamp(&SessionIdentity::from_persisted_key(&key));
     std::fs::write(&stamp, dead_pid().to_string()).expect("write stale ownership stamp");
     world.hardening.own_key = Some(key);
 }
@@ -307,7 +313,10 @@ fn given_session_stamped_by_dead_process(world: &mut QuectoWorld, key: String) {
 fn when_second_process_claims_key(world: &mut QuectoWorld, key: String) {
     let dir = own_dir(world);
     world.hardening.own_claimant_pid = Some(std::process::id());
-    world.hardening.own_claim = Some(SessionOwnershipGuard::acquire(&dir, &key));
+    world.hardening.own_claim = Some(SessionOwnershipGuard::acquire(
+        &FlatSessionLayout::new(&dir),
+        &SessionIdentity::from_persisted_key(&key),
+    ));
 }
 
 #[then("the ownership claim is refused with an error naming the key and owning process")]
@@ -357,7 +366,11 @@ fn given_store_key_owned_elsewhere(world: &mut QuectoWorld, key: String) {
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
     let owner_pid = other_live_pid();
-    world.hardening.store_lock = Some(hold_stamp_as(&sessions_dir, &key, owner_pid));
+    world.hardening.store_lock = Some(hold_stamp_as(
+        &FlatSessionLayout::new(dir.path()),
+        &key,
+        owner_pid,
+    ));
     world.hardening.own_owner_pid = Some(owner_pid);
     world.hardening.own_key = Some(key);
     world.hardening.store_dir = Some(dir);
@@ -366,10 +379,18 @@ fn given_store_key_owned_elsewhere(world: &mut QuectoWorld, key: String) {
 #[when(expr = "this process saves a turn for session key {string}")]
 async fn when_store_saves_turn(world: &mut QuectoWorld, key: String) {
     let dir = world.hardening.store_dir.as_ref().expect("store dir");
-    let store = FileSessionStore::new(dir.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
     let messages = vec![quecto::domain::message::Message::user("a turn".to_string())];
-    world.hardening.store_save_result =
-        Some(store.save_clean_delta(&key, &messages, 0, None).await);
+    world.hardening.store_save_result = Some(
+        store
+            .save_clean_delta(
+                &SessionIdentity::from_persisted_key(&key),
+                &messages,
+                0,
+                None,
+            )
+            .await,
+    );
 }
 
 #[then("the session save is refused with an error naming the key and owning process")]

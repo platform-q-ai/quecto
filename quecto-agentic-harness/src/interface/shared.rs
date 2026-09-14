@@ -32,7 +32,10 @@ pub fn generate_chat_key() -> String {
 pub fn scrub_ephemeral_spill(base_dir: &std::path::Path, ephemeral: bool) {
     if ephemeral {
         crate::infrastructure::persistence::context_spill::FileContextSpillStore::
-            scrub_session_spill_sync(base_dir, "");
+            scrub_session_spill_sync(
+                &crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(base_dir),
+                &crate::domain::session_identity::SessionIdentity::ephemeral(),
+            );
     }
 }
 

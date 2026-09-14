@@ -17,6 +17,7 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -34,7 +35,9 @@ pub(super) struct Fx {
 impl Fx {
     pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
+        let store = FileSessionStore::new(
+            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -107,6 +110,7 @@ impl Fx {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
@@ -614,7 +618,7 @@ async fn forward_get_message_unknown_agent_is_error_event() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{Session, SubagentLiveness};
 
     let registry = new_registry();
@@ -631,7 +635,7 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
     let mut fx = Fx::new();
     fx.store
         .save(&Session {
-            key: "dead-child".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -658,7 +662,7 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_omitted() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{Session, SubagentLiveness};
     use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
 
@@ -680,7 +684,7 @@ async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_o
         .collect();
     fx.store
         .save(&Session {
-            key: "dead-child".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
             messages,
             workflow_run: None,
             subagent_roster: Vec::new(),

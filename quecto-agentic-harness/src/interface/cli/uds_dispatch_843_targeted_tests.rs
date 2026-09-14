@@ -281,7 +281,7 @@ async fn forward_get_message_rejects_malformed_child_response() {
 
 #[tokio::test]
 async fn forward_get_messages_rejects_stale_historical_before_cursor() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{Session, SubagentLiveness};
 
     let registry = new_registry();
@@ -299,7 +299,7 @@ async fn forward_get_messages_rejects_stale_historical_before_cursor() {
     let mut fx = Fx::new();
     fx.store
         .save(&Session {
-            key: "dead-child".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
             subagent_roster: Vec::new(),

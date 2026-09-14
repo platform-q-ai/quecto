@@ -122,14 +122,20 @@ pub(super) async fn report(
         let mut records: Vec<Value> = messages.into_iter().map(|message| json!({"kind":"message","message":super::uds_session::message_to_json(&message)})).collect();
         let mut spill_count = 0;
         if let Some(store) = spill_store {
+            let identity = crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                session_key.as_str(),
+            );
             for entry in store
-                .list_entries(&session_key)
+                .list_entries(&identity)
                 .await
                 .map_err(|error| error.to_string())?
                 .iter()
             {
                 let spill = store
-                    .recall(&session_key, &entry.id)
+                    .recall(
+                        &identity,
+                        &crate::domain::session_identity::SpillId::new(entry.id.as_str()),
+                    )
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| format!("spill disappeared during export: {}", entry.id))?;

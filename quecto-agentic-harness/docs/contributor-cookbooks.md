@@ -194,7 +194,7 @@ paths.
 **Production files usually involved:**
 
 - `src/domain/session.rs` and `src/domain/message.rs` for persisted concepts;
-  `src/application/session/ports.rs` for the `SessionStore` contract.
+  `src/application/sessions/ports.rs` for the `SessionStore` contract.
 - `src/infrastructure/persistence/*` for JSON file serialization.
 - `src/application/reload.rs`, context modules, or agent loop finalization when
   persistence state is updated.

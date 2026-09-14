@@ -17,6 +17,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Sessions capability (#1968, D1 #1970): plural capability, one
+/// construction site, one layout owner, retirement of the singular path.
+#[path = "architecture/sessions_capability.rs"]
+mod sessions_capability;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]
@@ -333,6 +337,9 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // `application/<capability>/ports.rs` is a contract this
                 // layer implements. Subagent teardown (#1935) was the first.
                 ["crate", "application", _, "ports", ..] => true,
+                // The sessions list port takes the capability's own query
+                // DTO (#1970); the file store names it to implement `list`.
+                ["crate", "application", "sessions", "dto", "SessionListQuery"] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the
@@ -2746,7 +2753,53 @@ fn subagent_teardown_domain_is_pure() {
 
 #[test]
 fn subagent_teardown_interface_only_parses_maps_and_presents() {
-    assert_dependencies("src/interface/uds", teardown_interface_dependency_allowed);
+    assert_dependencies(
+        "src/interface/uds/subagent_teardown",
+        teardown_interface_dependency_allowed,
+    );
+    assert_dependencies(
+        "src/interface/uds/parent_control",
+        teardown_interface_dependency_allowed,
+    );
+}
+
+/// The UDS sessions edge (#1970) maps the wire command onto the sessions
+/// capability's DTOs and use cases and presents domain summaries. It never
+/// reaches infrastructure, the legacy CLI socket code, the runtime or
+/// another application capability.
+fn sessions_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "sessions", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "sessions", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn sessions_interface_only_parses_maps_and_presents() {
+    assert_dependencies(
+        "src/interface/uds/sessions",
+        sessions_interface_dependency_allowed,
+    );
+    // Every UDS edge directory is covered by exactly one of the edge rules.
+    let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    edges.sort();
+    assert_eq!(edges, ["parent_control", "sessions", "subagent_teardown"]);
 }
 
 /// `pub trait` names declared in a source file, in declaration order.

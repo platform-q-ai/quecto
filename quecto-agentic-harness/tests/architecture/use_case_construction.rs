@@ -43,6 +43,7 @@ const USE_CASES: &[&str] = &[
     "KillDelegatedAgentPorts",
     "KillEnvironment",
     "ListEnvironmentsQuery",
+    "ListSessions",
     "ObserveOwnedChildExit",
     "OwnerConclusionPorts",
     "PrepareHarnessShutdown",

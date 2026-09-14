@@ -204,8 +204,10 @@ async fn legacy_session_on_disk(
     key: &str,
     rows: serde_json::Value,
 ) -> crate::domain::session::Session {
-    use crate::application::session::ports::SessionStore;
-    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(dir);
+    use crate::application::sessions::ports::SessionStore;
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(dir),
+    );
     let path = dir.join("sessions").join(format!(
         "{}.json",
         crate::infrastructure::persistence::filename::sanitize_session_key(key)
@@ -220,7 +222,7 @@ async fn legacy_session_on_disk(
     });
     std::fs::write(&path, format!("{snapshot}\n")).unwrap();
     store
-        .load(key)
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
         .await
         .unwrap()
         .expect("the store loads the legacy file")
@@ -463,4 +465,24 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
             .unwrap_or_else(|e| e.into_inner())
             .is_empty()
     );
+}
+
+/// The composed sessions handles over `base` (#1970), built here so the
+/// shared dispatch test env never names the composition layer itself.
+pub(crate) fn composed_sessions(
+    base: &std::path::Path,
+) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    crate::composition::sessions::build_session_handles(
+        crate::interface::cli::uds_session_handles::SessionLoopInputs {
+            base_dir: base.to_path_buf(),
+            store: None,
+        },
+    )
+}
+
+/// The composed `list_sessions` handle a dispatch rig holds over `base`.
+pub(crate) fn list_handle(
+    base: &std::path::Path,
+) -> std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController> {
+    composed_sessions(base).list_sessions
 }

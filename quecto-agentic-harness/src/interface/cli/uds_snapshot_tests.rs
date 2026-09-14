@@ -132,10 +132,10 @@ pub(super) struct BlockingSpillStore {
     pub(super) release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
-impl crate::application::session::ports::ContextSpillStore for BlockingSpillStore {
+impl crate::application::sessions::ports::ContextSpillStore for BlockingSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &crate::domain::session_identity::SessionIdentity,
         _entry: &crate::domain::session::SpillEntry,
     ) -> std::pin::Pin<
         Box<
@@ -149,8 +149,8 @@ impl crate::application::session::ports::ContextSpillStore for BlockingSpillStor
 
     fn recall(
         &self,
-        _session_key: &str,
-        _id: &str,
+        _session_key: &crate::domain::session_identity::SessionIdentity,
+        _id: &crate::domain::session_identity::SpillId,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -178,7 +178,7 @@ impl crate::application::session::ports::ContextSpillStore for BlockingSpillStor
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &crate::domain::session_identity::SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -195,7 +195,7 @@ impl crate::application::session::ports::ContextSpillStore for BlockingSpillStor
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &crate::domain::session_identity::SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>

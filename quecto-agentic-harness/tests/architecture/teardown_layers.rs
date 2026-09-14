@@ -233,12 +233,12 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     (
         "src/domain/session.rs",
         "trait SessionStore",
-        "src/application/session/ports.rs",
+        "src/application/sessions/ports.rs",
     ),
     (
         "src/domain/session.rs",
         "trait ContextSpillStore",
-        "src/application/session/ports.rs",
+        "src/application/sessions/ports.rs",
     ),
     (
         "src/domain/provider.rs",

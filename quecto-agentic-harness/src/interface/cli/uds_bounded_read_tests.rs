@@ -16,6 +16,7 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use tokio::io::AsyncWriteExt;
@@ -45,7 +46,9 @@ fn make_agent() -> AgentLoopImpl {
 #[tokio::test]
 async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_command() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
     let mut session = AgentSession::new("stub".into(), "cli:test".into());
@@ -90,6 +93,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     let (mut client, server) = tokio::net::UnixStream::pair().expect("socketpair");

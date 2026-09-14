@@ -4,7 +4,14 @@ use super::{
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::application::session::ports::{ContextSpillStore, SessionStore};
+use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
+
+fn id(key: impl Into<String>) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
 use crate::application::tools::ports::Tool;
 use crate::domain::message::Message;
 use crate::domain::session::{Session, SpillEntry, SpillIndex};
@@ -23,7 +30,7 @@ pub(super) struct RecordingSpillStore {
 impl ContextSpillStore for RecordingSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         _entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
@@ -36,8 +43,8 @@ impl ContextSpillStore for RecordingSpillStore {
     }
     fn recall(
         &self,
-        _session_key: &str,
-        _id: &str,
+        _session_key: &SessionIdentity,
+        _id: &SpillId,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -50,7 +57,7 @@ impl ContextSpillStore for RecordingSpillStore {
     }
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -63,7 +70,7 @@ impl ContextSpillStore for RecordingSpillStore {
     }
     fn clear(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
@@ -71,19 +78,16 @@ impl ContextSpillStore for RecordingSpillStore {
                 + '_,
         >,
     > {
-        self.cleared.lock().unwrap().push(session_key.to_string());
+        let key = session_key.runtime_key().to_string();
+        self.cleared.lock().unwrap().push(key);
         Box::pin(async { Ok(()) })
     }
 }
 
 #[tokio::test]
 async fn recording_spill_store_default_has_entries_is_false() {
-    assert!(
-        !RecordingSpillStore::default()
-            .has_entries("s")
-            .await
-            .unwrap()
-    );
+    let store = RecordingSpillStore::default();
+    assert!(!store.has_entries(&id("s")).await.unwrap());
 }
 #[derive(Debug, Default)]
 pub(super) struct SessionAwareTool {
@@ -180,7 +184,7 @@ pub(super) struct Fixture {
 impl Fixture {
     pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
+        let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
         Self {
             agent: make_agent(),
             messages: Vec::new(),
@@ -245,6 +249,7 @@ impl Fixture {
             last_persisted_message_index: self.last_persisted_message_index,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
@@ -370,7 +375,7 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     let mut fx = Fixture::new();
     fx.messages.push(Message::user("old turn"));
     let old_key = fx.session_key.clone();
-    fx.store.claim(&old_key).unwrap();
+    fx.store.claim(&id(&old_key)).unwrap();
     {
         let mut ctx = fx.ctx();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
@@ -379,8 +384,8 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     assert!(fx.messages.is_empty());
     assert_ne!(fx.session_key, old_key);
     assert!(fx.session_key.starts_with("chat-"));
-    FileSessionStore::new(fx._tmp.path())
-        .claim(&old_key)
+    FileSessionStore::new(FlatSessionLayout::new(fx._tmp.path()))
+        .claim(&id(&old_key))
         .expect("/new_session must release the old session ownership lock");
 }
 
@@ -441,9 +446,9 @@ async fn failed_resume_releases_target_claim() {
         assert!(!handle_resume_session(&mut ctx, None, "resume_session", "missing".into()).await);
     }
 
-    let competing_store = FileSessionStore::new(fx._tmp.path());
+    let competing_store = FileSessionStore::new(FlatSessionLayout::new(fx._tmp.path()));
     competing_store
-        .claim(&Session::build_key("cli", "missing"))
+        .claim(&id(Session::build_key("cli", "missing")))
         .expect("failed resume must not retain ownership of the missing target");
 }
 
@@ -453,7 +458,7 @@ async fn resume_session_success_loads_messages() {
     // Pre-save a target session into the store.
     let key = Session::build_key("cli", "saved");
     let saved = Session {
-        key: key.clone(),
+        key: id(key.clone()),
         messages: vec![Message::user("restored")],
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -479,7 +484,7 @@ async fn resume_updates_session_aware_tools() {
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
-            key: key.clone(),
+            key: id(key.clone()),
             messages: vec![Message::user("restored")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -503,7 +508,7 @@ async fn resume_loads_chat_session_by_full_key() {
     let mut fx = Fixture::new();
     let key = "chat-1750000000-abc".to_string();
     let saved = Session {
-        key: key.clone(),
+        key: id(key.clone()),
         messages: vec![Message::user("restored chat")],
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -587,7 +592,7 @@ async fn prompt_persists_session_after_turn() {
         let mut ctx = fx.ctx();
         assert!(!dispatch_command(cmd, &mut ctx).await);
     }
-    let loaded = fx.store.load("cli:test").await.unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap();
     assert!(
         loaded.is_some(),
         "a completed prompt turn should have persisted the session"

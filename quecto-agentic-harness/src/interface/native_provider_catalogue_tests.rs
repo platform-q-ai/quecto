@@ -12,7 +12,11 @@ fn bundled_native_registration_preserves_provider_ids() {
     register_bundled_native_tools(
         &mut registry,
         build_session_tool_extensions(SessionToolDeps {
-            spill_store: std::sync::Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf())),
+            spill_store: std::sync::Arc::new(FileContextSpillStore::new(
+                crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
+                    tmp.path(),
+                ),
+            )),
             session_key: "provider-test".to_string(),
         }),
     );

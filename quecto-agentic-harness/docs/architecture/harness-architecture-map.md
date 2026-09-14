@@ -96,9 +96,19 @@ Important invariants before Phase 4:
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/session.rs`, the
-`SessionStore`/`ContextSpillStore` ports in `src/application/session/ports.rs`,
+`SessionStore`/`ContextSpillStore` ports in `src/application/sessions/ports.rs`,
 persistence adapters in `src/infrastructure`, and UDS/session recovery paths in
 `src/interface/cli`.
+
+Sessions capability (#1968): every port operation is keyed by the typed
+`SessionIdentity` (`src/domain/session_identity.rs`, the existing raw key
+only); the flat `<base>/sessions/` projection (`.json`, `.owner`,
+`spill.jsonl`) is owned by `FlatSessionLayout` in
+`src/infrastructure/persistence/session_layout.rs` alone; the saved-session
+query `ListSessions` (`src/application/sessions/use_cases/`) is constructed
+only by `src/composition/sessions.rs`, which hands the interface its handles
+through `CliComposition`. A folder/workspace-scoped store changes the identity
+and that one projection, not the callers.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a

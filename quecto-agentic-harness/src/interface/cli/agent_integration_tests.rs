@@ -136,6 +136,7 @@ fn test_agent_with_valid_config_provider_error() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test"), &ctx);
@@ -158,6 +159,7 @@ fn test_agent_ephemeral_session_no_file_created() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -197,6 +199,7 @@ fn test_agent_with_system_prompt_and_config() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -221,6 +224,7 @@ fn test_agent_with_max_time_reaches_deadline_path() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -250,6 +254,7 @@ fn test_agent_named_session_creates_no_file_on_error() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -274,6 +279,7 @@ fn test_agent_with_model_override_and_config() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -297,6 +303,7 @@ fn test_agent_with_max_iterations_and_config() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -320,6 +327,7 @@ fn test_agent_with_all_flags_and_config() {
     write_fake_config(tmp.path());
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -364,7 +372,13 @@ fn test_run_agent_session_ephemeral_no_save() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
     let sessions_dir = tmp.path().join("sessions");
@@ -393,7 +407,13 @@ fn test_run_agent_session_ephemeral_scrubs_spill_file() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1, "the fake provider must fail");
     assert!(
         !spill_path.exists(),
@@ -425,7 +445,13 @@ fn test_run_agent_session_named_session_keeps_spill_file() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let _ = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let _ = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert!(
         spill_path.exists(),
         "named-session spill files must survive the run"
@@ -443,7 +469,13 @@ fn test_run_agent_session_default_session_key() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -459,7 +491,13 @@ fn test_run_agent_session_with_system_prompt_injection() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -476,7 +514,13 @@ fn test_run_agent_session_with_deadline() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert!(code == 1 || code == 2);
 }
 
@@ -577,7 +621,13 @@ fn test_run_agent_session_loads_existing_session() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -608,7 +658,13 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(
+        tmp.path(),
+        crate::composition::sessions::build_session_handles,
+        agent,
+        &flags,
+        &mut out,
+    );
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -662,6 +718,7 @@ fn test_agent_with_anthropic_provider_reaches_session() {
     .unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test-anthropic"), &ctx);
@@ -680,6 +737,7 @@ fn test_agent_with_both_providers_reaches_session() {
     .unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test-both"), &ctx);

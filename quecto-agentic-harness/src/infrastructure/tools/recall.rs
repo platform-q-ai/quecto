@@ -9,15 +9,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 
 /// Tool that retrieves previously collapsed tool outputs by their spill ID.
 pub struct RecallTool {
     spill_store: Arc<dyn ContextSpillStore>,
-    session_key: Mutex<String>,
+    session_key: Mutex<SessionIdentity>,
     /// Tracks recall counts per ID for diagnostic warnings.
     recall_counts: Mutex<HashMap<String, u32>>,
 }
@@ -26,7 +27,7 @@ impl RecallTool {
     pub fn new(spill_store: Arc<dyn ContextSpillStore>, session_key: String) -> Self {
         Self {
             spill_store,
-            session_key: Mutex::new(session_key),
+            session_key: Mutex::new(SessionIdentity::from_persisted_key(session_key)),
             recall_counts: Mutex::new(HashMap::new()),
         }
     }
@@ -35,7 +36,14 @@ impl RecallTool {
 impl std::fmt::Debug for RecallTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecallTool")
-            .field("session_key", &self.session_key.lock().ok().as_deref())
+            .field(
+                "session_key",
+                &self
+                    .session_key
+                    .lock()
+                    .ok()
+                    .map(|key| key.runtime_key().to_string()),
+            )
             .finish()
     }
 }
@@ -54,7 +62,7 @@ impl Tool for RecallTool {
     }
 
     fn set_session_key(&self, session_key: String) {
-        *self.session_key.lock().unwrap() = session_key;
+        *self.session_key.lock().unwrap() = SessionIdentity::from_persisted_key(session_key);
         self.recall_counts.lock().unwrap().clear();
     }
 
@@ -87,7 +95,11 @@ impl Tool for RecallTool {
                 }
             }
 
-            match self.spill_store.recall(&session_key, &id).await? {
+            match self
+                .spill_store
+                .recall(&session_key, &SpillId::new(id.as_str()))
+                .await?
+            {
                 Some(entry) => Ok(ToolResult {
                     content: entry.content,
                     is_error: false,

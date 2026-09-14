@@ -7,6 +7,7 @@ use super::{
     remove_injected_system_prompt,
 };
 use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentRestoreReason};
+use crate::domain::session_identity::SessionIdentity;
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -294,10 +295,11 @@ async fn persist_current_session_with_options(
     };
     let roster =
         snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
+    let identity = SessionIdentity::from_persisted_key(ctx.session_key.as_str());
     let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
-                key: ctx.session_key.to_string(),
+                key: identity,
                 messages: ctx.messages.to_vec(),
                 workflow_run,
                 subagent_roster: roster,
@@ -306,7 +308,7 @@ async fn persist_current_session_with_options(
     } else {
         ctx.session_store
             .save_clean_delta(
-                ctx.session_key,
+                &identity,
                 ctx.messages,
                 ctx.last_persisted_message_index,
                 workflow_run,
@@ -369,7 +371,8 @@ pub(super) async fn handle_new_session(
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
     if old_key != key {
-        ctx.session_store.release(&old_key);
+        ctx.session_store
+            .release(&SessionIdentity::from_persisted_key(old_key));
     }
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
@@ -390,7 +393,11 @@ pub(super) async fn handle_new_session(
     }
     set_workflow_run(ctx, None);
     if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill.clear(ctx.session_key).await
+        && let Err(e) = spill
+            .clear(&SessionIdentity::from_persisted_key(
+                ctx.session_key.as_str(),
+            ))
+            .await
     {
         tracing::warn!("new_session: failed to clear spill store: {e}");
     }
@@ -466,21 +473,22 @@ pub(super) async fn handle_resume_session(
     }
     // Refuse at open (#1460): resuming a key owned by another live process
     // must fail before any turn runs against it.
-    if let Err(err) = ctx.session_store.claim(&new_key) {
+    let target = SessionIdentity::from_persisted_key(new_key.as_str());
+    if let Err(err) = ctx.session_store.claim(&target) {
         let ev = AgentEvent::err(id, type_name, err.to_string());
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let loaded = match ctx.session_store.load(&new_key).await {
+    let loaded = match ctx.session_store.load(&target).await {
         Ok(Some(session)) => session,
         Ok(None) => {
-            ctx.session_store.release(&new_key);
+            ctx.session_store.release(&target);
             let ev = AgentEvent::err(id, type_name, format!("session not found: {name}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
         Err(err) => {
-            ctx.session_store.release(&new_key);
+            ctx.session_store.release(&target);
             let ev = AgentEvent::err(id, type_name, format!("failed to load session: {err}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
@@ -492,14 +500,15 @@ pub(super) async fn handle_resume_session(
     // current session whole and only releases the claim just taken.
     note_persisted_roster_is_history(&ctx.subagent_registry, &loaded.subagent_roster);
     if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "resume_session") {
-        ctx.session_store.release(&new_key);
+        ctx.session_store.release(&target);
         let ev = AgentEvent::err(id, type_name, refused.to_string());
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
-        ctx.session_store.release(&old_key);
+        ctx.session_store
+            .release(&SessionIdentity::from_persisted_key(old_key));
     }
     ctx.session.set_session_key(new_key.clone());
     ctx.agent.set_session_key(new_key.clone());
@@ -564,7 +573,11 @@ pub(super) async fn handle_clear_history(
     ctx.session.discard_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
     if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill.clear(ctx.session_key).await
+        && let Err(e) = spill
+            .clear(&SessionIdentity::from_persisted_key(
+                ctx.session_key.as_str(),
+            ))
+            .await
     {
         tracing::warn!("clear_history: failed to clear spill store: {e}");
     }
@@ -625,7 +638,11 @@ pub(super) async fn handle_rewind_to(
     // Clear spill store and remove retained spill references so stale truncated
     // tool output is not recallable or re-injected.
     if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill.clear(ctx.session_key).await
+        && let Err(e) = spill
+            .clear(&SessionIdentity::from_persisted_key(
+                ctx.session_key.as_str(),
+            ))
+            .await
     {
         tracing::warn!("rewind_to: failed to clear spill store: {e}");
     }

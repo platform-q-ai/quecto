@@ -4,7 +4,7 @@ use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
     messages_page_json,
 };
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role, ThinkingBlock};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -397,7 +397,15 @@ impl GetMessageResolution {
                     spill_id: spill_id.clone(),
                     generation,
                 };
-                match spill_store.recall(&session_key, &spill_id).await {
+                match spill_store
+                    .recall(
+                        &crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                            session_key.as_str(),
+                        ),
+                        &crate::domain::session_identity::SpillId::new(spill_id.as_str()),
+                    )
+                    .await
+                {
                     Ok(Some(entry)) => {
                         stub.content = entry.content;
                         stub.is_collapsed = false;

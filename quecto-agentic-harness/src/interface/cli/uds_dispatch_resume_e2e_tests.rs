@@ -1,4 +1,4 @@
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
@@ -12,7 +12,9 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let persisted_key = crate::domain::session::Session::build_key("cli", "default");
     fx.store
         .save(&Session {
-            key: persisted_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                persisted_key.clone(),
+            ),
             messages: vec![Message::user("persisted message that /resume must offer")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -20,7 +22,11 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
         .await
         .unwrap();
 
-    let listed = fx.store.list(None).await.unwrap();
+    let listed = fx
+        .store
+        .list(&crate::application::sessions::dto::SessionListQuery::All)
+        .await
+        .unwrap();
     assert!(
         listed.iter().any(|summary| summary.key == persisted_key),
         "a TUI-owned persisted default session must be offered by bare /resume; listed={listed:?}"
@@ -80,7 +86,11 @@ async fn write_legacy_session_file(
         .unwrap();
     // The store must actually see the legacy file where it looks.
     assert!(
-        fx.store.load(key).await.unwrap().is_some(),
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+            .await
+            .unwrap()
+            .is_some(),
         "legacy session file not found at {}",
         path.display()
     );
@@ -266,7 +276,12 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     assert!(registry.lock().unwrap().is_empty());
     assert_never_probed(&listener, "live row");
     // The old session's history was saved on the way out, without pid/socket.
-    let saved = fx.store.load(key).await.unwrap().unwrap();
+    let saved = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(saved.messages.len(), 3);
     assert!(
         saved.subagent_roster.is_empty(),

@@ -423,6 +423,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             system_prompt: String::new(),
             socket_path: sp,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_registry),
             // A launcher-created child is launch-bound (#1937): ordinary

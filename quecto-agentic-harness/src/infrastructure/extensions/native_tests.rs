@@ -309,7 +309,9 @@ fn build_session_tool_extensions_supplies_recall() {
 
     let tmp = tempfile::TempDir::new().unwrap();
     let exts = build_session_tool_extensions(SessionToolDeps {
-        spill_store: Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf())),
+        spill_store: Arc::new(FileContextSpillStore::new(
+            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        )),
         session_key: "cli:test".into(),
     });
     assert_eq!(exts.len(), 1);

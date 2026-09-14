@@ -21,9 +21,10 @@
 //!   and physical drops.
 
 use crate::application::context_pruning;
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::SpillEntry;
+use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
 
@@ -80,7 +81,7 @@ impl ContextGaugeCalibration {
 
 pub struct ContextManagerConfig {
     pub spill_store: Option<Arc<dyn ContextSpillStore>>,
-    pub session_key: String,
+    pub session_key: SessionIdentity,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
     pub pin_recent_turns: u32,
@@ -90,7 +91,7 @@ pub struct ContextManagerConfig {
 
 pub(crate) struct ContextManager {
     spill_store: Option<Arc<dyn ContextSpillStore>>,
-    session_key: String,
+    session_key: SessionIdentity,
     context_collapse_after_tool_calls: u32,
     max_context_tokens: usize,
     pin_recent_turns: u32,
@@ -131,7 +132,7 @@ impl ContextManager {
         }
     }
 
-    pub fn set_session_key(&mut self, session_key: String) {
+    pub fn set_session_key(&mut self, session_key: SessionIdentity) {
         self.session_key = session_key;
     }
 

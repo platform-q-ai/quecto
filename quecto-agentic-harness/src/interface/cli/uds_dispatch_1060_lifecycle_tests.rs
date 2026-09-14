@@ -2,7 +2,7 @@
 
 use super::cov_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 
@@ -72,7 +72,7 @@ async fn resume_session_clears_previous_session_ref() {
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
-            key,
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key),
             messages: vec![Message::user("restored")],
             workflow_run: None,
             subagent_roster: Vec::new(),

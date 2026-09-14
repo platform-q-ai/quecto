@@ -27,6 +27,7 @@ fn test_composition() -> CliComposition {
         web_fetch_tool_factory: crate::composition::web_fetch::build,
         teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
+        sessions: crate::composition::sessions::build_session_handles,
     }
 }
 

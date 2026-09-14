@@ -1,5 +1,5 @@
 use super::cov_tests::Fixture;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 use crate::interface::cli::protocol::AgentCommand;
@@ -45,7 +45,7 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
-            key: "chat:one".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("chat:one"),
             messages: vec![Message::user("hello")],
             workflow_run: None,
             subagent_roster: Vec::new(),

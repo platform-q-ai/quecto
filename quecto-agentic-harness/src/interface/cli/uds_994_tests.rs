@@ -6,6 +6,7 @@
 //! event stream, and message snapshots keep the canonical response envelope and
 //! public message shape.
 
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
@@ -55,7 +56,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> (Self, tokio::sync::broadcast::Receiver<String>) {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
+        let store = FileSessionStore::new(
+            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        );
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
         (
             Self {
@@ -111,6 +114,7 @@ impl Fixture {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }

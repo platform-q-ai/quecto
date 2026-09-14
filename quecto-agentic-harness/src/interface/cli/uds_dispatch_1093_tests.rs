@@ -1,9 +1,12 @@
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::application::session::ports::{ContextSpillStore, SessionStore};
+use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{Session, SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool::ToolProfileContext;
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -47,7 +50,7 @@ impl MemSpillStore {
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
@@ -56,17 +59,15 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
-        self.entries
-            .lock()
-            .unwrap()
-            .insert((session_key.to_string(), entry.id.clone()), entry.clone());
+        let key = (session_key.runtime_key().to_string(), entry.id.clone());
+        self.entries.lock().unwrap().insert(key, entry.clone());
         Box::pin(async { Ok(()) })
     }
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -75,27 +76,23 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
-        self.recalls
-            .lock()
-            .unwrap()
-            .push((session_key.to_string(), id.to_string()));
+        let key = (
+            session_key.runtime_key().to_string(),
+            id.as_str().to_string(),
+        );
+        self.recalls.lock().unwrap().push(key.clone());
         if self.recall_error {
             return Box::pin(async {
                 Err(crate::domain::error::DomainError::Other("boom".into()))
             });
         }
-        let hit = self
-            .entries
-            .lock()
-            .unwrap()
-            .get(&(session_key.to_string(), id.to_string()))
-            .cloned();
+        let hit = self.entries.lock().unwrap().get(&key).cloned();
         Box::pin(async move { Ok(hit) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -109,7 +106,7 @@ impl ContextSpillStore for MemSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
@@ -135,8 +132,9 @@ struct Fixture {
 impl Fixture {
     fn new(spill_store: Option<Arc<dyn ContextSpillStore>>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+        let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+            FlatSessionLayout::new(tmp.path()),
+        );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -214,6 +212,7 @@ impl Fixture {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
@@ -687,7 +686,7 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
     let collapsed = collapsed_message(spill_id);
     fx.store
         .save(&Session {
-            key: "cli:saved".into(),
+            key: SessionIdentity::from_persisted_key("cli:saved"),
             messages: vec![collapsed],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -746,5 +745,6 @@ async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
 }
 #[tokio::test]
 async fn mem_spill_store_default_has_entries_is_false() {
-    assert!(!MemSpillStore::default().has_entries("s").await.unwrap());
+    let none = SessionIdentity::from_persisted_key("s");
+    assert!(!MemSpillStore::default().has_entries(&none).await.unwrap());
 }

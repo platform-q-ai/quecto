@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[derive(Debug)]
 struct CovProvider;
@@ -421,8 +422,9 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let registry = new_client_tool_registry();
     let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<String>(4);
@@ -466,6 +468,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-1"), &tools).await;
@@ -519,8 +522,9 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -562,6 +566,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;

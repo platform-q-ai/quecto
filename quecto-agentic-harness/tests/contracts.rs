@@ -65,6 +65,10 @@ mod runtime_composition;
 mod runtime_tool_lifecycle_registry;
 #[path = "contracts/session_aware_tools.rs"]
 mod session_aware_tools;
+#[path = "contracts/session_layout.rs"]
+mod session_layout;
+#[path = "contracts/session_list_scale.rs"]
+mod session_list_scale;
 #[path = "contracts/session_store.rs"]
 mod session_store;
 #[path = "contracts/subagent_launch_ports.rs"]

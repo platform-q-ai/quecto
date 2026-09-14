@@ -366,12 +366,15 @@ fn test_rewind_keeps_collapsed_conversation_messages_non_empty() {
 
 #[tokio::test]
 async fn test_spill_store_clear_removes_entries_and_recall() {
-    use crate::application::session::ports::ContextSpillStore;
+    use crate::application::sessions::ports::ContextSpillStore;
     use crate::domain::session::SpillEntry;
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
     let tmp = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf()));
-    let key = "clear-test-412";
+    let store = std::sync::Arc::new(FileContextSpillStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    ));
+    let key =
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("clear-test-412");
     let entry = SpillEntry {
         id: "turn1:bash:0".into(),
         tool: "bash".into(),
@@ -381,9 +384,27 @@ async fn test_spill_store_clear_removes_entries_and_recall() {
     };
     store.append(key, &entry).await.unwrap();
     assert_eq!(store.list_entries(key).await.unwrap().len(), 1);
-    assert!(store.recall(key, "turn1:bash:0").await.unwrap().is_some());
+    assert!(
+        store
+            .recall(
+                key,
+                &crate::domain::session_identity::SpillId::new("turn1:bash:0")
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
     // After clear: both list and recall should return empty/None.
     store.clear(key).await.unwrap();
     assert!(store.list_entries(key).await.unwrap().is_empty());
-    assert!(store.recall(key, "turn1:bash:0").await.unwrap().is_none());
+    assert!(
+        store
+            .recall(
+                key,
+                &crate::domain::session_identity::SpillId::new("turn1:bash:0")
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

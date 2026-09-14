@@ -1,6 +1,13 @@
 use super::*;
+use crate::application::sessions::dto::SessionListQuery;
+use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn make_message(role: Role, content: &str) -> Message {
     match role {
@@ -14,16 +21,16 @@ fn make_message(role: Role, content: &str) -> Message {
 #[tokio::test]
 async fn empty_conversation_is_not_persisted() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    store.save(&Session::new("test:empty")).await.unwrap();
+    store.save(&Session::new(id("test:empty"))).await.unwrap();
 
     assert!(
-        !store.exists("test:empty").await.unwrap(),
+        !store.exists(&id("test:empty")).await.unwrap(),
         "saving an empty conversation must not create a resumable session"
     );
     assert!(
-        store.load("test:empty").await.unwrap().is_none(),
+        store.load(&id("test:empty")).await.unwrap().is_none(),
         "loading an empty conversation key must behave like an unknown session"
     );
 }
@@ -31,23 +38,23 @@ async fn empty_conversation_is_not_persisted() {
 #[tokio::test]
 async fn empty_delta_is_not_persisted() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
     store
-        .save_delta("test:empty-delta", &[], 0, None)
+        .save_delta(&id("test:empty-delta"), &[], 0, None)
         .await
         .unwrap();
     store
-        .save_clean_delta("test:empty-clean-delta", &[], 0, None)
+        .save_clean_delta(&id("test:empty-clean-delta"), &[], 0, None)
         .await
         .unwrap();
 
     assert!(
-        !store.exists("test:empty-delta").await.unwrap(),
+        !store.exists(&id("test:empty-delta")).await.unwrap(),
         "saving an empty delta must not create a zero-message session"
     );
     assert!(
-        !store.exists("test:empty-clean-delta").await.unwrap(),
+        !store.exists(&id("test:empty-clean-delta")).await.unwrap(),
         "saving an empty clean delta must not create a zero-message session"
     );
 }
@@ -55,9 +62,9 @@ async fn empty_delta_is_not_persisted() {
 #[tokio::test]
 async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut session = Session::new("test:append");
+    let mut session = Session::new(id("test:append"));
     session.messages.push(make_message(Role::User, "first"));
     session
         .messages
@@ -86,7 +93,7 @@ async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
     assert!(!appended.contains("first"));
     assert!(!appended.contains("\"content\":\"response\""));
 
-    let loaded = store.load("test:append").await.unwrap().unwrap();
+    let loaded = store.load(&id("test:append")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 4);
     assert_eq!(loaded.messages[0].content, "first");
     assert_eq!(loaded.messages[3].content, "second response");
@@ -95,9 +102,9 @@ async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
 #[tokio::test]
 async fn appending_refuses_symlinked_session_file() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut session = Session::new("test:symlink");
+    let mut session = Session::new(id("test:symlink"));
     session.messages.push(make_message(Role::User, "first"));
     store.save(&session).await.unwrap();
     let path = tmp.path().join("sessions/test_symlink.json");
@@ -141,7 +148,7 @@ async fn append_reports_directory_open_failure() {
 async fn compact_write_reports_missing_parent_directory() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("missing-parent/session.json");
-    let mut session = Session::new("test:compact-write-error");
+    let mut session = Session::new(id("test:compact-write-error"));
     session.messages.push(make_message(Role::User, "first"));
 
     let err = write_compacted(&path, &session).await.unwrap_err();
@@ -151,9 +158,9 @@ async fn compact_write_reports_missing_parent_directory() {
 #[tokio::test]
 async fn append_reports_missing_file_when_path_disappears_after_compaction_decision() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut session = Session::new("test:missing-append");
+    let mut session = Session::new(id("test:missing-append"));
     session.messages.push(make_message(Role::User, "first"));
     store.save(&session).await.unwrap();
     let path = tmp.path().join("sessions/test_missing-append.json");
@@ -176,9 +183,9 @@ async fn append_reports_missing_file_when_path_disappears_after_compaction_decis
 #[tokio::test]
 async fn interrupted_append_preserves_last_completed_session() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut session = Session::new("test:interrupted");
+    let mut session = Session::new(id("test:interrupted"));
     session.messages.push(make_message(Role::User, "first"));
     session
         .messages
@@ -197,7 +204,7 @@ async fn interrupted_append_preserves_last_completed_session() {
         .unwrap();
     file.flush().await.unwrap();
 
-    let loaded = store.load("test:interrupted").await.unwrap().unwrap();
+    let loaded = store.load(&id("test:interrupted")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 2);
     assert_eq!(loaded.messages[0].content, "first");
     assert_eq!(loaded.messages[1].content, "response");
@@ -206,9 +213,9 @@ async fn interrupted_append_preserves_last_completed_session() {
 #[tokio::test]
 async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut first_process = Session::new("test:stale");
+    let mut first_process = Session::new(id("test:stale"));
     first_process
         .messages
         .push(make_message(Role::User, "old 1"));
@@ -217,7 +224,7 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
         .push(make_message(Role::Assistant, "old 2"));
     store.save(&first_process).await.unwrap();
 
-    let mut second_process = Session::new("test:stale");
+    let mut second_process = Session::new(id("test:stale"));
     second_process
         .messages
         .push(make_message(Role::User, "replacement"));
@@ -236,7 +243,7 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
         .await
         .unwrap();
 
-    let loaded = store.load("test:stale").await.unwrap().unwrap();
+    let loaded = store.load(&id("test:stale")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "replacement");
 }
@@ -253,8 +260,8 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
 #[tokio::test]
 async fn shorter_history_shortcut_forces_compact_and_resumes_exactly() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
-    let mut session = Session::new("test:shorter-prune");
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:shorter-prune"));
     for content in ["old 1", "old 2", "old 3"] {
         session.messages.push(make_message(Role::User, content));
     }
@@ -275,8 +282,8 @@ async fn shorter_history_shortcut_forces_compact_and_resumes_exactly() {
 #[tokio::test]
 async fn masked_pruning_compacts_and_resumes_exact_current_history() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
-    let mut session = Session::new("test:masked-prune");
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:masked-prune"));
     for content in ["old 1", "old 2", "old 3"] {
         session.messages.push(make_message(Role::User, content));
     }
@@ -304,8 +311,8 @@ async fn masked_pruning_compacts_and_resumes_exact_current_history() {
 #[tokio::test]
 async fn masked_pruning_with_longer_current_history_resumes_exactly() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
-    let mut session = Session::new("test:masked-prune-longer");
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:masked-prune-longer"));
     for content in ["old 1", "old 2", "old 3"] {
         session.messages.push(make_message(Role::User, content));
     }
@@ -337,9 +344,9 @@ async fn masked_pruning_with_longer_current_history_resumes_exactly() {
 #[tokio::test]
 async fn replacing_history_compacts_to_the_requested_messages() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut session = Session::new("test:compact");
+    let mut session = Session::new(id("test:compact"));
     for idx in 0..6 {
         session
             .messages
@@ -362,7 +369,7 @@ async fn replacing_history_compacts_to_the_requested_messages() {
     assert_eq!(compacted_record["type"], "snapshot");
     assert_eq!(compacted_record["messages"].as_array().unwrap().len(), 2);
 
-    let loaded = store.load("test:compact").await.unwrap().unwrap();
+    let loaded = store.load(&id("test:compact")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 2);
     assert_eq!(loaded.messages[0].content, "message 4");
     assert_eq!(loaded.messages[1].content, "message 5");
@@ -371,28 +378,28 @@ async fn replacing_history_compacts_to_the_requested_messages() {
 #[tokio::test]
 async fn load_malformed_json_returns_parse_error() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let dir = tmp.path().join("sessions");
     tokio::fs::create_dir_all(&dir).await.unwrap();
     tokio::fs::write(dir.join("bad_json.json"), b"not-json")
         .await
         .unwrap();
 
-    let err = store.load("bad:json").await.unwrap_err();
+    let err = store.load(&id("bad:json")).await.unwrap_err();
     assert!(err.to_string().contains("failed to parse session"));
 }
 
 #[tokio::test]
 async fn list_skips_malformed_and_non_json_files() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let mut good = Session::new("ok:list");
+    let mut good = Session::new(id("ok:list"));
     good.messages
         .push(make_message(Role::User, "visible title"));
     store.save(&good).await.unwrap();
 
-    let mut other = Session::new("other:list");
+    let mut other = Session::new(id("other:list"));
     other.messages.push(make_message(Role::User, "other title"));
     store.save(&other).await.unwrap();
 
@@ -404,12 +411,17 @@ async fn list_skips_malformed_and_non_json_files() {
         .await
         .unwrap();
 
-    let summaries = store.list(Some("ok:")).await.unwrap();
+    let summaries = store
+        .list(&SessionListQuery::ExistingKeyPrefix(
+            SessionKeyPrefix::new("ok:").unwrap(),
+        ))
+        .await
+        .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].key, "ok:list");
     assert_eq!(summaries[0].title, "visible title");
 
-    let summaries = store.list(None).await.unwrap();
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
     assert_eq!(summaries.len(), 2);
     assert!(summaries.iter().any(|summary| summary.key == "other:list"));
 }
@@ -417,7 +429,7 @@ async fn list_skips_malformed_and_non_json_files() {
 #[tokio::test]
 async fn load_legacy_snapshot_json_migrates_to_session() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let dir = tmp.path().join("sessions");
     tokio::fs::create_dir_all(&dir).await.unwrap();
     tokio::fs::write(
@@ -427,8 +439,8 @@ async fn load_legacy_snapshot_json_migrates_to_session() {
     .await
     .unwrap();
 
-    let loaded = store.load("legacy:key").await.unwrap().unwrap();
-    assert_eq!(loaded.key, "legacy:key");
+    let loaded = store.load(&id("legacy:key")).await.unwrap().unwrap();
+    assert_eq!(loaded.key.runtime_key(), "legacy:key");
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].role, Role::Assistant);
     assert_eq!(loaded.messages[0].tool_calls.len(), 1);
@@ -437,7 +449,7 @@ async fn load_legacy_snapshot_json_migrates_to_session() {
 #[tokio::test]
 async fn append_or_compact_rewrites_legacy_snapshot_as_jsonl() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let dir = tmp.path().join("sessions");
     tokio::fs::create_dir_all(&dir).await.unwrap();
     let path = dir.join("legacy_rewrite.json");
@@ -448,23 +460,23 @@ async fn append_or_compact_rewrites_legacy_snapshot_as_jsonl() {
     .await
     .unwrap();
 
-    let mut session = Session::new("legacy:rewrite");
+    let mut session = Session::new(id("legacy:rewrite"));
     session.messages.push(make_message(Role::User, "new"));
     store.save(&session).await.unwrap();
 
     let raw = tokio::fs::read_to_string(&path).await.unwrap();
     assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
-    let loaded = store.load("legacy:rewrite").await.unwrap().unwrap();
+    let loaded = store.load(&id("legacy:rewrite")).await.unwrap().unwrap();
     assert_eq!(loaded.messages[0].content, "new");
 }
 
 #[tokio::test]
 async fn save_clean_delta_with_zero_watermark_compacts() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let messages = vec![make_message(Role::User, "clean compact")];
     store
-        .save_clean_delta("clean:zero", &messages, 0, None)
+        .save_clean_delta(&id("clean:zero"), &messages, 0, None)
         .await
         .unwrap();
     let raw = tokio::fs::read_to_string(tmp.path().join("sessions/clean_zero.json"))
@@ -490,8 +502,8 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
         // pid so the refusal message names a pid that is not this process.
         let owner_pid = std::os::unix::process::parent_id();
         let lock_file = crate::infrastructure::persistence::session_ownership::open_stamp_file(
-            &sessions_dir,
-            key,
+            &FlatSessionLayout::new(tmp.path()),
+            &id(key),
         )
         .unwrap();
         lock_file.try_lock().unwrap();
@@ -513,14 +525,14 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
     }
 
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
     let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:save");
     assert_refused(
         <FileSessionStore as SessionStore>::save(
             &store,
             &Session {
-                key: "owned:save".to_string(),
+                key: id("owned:save"),
                 messages: Vec::new(),
                 workflow_run: None,
                 subagent_roster: Vec::new(),
@@ -534,7 +546,8 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
 
     let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:delta");
     assert_refused(
-        <FileSessionStore as SessionStore>::save_delta(&store, "owned:delta", &[], 0, None).await,
+        <FileSessionStore as SessionStore>::save_delta(&store, &id("owned:delta"), &[], 0, None)
+            .await,
         "owned:delta",
         owner_pid,
     )
@@ -544,7 +557,7 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
     assert_refused(
         <FileSessionStore as SessionStore>::save_clean_delta(
             &store,
-            "owned:clean-delta",
+            &id("owned:clean-delta"),
             &[],
             0,
             None,
@@ -566,16 +579,13 @@ async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let dead = child.id();
     child.wait().unwrap();
-    let stamp = crate::infrastructure::persistence::session_ownership::ownership_stamp_path(
-        &sessions_dir,
-        "owned:dead",
-    );
+    let stamp = FlatSessionLayout::new(tmp.path()).ownership_stamp(&id("owned:dead"));
     std::fs::write(&stamp, dead.to_string()).unwrap();
 
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let messages = vec![make_message(Role::User, "reclaimed")];
     store
-        .save_clean_delta("owned:dead", &messages, 0, None)
+        .save_clean_delta(&id("owned:dead"), &messages, 0, None)
         .await
         .expect("a key stamped by a dead process must be reclaimable");
     let contents = std::fs::read_to_string(&stamp).unwrap();
@@ -598,9 +608,13 @@ async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
         ),
     )
     .unwrap();
-    let store = FileSessionStore::new(dir.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
 
-    let replayed = store.load("ordinals:legacy-append").await.unwrap().unwrap();
+    let replayed = store
+        .load(&id("ordinals:legacy-append"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         replayed
             .messages
@@ -615,7 +629,11 @@ async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
         ..replayed
     };
     store.save(&compacted).await.unwrap();
-    let reloaded = store.load("ordinals:legacy-append").await.unwrap().unwrap();
+    let reloaded = store
+        .load(&id("ordinals:legacy-append"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         reloaded
             .messages
@@ -629,15 +647,15 @@ async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
 #[tokio::test]
 async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate() {
     let dir = TempDir::new().unwrap();
-    let store = FileSessionStore::new(dir.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
     let session = Session {
-        key: "ordinals:reload".into(),
+        key: id("ordinals:reload"),
         messages: vec![Message::user("one"), Message::assistant("two", vec![])],
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
-    let loaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    let loaded = store.load(&id("ordinals:reload")).await.unwrap().unwrap();
     assert_eq!(
         loaded
             .messages
@@ -649,13 +667,13 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
     assert_ne!(loaded.messages[0].id(), session.messages[0].id());
 
     let compacted = Session {
-        key: "ordinals:reload".into(),
+        key: id("ordinals:reload"),
         messages: loaded.messages.clone(),
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
     store.save(&compacted).await.unwrap();
-    let reloaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    let reloaded = store.load(&id("ordinals:reload")).await.unwrap().unwrap();
     assert_eq!(
         reloaded
             .messages

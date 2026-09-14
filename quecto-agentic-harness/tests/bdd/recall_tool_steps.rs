@@ -1,6 +1,7 @@
 use super::*;
-use quecto::application::session::ports::SpillIndexList;
+use quecto::application::sessions::ports::SpillIndexList;
 use quecto::domain::session::{SpillEntry, SpillIndex};
+use quecto::domain::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::tools::recall::RecallTool;
 
 #[derive(Debug, Default)]
@@ -35,13 +36,13 @@ impl BddMemorySpillStore {
 impl ContextSpillStore for BddMemorySpillStore {
     fn append(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries_by_session
             .lock()
             .unwrap()
-            .entry(session_key.to_string())
+            .entry(session_key.runtime_key().to_string())
             .or_default()
             .push(entry.clone());
         Box::pin(async { Ok(()) })
@@ -49,24 +50,29 @@ impl ContextSpillStore for BddMemorySpillStore {
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         let result = self
             .entries_by_session
             .lock()
             .unwrap()
-            .get(session_key)
-            .and_then(|entries| entries.iter().find(|entry| entry.id == id).cloned());
+            .get(session_key.runtime_key())
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.id == id.as_str())
+                    .cloned()
+            });
         Box::pin(async move { Ok(result) })
     }
 
-    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_> {
+    fn list_entries(&self, session_key: &SessionIdentity) -> SpillIndexList<'_> {
         let entries = self
             .entries_by_session
             .lock()
             .unwrap()
-            .get(session_key)
+            .get(session_key.runtime_key())
             .cloned()
             .unwrap_or_default()
             .into_iter()
@@ -82,9 +88,12 @@ impl ContextSpillStore for BddMemorySpillStore {
 
     fn clear(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.entries_by_session.lock().unwrap().remove(session_key);
+        self.entries_by_session
+            .lock()
+            .unwrap()
+            .remove(session_key.runtime_key());
         Box::pin(async { Ok(()) })
     }
 }

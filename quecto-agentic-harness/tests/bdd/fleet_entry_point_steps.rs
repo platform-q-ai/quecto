@@ -8,7 +8,10 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::application::session::ports::SessionStore;
+use quecto::application::sessions::dto::SessionListQuery;
+use quecto::application::sessions::ports::SessionStore;
+use quecto::domain::session_identity::SessionIdentity;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
 
@@ -79,16 +82,16 @@ fn then_still_serving(world: &mut QuectoWorld, seconds: u64) {
 #[then("no saved session writes a live child")]
 fn then_no_session_writes_a_live_child(world: &mut QuectoWorld) {
     let base = base(world);
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let sessions = rt.block_on(store.list(None)).unwrap();
+    let sessions = rt.block_on(store.list(&SessionListQuery::All)).unwrap();
     assert!(
         !sessions.is_empty(),
         "the session was persisted on the way out"
     );
     for summary in sessions {
         let saved = rt
-            .block_on(store.load(&summary.key))
+            .block_on(store.load(&SessionIdentity::from_persisted_key(&summary.key)))
             .unwrap()
             .expect("loadable");
         assert!(
