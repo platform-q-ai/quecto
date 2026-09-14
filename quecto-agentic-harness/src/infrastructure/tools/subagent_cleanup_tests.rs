@@ -38,8 +38,18 @@ async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     registry.lock().unwrap().insert("child".to_string(), entry);
 
-    let a = cleanup_registered_once(&registry, "child", FinalizeMode::Exit);
-    let b = cleanup_registered_once(&registry, "child", FinalizeMode::Exit);
+    let a = cleanup_registered_once(
+        &registry,
+        "child",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    );
+    let b = cleanup_registered_once(
+        &registry,
+        "child",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    );
     tokio::join!(a, b);
 
     let text = std::fs::read_to_string(&log).unwrap();
@@ -61,8 +71,14 @@ fn cleanup_removed_entries_runs_pid_zero_script_plan_before_discard() {
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     let mut removed = vec![("child".to_string(), entry)];
 
-    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
-    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+    super::subagent_cleanup::cleanup_removed_entries_sync(
+        &mut removed,
+        crate::composition::environments::build_member_finalizer,
+    );
+    super::subagent_cleanup::cleanup_removed_entries_sync(
+        &mut removed,
+        crate::composition::environments::build_member_finalizer,
+    );
 
     let text = std::fs::read_to_string(&log).unwrap();
     assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-kill"]);
@@ -165,7 +181,13 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     // final member's exit claims the environment cleanup exactly once. Script
     // sets without a retained kill fall back to the rollback cleanup plan, and
     // the stopped record stays listed (#1369 slice 2: refs never reused).
-    cleanup_registered_once(&registry, "child", FinalizeMode::Exit).await;
+    cleanup_registered_once(
+        &registry,
+        "child",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .await;
     let record = environments
         .get(&env_ref)
         .expect("stopped record stays listed");
@@ -174,7 +196,13 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
 
     // Second run is a no-op: the claim was consumed.
-    cleanup_registered_once(&registry, "child", FinalizeMode::Exit).await;
+    cleanup_registered_once(
+        &registry,
+        "child",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .await;
     assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
 }
 
@@ -242,10 +270,22 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
         .insert("joiner".to_string(), joiner);
 
     // Creator exits first (non-final): no teardown yet.
-    cleanup_registered_once(&registry, "creator", FinalizeMode::Exit).await;
+    cleanup_registered_once(
+        &registry,
+        "creator",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .await;
     assert!(!log.exists(), "non-final exit must not tear down");
     // Joiner exits last: the record's retained cleanup runs exactly once.
-    cleanup_registered_once(&registry, "joiner", FinalizeMode::Exit).await;
+    cleanup_registered_once(
+        &registry,
+        "joiner",
+        FinalizeMode::Exit,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .await;
     let record = environments.get(&env_ref).unwrap();
     assert_eq!(
         record.status,
@@ -302,6 +342,7 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
         FinalizeMode::LaunchRollback,
+        crate::composition::environments::build_member_finalizer,
     )
     .await;
 
@@ -335,6 +376,7 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
         FinalizeMode::LaunchRollbackOwned,
+        crate::composition::environments::build_member_finalizer,
     )
     .await;
 
@@ -395,7 +437,12 @@ async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
     entry.environment_registry = Some(environments.clone());
     entry.environment_ref = Some(env_ref.clone());
     let mut removed = vec![("member".to_string(), entry)];
-    cleanup_removed_entries_once(&mut removed, FinalizeMode::ParentKill).await;
+    cleanup_removed_entries_once(
+        &mut removed,
+        FinalizeMode::ParentKill,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .await;
     environments.complete_kill(claim);
 
     assert!(

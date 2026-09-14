@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 
 fn tool() -> SpawnTool {
     let dir = tempfile::tempdir().unwrap().keep();
-    SpawnTool::new(vec![]).with_socket_dir(dir)
+    crate::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::new(vec![]).with_socket_dir(dir),
+    )
 }
 
 fn config() -> SubagentConfig {

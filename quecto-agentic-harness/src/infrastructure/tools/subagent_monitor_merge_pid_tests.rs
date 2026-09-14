@@ -62,13 +62,12 @@ async fn launch_a_merge_b_and_let_a_die(
     assert!(merge_and_forward_state_changed(&snapshot, &registry, "a-uuid").is_some());
 
     let (exit_tx, mut exit_rx) = new_exit_signal_channel();
-    let observer =
-        crate::infrastructure::tools::subagent_teardown_wiring::build_lifecycle_use_cases(
-            registry.clone(),
-            None,
-            None,
-        )
-        .observe_exit;
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
+        registry.clone(),
+        None,
+        None,
+    )
+    .observe_exit;
     spawn_reaper_task(
         handle,
         supervisor,

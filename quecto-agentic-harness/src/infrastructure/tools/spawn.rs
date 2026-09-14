@@ -167,6 +167,12 @@ pub struct SpawnTool {
     /// under the registry lock so no spawn can race the fleet claim. A tool
     /// built without composition's cell owns an always-accepting one.
     pub(super) harness_lifecycle: super::harness_lifecycle::SharedHarnessLifecycle,
+    /// The lifecycle use cases (#1936) the reaper, monitor and rollback of
+    /// every child this tool launches report to, composed over this tool's
+    /// registry, event stream and notification channel and installed by
+    /// composition. Empty, a real launch is refused before any process
+    /// exists: this tool composes no use case.
+    pub(super) lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot,
 }
 
 impl SpawnTool {
@@ -211,6 +217,7 @@ impl SpawnTool {
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
+            lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot::default(),
         }
     }
 
@@ -233,6 +240,7 @@ impl SpawnTool {
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
+            lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot::default(),
         }
     }
 
@@ -265,19 +273,6 @@ impl SpawnTool {
     ) -> Self {
         self.supervisor = supervisor;
         self
-    }
-
-    /// The lifecycle use cases (#1936) the reaper, monitor and rollback of
-    /// every child this tool launches report to, over this tool's registry,
-    /// event stream and notification channel.
-    pub(super) fn lifecycle_use_cases(
-        &self,
-    ) -> super::subagent_teardown_wiring::SubagentLifecycleUseCases {
-        super::subagent_teardown_wiring::build_lifecycle_use_cases(
-            self.registry.clone(),
-            self.broadcast_tx.clone(),
-            self.notify_tx.clone(),
-        )
     }
 
     /// The supervisor holding every child this tool launched.
@@ -612,6 +607,19 @@ impl Tool for SpawnTool {
             if let Err(refused) = super::harness_lifecycle::admit_spawn(&self.harness_lifecycle) {
                 return Ok(ToolResult {
                     content: format!("Failed to spawn subagent: {refused}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
+            // A real launch reports its exit through the composed lifecycle
+            // use cases; a tool nobody composed refuses before any process
+            // exists (the stub path below launches nothing).
+            let launches_process = !self.base_dir.as_os_str().is_empty();
+            if launches_process && self.lifecycle.get().is_none() {
+                return Ok(ToolResult {
+                    content: "Failed to spawn subagent: no subagent lifecycle is composed in this session"
+                        .to_string(),
                     is_error: true,
                     image_blocks: vec![],
                     delivery_metadata: None,

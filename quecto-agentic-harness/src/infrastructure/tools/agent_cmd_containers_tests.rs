@@ -184,7 +184,10 @@ fn use_case_debug_is_redacted_but_present() {
 
 fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd::AgentCmdTool {
     super::super::agent_cmd::AgentCmdTool::new(super::super::subagent_registry::new_registry())
-        .with_list_environments(query)
+        .with_environment_control(super::EnvironmentControl {
+            list: query,
+            kill: use_case(EnvironmentRegistry::new()),
+        })
 }
 
 #[test]

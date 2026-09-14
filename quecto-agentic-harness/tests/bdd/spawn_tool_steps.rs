@@ -664,11 +664,11 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     let registry = AgentCmdTool::new_registry();
     let socket_dir = base.join("sockets");
     std::fs::create_dir_all(&socket_dir).expect("create socket dir");
-    world.spawn_tool = Some(
+    world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(socket_dir)
             .with_registry(registry.clone()),
-    );
+    ));
     world.agent_cmd_tool = Some(crate::agent_cmd_tool_steps::agent_cmd_tool_with_kill(
         &registry, None,
     ));
@@ -761,12 +761,12 @@ fn rebuild_spawn_tool_with_parent_config(world: &mut QuectoWorld, parent_config:
         .agent_cmd_registry
         .clone()
         .expect("registry from live spawn setup");
-    world.spawn_tool = Some(
+    world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(registry)
             .with_parent_config_path(Some(parent_config)),
-    );
+    ));
 }
 
 #[given(

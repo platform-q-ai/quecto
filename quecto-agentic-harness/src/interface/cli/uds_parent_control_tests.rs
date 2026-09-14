@@ -477,7 +477,7 @@ async fn the_bind_deadline_is_inert_once_a_parent_bound_in_time() {
     let trigger = Arc::new(tokio::sync::Notify::new());
     let watcher = arm_bind_deadline(
         bound.teardown.clone(),
-        super::super::uds_teardown_graph::BindDeadline::Triggered(trigger.clone()),
+        super::BindDeadline::Triggered(trigger.clone()),
     );
     trigger.notify_one();
     assert!(bounded(watcher).await.unwrap().is_none());
@@ -488,7 +488,7 @@ async fn the_bind_deadline_is_inert_once_a_parent_bound_in_time() {
     let top = rig(ParentControlBinding::unlaunched());
     let watcher = arm_bind_deadline(
         top.teardown.clone(),
-        super::super::uds_teardown_graph::BindDeadline::After(std::time::Duration::from_millis(5)),
+        super::BindDeadline::After(std::time::Duration::from_millis(5)),
     );
     assert!(bounded(watcher).await.unwrap().is_none());
     top.nothing_ran();
@@ -500,7 +500,7 @@ async fn a_triggered_deadline_expires_an_unbound_harness_when_fired() {
     let trigger = Arc::new(tokio::sync::Notify::new());
     let watcher = arm_bind_deadline(
         rig.teardown.clone(),
-        super::super::uds_teardown_graph::BindDeadline::Triggered(trigger.clone()),
+        super::BindDeadline::Triggered(trigger.clone()),
     );
     tokio::task::yield_now().await;
     assert_eq!(rig.teardown.binding_state(), BindingState::Unbound);

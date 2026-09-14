@@ -109,10 +109,10 @@ pub(super) struct MultiClientArgs<'a> {
     pub last_persisted_message_index: usize,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
-    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
-    /// Composition's teardown graph builder; without it the loop runs with
+    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
-    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
+    pub teardown_graph: Option<super::TeardownHandlesBuilder>,
 }
 
 /// A command line from a client.
@@ -278,17 +278,17 @@ pub(super) async fn multi_client_loop(
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
 
-    // Subagent teardown graph (#1935, #1938): composition's builder wires
+    // Subagent teardown handles (#1935, #1938): composition's builder wires
     // the application use cases to this loop's cancel slot, exit
     // notification, registry and lifecycle cell, plus the parent control
-    // binding every connection is checked against. A launched child also
-    // arms its bind deadline: a launcher that never presents is presumed
-    // gone.
+    // binding every connection is checked against, and hands the handles
+    // back. A launched child also arms its bind deadline: a launcher that
+    // never presents is presumed gone.
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
     let teardown = teardown_graph.map(|build| {
-        build(super::uds_teardown_graph::TeardownGraphInputs {
+        build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {

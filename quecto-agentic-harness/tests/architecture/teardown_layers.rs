@@ -10,8 +10,9 @@ use std::path::Path;
 use super::teardown_authority::{production_code, production_files, walk};
 
 /// The concrete teardown graph is built in composition only: the fleet,
-/// the common shutdown, the selected-termination owners and the environment
-/// kill are constructed nowhere else in production.
+/// the common shutdown, the selected-termination owners, the launch
+/// lifecycle, the environment kill and the final-member cleanup are
+/// constructed nowhere else in production.
 #[test]
 fn teardown_graph_and_shutdown_delivery_are_composed_in_composition() {
     let constructors = [
@@ -20,17 +21,21 @@ fn teardown_graph_and_shutdown_delivery_are_composed_in_composition() {
         "KillDelegatedAgent::new(",
         "TerminateDelegatedAgent::new(",
         "SettleDelegatedChild::new(",
+        "ObserveOwnedChildExit::new(",
+        "CompensateFailedLaunch::new(",
         "KillEnvironment::new(",
+        "ListEnvironmentsQuery::new(",
+        "FinalizeEnvironmentMember::new(",
         "SubagentTeardownController::new(",
     ];
     let allowed = [
         "src/composition/subagent_teardown.rs",
         "src/composition/subagent_termination.rs",
+        "src/composition/subagent_lifecycle.rs",
+        "src/composition/environments.rs",
         // The fleet builds its per-child settlement from the ports it was
-        // composed with; the environment kill is assembled by the native
-        // extension build over composition's member-shutdown owner.
+        // composed with.
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
-        "src/infrastructure/extensions/native.rs",
     ];
     for path in production_files() {
         for (line_no, line) in production_code(&path) {
@@ -434,7 +439,7 @@ fn teardown_interface_only_parses_maps_and_presents() {
             "src/interface/cli/uds_shutdown.rs",
             "src/interface/cli/uds_dispatch_session.rs",
             "src/interface/cli/uds_parent_control.rs",
-            "src/interface/cli/uds_teardown_graph.rs",
+            "src/interface/cli/uds_teardown_handles.rs",
         ]
         .into_iter()
         .map(str::to_string),

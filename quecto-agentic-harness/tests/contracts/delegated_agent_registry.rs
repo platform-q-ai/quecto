@@ -117,8 +117,13 @@ fn tree(a_socket: &std::path::Path, d_socket: &std::path::Path) -> SubagentRegis
 
 fn port(registry: &SubagentRegistry) -> Arc<dyn DelegatedAgentRegistry> {
     Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_millis(200)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_millis(200)),
     )
 }
 
@@ -290,8 +295,13 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
     let (d, _) = fake_child();
     let registry = tree(&a, &d);
     let agents = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(5)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5)),
     );
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),

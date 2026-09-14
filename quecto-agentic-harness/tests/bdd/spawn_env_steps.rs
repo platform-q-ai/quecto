@@ -184,13 +184,13 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     let (notify_tx, notify_rx) =
         quecto::infrastructure::tools::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
-    world.spawn_tool = Some(
+    world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(subagent_registry_for_spawn)
             .with_notify_tx(notify_tx)
             .with_event_forwarding(Some(broadcast_tx.clone()), None),
-    );
+    ));
     world.notify_rx = Some(notify_rx);
     world.spawn_broadcast_rx = Some(broadcast_rx);
 
@@ -212,25 +212,14 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     // claim ladder an operator kill walks.
     let owners =
         crate::agent_cmd_tool_steps::termination_owners(&subagent_registry, Some(broadcast_tx));
-    let list_environments = std::sync::Arc::new(
-        quecto::application::environments::use_cases::ListEnvironmentsQuery::new(
-            environment_registry.clone(),
-        ),
-    );
-    let kill_environment = std::sync::Arc::new(
-        quecto::application::environments::use_cases::KillEnvironment::new(
-            environment_registry,
-            owners.member_shutdown.clone(),
-            std::sync::Arc::new(
-                quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
-            ),
-        ),
+    let environment_control = quecto::composition::environments::build_environment_control(
+        environment_registry,
+        owners.member_shutdown.clone(),
     );
     world.agent_cmd_tool = Some(
         quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry.clone())
             .with_kill_tool(owners.kill_tool)
-            .with_list_environments(list_environments)
-            .with_kill_environment(kill_environment),
+            .with_environment_control(environment_control),
     );
 }
 
@@ -998,6 +987,7 @@ fn delegated_agents(world: &QuectoWorld) -> RegistryDelegatedAgents {
             .clone(),
         None,
         None,
+        quecto::composition::environments::build_member_finalizer,
     )
 }
 

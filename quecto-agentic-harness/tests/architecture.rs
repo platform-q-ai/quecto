@@ -23,6 +23,8 @@ use std::path::Path;
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
 mod teardown_layers;
+#[path = "architecture/use_case_construction.rs"]
+mod use_case_construction;
 
 /// Recursively collect all .rs files under a directory.
 fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
@@ -3099,12 +3101,14 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/interface/cli/uds_multi_client.rs",
     "src/interface/cli/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
-    "src/interface/cli/uds_teardown_graph.rs",
+    "src/interface/cli/uds_teardown_handles.rs",
     "src/interface/cli/uds_shutdown.rs",
     "src/interface/cli/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
     "src/interface/cli/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
+    "src/composition/subagent_lifecycle.rs",
+    "src/composition/environments.rs",
 ];
 
 /// A source file with every `#[cfg(test)]`-gated item removed (see
@@ -3113,7 +3117,7 @@ fn production_source(path: &str) -> String {
     teardown_authority::production_source(path)
 }
 
-/// The interface receives composition's teardown graph builder through
+/// The interface receives composition's teardown handles builder through
 /// `CliContext` (`run`, via `CliComposition`) and the process-wide supervisor from
 /// infrastructure: no subagent module of the interface names the
 /// composition layer (the find capability's delegation predates this and
@@ -3345,6 +3349,8 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/processes/owned_child_termination.rs",
         "src/interface/tools/agent_cmd_kill.rs",
         "src/composition/subagent_termination.rs",
+        "src/composition/subagent_lifecycle.rs",
+        "src/composition/environments.rs",
         // Environment and swarm member termination (#1939).
         "src/application/environments/use_cases/kill_environment.rs",
         "src/application/environments/use_cases/finalize_environment_member.rs",
@@ -3710,9 +3716,9 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
             );
         }
     }
-    let graph = production_source("src/interface/cli/uds_teardown_graph.rs");
-    assert!(graph.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
-    assert!(graph.contains("pub controller: Arc<SubagentTeardownController>"));
+    let handles = production_source("src/interface/cli/uds_teardown_handles.rs");
+    assert!(handles.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
+    assert!(handles.contains("pub controller: Arc<SubagentTeardownController>"));
     let composition = production_source("src/composition/subagent_teardown.rs");
     assert!(composition.contains("children: fleet.clone()"));
     // The signal watcher and the last client deliver to the controller.
@@ -4056,11 +4062,14 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
         );
     }
     // Composition binds the delegated termination once, beside the kill tool
-    // and the member shutdown it installs into the tools' slots.
+    // it installs into the tools' slot and the member shutdown it hands the
+    // environment kill.
     let composition = production_source("src/composition/subagent_termination.rs");
     assert!(composition.contains("bind_member_termination("));
     assert!(composition.contains("slots.kill.install("));
-    assert!(composition.contains("slots.member_shutdown.install("));
+    assert!(
+        composition.contains("build_environment_control(environments, owners.member_shutdown)")
+    );
     assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
     assert!(composition.contains("DelegatedMemberShutdown::new("));
 }

@@ -195,7 +195,7 @@ fn test_observer(
     registry: &super::super::subagent_registry::SubagentRegistry,
     notify_tx: Option<super::super::subagent_registry::NotificationTx>,
 ) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
-    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(
+    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
         None,
         notify_tx,

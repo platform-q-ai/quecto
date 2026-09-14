@@ -589,9 +589,11 @@ fn when_harness_respawns(world: &mut QuectoWorld, agent_id: String, task: String
     let registry = state(world).harness.as_ref().unwrap().registry.clone();
     let socket_dir = base.join("sockets");
     std::fs::create_dir_all(&socket_dir).unwrap();
-    let tool = SpawnTool::with_base_dir(vec![], base)
-        .with_socket_dir(socket_dir)
-        .with_registry(registry.clone());
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::with_base_dir(vec![], base)
+            .with_socket_dir(socket_dir)
+            .with_registry(registry.clone()),
+    );
     let args = serde_json::json!({
         "agent_id": agent_id,
         "task": task,

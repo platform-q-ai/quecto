@@ -1,4 +1,6 @@
+pub mod environments;
 pub mod find;
+pub mod subagent_lifecycle;
 pub mod subagent_teardown;
 pub mod subagent_termination;
 

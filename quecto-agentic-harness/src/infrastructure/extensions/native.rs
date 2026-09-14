@@ -203,12 +203,16 @@ pub struct AgentControlToolBuild {
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
     pub notification_tx: crate::infrastructure::tools::subagent_registry::NotificationTx,
     pub notification_rx: crate::infrastructure::tools::subagent_registry::NotificationRx,
-    /// The slots the built tools read their parent-hand termination owners
-    /// from (#1936, #1939): `agent_cmd kill` and the member shutdown
-    /// `kill_container` asks before its retained kill. Composition fills
-    /// them; this layer never composes a lifecycle.
+    /// The slots the built tools read their composed use cases from
+    /// (#1936, #1939): `agent_cmd kill`, the launch lifecycle the spawn
+    /// tool hands its reaper and monitor, and the environment control
+    /// `agent_cmd` serves. Composition fills them; this layer never
+    /// composes a use case.
     pub termination_slots:
         crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+    /// The session-scoped environment registry the spawn tool commits
+    /// members to; composition builds the environment control over it.
+    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
@@ -234,30 +238,20 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_registry(registry.clone())
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
-    // The parent-hand termination owners (#1936, #1939) share one graph
-    // composition builds and installs later: `kill_container` asks the
-    // environment's members through its slot before the retained kill;
-    // `kill` reads its own slot; a settling swarm run ends the members
-    // this harness launched through the termination composition binds.
+    // The parent-hand termination owners (#1936, #1939), the launch
+    // lifecycle and the environment control share one graph composition
+    // builds and installs later: `kill` reads its own slot; `agent_cmd`
+    // reads its environment control, whose kill asks the environment's
+    // members to shut down before the retained kill; the spawn tool reads
+    // its lifecycle; a settling swarm run ends the members this harness
+    // launched through the termination composition binds. Empty slots
+    // refuse, never compose.
     let termination_slots =
         crate::infrastructure::tools::environment_member_shutdown::TerminationSlots::default();
-    let kill_environment = std::sync::Arc::new(
-        crate::application::environments::use_cases::KillEnvironment::new(
-            environment_registry.clone(),
-            std::sync::Arc::new(termination_slots.member_shutdown.clone()),
-            std::sync::Arc::new(
-                crate::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
-            ),
-        ),
-    );
+    let spawn = spawn.with_lifecycle_slot(termination_slots.lifecycle.clone());
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
         .with_kill_slot(termination_slots.kill.clone())
-        .with_list_environments(std::sync::Arc::new(
-            crate::application::environments::use_cases::ListEnvironmentsQuery::new(
-                environment_registry,
-            ),
-        ))
-        .with_kill_environment(kill_environment);
+        .with_environment_control_slot(termination_slots.environments.clone());
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(
@@ -270,6 +264,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         notification_tx,
         notification_rx,
         termination_slots,
+        environment_registry,
     }
 }
 

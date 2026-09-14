@@ -118,8 +118,13 @@ fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<Strin
         }
     }
     let agents = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_millis(300)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_millis(300)),
     );
     let settle = Arc::new(SettleDelegatedChild::new(SettleDelegatedChildPorts {
         registry: agents.clone(),

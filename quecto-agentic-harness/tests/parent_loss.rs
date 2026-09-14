@@ -128,11 +128,12 @@ fn persist_refused_launcher(base: &Path) {
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &wrapper) };
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
-    let tool =
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.to_path_buf())
             .with_socket_dir(sockets)
             .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone()));
+            .with_parent_config_path(Some(config.clone())),
+    );
     let args = serde_json::json!({
         "agent_id": "refused-child",
         "task": "wait",
@@ -173,10 +174,12 @@ fn launcher_role() {
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto")) };
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
-    let tool = quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-        .with_socket_dir(sockets.clone())
-        .with_registry(registry.clone())
-        .with_parent_config_path(Some(config.clone()));
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
+        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
+            .with_socket_dir(sockets.clone())
+            .with_registry(registry.clone())
+            .with_parent_config_path(Some(config.clone())),
+    );
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let args = serde_json::json!({
         "agent_id": "bound-child",
@@ -327,7 +330,7 @@ fn spawn_launched_child(
         .args(extra_args)
         .env("QUECTO_BASE_DIR", base)
         .env(
-            quecto::interface::cli::uds_teardown_graph::BIND_DEADLINE_ENV,
+            quecto::interface::cli::uds_parent_control::BIND_DEADLINE_ENV,
             "1000",
         )
         .stdin(std::process::Stdio::null())

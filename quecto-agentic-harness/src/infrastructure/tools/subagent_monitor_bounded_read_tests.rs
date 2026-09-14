@@ -27,14 +27,22 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
-    let handle = spawn_monitor_task_unbound(
-        "child".to_string(),
-        sock.clone(),
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
+        Some(btx.clone()),
         None,
-        Some(btx),
-        Some("root".to_string()),
-    );
+    )
+    .observe_exit;
+    let handle = spawn_monitor_task(MonitorSpec {
+        agent_id: "child".to_string(),
+        socket_path: sock.clone(),
+        registry: registry.clone(),
+        notify_tx: None,
+        broadcast_tx: Some(btx),
+        parent_id: Some("root".to_string()),
+        observer,
+        parent_control: None,
+    });
     let (mut stream, _) = listener.accept().await.unwrap();
 
     // One giant unterminated-then-terminated line, well over MAX_EVENT_PAYLOAD_BYTES,

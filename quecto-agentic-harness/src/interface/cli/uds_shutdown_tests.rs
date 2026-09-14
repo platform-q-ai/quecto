@@ -11,7 +11,7 @@ use crate::domain::environment_registry::{
 use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
-use crate::interface::cli::uds_teardown_graph::TeardownGraphInputs;
+use crate::interface::cli::uds_teardown_handles::TeardownLoopInputs;
 use crate::interface::uds::subagent_teardown::controller::ControllerOutcome;
 
 /// A first signal that fires at once, repeats that never come, and a
@@ -71,7 +71,7 @@ struct Rig {
     cancel: CancelHandle,
     notify: Arc<tokio::sync::Notify>,
     busy: super::super::uds_multi::BusyFlag,
-    graph: super::super::uds_teardown_graph::TeardownGraph,
+    graph: super::super::uds_teardown_handles::TeardownHandles,
 }
 
 /// The composed graph over a registry holding one script-managed member
@@ -93,7 +93,7 @@ fn rig(dir: &std::path::Path) -> Rig {
     let cancel: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
     let notify = Arc::new(tokio::sync::Notify::new());
     let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let graph = crate::composition::subagent_teardown::build_teardown_graph(TeardownGraphInputs {
+    let graph = crate::composition::subagent_teardown::build_teardown_graph(TeardownLoopInputs {
         owner: crate::domain::ids::AgentUuid::new("root"),
         registry: Some(subagents.clone()),
         harness_lifecycle: None,
