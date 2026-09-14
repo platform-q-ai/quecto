@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 use std::io::Write;
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use super::{App, NotifyLevel};
@@ -14,12 +12,6 @@ const ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(2
 /// elapsed seconds are appended and the notice is replaced in place.
 pub(crate) const SETTLING_NOTICE_PREFIX: &str = "waiting for the agent to settle its subagents…";
 
-#[cfg(test)]
-fn ordinary_exit_finalization_errors_for_tests() -> &'static Mutex<Vec<String>> {
-    static ERRORS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    ERRORS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 /// What ordinary exit does with TUI-owned harnesses (#1956).
 #[derive(Debug, Clone)]
 pub(crate) struct OrdinaryExitPolicy {
@@ -31,6 +23,12 @@ pub(crate) struct OrdinaryExitPolicy {
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) settling_notices_shown: Vec<String>,
+    /// Every post-cleanup finalization error this instance emitted to
+    /// stderr, in order (test seam). Kept on the instance rather than in a
+    /// process-global sink so concurrently running tests cannot drain or
+    /// interleave one another's emissions.
+    #[cfg(test)]
+    finalization_errors_emitted: Vec<String>,
 }
 
 impl Default for OrdinaryExitPolicy {
@@ -40,6 +38,8 @@ impl Default for OrdinaryExitPolicy {
             leader_budget_override: None,
             #[cfg(any(test, feature = "test-harness"))]
             settling_notices_shown: Vec::new(),
+            #[cfg(test)]
+            finalization_errors_emitted: Vec::new(),
         }
     }
 }
@@ -71,7 +71,7 @@ impl App {
         self.terminal.show_cursor();
         self.terminal.exit_raw_mode();
         self.terminal.write_str("\r\n");
-        Self::emit_ordinary_exit_finalization_errors(&errors);
+        self.emit_ordinary_exit_finalization_errors(&errors);
         errors
     }
 
@@ -172,28 +172,21 @@ impl App {
         (!notes.is_empty()).then(|| notes.join("; "))
     }
 
-    pub(crate) fn emit_ordinary_exit_finalization_errors(errors: &[String]) {
+    /// Write the finalization errors to the real stderr after the terminal
+    /// has been restored, recording them on this instance for tests.
+    fn emit_ordinary_exit_finalization_errors(&mut self, errors: &[String]) {
         let mut stderr = std::io::stderr().lock();
         Self::emit_ordinary_exit_finalization_errors_to(errors, &mut stderr);
         #[cfg(test)]
-        Self::record_ordinary_exit_finalization_errors_for_tests(errors);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_ordinary_exit_finalization_errors_for_tests() -> Vec<String> {
-        ordinary_exit_finalization_errors_for_tests()
-            .lock()
-            .unwrap()
-            .drain(..)
-            .collect()
-    }
-
-    #[cfg(test)]
-    fn record_ordinary_exit_finalization_errors_for_tests(errors: &[String]) {
-        ordinary_exit_finalization_errors_for_tests()
-            .lock()
-            .unwrap()
+        self.exit_policy
+            .finalization_errors_emitted
             .extend(errors.iter().cloned());
+    }
+
+    /// Drain the finalization errors this instance has emitted so far.
+    #[cfg(test)]
+    pub(crate) fn take_ordinary_exit_finalization_errors_for_tests(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.exit_policy.finalization_errors_emitted)
     }
 
     pub(crate) fn emit_ordinary_exit_finalization_errors_to(
