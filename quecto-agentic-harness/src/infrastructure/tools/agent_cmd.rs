@@ -77,7 +77,11 @@ impl AgentCmdTool {
         self,
         control: super::agent_cmd_containers::EnvironmentControl,
     ) -> Self {
-        self.environments.install(control);
+        let installed = self.environments.install(control);
+        debug_assert!(
+            installed,
+            "the environment control is composed once per tool"
+        );
         self
     }
 

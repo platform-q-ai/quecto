@@ -5,6 +5,10 @@
 use super::spawn::SpawnTool;
 use super::subagent_registry::NotificationTx;
 use super::subagent_teardown_wiring::{SubagentLifecycleSlot, SubagentLifecycleUseCases};
+use crate::domain::error::DomainError;
+
+/// What a launch reports when no lifecycle was composed for its tool.
+pub const NO_LIFECYCLE_COMPOSED: &str = "no subagent lifecycle is composed in this session";
 
 impl SpawnTool {
     /// Read the lifecycle use cases from a slot shared with whoever fills
@@ -17,18 +21,27 @@ impl SpawnTool {
     /// Install composed lifecycle use cases directly: launchers and
     /// fixtures that compose their own over this tool's registry.
     pub fn with_lifecycle_use_cases(self, use_cases: SubagentLifecycleUseCases) -> Self {
-        self.lifecycle.install(use_cases);
+        let installed = self.lifecycle.install(use_cases);
+        debug_assert!(
+            installed,
+            "the lifecycle use cases are composed once per launcher"
+        );
         self
+    }
+
+    /// Whether composition installed this tool's lifecycle use cases.
+    pub fn lifecycle_composed(&self) -> bool {
+        self.lifecycle.get().is_some()
     }
 
     /// The lifecycle use cases (#1936) the reaper, monitor and rollback of
     /// every child this tool launches report to. `execute` refuses a real
-    /// launch while the slot is empty, so a launch in flight always finds
-    /// its lifecycle here.
-    pub(super) fn lifecycle_use_cases(&self) -> SubagentLifecycleUseCases {
+    /// launch while the slot is empty; a launch port driven directly (the
+    /// contract suite) meets the same refusal here.
+    pub(super) fn lifecycle_use_cases(&self) -> Result<SubagentLifecycleUseCases, DomainError> {
         self.lifecycle
             .get()
-            .expect("a launch is admitted only once composition installed the lifecycle use cases")
+            .ok_or_else(|| DomainError::Tool(NO_LIFECYCLE_COMPOSED.to_string()))
     }
 
     /// The event stream this tool forwards child events on, if any.
@@ -41,3 +54,7 @@ impl SpawnTool {
         self.notify_tx.as_ref()
     }
 }
+
+#[cfg(test)]
+#[path = "spawn_lifecycle_tests.rs"]
+mod tests;

@@ -616,10 +616,12 @@ impl Tool for SpawnTool {
             // use cases; a tool nobody composed refuses before any process
             // exists (the stub path below launches nothing).
             let launches_process = !self.base_dir.as_os_str().is_empty();
-            if launches_process && self.lifecycle.get().is_none() {
+            if launches_process && !self.lifecycle_composed() {
                 return Ok(ToolResult {
-                    content: "Failed to spawn subagent: no subagent lifecycle is composed in this session"
-                        .to_string(),
+                    content: format!(
+                        "Failed to spawn subagent: {}",
+                        super::spawn_lifecycle::NO_LIFECYCLE_COMPOSED
+                    ),
                     is_error: true,
                     image_blocks: vec![],
                     delivery_metadata: None,

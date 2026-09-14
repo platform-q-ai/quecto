@@ -373,9 +373,16 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             let Some(child) = child else {
                 return;
             };
-            let compensated = self
-                .tool
-                .lifecycle_use_cases()
+            let lifecycle = match self.tool.lifecycle_use_cases() {
+                Ok(lifecycle) => lifecycle,
+                Err(error) => {
+                    // A registration needs the lifecycle, so an uncommit
+                    // without one has nothing registered to conclude.
+                    tracing::warn!(agent = %registry_key, %error, "launch rollback without a lifecycle");
+                    return;
+                }
+            };
+            let compensated = lifecycle
                 .compensate_launch
                 .execute(
                     crate::application::subagents::dto::CompensateFailedLaunchRequest {
@@ -449,7 +456,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     crate::infrastructure::processes::parent_control::next_launch_generation,
                 );
             entry.launch_generation = Some(launch_generation);
-            let lifecycle = self.tool.lifecycle_use_cases();
+            let lifecycle = self.tool.lifecycle_use_cases()?;
             entry.owned_child = prepared.owned_child;
             entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));
             register_and_broadcast(
