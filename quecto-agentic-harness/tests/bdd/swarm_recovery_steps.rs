@@ -135,17 +135,64 @@ async fn admit_other(workspace: &Path) {
     python(workspace, "coordinator", &code).await.unwrap();
 }
 
+/// The longest a reconcile turn may take before the harness is declared
+/// hung: a ceiling against a dead coordinator, not an estimate of a turn.
+const RECONCILE_BUDGET: Duration = Duration::from_secs(120);
+
+/// How often the receipt is read. Every read is a fresh UDS client the
+/// coordinator's accept loop must admit and later reap; a starved
+/// coordinator reaps slowly, and polling faster than it reaps risks its
+/// 64-client cap (a reset connection) instead of an answer.
+const RECEIPT_POLL: Duration = Duration::from_millis(250);
+
 /// Ask the coordinator to run one `op=reconcile` (a tool call and its
 /// answer) and wait until that turn is over.
+///
+/// The prompt carries `"ack":"accept"`, so the coordinator's reader accepts
+/// it at once and queues it as a follow-up (a busy coordinator runs it at
+/// its next idle boundary). The wait then follows that command's own
+/// control receipt — queued, started, completed — under the id the
+/// transport stamped on it, rather than a wall-clock guess at how long a
+/// turn takes (two provider round-trips and a Python swarm subprocess,
+/// several seconds each on a loaded runner): a slow box only makes this
+/// slower, never wrong. `RECONCILE_BUDGET` is the ceiling against a hung
+/// coordinator.
 async fn reconcile(runtime: &fixture::Runtime, message: &str) {
     let before = runtime.requests.load(std::sync::atomic::Ordering::SeqCst);
-    runtime
+    let accepted = runtime
         .command(json!({"type":"prompt","message":message,"ack":"accept"}))
         .await;
-    let until = tokio::time::Instant::now() + Duration::from_secs(15);
-    while runtime.requests.load(std::sync::atomic::Ordering::SeqCst) < before + 2 {
-        assert!(tokio::time::Instant::now() < until, "reconcile never ran");
-        tokio::time::sleep(Duration::from_millis(25)).await;
+    // The transport stamps its own correlation id; the acceptance echoes it
+    // and the receipt is recorded under it.
+    let id = accepted["id"]
+        .as_str()
+        .expect("the acceptance echoes the stamped command id")
+        .to_owned();
+    let until = tokio::time::Instant::now() + RECONCILE_BUDGET;
+    loop {
+        let state = runtime.command(json!({"type":"get_state"})).await;
+        let receipt = state["data"]["controlReceipts"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id.as_str()))
+            .map(|row| row["status"].as_str().unwrap_or_default().to_owned());
+        let requests = runtime.requests.load(std::sync::atomic::Ordering::SeqCst);
+        let ran = requests >= before + 2;
+        match receipt.as_deref() {
+            Some("completed") if ran => break,
+            Some("completed" | "failed" | "cancelled" | "rejected") => panic!(
+                "reconcile never ran: receipt {receipt:?}, requests {before} -> {requests}, state {}\n--- coordinator stderr ---\n{}",
+                state["data"]["state"],
+                runtime.stderr_tail()
+            ),
+            _ => {}
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "reconcile did not finish within {RECONCILE_BUDGET:?}: receipt {receipt:?}, requests {before} -> {requests}, state {}\n--- coordinator stderr ---\n{}",
+            state["data"]["state"],
+            runtime.stderr_tail()
+        );
+        tokio::time::sleep(RECEIPT_POLL).await;
     }
     runtime.wait_idle().await;
 }
@@ -168,18 +215,27 @@ fn count(events: &[Value], action: &str) -> usize {
     events.iter().filter(|e| e["action"] == action).count()
 }
 
-fn spawn_exercise(
+/// Run `exercise` on its own tokio runtime and thread, yielding cucumber's
+/// executor while it runs: an exercise takes tens of seconds (a real
+/// coordinator, a 10 s loss grace) and a blocking join would freeze every
+/// scenario co-scheduled in this process for that long.
+async fn spawn_exercise(
     world: &mut QuectoWorld,
     exercise: fn(PathBuf) -> std::pin::Pin<Box<dyn std::future::Future<Output = Value> + Send>>,
 ) {
     let workspace = world.swarm_workspace.clone().unwrap();
-    let evidence = std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(exercise(workspace))
-    })
-    .join()
-    .unwrap_or_else(|payload| {
+    let (done_tx, done_rx) = futures::channel::oneshot::channel();
+    let worker = std::thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(exercise(workspace))
+        }));
+        let _ = done_tx.send(outcome);
+    });
+    let outcome = done_rx.await.expect("the exercise thread reports");
+    let _ = worker.join();
+    let evidence = outcome.unwrap_or_else(|payload| {
         let text = payload
             .downcast_ref::<String>()
             .cloned()
@@ -200,8 +256,8 @@ fn spawn_exercise(
 #[when(
     "a member the coordinator launched is killed while holding a claim and another member reconciles throughout"
 )]
-fn kill_claiming_member(world: &mut QuectoWorld) {
-    spawn_exercise(world, |workspace| Box::pin(exercise_kill(workspace)));
+async fn kill_claiming_member(world: &mut QuectoWorld) {
+    spawn_exercise(world, |workspace| Box::pin(exercise_kill(workspace))).await;
 }
 
 async fn exercise_kill(workspace: PathBuf) -> Value {
@@ -338,8 +394,8 @@ fn recovered_after_kill(world: &mut QuectoWorld) {
 // ── Unobserved loss: recorded once, never re-pauses a resumed run ──────────
 
 #[when("an unobserved member loss pauses the run and the supervisor resumes it")]
-fn unobserved_loss(world: &mut QuectoWorld) {
-    spawn_exercise(world, |workspace| Box::pin(exercise_loss(workspace)));
+async fn unobserved_loss(world: &mut QuectoWorld) {
+    spawn_exercise(world, |workspace| Box::pin(exercise_loss(workspace))).await;
 }
 
 async fn exercise_loss(workspace: PathBuf) -> Value {

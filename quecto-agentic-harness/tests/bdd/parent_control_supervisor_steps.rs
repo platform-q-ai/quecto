@@ -353,8 +353,12 @@ fn fixture_pid(world: &mut QuectoWorld) -> u32 {
 
 #[given("a live fixture process that is not owned by the supervisor")]
 fn given_fixture_process(world: &mut QuectoWorld) {
+    // A process that never ends on its own: the only way it can be gone
+    // at the end of the scenario is a signal, whatever the scheduling of
+    // the scenarios sharing this shard (a `sleep 30` expired under CI
+    // load and read as a signal).
     let child = std::process::Command::new("sleep")
-        .arg("30")
+        .arg("infinity")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -468,9 +472,12 @@ fn when_production_paths(world: &mut QuectoWorld) {
 #[then("the fixture process is still alive")]
 fn then_fixture_alive(world: &mut QuectoWorld) {
     let fixture = state(world).fixture.as_mut().unwrap();
+    let status = fixture.try_wait().unwrap();
     assert!(
-        fixture.try_wait().unwrap().is_none(),
-        "the fixture pid must never be signalled"
+        status.is_none(),
+        "the fixture pid must never be signalled: exited with {status:?} (signal {:?}, code {:?})",
+        status.and_then(|s| std::os::unix::process::ExitStatusExt::signal(&s)),
+        status.and_then(|s| s.code())
     );
     let _ = fixture.kill();
     let _ = fixture.wait();

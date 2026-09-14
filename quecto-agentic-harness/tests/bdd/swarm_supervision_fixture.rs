@@ -12,6 +12,13 @@ use std::{
     time::Duration,
 };
 
+/// How long a real coordinator may take to bind its socket or answer its
+/// first turn before it is declared dead. Both waits are event-driven (the
+/// socket appearing, the report arriving); this is the ceiling against a
+/// hung process, not an estimate of a start-up on a runner executing 24
+/// shards on two vCPUs, where a 15 s guess was overrun.
+pub const STARTUP_CEILING: Duration = Duration::from_secs(60);
+
 pub struct Runtime {
     child: Child,
     socket: PathBuf,
@@ -213,7 +220,7 @@ impl Runtime {
             requests,
             _server: server,
         };
-        let until = tokio::time::Instant::now() + Duration::from_secs(15);
+        let until = tokio::time::Instant::now() + STARTUP_CEILING;
         while !runtime.socket.exists() {
             assert!(
                 runtime.child.try_wait().unwrap().is_none(),
@@ -234,13 +241,18 @@ impl Runtime {
             Duration::from_secs(10),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "{input} failed: {error}\n--- coordinator stderr ---\n{}",
+                self.stderr_tail()
+            )
+        });
         let reply: Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(reply["success"], true, "{reply}");
         reply
     }
     pub async fn wait_report(&self, expected: &str) -> Value {
-        let until = tokio::time::Instant::now() + Duration::from_secs(15);
+        let until = tokio::time::Instant::now() + STARTUP_CEILING;
         loop {
             let report = self.command(json!({"type":"get_report"})).await;
             if report["data"]["report"]["content"] == expected {
