@@ -53,10 +53,25 @@ pub(crate) struct Endpoint {
     pub(crate) requests: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
+/// Something the endpoint does the moment a `shutdown` request reaches it,
+/// before any pause or answer: the scenario's chance to act while the
+/// owner's "shut down children" phase is provably open.
+pub(crate) type ShutdownHook = Arc<dyn Fn() + Send + Sync>;
+
 pub(crate) fn serve(
     runtime: &tokio::runtime::Runtime,
     behaviour: Behaviour,
     exit_pid: Arc<AtomicU64>,
+) -> Endpoint {
+    serve_with_shutdown_hook(runtime, behaviour, exit_pid, None)
+}
+
+/// [`serve`] with `on_shutdown` run on every `shutdown` request received.
+pub(crate) fn serve_with_shutdown_hook(
+    runtime: &tokio::runtime::Runtime,
+    behaviour: Behaviour,
+    exit_pid: Arc<AtomicU64>,
+    on_shutdown: Option<ShutdownHook>,
 ) -> Endpoint {
     let path = std::env::temp_dir().join(format!("q-st-{}.sock", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_file(&path);
@@ -76,6 +91,7 @@ pub(crate) fn serve(
             };
             let seen = seen.clone();
             let exit_pid = exit_pid.clone();
+            let on_shutdown = on_shutdown.clone();
             tokio::spawn(async move {
                 use tokio::io::AsyncWriteExt;
                 let (read, mut write) = tokio::io::split(stream);
@@ -91,6 +107,11 @@ pub(crate) fn serve(
                 };
                 let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 seen.lock().unwrap().push(request.clone());
+                if request["type"] == "shutdown"
+                    && let Some(hook) = on_shutdown.as_ref()
+                {
+                    hook();
+                }
                 if behaviour == Behaviour::EndsProcessThenRefuses && request["type"] == "shutdown" {
                     let pid = exit_pid.load(Ordering::SeqCst);
                     assert!(pid != 0, "the fixture holds a process to end");

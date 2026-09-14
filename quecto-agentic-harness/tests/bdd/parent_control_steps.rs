@@ -28,6 +28,10 @@ use quecto::interface::uds::parent_control::wire::BindParentControlWire;
 
 use crate::QuectoWorld;
 
+/// The slow direct child's report of delivering the completion note into
+/// the harness: unset until its shutdown request arrives.
+type NoteDelivery = Arc<std::sync::Mutex<Option<Result<(), String>>>>;
+
 #[derive(Default)]
 pub(crate) struct ParentControlState {
     minted: Vec<ParentControlCredential>,
@@ -42,6 +46,20 @@ pub(crate) struct ParentControlState {
     pub(crate) supervisor: Option<SupervisorRig>,
     pub(crate) fixture: Option<std::process::Child>,
     pub(crate) teardown_effects: Vec<bool>,
+    /// Whether the slow direct child's endpoint delivered the completion
+    /// note into the harness when its shutdown request arrived.
+    note_delivery: Option<NoteDelivery>,
+}
+
+impl Drop for ParentControlState {
+    fn drop(&mut self) {
+        // The unowned fixture never ends on its own; a scenario that failed
+        // before its own kill step must not leak it.
+        if let Some(mut fixture) = self.fixture.take() {
+            let _ = fixture.kill();
+            let _ = fixture.wait();
+        }
+    }
 }
 
 impl std::fmt::Debug for ParentControlState {
@@ -583,16 +601,47 @@ fn when_client_prompts(world: &mut QuectoWorld) {
     "the launched harness owns a direct child that acknowledges shutdown slowly and exits when told"
 )]
 fn given_slow_child(world: &mut QuectoWorld) {
-    use crate::selected_termination_steps::fixture::{Behaviour, serve};
+    use crate::selected_termination_steps::fixture::{Behaviour, serve_with_shutdown_hook};
     use quecto::infrastructure::processes::owned_child_supervisor::ProcessGroup;
-    let harness = state(world).harness.as_mut().unwrap();
+    use quecto::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentNotification,
+    };
+    let s = state(world);
+    let delivery = Arc::new(std::sync::Mutex::new(None));
+    s.note_delivery = Some(delivery.clone());
+    let harness = s.harness.as_mut().unwrap();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .build()
         .unwrap();
     let exit_pid = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let endpoint = serve(&runtime, Behaviour::AcknowledgeSlowly, exit_pid.clone());
+    // The note is delivered by the child's own endpoint the moment the
+    // harness asks it to shut down: that is exactly while the "shut down
+    // children" phase is open, however the scenarios sharing this process
+    // are scheduled (a step-driven delivery lost the 1.5 s window whenever
+    // a co-scheduled sync step held the executor, and found the note
+    // channel already closed by the exited harness).
+    let notes = harness.notes.clone();
+    let on_shutdown: crate::selected_termination_steps::fixture::ShutdownHook =
+        Arc::new(move || {
+            let sent = notes
+                .try_send(SequencedSubagentNotification::new_for_agent(
+                    1,
+                    SubagentNotification::Completed {
+                        agent_id: "slow".into(),
+                    },
+                    quecto::domain::ids::AgentUuid::new("slow-child"),
+                ))
+                .map_err(|error| format!("{error:?}"));
+            *delivery.lock().unwrap() = Some(sent);
+        });
+    let endpoint = serve_with_shutdown_hook(
+        &runtime,
+        Behaviour::AcknowledgeSlowly,
+        exit_pid.clone(),
+        Some(on_shutdown),
+    );
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let mut command = tokio::process::Command::new("sleep");
     command
@@ -631,23 +680,27 @@ fn given_slow_child(world: &mut QuectoWorld) {
 /// A subagent completion note reaching the harness while its shutdown is
 /// executing: at the idle boundary the cancelled turn left, the note would
 /// nudge a fresh turn — a 20 s provider call — unless turn admission was
-/// closed by the shutdown (`mark_shutting_down`).
+/// closed by the shutdown (`mark_shutting_down`). The slow child's endpoint
+/// delivers it on the shutdown request it receives; this step waits for
+/// that delivery and checks the harness accepted the note.
 #[when("a subagent completion note reaches the harness")]
 fn when_note_arrives(world: &mut QuectoWorld) {
-    use quecto::infrastructure::tools::subagent_registry::{
-        SequencedSubagentNotification, SubagentNotification,
+    let delivery = state(world)
+        .note_delivery
+        .clone()
+        .expect("a slow direct child that delivers the note");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let sent = loop {
+        if let Some(sent) = delivery.lock().unwrap().clone() {
+            break sent;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the harness never asked its direct child to shut down"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     };
-    let harness = state(world).harness.as_mut().unwrap();
-    harness
-        .notes
-        .try_send(SequencedSubagentNotification::new_for_agent(
-            1,
-            SubagentNotification::Completed {
-                agent_id: "slow".into(),
-            },
-            quecto::domain::ids::AgentUuid::new("slow-child"),
-        ))
-        .expect("the note is accepted");
+    assert_eq!(sent, Ok(()), "the note is accepted");
 }
 
 /// The note's turn is refused before it starts (pre-cancelled): no further
