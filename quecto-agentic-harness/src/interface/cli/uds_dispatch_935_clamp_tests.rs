@@ -71,9 +71,12 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             base_dir: tmp.path(),
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &session_key,
+                None,
+                &[],
+            ),
+            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 session.state_snapshot(0, None, 0, None),
             )),

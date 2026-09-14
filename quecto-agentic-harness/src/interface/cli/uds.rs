@@ -9,7 +9,7 @@ use super::uds_session::AgentSession;
 #[cfg(test)]
 use super::uds_session::{
     clear_conversation, compute_session_stats, compute_session_stats_with_usage,
-    messages_tail_json, resolve_rewind_target, rewind_to_message_index,
+    messages_page_json, resolve_rewind_target, rewind_to_message_index,
 };
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
@@ -127,8 +127,12 @@ pub(crate) struct DispatchCtx<'a> {
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
-    pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
-    pub state_snapshot: super::uds_multi::StateSnapshot,               // #837
+    /// The active session and its read use cases (#1971): the one
+    /// conversation read model every transport serves from.
+    pub sessions: super::uds_session_handles::SessionReadHandles,
+    /// Where `get_report` raw exports are written (D4 #1974).
+    pub export_root: super::uds_snapshots::ExportRootSlot,
+    pub state_snapshot: super::uds_multi::StateSnapshot, // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
     pub tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot, // #880
@@ -208,7 +212,7 @@ pub(super) async fn emit_event_to_broadcast_or_writer(
 
 pub(super) async fn emit_ledger_advanced(
     ctx: &mut DispatchCtx<'_>,
-    advance: super::uds_snapshots::LedgerAdvance,
+    advance: crate::application::sessions::conversation_ledger::LedgerAdvance,
 ) {
     ctx.event_sink().emit_ledger_advanced(advance).await;
 }
@@ -305,9 +309,7 @@ async fn persist_user_prompt_before_run(
         .and_then(|message| message.ordinal);
     let persisted_len = persisted_messages.len();
     let workflow_run = persisted_workflow_run(ctx);
-    let identity = crate::domain::session_identity::SessionIdentity::from_persisted_key(
-        ctx.session_key.as_str(),
-    );
+    let identity = ctx.sessions.active_session.read().await.identity().clone();
     let result = if ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
@@ -599,7 +601,7 @@ async fn run_prompt_dispatch(
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
-        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+        active_session: Some(ctx.sessions.active_session.clone()),
         execution_state: Some(ctx.execution_state.clone()),
         session: ctx.session,
         sink: &mut sink,
@@ -648,7 +650,7 @@ async fn run_drained_message_guarded(
         let run = run_agent_message(PromptRun {
             agent: ctx.agent,
             messages: ctx.messages,
-            conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+            active_session: Some(ctx.sessions.active_session.clone()),
             execution_state: Some(ctx.execution_state.clone()),
             session: ctx.session,
             sink: &mut sink,

@@ -6,7 +6,9 @@ use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool::ToolProfileContext;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
-use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::cli::uds::dispatch_session_roster_tests::{
+    list_handle, read_handles_for, resolve_message,
+};
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -171,20 +173,19 @@ impl Fixture {
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     ) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
-        let snapshot_messages = self.messages.clone();
-        let spill_store = self.agent.spill_store().cloned();
-        let mut snapshot_data =
-            crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(
-                snapshot_messages,
-            );
-        snapshot_data.set_spill_store(spill_store, self.session_key.clone());
+        let sessions = read_handles_for(
+            &self.session_key,
+            self.agent.spill_store().cloned(),
+            &self.messages,
+        );
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(snapshot_data)),
+            sessions,
+            export_root: Arc::default(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -355,9 +356,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
     let mut msg = Message::assistant(oversized.clone(), vec![]);
     let message_id = msg.id().to_string();
     msg.content = oversized.clone();
-    let snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![msg]);
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+    let snapshot = read_handles_for("cli:test", None, &[msg]);
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
@@ -533,13 +532,8 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     let full = "busy resolver full content from spill";
     let collapsed = collapsed_message(spill_id);
     let message_id = collapsed.id().to_string();
-    let mut snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            collapsed,
-        ]);
     let spill_store = Arc::new(MemSpillStore::with_entry(spill_entry(spill_id, full)));
-    snapshot_data.set_spill_store(Some(spill_store.clone()), "cli:test".into());
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+    let snapshot = read_handles_for("cli:test", Some(spill_store.clone()), &[collapsed]);
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
@@ -654,19 +648,15 @@ async fn get_message_uses_the_snapshot_session_key_for_spill_recall() {
     ));
     let collapsed = collapsed_message(spill_id);
     let message_id = collapsed.id().to_string();
-    let mut snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::default();
-    snapshot_data.reset_to_with_spill_store(
-        std::slice::from_ref(&collapsed),
+    let snapshot = read_handles_for(
+        "cli:resumed",
         Some(store.clone()),
-        "cli:resumed".into(),
+        std::slice::from_ref(&collapsed),
     );
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
 
-    let resolved =
-        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
-            .await
-            .expect("collapsed message resolves");
+    let resolved = resolve_message(&snapshot, &message_id)
+        .await
+        .expect("collapsed message resolves");
 
     assert_eq!(resolved.content, "resumed session content");
     assert_eq!(
@@ -695,12 +685,12 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         .unwrap();
     let snapshot = {
         let ctx = fx.ctx(None);
-        ctx.conversation_snapshot.clone()
+        ctx.sessions.clone()
     };
     {
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let mut ctx = fx.ctx(Some(tx));
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(
             !super::handle_resume_session(
                 &mut ctx,
@@ -712,18 +702,19 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         );
     }
     let message_id = snapshot
+        .active_session
         .read()
         .await
-        .messages
+        .conversation()
+        .live_messages()
         .iter()
         .find(|message| message.is_collapsed)
         .expect("resumed snapshot contains collapsed message")
         .id()
         .to_string();
-    let resolved =
-        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
-            .await
-            .expect("resumed collapsed message resolves");
+    let resolved = resolve_message(&snapshot, &message_id)
+        .await
+        .expect("resumed collapsed message resolves");
     assert_eq!(resolved.content, "content from resumed session");
     assert_eq!(
         store.recalled(),

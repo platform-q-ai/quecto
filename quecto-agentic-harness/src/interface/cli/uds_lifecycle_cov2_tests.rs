@@ -252,6 +252,8 @@ async fn single_client_socket_override_serves_get_state() {
                 crate::interface::cli::uds_session_handles::SessionLoopInputs {
                     base_dir: dir.path().to_path_buf(),
                     store: None,
+                    session_key: "cli:cov".into(),
+                    spill_store: None,
                 },
             );
             single_client_loop(

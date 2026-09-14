@@ -1,4 +1,12 @@
+//! The `agent_cmd` default unread report (#1856): the adapter side of the
+//! supervisor's plain `get_messages` read. The child's wire response is
+//! parsed here, the selection and acknowledgement rules are the domain's
+//! (`domain::unread_report`), and the report budget, receipt and envelope
+//! shaping stay with this tool.
 use crate::domain::session::PendingMessageReport;
+use crate::domain::unread_report::{
+    ReportedMessage, UnreadSelection, acknowledged_report_index, needs_backfill, select_unread,
+};
 
 pub(crate) fn mint_default_report_receipt() -> String {
     format!("agent-cmd-report-{}", uuid::Uuid::new_v4())
@@ -11,31 +19,21 @@ pub(crate) fn delivery_receipt(response: &serde_json::Value) -> Option<&str> {
         .filter(|receipt| !receipt.is_empty())
 }
 
-pub(crate) fn pending_delivery_match_index(
-    pending: &std::collections::VecDeque<PendingMessageReport>,
-    receipt: Option<&str>,
-    delivered_content: &str,
-) -> Option<usize> {
-    if let Some(receipt) = receipt {
-        return pending
-            .iter()
-            .position(|pending| !pending.receipt.is_empty() && pending.receipt == receipt);
-    }
-    let mut matches = pending
-        .iter()
-        .enumerate()
-        .filter(|(_, pending)| pending.receipt.is_empty() && pending.response == delivered_content);
-    let (index, _) = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    Some(index)
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DefaultReportPlan {
     pub content: String,
     pub pending: Option<PendingMessageReport>,
+}
+
+fn ordinal_of(message: &serde_json::Value) -> Option<u64> {
+    message.get("ordinal").and_then(|value| value.as_u64())
+}
+
+fn observed(message: &serde_json::Value) -> ReportedMessage {
+    ReportedMessage {
+        ordinal: ordinal_of(message),
+        substantive_assistant: is_substantive_assistant(message),
+    }
 }
 
 pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultReportPlan {
@@ -56,114 +54,74 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
     let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return unchanged(response.to_string());
     };
-    // A live turn may publish messages before persistence assigns durable
-    // ordinals. Expose its latest report by ID without inventing a watermark.
-    if messages.iter().any(|message| {
-        message
-            .get("ordinal")
-            .and_then(|value| value.as_u64())
-            .is_none()
-    }) {
-        let latest = messages
+    let selected = |indices: &[usize]| -> Vec<serde_json::Value> {
+        indices
             .iter()
-            .rev()
-            .find(|message| is_substantive_assistant(message))
-            .cloned();
-        let report = bounded_report_messages(latest.into_iter().collect(), 0);
-        *data = serde_json::json!({"messages":report.messages, "cursorNeutral":true,
-            "ordinalStatus":"pending_persistence", "reportIncomplete":true,
-            "messageContentTruncated":report.message_content_truncated});
-        return unchanged(envelope.to_string());
-    }
-    let observed_max = messages
-        .iter()
-        .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-        .max()
-        .unwrap_or(0);
-    if report_incomplete {
-        if observed_max > delivered {
+            .map(|&index| messages[index].clone())
+            .collect()
+    };
+    let reported: Vec<ReportedMessage> = messages.iter().map(observed).collect();
+    match select_unread(&reported, delivered, report_incomplete) {
+        UnreadSelection::PendingPersistence { latest_substantive } => {
             let report = bounded_report_messages(
-                messages
-                    .iter()
-                    .filter(|m| {
-                        m.get("ordinal")
-                            .and_then(|v| v.as_u64())
-                            .is_some_and(|ord| ord > delivered)
-                    })
-                    .cloned()
-                    .collect(),
-                observed_max,
+                selected(&latest_substantive.into_iter().collect::<Vec<_>>()),
+                0,
             );
-            if !report.messages.is_empty() {
-                *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
+            *data = serde_json::json!({"messages":report.messages, "cursorNeutral":true,
+                "ordinalStatus":"pending_persistence", "reportIncomplete":true,
+                "messageContentTruncated":report.message_content_truncated});
+            unchanged(envelope.to_string())
+        }
+        UnreadSelection::Incomplete {
+            unread,
+            max_ordinal,
+        } => {
+            if !unread.is_empty() {
+                let report = bounded_report_messages(selected(&unread), max_ordinal);
+                if !report.messages.is_empty() {
+                    *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
+                    return unchanged(envelope.to_string());
+                }
+            }
+            *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
+            unchanged(envelope.to_string())
+        }
+        UnreadSelection::Unchanged => {
+            *data = serde_json::json!({"unchanged": true});
+            unchanged(envelope.to_string())
+        }
+        UnreadSelection::Unread {
+            indices,
+            max_ordinal,
+        } => {
+            let report = bounded_report_messages(selected(&indices), max_ordinal);
+            if report.messages.is_empty() {
+                *data = if max_ordinal > delivered {
+                    serde_json::json!({"messages": [], "truncated": true, "hasMoreMessages": true, "messageContentTruncated": false, "reportIncomplete": true})
+                } else {
+                    serde_json::json!({"unchanged": true})
+                };
                 return unchanged(envelope.to_string());
             }
-        }
-        *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
-        return unchanged(envelope.to_string());
-    }
-    if observed_max < delivered {
-        *data = serde_json::json!({"unchanged": true});
-        return unchanged(envelope.to_string());
-    }
-    let mut max_ord = delivered;
-    let mut latest_assistant = None;
-    let mut unread = Vec::new();
-    for (idx, msg) in messages.iter_mut().enumerate() {
-        let ord = msg
-            .get("ordinal")
-            .and_then(|value| value.as_u64())
-            .expect("durable ordinals validated above");
-        max_ord = max_ord.max(ord);
-        if ord > delivered {
-            unread.push(idx);
-            if is_substantive_assistant(msg) {
-                latest_assistant = Some(idx);
+            let ordinal = report
+                .messages
+                .iter()
+                .filter_map(ordinal_of)
+                .max()
+                .unwrap_or(delivered);
+            let truncated = report.has_more_messages || report.message_content_truncated;
+            let receipt = mint_default_report_receipt();
+            *data = serde_json::json!({"messages": report.messages, "truncated": truncated, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated});
+            let content = envelope.to_string();
+            DefaultReportPlan {
+                content: content.clone(),
+                pending: Some(PendingMessageReport {
+                    receipt,
+                    response: content,
+                    ordinal,
+                }),
             }
         }
-    }
-    if unread.is_empty() {
-        *data = serde_json::json!({"unchanged": true});
-        return unchanged(envelope.to_string());
-    }
-    let candidates: Vec<_> = if delivered == 0 {
-        latest_assistant
-            .into_iter()
-            .map(|i| messages[i].clone())
-            .collect()
-    } else {
-        unread.into_iter().map(|i| messages[i].clone()).collect()
-    };
-    if candidates.is_empty() {
-        *data = serde_json::json!({"unchanged": true});
-        return unchanged(envelope.to_string());
-    }
-    let report = bounded_report_messages(candidates, max_ord);
-    if report.messages.is_empty() {
-        *data = if max_ord > delivered {
-            serde_json::json!({"messages": [], "truncated": true, "hasMoreMessages": true, "messageContentTruncated": false, "reportIncomplete": true})
-        } else {
-            serde_json::json!({"unchanged": true})
-        };
-        return unchanged(envelope.to_string());
-    }
-    let ordinal = report
-        .messages
-        .iter()
-        .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-        .max()
-        .unwrap_or(delivered);
-    let truncated = report.has_more_messages || report.message_content_truncated;
-    let receipt = mint_default_report_receipt();
-    *data = serde_json::json!({"messages": report.messages, "truncated": truncated, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated});
-    let content = envelope.to_string();
-    DefaultReportPlan {
-        content: content.clone(),
-        pending: Some(PendingMessageReport {
-            receipt,
-            response: content,
-            ordinal,
-        }),
     }
 }
 
@@ -211,7 +169,7 @@ pub(crate) fn plan_delivery(
         return DeliveryDecision::Ignore;
     }
     let receipt = metadata_receipt.or_else(|| delivery_receipt(&value));
-    pending_delivery_match_index(pending, receipt, content)
+    acknowledged_report_index(pending, receipt, content)
         .map(DeliveryDecision::Acknowledge)
         .unwrap_or(DeliveryDecision::Ignore)
 }
@@ -220,17 +178,14 @@ pub(crate) fn needs_default_report_backfill(
     messages: &[serde_json::Value],
     delivered: u64,
 ) -> bool {
-    if delivered == 0
-        && messages
-            .iter()
-            .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
-    {
-        return false;
-    }
-    messages
-        .first()
-        .and_then(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-        .is_some_and(|ord| ord > delivered.saturating_add(1))
+    let holds_assistant = messages
+        .iter()
+        .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
+    needs_backfill(
+        messages.first().and_then(ordinal_of),
+        holds_assistant,
+        delivered,
+    )
 }
 
 pub(crate) const REPORT_BUDGET_BYTES: usize = 800 * 4;

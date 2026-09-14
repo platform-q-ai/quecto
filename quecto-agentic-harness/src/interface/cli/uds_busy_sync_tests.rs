@@ -1,15 +1,28 @@
 use super::uds_busy_sync::*;
+use crate::application::sessions::active_session::ActiveSessionState;
+use crate::application::sessions::conversation_ledger::LEDGER_MAX_ENTRIES;
 use crate::domain::message::{Message, ToolCall};
-use crate::interface::cli::uds_snapshots::{ConversationSnapshotData, LEDGER_MAX_ENTRIES};
+use crate::domain::session_identity::SessionIdentity;
+use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
+use crate::interface::cli::uds_snapshots::{reset_to, sync_json};
+
+fn state() -> ActiveSessionState {
+    ActiveSessionState::new(SessionIdentity::ephemeral())
+}
+
+fn sync(state: &ActiveSessionState, epoch: u64, since_rev: u64) -> serde_json::Value {
+    let handles = ephemeral_read_handles(&[]);
+    sync_json(state, &handles.read_history, epoch, since_rev)
+}
 
 #[test]
 fn sync_delta_is_chronological_and_exclusive() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let first = Message::user("one");
     let second = Message::assistant("two", vec![]);
     let third = Message::assistant("three", vec![]);
     snap.publish(&[first.clone(), second.clone(), third.clone()]);
-    let data = snap.sync_json(0, 1);
+    let data = sync(&snap, 0, 1);
     assert_eq!(data["rev"], 3);
     assert!(!data["resync"].as_bool().unwrap());
     assert_eq!(data["caughtUp"], true);
@@ -24,7 +37,7 @@ fn sync_delta_is_chronological_and_exclusive() {
 
 #[test]
 fn unchanged_republish_does_not_advance_rev() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let msg = Message::user("one");
     let first = snap.publish(std::slice::from_ref(&msg));
     let second = snap.publish(std::slice::from_ref(&msg));
@@ -35,7 +48,7 @@ fn unchanged_republish_does_not_advance_rev() {
 
 #[test]
 fn sync_payload_preserves_tool_fields() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let mut first_tool = Message::tool("call-1", "error-result");
     first_tool.tool_name = Some("bash".into());
     first_tool.is_error = true;
@@ -58,7 +71,7 @@ fn sync_payload_preserves_tool_fields() {
         ],
     );
     snap.publish(&[assistant, first_tool, second_tool]);
-    let data = snap.sync_json(0, 0);
+    let data = sync(&snap, 0, 0);
     assert_eq!(data["messages"][0]["toolCalls"][0]["id"], "call-1");
     assert_eq!(data["messages"][0]["toolCalls"][0]["name"], "bash");
     assert_eq!(data["messages"][0]["toolCalls"][0]["arguments"], "echo hi");
@@ -74,17 +87,18 @@ fn sync_payload_preserves_tool_fields() {
 
 #[test]
 fn epoch_bumps_on_clear_and_sync_demands_resync() {
-    let mut snap = ConversationSnapshotData::from_messages(vec![Message::user("old")]);
-    let epoch = snap.epoch;
-    let rev = snap.rev;
+    let mut snap = state();
+    snap.publish(&[Message::user("old")]);
+    let epoch = snap.conversation().epoch();
+    let rev = snap.conversation().rev();
     let adv = snap.clear();
     assert_eq!(adv.epoch, epoch + 1);
     assert_eq!(adv.rev, rev);
-    let stale = snap.sync_json(epoch, rev);
+    let stale = sync(&snap, epoch, rev);
     assert!(stale["resync"].as_bool().unwrap());
     assert_eq!(stale["epoch"], adv.epoch);
     assert_eq!(stale["rev"], rev);
-    let current = snap.sync_json(adv.epoch, adv.rev);
+    let current = sync(&snap, adv.epoch, adv.rev);
     assert!(!current["resync"].as_bool().unwrap());
 }
 
@@ -108,7 +122,7 @@ fn parse_sync_requires_epoch_and_since_rev() {
 
 #[test]
 fn frontier_eviction_resync_boundary_is_exclusive() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let messages: Vec<_> = (0..=LEDGER_MAX_ENTRIES)
         .map(|i| Message::user(format!("message-{i}")))
         .collect();
@@ -116,10 +130,10 @@ fn frontier_eviction_resync_boundary_is_exclusive() {
     let retained_first_id = messages[1].id().to_string();
     snap.publish(&messages);
 
-    let retained = snap.sync_json(0, 1);
+    let retained = sync(&snap, 0, 1);
     assert_eq!(retained["resync"], false);
     assert_eq!(retained["messages"][0]["id"], retained_first_id);
-    let evicted = snap.sync_json(0, 0);
+    let evicted = sync(&snap, 0, 0);
     assert_eq!(evicted["resync"], true);
     assert!(
         evicted["messages"]
@@ -132,20 +146,21 @@ fn frontier_eviction_resync_boundary_is_exclusive() {
 
 #[test]
 fn reset_to_bumps_epoch_once_without_double_counting_republished_messages() {
-    let mut snap = ConversationSnapshotData::from_messages(vec![Message::user("old")]);
-    let epoch = snap.epoch;
-    let rev = snap.rev;
+    let mut snap = state();
+    snap.publish(&[Message::user("old")]);
+    let epoch = snap.conversation().epoch();
+    let rev = snap.conversation().rev();
     let replacement = vec![Message::user("new")];
-    let advance = snap.reset_to(&replacement);
+    let advance = reset_to(&mut snap, &replacement);
     assert_eq!(advance.epoch, epoch + 1);
     assert_eq!(advance.rev, rev + 1);
-    assert_eq!(snap.epoch, epoch + 1);
-    assert_eq!(snap.rev, rev + 1);
+    assert_eq!(snap.conversation().epoch(), epoch + 1);
+    assert_eq!(snap.conversation().rev(), rev + 1);
 }
 
 #[test]
 fn collapse_republish_keeps_message_id_without_advancing_rev() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let full = Message::assistant("full content", vec![]);
     let id = full.id().to_string();
     let first = snap.publish(std::slice::from_ref(&full));
@@ -153,7 +168,7 @@ fn collapse_republish_keeps_message_id_without_advancing_rev() {
     stub.content = "stub".into();
     stub.is_collapsed = true;
     let second = snap.publish(std::slice::from_ref(&stub));
-    let data = snap.sync_json(0, first.rev - 1);
+    let data = sync(&snap, 0, first.rev - 1);
     assert!(!second.changed);
     assert_eq!(second.rev, first.rev);
     assert_eq!(data["messages"][0]["id"], id);
@@ -162,13 +177,17 @@ fn collapse_republish_keeps_message_id_without_advancing_rev() {
 
 #[test]
 fn resync_preserves_history_pagination_cursors() {
-    let mut snap = ConversationSnapshotData::default();
+    let mut snap = state();
     let messages: Vec<_> = (0..(super::protocol::HISTORY_PAGE_SIZE + 1))
         .map(|i| Message::user(format!("message-{i}")))
         .collect();
     snap.publish(&messages);
 
-    let stale = snap.sync_json(snap.epoch.wrapping_add(1), snap.rev);
+    let stale = sync(
+        &snap,
+        snap.conversation().epoch().wrapping_add(1),
+        snap.conversation().rev(),
+    );
     assert_eq!(stale["resync"], true);
     assert_eq!(stale["caughtUp"], true);
     assert_eq!(stale["hasMoreBefore"], true);

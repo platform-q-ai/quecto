@@ -1473,6 +1473,7 @@ mod uds_bounded_events_steps;
 #[path = "../common/uds_event_reader.rs"]
 mod uds_event_reader;
 mod uds_framing_steps;
+mod uds_history_recovery_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_steps;

@@ -57,7 +57,34 @@ impl Tool for CatalogueFixtureTool {
         })
     }
 }
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::cli::protocol::{AgentCommand, HISTORY_PAGE_SIZE};
+use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+
+/// The idle `get_message` path: the composed recovery owner over the rig's
+/// live conversation, presented by the range presenter.
+async fn get_message_data(
+    ctx: &DispatchCtx<'_>,
+    message_id: &str,
+    tool_call_id: Option<&str>,
+    request_id: Option<&str>,
+) -> Option<serde_json::Value> {
+    let content = ctx
+        .sessions
+        .recover_message
+        .recover(
+            GetMessageFields {
+                message_id,
+                tool_call_id,
+                offset: None,
+                thinking_offset: None,
+                limit: None,
+            },
+            ctx.messages,
+        )
+        .await
+        .ok()?;
+    crate::interface::cli::uds_session::recovered_content_json(&content, request_id)
+}
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -68,7 +95,7 @@ pub(crate) struct Fx {
     session: AgentSession,
     pub(crate) execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
-    store: FileSessionStore,
+    store: Arc<FileSessionStore>,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }
@@ -105,11 +132,11 @@ impl Fx {
             session: AgentSession::new("stub".into(), "cli:test".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
-            store: FileSessionStore::new(
+            store: Arc::new(FileSessionStore::new(
                 crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
                     tmp.path(),
                 ),
-            ),
+            )),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -136,9 +163,13 @@ impl Fx {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_over(
+                self.store.clone(),
+                &self.session_key,
+                None,
+                &[],
+            ),
+            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -148,7 +179,7 @@ impl Fx {
             session: &mut self.session,
             stdout: Some(&mut self.writer),
             session_key: &mut self.session_key,
-            session_store: &self.store,
+            session_store: self.store.as_ref(),
             ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
@@ -593,25 +624,15 @@ fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
     assert_page_metadata(&page, true);
 }
 
-#[test]
-fn query_get_message_hit_returns_message_by_stable_id() {
+#[tokio::test]
+async fn query_get_message_hit_returns_message_by_stable_id() {
     let mut fx = Fx::new();
     // Resolve against the stable id of the second (assistant) message.
     let target_id = fx.messages[1].id().to_string();
     let ctx = fx.ctx();
-    let hit = query_response_data(
-        &AgentCommand::GetMessage {
-            id: Some("r1".into()),
-            message_id: target_id.clone(),
-            agent_id: None,
-            tool_call_id: None,
-            offset: None,
-            thinking_offset: None,
-            limit: None,
-        },
-        &ctx,
-    )
-    .expect("get_message must resolve a present stable id");
+    let hit = get_message_data(&ctx, &target_id, None, Some("r1"))
+        .await
+        .expect("get_message must resolve a present stable id");
     assert_eq!(
         hit["id"], target_id,
         "resolved message carries its stable id"
@@ -623,25 +644,14 @@ fn query_get_message_hit_returns_message_by_stable_id() {
     );
 }
 
-#[test]
-fn query_get_message_miss_returns_none_for_structured_error() {
+#[tokio::test]
+async fn query_get_message_miss_returns_none_for_structured_error() {
     for message_id in ["00000000-0000-0000-0000-000000000000", "not-a-uuid"] {
         let mut fx = Fx::new();
         let ctx = fx.ctx();
         // An unknown id must return None so dispatch emits a structured
         // "message not found" error rather than a stale/empty hit (#1060).
-        let miss = query_response_data(
-            &AgentCommand::GetMessage {
-                id: Some("r1".into()),
-                message_id: message_id.into(),
-                agent_id: None,
-                tool_call_id: None,
-                offset: None,
-                thinking_offset: None,
-                limit: None,
-            },
-            &ctx,
-        );
+        let miss = get_message_data(&ctx, message_id, None, Some("r1")).await;
         assert!(
             miss.is_none(),
             "unknown message id {message_id:?} must miss (None), got {miss:?}"
@@ -649,8 +659,8 @@ fn query_get_message_miss_returns_none_for_structured_error() {
     }
 }
 
-#[test]
-fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
+#[tokio::test]
+async fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
     let mut fx = Fx::new();
     fx.messages.push(Message::assistant(
         "call requested",
@@ -663,18 +673,13 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
     let message_id = fx.messages.last().unwrap().id().to_string();
     let ctx = fx.ctx();
 
-    let hit = query_response_data(
-        &AgentCommand::GetMessage {
-            id: Some("response-correlation".into()),
-            message_id: message_id.clone(),
-            agent_id: None,
-            tool_call_id: Some("call-target".into()),
-            offset: None,
-            thinking_offset: None,
-            limit: None,
-        },
+    let hit = get_message_data(
         &ctx,
+        &message_id,
+        Some("call-target"),
+        Some("response-correlation"),
     )
+    .await
     .expect("tool-call argument lookup must resolve by the requested toolCallId");
 
     assert_eq!(hit["id"], message_id);

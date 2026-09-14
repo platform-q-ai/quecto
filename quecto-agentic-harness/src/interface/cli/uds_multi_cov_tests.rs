@@ -225,9 +225,8 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
     let cancel_handle: super::super::uds_cancel::CancelHandle = Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
-    let snapshot = Arc::new(tokio::sync::RwLock::new(
-        super::super::uds_snapshots::ConversationSnapshotData::default(),
-    ));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -238,7 +237,8 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         turn_control: turn_control.clone(),
         client_id: 77,
         client_tool_registry: registry,
-        conversation_snapshot: snapshot,
+        session,
+        export_root: Arc::default(),
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {
@@ -307,9 +307,8 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
-    let snapshot = Arc::new(tokio::sync::RwLock::new(
-        super::super::uds_snapshots::ConversationSnapshotData::default(),
-    ));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -322,7 +321,8 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         turn_control: Arc::default(),
         client_id: 88,
         client_tool_registry: registry,
-        conversation_snapshot: snapshot,
+        session,
+        export_root: Arc::default(),
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {

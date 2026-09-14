@@ -180,9 +180,13 @@ impl DispatchTestEnv {
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_over(
+                self.store.clone(),
+                &self.session_key,
+                None,
+                &[],
+            ),
+            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

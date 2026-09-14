@@ -145,6 +145,8 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
                 crate::interface::cli::uds_session_handles::SessionLoopInputs {
                     base_dir: dir.path().to_path_buf(),
                     store: None,
+                    session_key: "cli:cov".into(),
+                    spill_store: None,
                 },
             );
             multi_client_loop(multi_args(dir.path()), listener, &store).await
@@ -296,7 +298,12 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         base_dir: dir.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(Default::default())),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0, None),
         )),

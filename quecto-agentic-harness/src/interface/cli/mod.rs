@@ -116,14 +116,12 @@ pub fn completed_live_execution_state(
 #[cfg(any(test, feature = "test-support"))]
 pub async fn ledger_hint_lines_for_turn_events(
     events: &[crate::domain::agent::AgentProgressEvent],
+    session: &crate::application::sessions::active_session::ActiveSessionHandle,
 ) -> Vec<serde_json::Value> {
-    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        uds_snapshots::ConversationSnapshotData::default(),
-    ));
     let mut buf: Vec<u8> = Vec::new();
     let mut sink = uds_cancel::EventSink::writer(&mut buf);
     for event in events {
-        uds_cancel::publish_turn_progress(event, Some(&snapshot), &mut sink).await;
+        uds_cancel::publish_turn_progress(event, Some(session), &mut sink).await;
     }
     String::from_utf8_lossy(&buf)
         .lines()
@@ -140,12 +138,15 @@ pub async fn ledger_hint_lines_for_turn_events(
 /// served by the child-local `uds_busy_sync` fast path even while the child's
 /// dispatch loop is occupied (PR #1307 review).
 #[cfg(any(test, feature = "test-support"))]
-pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value>) {
-    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            crate::domain::message::Message::user("committed"),
-        ]),
-    ));
+pub async fn busy_reader_dispatch(
+    line: &str,
+    session: &uds_session_handles::SessionReadHandles,
+) -> (bool, Option<serde_json::Value>) {
+    let _ = session
+        .active_session
+        .write()
+        .await
+        .publish(&[crate::domain::message::Message::user("committed")]);
     let clients = uds_ext_protocol::new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
     uds_ext_protocol::register_client_writer(&clients, 1, tx);
@@ -154,7 +155,8 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
     uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
         line: line.to_string(),
-        snapshot: &snapshot,
+        session,
+        export_root: &std::sync::Arc::default(),
         registry: &clients,
         subagent_registry: &None,
         fleet: None,

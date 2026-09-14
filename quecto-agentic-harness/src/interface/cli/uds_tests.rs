@@ -381,7 +381,7 @@ fn test_deprecated_get_messages_tail_still_parses() {
 fn test_get_messages_with_count_returns_last_n_in_order() {
     // Build 5 user messages and request tail of 3 — should get last 3 in original order.
     let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg{i}"))).collect();
-    let data = messages_tail_json(&messages, 3);
+    let data = messages_page_json(&messages, 3, None);
     let arr = data["messages"].as_array().unwrap();
     assert_eq!(arr.len(), 3);
     assert_eq!(arr[0]["content"], "msg2");
@@ -392,14 +392,14 @@ fn test_get_messages_with_count_returns_last_n_in_order() {
 #[test]
 fn test_messages_tail_json_empty_history() {
     let messages: Vec<Message> = vec![];
-    let data = messages_tail_json(&messages, 5);
+    let data = messages_page_json(&messages, 5, None);
     assert!(data["messages"].as_array().unwrap().is_empty());
 }
 
 #[test]
 fn test_messages_tail_json_count_zero() {
     let messages: Vec<Message> = (0..3).map(|i| Message::user(format!("m{i}"))).collect();
-    let data = messages_tail_json(&messages, 0);
+    let data = messages_page_json(&messages, 0, None);
     assert!(data["messages"].as_array().unwrap().is_empty());
     // Documented count=0 contract (#1061): an empty window carries no cursor —
     // the cursor names the oldest INCLUDED message, which it lacks.
@@ -410,7 +410,7 @@ fn test_messages_tail_json_count_zero() {
 #[test]
 fn test_messages_tail_json_count_exceeds_page_size() {
     let messages: Vec<Message> = (0..100).map(|i| Message::user(format!("m{i}"))).collect();
-    let data = messages_tail_json(&messages, 80);
+    let data = messages_page_json(&messages, 80, None);
     let returned = data["messages"].as_array().unwrap();
     assert_eq!(
         returned.len(),

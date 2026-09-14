@@ -1,57 +1,14 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
-use super::uds_session::{
-    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json_for_id,
-    messages_tail_json, position_by_message_id,
-};
-use crate::domain::ids::{CommandId, MessageId, ToolCallId};
+use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
+use crate::domain::conversation_view::{is_injected_system_prompt, user_visible_messages};
 use crate::domain::message::Message;
-
-fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
-    messages
-        .iter()
-        .filter(|m| !super::uds_snapshots::is_injected_system_prompt(m, system_prompt))
-        .cloned()
-        .collect()
-}
 
 fn user_visible_message_count(messages: &[Message], system_prompt: &str) -> usize {
     messages
         .iter()
-        .filter(|m| !super::uds_snapshots::is_injected_system_prompt(m, system_prompt))
+        .filter(|m| !is_injected_system_prompt(m, system_prompt))
         .count()
-}
-
-pub(super) struct GetMessageLookup<'ctx, 'data> {
-    pub(super) message_id: MessageId,
-    pub(super) tool_call_id: Option<ToolCallId>,
-    pub(super) offset: Option<usize>,
-    pub(super) thinking_offset: Option<usize>,
-    pub(super) limit: Option<usize>,
-    pub(super) request_id: Option<CommandId>,
-    pub(super) ctx: &'ctx DispatchCtx<'data>,
-}
-
-pub(super) fn get_message_response_data(
-    req: GetMessageLookup<'_, '_>,
-) -> Option<serde_json::Value> {
-    let message = &req.ctx.messages[position_by_message_id(req.ctx.messages, &req.message_id)?];
-    match req.tool_call_id.as_ref() {
-        Some(tool_call_id) => super::uds_session::tool_call_arguments_to_json_range_for_response(
-            message,
-            tool_call_id.as_str(),
-            req.offset,
-            req.limit,
-            req.request_id.as_ref().map(CommandId::as_str),
-        ),
-        None => Some(super::uds_session::message_to_json_range_for_response(
-            message,
-            req.offset,
-            req.thinking_offset,
-            req.limit,
-            req.request_id.as_ref().map(CommandId::as_str),
-        )),
-    }
 }
 
 #[cfg(test)]
@@ -118,19 +75,27 @@ pub(super) fn query_response_data_result(
                 &state, *since,
             ))
         }
-        AgentCommand::GetMessages { count, before, .. } => {
-            let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
-            let before = before.as_deref().map(MessageId::from);
-            Some(messages_page_json_for_id(
-                &visible_messages,
-                count.unwrap_or(HISTORY_PAGE_SIZE),
-                before.as_ref(),
-            ))
-        }
-        AgentCommand::GetMessagesTail { count, .. } => {
-            let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
-            Some(messages_tail_json(&visible_messages, *count))
-        }
+        // Read conversation history (#1856, #1971): the composed history
+        // owner selects the window (and refuses a stale/unknown cursor as a
+        // structured error, never a silent restart at the newest page); this
+        // edge presents it under the frame budget.
+        AgentCommand::GetMessages { count, before, .. } => Some(history_page_json(
+            ctx.sessions
+                .read_history
+                .page(
+                    ctx.messages,
+                    ctx.system_prompt,
+                    count.unwrap_or(HISTORY_PAGE_SIZE),
+                    before.as_deref(),
+                )
+                .map_err(|err| err.to_string())?,
+        )),
+        AgentCommand::GetMessagesTail { count, .. } => Some(history_page_json(
+            ctx.sessions
+                .read_history
+                .tail(ctx.messages, ctx.system_prompt, *count)
+                .map_err(|err| err.to_string())?,
+        )),
         AgentCommand::PersistSession { .. } => None,
         AgentCommand::GetSessionStats { .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
@@ -157,25 +122,8 @@ pub(super) fn query_response_data_result(
             )?)
             .map_err(|e| e.to_string())?,
         ),
-        // #1060: on-demand single-message lookup by stable id (busy-path safe).
-        // Miss returns None so dispatch_fieldless_command emits a structured error.
-        AgentCommand::GetMessage {
-            id,
-            message_id,
-            tool_call_id,
-            offset,
-            thinking_offset,
-            limit,
-            ..
-        } => get_message_response_data(GetMessageLookup {
-            message_id: MessageId::from(message_id.as_str()),
-            tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
-            offset: *offset,
-            thinking_offset: *thinking_offset,
-            limit: *limit,
-            request_id: id.as_deref().map(CommandId::from),
-            ctx,
-        }),
+        // `get_message` (#1060) is answered by `dispatch_fieldless_command`
+        // through the composed recovery owner before this projection runs.
         _ => None,
     };
     Ok(data)

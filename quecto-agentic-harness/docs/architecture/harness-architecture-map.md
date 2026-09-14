@@ -105,10 +105,18 @@ Sessions capability (#1968): every port operation is keyed by the typed
 only); the flat `<base>/sessions/` projection (`.json`, `.owner`,
 `spill.jsonl`) is owned by `FlatSessionLayout` in
 `src/infrastructure/persistence/session_layout.rs` alone; the saved-session
-query `ListSessions` (`src/application/sessions/use_cases/`) is constructed
-only by `src/composition/sessions.rs`, which hands the interface its handles
-through `CliComposition`. A folder/workspace-scoped store changes the identity
-and that one projection, not the callers.
+query `ListSessions` and the live-conversation reads `ReadHistory` /
+`RecoverMessage` (`src/application/sessions/use_cases/`) are constructed only
+by `src/composition/sessions.rs` and `src/composition/active_session.rs`,
+which hand the interface its handles through `CliComposition`. The one
+application-owned `ActiveSessionState` (`src/application/sessions/
+active_session.rs`: typed identity plus the `ConversationLedger` read model —
+published transcript, bounded full-copy ledger, sync frontier, retention
+backstop) is created per loop by composition; the idle dispatch loop, the busy
+reader task and the connect-time snapshot all read history and recover
+messages through the same owners, and the interface only maps wire fields,
+frames the response and applies the transport budget. A folder/workspace-scoped
+store changes the identity and that one projection, not the callers.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a

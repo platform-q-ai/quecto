@@ -52,9 +52,12 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -118,9 +121,12 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -185,9 +191,12 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

@@ -192,6 +192,7 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
     // uds_busy_sync — never queued behind the dispatch loop (PR #1307 review).
     let (served_inline, response) = crate::interface::cli::busy_reader_dispatch(
         r#"{"type":"sync","id":"feed-9","epoch":1,"sinceRev":0}"#,
+        &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]),
     )
     .await;
 

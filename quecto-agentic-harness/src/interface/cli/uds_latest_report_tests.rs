@@ -15,21 +15,24 @@ fn latest_report_ignores_tool_backlog_and_bounds_unicode_content() {
 async fn raw_report_export_preserves_content_without_consuming_cursor() {
     let directory = tempfile::tempdir().unwrap();
     let message = Message::assistant("raw".repeat(10000), vec![]);
-    let mut state =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            message.clone(),
-        ]);
-    state.export_root = Some(directory.path().to_path_buf());
-    let epoch = state.epoch;
-    let rev = state.rev;
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
-    let result = report(&snapshot, true).await.unwrap();
+    let snapshot =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+            std::slice::from_ref(&message),
+        )
+        .active_session;
+    let (epoch, rev) = {
+        let state = snapshot.read().await;
+        (state.conversation().epoch(), state.conversation().rev())
+    };
+    let result = report(&snapshot, Some(directory.path().to_path_buf()), true)
+        .await
+        .unwrap();
     assert!(result.to_string().len() < 10000);
     let path = result["rawExport"]["path"].as_str().unwrap();
     let raw = std::fs::read_to_string(path).unwrap();
     assert!(raw.contains(&message.content));
-    assert_eq!(snapshot.read().await.epoch, epoch);
-    assert_eq!(snapshot.read().await.rev, rev);
+    assert_eq!(snapshot.read().await.conversation().epoch(), epoch);
+    assert_eq!(snapshot.read().await.conversation().rev(), rev);
 }
 
 mod export_control_tests {
@@ -75,14 +78,18 @@ mod export_control_tests {
     #[tokio::test]
     async fn raw_export_releases_reader_before_spill_io_completes() {
         let directory = tempfile::tempdir().unwrap();
-        let mut state = crate::interface::cli::uds_snapshots::ConversationSnapshotData::default();
-        state.export_root = Some(directory.path().to_path_buf());
-        state.set_spill_store(Some(Arc::new(SlowExportStore)), "test".into());
-        let snapshot = Arc::new(tokio::sync::RwLock::new(state));
+        let session = crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            "test",
+            Some(Arc::new(SlowExportStore)),
+            &[],
+        );
+        let export_root: crate::interface::cli::uds_snapshots::ExportRootSlot =
+            Arc::new(std::sync::Mutex::new(Some(directory.path().to_path_buf())));
         let registry = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
         let ctx = crate::interface::cli::uds_busy_get_message::BusyCommandCtx {
             line: r#"{"type":"get_report","id":"slow-export","export_raw":true}"#,
-            snapshot: &snapshot,
+            session: &session,
+            export_root: &export_root,
             registry: &registry,
             client_id: 1,
         };
@@ -97,27 +104,27 @@ mod export_control_tests {
 
 #[tokio::test]
 async fn asynchronous_export_returns_correlated_artifact_or_storage_error() {
-    use crate::interface::cli::{
-        uds_busy_get_message::BusyCommandCtx, uds_ext_protocol,
-        uds_snapshots::ConversationSnapshotData,
-    };
+    use crate::interface::cli::{uds_busy_get_message::BusyCommandCtx, uds_ext_protocol};
     for writable in [true, false] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("export");
         if !writable {
             std::fs::write(&root, "occupied").unwrap();
         }
-        let mut state =
-            ConversationSnapshotData::from_messages(vec![Message::assistant("report", vec![])]);
-        state.export_root = Some(root);
-        let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
+        let session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[
+                Message::assistant("report", vec![]),
+            ]);
+        let export_root: crate::interface::cli::uds_snapshots::ExportRootSlot =
+            std::sync::Arc::new(std::sync::Mutex::new(Some(root)));
         let registry = uds_ext_protocol::new_client_tool_registry();
         let (writer, mut replies) = tokio::sync::mpsc::channel(2);
         uds_ext_protocol::register_client_writer(&registry, 1, writer);
         assert!(
             intercept(&BusyCommandCtx {
                 line: r#"{"type":"get_report","id":"export-id","export_raw":true}"#,
-                snapshot: &snapshot,
+                session: &session,
+                export_root: &export_root,
                 registry: &registry,
                 client_id: 1
             })
@@ -200,12 +207,19 @@ mod unavailable_spill {
             "spill disappeared",
         ] {
             let directory = tempfile::tempdir().unwrap();
-            let mut state =
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default();
-            state.export_root = Some(directory.path().to_path_buf());
-            state.set_spill_store(Some(Arc::new(Store(reason))), "test".into());
-            let snapshot = Arc::new(tokio::sync::RwLock::new(state));
-            assert!(report(&snapshot, true).await.unwrap_err().contains(reason));
+            let snapshot =
+                crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                    "test",
+                    Some(Arc::new(Store(reason))),
+                    &[],
+                )
+                .active_session;
+            assert!(
+                report(&snapshot, Some(directory.path().to_path_buf()), true)
+                    .await
+                    .unwrap_err()
+                    .contains(reason)
+            );
             assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         }
     }
@@ -216,16 +230,17 @@ mod unavailable_spill {
 #[tokio::test]
 async fn report_prefers_the_ledger_copy_over_a_collapsed_stub() {
     use crate::domain::message::Message;
-    use crate::interface::cli::uds_snapshots::ConversationSnapshotData;
     let full = Message::assistant("the complete final report", vec![]);
     let id = full.id().to_string();
-    let mut state = ConversationSnapshotData::default();
-    state.publish(std::slice::from_ref(&full));
+    let snapshot =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+            std::slice::from_ref(&full),
+        )
+        .active_session;
     let mut stub = full.clone();
     stub.content = "recall(spilled)".to_string();
-    state.publish(&[stub]);
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
-    let data = report(&snapshot, false).await.unwrap();
+    snapshot.write().await.publish(&[stub]);
+    let data = report(&snapshot, None, false).await.unwrap();
     assert_eq!(data["report"]["messageId"], id);
     assert_eq!(data["report"]["content"], "the complete final report");
     assert_eq!(data["report"]["contentTruncated"], false);

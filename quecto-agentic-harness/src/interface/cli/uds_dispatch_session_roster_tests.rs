@@ -472,12 +472,113 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
 pub(crate) fn composed_sessions(
     base: &std::path::Path,
 ) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    composed_sessions_for(base, "cli:test", None)
+}
+
+/// The composed sessions handles over `base` opened on `session_key`, with
+/// the agent's retention store `spill_store` paired to the active session.
+pub(crate) fn composed_sessions_for(
+    base: &std::path::Path,
+    session_key: &str,
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+) -> crate::interface::cli::uds_session_handles::SessionHandles {
     crate::composition::sessions::build_session_handles(
         crate::interface::cli::uds_session_handles::SessionLoopInputs {
             base_dir: base.to_path_buf(),
             store: None,
+            session_key: session_key.to_string(),
+            spill_store,
         },
     )
+}
+
+/// The read handles of a session opened on `session_key` over the rig's
+/// own `store`, with `messages` already published as its live transcript.
+pub(crate) fn read_handles_over(
+    store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    session_key: &str,
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+    messages: &[crate::domain::message::Message],
+) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+    let handles = crate::composition::sessions::build_session_handles(
+        crate::interface::cli::uds_session_handles::SessionLoopInputs {
+            base_dir: std::path::PathBuf::new(),
+            store: Some(store),
+            session_key: session_key.to_string(),
+            spill_store,
+        },
+    )
+    .read_handles();
+    let _ = handles
+        .active_session
+        .try_write()
+        .expect("fresh session is uncontended")
+        .publish(messages);
+    handles
+}
+
+/// The read handles of a session opened on `session_key` over `base`, with
+/// `messages` already published as its live transcript.
+pub(crate) fn seeded_read_handles(
+    base: &std::path::Path,
+    session_key: &str,
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+    messages: &[crate::domain::message::Message],
+) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+    let handles = composed_sessions_for(base, session_key, spill_store).read_handles();
+    let _ = handles
+        .active_session
+        .try_write()
+        .expect("fresh session is uncontended")
+        .publish(messages);
+    handles
+}
+
+/// Read handles of a session opened on `session_key` over a throwaway base
+/// directory (leaked for the test's lifetime), with `messages` published.
+pub(crate) fn read_handles_for(
+    session_key: &str,
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+    messages: &[crate::domain::message::Message],
+) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let base = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    seeded_read_handles(&base, session_key, spill_store, messages)
+}
+
+/// The full message a stable ref resolves to through the composed recovery
+/// owner (ledger, live view, retention store), without a fallback slice.
+pub(crate) async fn resolve_message(
+    handles: &crate::interface::cli::uds_session_handles::SessionReadHandles,
+    message_id: &str,
+) -> Option<crate::domain::message::Message> {
+    use crate::application::sessions::dto::RecoveredContent;
+    use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+    match handles
+        .recover_message
+        .recover(
+            GetMessageFields {
+                message_id,
+                tool_call_id: None,
+                offset: None,
+                thinking_offset: None,
+                limit: None,
+            },
+            &[],
+        )
+        .await
+    {
+        Ok(RecoveredContent::Message { message, .. }) => Some(*message),
+        _ => None,
+    }
+}
+
+/// Read handles of an ephemeral session with `messages` published.
+pub(crate) fn ephemeral_read_handles(
+    messages: &[crate::domain::message::Message],
+) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+    read_handles_for("", None, messages)
 }
 
 /// The composed `list_sessions` handle a dispatch rig holds over `base`.

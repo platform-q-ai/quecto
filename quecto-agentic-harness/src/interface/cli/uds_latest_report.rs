@@ -46,11 +46,12 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
         static EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
         match EXPORTS.try_acquire() {
             Ok(permit) => {
-                let snapshot = ctx.snapshot.clone();
+                let session = ctx.session.active_session.clone();
+                let export_root = super::uds_snapshots::export_root(ctx.export_root);
                 let registry = ctx.registry.clone();
                 let client_id = ctx.client_id;
                 tokio::spawn(async move {
-                    let event = match report(&snapshot, true).await {
+                    let event = match report(&session, export_root, true).await {
                         Ok(data) => {
                             super::protocol::AgentEvent::ok(id.as_deref(), "get_report", Some(data))
                         }
@@ -82,7 +83,8 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
             }
         }
     }
-    let event = match report(ctx.snapshot, false).await {
+    let export_root = super::uds_snapshots::export_root(ctx.export_root);
+    let event = match report(&ctx.session.active_session, export_root, false).await {
         Ok(data) => super::protocol::AgentEvent::ok(id.as_deref(), "get_report", Some(data)),
         Err(error) => super::protocol::AgentEvent::err(id.as_deref(), "get_report", error),
     };
@@ -93,38 +95,35 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
 }
 
 pub(super) async fn report(
-    snapshot: &super::uds_multi::ConversationSnapshot,
+    session: &crate::application::sessions::active_session::ActiveSessionHandle,
+    export_root: Option<std::path::PathBuf>,
     export_raw: bool,
 ) -> Result<Value, String> {
     let (mut data, export) = {
-        let state = snapshot.read().await;
+        let state = session.read().await;
         let export = if export_raw {
-            let root = state
-                .export_root
-                .clone()
-                .ok_or("session export directory unavailable")?;
-            Some((
-                root,
-                state.epoch,
-                state.rev,
-                state.export_messages(),
-                state.export_spill_source(),
-            ))
+            let root = export_root.ok_or("session export directory unavailable")?;
+            Some((root, super::uds_snapshots::export_source(&state)))
         } else {
             None
         };
+        let ledger = state.conversation();
         (
-            latest_report_resolving(&state.messages, |id| state.full_copy(id)),
+            latest_report_resolving(ledger.live_messages(), |id| ledger.full_copy(id)),
             export,
         )
     };
-    if let Some((root, epoch, revision, messages, (spill_store, session_key))) = export {
+    if let Some((root, source)) = export {
+        let super::uds_snapshots::ExportSource {
+            epoch,
+            revision,
+            messages,
+            spill_store,
+            identity,
+        } = source;
         let mut records: Vec<Value> = messages.into_iter().map(|message| json!({"kind":"message","message":super::uds_session::message_to_json(&message)})).collect();
         let mut spill_count = 0;
         if let Some(store) = spill_store {
-            let identity = crate::domain::session_identity::SessionIdentity::from_persisted_key(
-                session_key.as_str(),
-            );
             for entry in store
                 .list_entries(&identity)
                 .await
@@ -143,7 +142,7 @@ pub(super) async fn report(
                 spill_count += 1;
             }
         }
-        if snapshot.read().await.epoch == epoch {
+        if session.read().await.conversation().epoch() == epoch {
             let metadata = json!({"format":1,"epoch":epoch,"revision":revision,"recordCount":records.len(),"spillCount":spill_count,
                 "scope":"retained live and full-message ledger plus available spill entries; previously evicted or cleared data is not reconstructed",
                 "spillConsistency":"entries read after the message snapshot; concurrent appends may be absent"});

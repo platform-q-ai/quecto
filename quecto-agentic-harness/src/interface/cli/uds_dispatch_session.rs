@@ -12,8 +12,11 @@ use crate::domain::session_identity::SessionIdentity;
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
         state.set_message_count(
-            super::super::uds_snapshots::user_visible_messages(ctx.messages, ctx.system_prompt)
-                .len(),
+            crate::domain::conversation_view::user_visible_messages(
+                ctx.messages,
+                ctx.system_prompt,
+            )
+            .len(),
         );
     }
 }
@@ -295,7 +298,7 @@ async fn persist_current_session_with_options(
     };
     let roster =
         snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
-    let identity = SessionIdentity::from_persisted_key(ctx.session_key.as_str());
+    let identity = ctx.sessions.active_session.read().await.identity().clone();
     let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
@@ -360,30 +363,34 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let old_key = ctx.session_key.to_string();
+    let old_identity = ctx.sessions.active_session.read().await.identity().clone();
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     broadcast_roster_reset(ctx);
-    let key = crate::interface::shared::generate_chat_key();
+    let identity = crate::interface::shared::generate_chat_identity();
+    let key = identity.runtime_key().to_string();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
-    if old_key != key {
-        ctx.session_store
-            .release(&SessionIdentity::from_persisted_key(old_key));
+    if old_identity != identity {
+        ctx.session_store.release(&old_identity);
     }
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
-    // Replace history and its spill namespace in one snapshot write so busy
+    // Replace history, identity and spill namespace in one write so busy
     // readers can observe neither old refs under the new key nor new history
     // under the old key.
-    let advance = ctx
-        .conversation_snapshot
-        .write()
-        .await
-        .reset_to_with_spill_store(ctx.messages, ctx.agent.spill_store().cloned(), key.clone());
+    let advance = {
+        let mut state = ctx.sessions.active_session.write().await;
+        super::super::uds_snapshots::reset_to_with_spill_store(
+            &mut state,
+            ctx.messages,
+            ctx.agent.spill_store().cloned(),
+            identity,
+        )
+    };
     emit_ledger_advanced(ctx, advance).await;
     // Session-scoped effort must not leak into the fresh session (#1067).
     let before_effort = ctx.agent.effort();
@@ -392,14 +399,11 @@ pub(super) async fn handle_new_session(
         ctx.session.bump_visible_generation();
     }
     set_workflow_run(ctx, None);
-    if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill
-            .clear(&SessionIdentity::from_persisted_key(
-                ctx.session_key.as_str(),
-            ))
-            .await
-    {
-        tracing::warn!("new_session: failed to clear spill store: {e}");
+    if let Some(spill) = ctx.agent.spill_store() {
+        let identity = ctx.sessions.active_session.read().await.identity().clone();
+        if let Err(e) = spill.clear(&identity).await {
+            tracing::warn!("new_session: failed to clear spill store: {e}");
+        }
     }
     let ev = AgentEvent::ok(
         id,
@@ -505,10 +509,10 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let old_key = std::mem::replace(ctx.session_key, new_key.clone());
-    if old_key != new_key {
-        ctx.session_store
-            .release(&SessionIdentity::from_persisted_key(old_key));
+    let old_identity = ctx.sessions.active_session.read().await.identity().clone();
+    *ctx.session_key = new_key.clone();
+    if old_identity != target {
+        ctx.session_store.release(&old_identity);
     }
     ctx.session.set_session_key(new_key.clone());
     ctx.agent.set_session_key(new_key.clone());
@@ -531,15 +535,15 @@ pub(super) async fn handle_resume_session(
     // Atomically reset history AND spill namespace to the resumed session so
     // refs from the previous session cannot resolve and collapsed refs from the
     // resumed session never query the previous session key.
-    let advance = ctx
-        .conversation_snapshot
-        .write()
-        .await
-        .reset_to_with_spill_store(
+    let advance = {
+        let mut state = ctx.sessions.active_session.write().await;
+        super::super::uds_snapshots::reset_to_with_spill_store(
+            &mut state,
             ctx.messages,
             ctx.agent.spill_store().cloned(),
-            new_key.clone(),
-        );
+            target,
+        )
+    };
     emit_ledger_advanced(ctx, advance).await;
     let ev = AgentEvent::ok(
         id,
@@ -566,20 +570,17 @@ pub(super) async fn handle_clear_history(
     }
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
-    let advance = ctx.conversation_snapshot.write().await.clear();
+    let advance = ctx.sessions.active_session.write().await.clear();
     emit_ledger_advanced(ctx, advance).await;
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
-    if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill
-            .clear(&SessionIdentity::from_persisted_key(
-                ctx.session_key.as_str(),
-            ))
-            .await
-    {
-        tracing::warn!("clear_history: failed to clear spill store: {e}");
+    if let Some(spill) = ctx.agent.spill_store() {
+        let identity = ctx.sessions.active_session.read().await.identity().clone();
+        if let Err(e) = spill.clear(&identity).await {
+            tracing::warn!("clear_history: failed to clear spill store: {e}");
+        }
     }
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(id, tn, format!("failed to save cleared session: {err}"));
@@ -629,22 +630,18 @@ pub(super) async fn handle_rewind_to(
     // rewound-away message is no longer recoverable via get_message (same
     // intent as the spill clear below — truncated content must not be
     // recallable) (#1060 review r4).
-    let advance = ctx
-        .conversation_snapshot
-        .write()
-        .await
-        .reset_to(ctx.messages);
+    let advance = {
+        let mut state = ctx.sessions.active_session.write().await;
+        super::super::uds_snapshots::reset_to(&mut state, ctx.messages)
+    };
     emit_ledger_advanced(ctx, advance).await;
     // Clear spill store and remove retained spill references so stale truncated
     // tool output is not recallable or re-injected.
-    if let Some(spill) = ctx.agent.spill_store()
-        && let Err(e) = spill
-            .clear(&SessionIdentity::from_persisted_key(
-                ctx.session_key.as_str(),
-            ))
-            .await
-    {
-        tracing::warn!("rewind_to: failed to clear spill store: {e}");
+    if let Some(spill) = ctx.agent.spill_store() {
+        let identity = ctx.sessions.active_session.read().await.identity().clone();
+        if let Err(e) = spill.clear(&identity).await {
+            tracing::warn!("rewind_to: failed to clear spill store: {e}");
+        }
     }
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(id, tn, format!("failed to save rewound session: {err}"));

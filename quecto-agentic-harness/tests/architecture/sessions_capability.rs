@@ -1,15 +1,18 @@
-//! The sessions capability (#1968, D1 #1970): exact-inventory ratchets for
-//! the plural capability, its one construction site, and the single owner
-//! of the flat storage layout. Affirmative throughout: each check states the
-//! set that is allowed and asserts the observed set equals it, so an unknown
-//! future owner fails by not being listed.
+//! The sessions capability (#1968, D1 #1970, D2 #1971): exact-inventory
+//! ratchets for the plural capability, its composition sites, and the
+//! single owner of the flat storage layout. Affirmative throughout: each
+//! check states the set that is allowed and asserts the observed set equals
+//! it, so an unknown future owner fails by not being listed.
 //!
 //! - R1: the canonical files of the capability exist; the singular
 //!   `application/session` path, every singular import and any alias
 //!   re-export are absent.
-//! - R5: the sessions use case, its controller and the file store are
-//!   constructed only in `composition/sessions.rs`; interface and
-//!   infrastructure hold injected handles.
+//! - R5: every sessions use case, controller, the file store and the one
+//!   active-session state (R7a) are constructed only at their named
+//!   composition file; interface and infrastructure hold injected handles.
+//! - R7a/R9: one owner of live-conversation state and of history/recovery
+//!   policy: the interface neither declares a conversation ledger nor pages
+//!   or ranges history itself, and converts no raw key into an identity.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -33,9 +36,19 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/mod.rs",
     "src/application/sessions/use_cases/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
+    "src/application/sessions/use_cases/read_history.rs",
+    "src/application/sessions/use_cases/recover_message.rs",
+    "src/application/sessions/dto/history.rs",
+    "src/application/sessions/dto/message_recovery.rs",
+    "src/application/sessions/active_session.rs",
+    "src/application/sessions/conversation_ledger.rs",
     "src/composition/sessions.rs",
+    "src/composition/active_session.rs",
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/uds/sessions/controller.rs",
+    "src/interface/uds/sessions/read_history_controller.rs",
+    "src/interface/uds/sessions/recover_message_controller.rs",
+    "src/domain/conversation_view.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/session_identity.rs",
 ];
@@ -49,13 +62,48 @@ const SESSION_PORTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Where a sessions graph node may be constructed (R5): composition only.
-const CONSTRUCTION_SITE: &str = "src/composition/sessions.rs";
-const COMPOSED_CONSTRUCTORS: &[&str] = &[
-    "ListSessions::new(",
-    "ListSessionsController::new(",
-    "FileSessionStore::new(",
+/// Where each sessions graph node may be constructed (R5, R7a): exactly one
+/// composition file per constructor (constructor, file).
+const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
+    ("ListSessions::new(", "src/composition/sessions.rs"),
+    (
+        "ListSessionsController::new(",
+        "src/composition/sessions.rs",
+    ),
+    ("FileSessionStore::new(", "src/composition/sessions.rs"),
+    (
+        "ActiveSessionState::new(",
+        "src/composition/active_session.rs",
+    ),
+    ("ReadHistory::new(", "src/composition/active_session.rs"),
+    ("RecoverMessage::new(", "src/composition/active_session.rs"),
+    (
+        "ReadHistoryController::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "RecoverMessageController::new(",
+        "src/composition/active_session.rs",
+    ),
 ];
+
+/// The history/recovery policy vocabulary no interface production file may
+/// declare or spell (R9): the read model, the paging and ranging
+/// primitives, and the raw-key conversion the active session retired.
+const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
+    "struct ConversationSnapshotData",
+    "fn messages_page_json_for_id(",
+    "fn position_by_wire_id(",
+    "fn position_by_message_id(",
+    "fn nearest_char_boundary_at_or_before(",
+    "fn resolve_get_message(",
+    "SessionIdentity::from_persisted_key(",
+];
+
+/// The interface files still holding a raw persisted key the active session
+/// does not stand for (exact, decrease-only): the resume target a client
+/// names on the wire (D8 #1977 owns its admission).
+const RAW_KEY_CONVERSION_SITES: &[&str] = &["src/interface/cli/uds_dispatch_session.rs"];
 
 /// The exact sites that create a `FlatSessionLayout` (R7). Decrease-only:
 /// the two interface sites (the ephemeral spill scrub and the tool
@@ -80,8 +128,15 @@ const SANITIZER_CALLERS: &[&str] = &[
 /// Decrease-only line ceilings of the list/owner files (file, ceiling).
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
 const LINE_CEILINGS: &[(&str, usize)] = &[
+    ("src/application/sessions/active_session.rs", 210),
+    ("src/application/sessions/conversation_ledger.rs", 295),
+    ("src/application/sessions/dto/history.rs", 90),
+    ("src/application/sessions/dto/message_recovery.rs", 185),
     ("src/application/sessions/ports.rs", 135),
     ("src/application/sessions/use_cases/list_sessions.rs", 46),
+    ("src/application/sessions/use_cases/read_history.rs", 110),
+    ("src/application/sessions/use_cases/recover_message.rs", 140),
+    ("src/composition/active_session.rs", 50),
     ("src/composition/sessions.rs", 38),
     ("src/domain/session_identity.rs", 133),
     ("src/infrastructure/persistence/context_spill.rs", 376),
@@ -89,8 +144,16 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     ("src/infrastructure/persistence/session_store.rs", 687),
     ("src/infrastructure/persistence/session_store_list.rs", 99),
-    ("src/interface/cli/uds_dispatch_query.rs", 217),
+    ("src/interface/cli/uds_dispatch_query.rs", 195),
+    ("src/interface/cli/uds_session_history.rs", 205),
+    ("src/interface/cli/uds_session_message_range.rs", 290),
+    ("src/interface/cli/uds_snapshots.rs", 395),
     ("src/interface/uds/sessions/controller.rs", 36),
+    ("src/interface/uds/sessions/read_history_controller.rs", 100),
+    (
+        "src/interface/uds/sessions/recover_message_controller.rs",
+        80,
+    ),
 ];
 
 fn files_under(root: &str) -> Vec<String> {
@@ -236,12 +299,12 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
 
 #[test]
 fn sessions_graph_nodes_are_constructed_only_in_composition() {
-    for constructor in COMPOSED_CONSTRUCTORS {
+    for (constructor, site) in COMPOSED_CONSTRUCTORS {
         let sites = production_files_calling(constructor);
         assert_eq!(
             sites,
-            set(&[CONSTRUCTION_SITE]),
-            "{constructor} may appear only in {CONSTRUCTION_SITE}"
+            set(&[site]),
+            "{constructor} may appear only in {site}"
         );
     }
     let layout_sites = production_files_calling("FlatSessionLayout::new(");
@@ -377,6 +440,49 @@ fn interface_never_lists_the_store_directly() {
     assert!(
         query.contains("list_sessions.list_all()"),
         "the list_sessions command is answered through the composed controller"
+    );
+}
+
+/// R7a/R9: the interface declares no conversation read model of its own and
+/// re-implements none of the history/recovery policy; the raw-key
+/// conversion survives only at the exact resume-target site.
+#[test]
+fn interface_owns_no_conversation_state_or_history_policy() {
+    let interface: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with("src/interface/"))
+        .collect();
+    for needle in INTERFACE_FORBIDDEN_NEEDLES {
+        let owners: BTreeSet<String> = interface
+            .iter()
+            .filter(|path| {
+                production_code(path)
+                    .iter()
+                    .any(|(_, line)| line.contains(needle))
+            })
+            .cloned()
+            .collect();
+        let allowed = if *needle == "SessionIdentity::from_persisted_key(" {
+            set(RAW_KEY_CONVERSION_SITES)
+        } else {
+            BTreeSet::new()
+        };
+        assert_eq!(
+            owners, allowed,
+            "{needle} declared or spelled in the interface"
+        );
+    }
+    let application_ledger = production_files_calling("struct ConversationLedger");
+    assert_eq!(
+        application_ledger,
+        set(&["src/application/sessions/conversation_ledger.rs"]),
+        "one conversation ledger, owned by the application"
+    );
+    let state_owner = production_files_calling("struct ActiveSessionState");
+    assert_eq!(
+        state_owner,
+        set(&["src/application/sessions/active_session.rs"]),
+        "one active-session state, owned by the application"
     );
 }
 
