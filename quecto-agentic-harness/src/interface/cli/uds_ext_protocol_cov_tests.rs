@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[derive(Debug)]
 struct CovProvider;
@@ -467,7 +468,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-1"), &tools).await;
@@ -565,7 +566,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;

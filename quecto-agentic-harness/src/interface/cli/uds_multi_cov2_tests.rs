@@ -8,6 +8,7 @@ use crate::domain::message::Message;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
@@ -327,7 +328,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(dir.path()),
     };
 
     run_dispatch_loop(

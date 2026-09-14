@@ -13,6 +13,7 @@
 //! anti-flood design and is left as an open design question.
 use super::*;
 use crate::domain::message::Role;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 /// Owns every value a [`DispatchCtx`] borrows so the helper can build the
 /// context inline (each field borrow is a disjoint field of this struct).
@@ -106,7 +107,7 @@ impl ActEnv {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: None,
+            list_sessions: list_handle(self.tmp.path()),
         }
     }
 }

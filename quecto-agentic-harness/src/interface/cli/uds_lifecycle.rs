@@ -300,7 +300,7 @@ async fn single_client_loop(
             last_persisted_message_index,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: Some(sessions.list_sessions.clone()),
+            list_sessions: sessions.list_sessions.clone(),
         },
     )
     .await;

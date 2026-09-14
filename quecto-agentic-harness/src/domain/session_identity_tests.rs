@@ -34,6 +34,19 @@ fn every_historical_persisted_key_category_round_trips_unchanged() {
 }
 
 #[test]
+fn from_persisted_key_keeps_the_exact_bytes_without_normalisation() {
+    // No trimming, folding or validation: a padded key is a distinct key.
+    let padded = SessionIdentity::from_persisted_key(" padded ");
+    assert_eq!(padded.persisted_key(), Some(" padded "));
+    assert_eq!(padded.runtime_key(), " padded ");
+    assert_ne!(padded, SessionIdentity::from_persisted_key("padded"));
+    assert_ne!(padded, SessionIdentity::from_persisted_key("PADDED"));
+    let whitespace_only = SessionIdentity::from_persisted_key("  ");
+    assert!(!whitespace_only.is_ephemeral());
+    assert_eq!(whitespace_only.persisted_key(), Some("  "));
+}
+
+#[test]
 fn the_empty_persisted_key_is_the_ephemeral_identity() {
     // A stored file with no snapshot header reads back as the empty key
     // today; the typed identity classifies that as ephemeral, nothing else.

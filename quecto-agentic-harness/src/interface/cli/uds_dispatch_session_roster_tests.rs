@@ -469,7 +469,7 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
 
 /// The composed sessions handles over `base` (#1970), built here so the
 /// shared dispatch test env never names the composition layer itself.
-pub(super) fn composed_sessions(
+pub(crate) fn composed_sessions(
     base: &std::path::Path,
 ) -> crate::interface::cli::uds_session_handles::SessionHandles {
     crate::composition::sessions::build_session_handles(
@@ -478,4 +478,11 @@ pub(super) fn composed_sessions(
             store: None,
         },
     )
+}
+
+/// The composed `list_sessions` handle a dispatch rig holds over `base`.
+pub(crate) fn list_handle(
+    base: &std::path::Path,
+) -> std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController> {
+    composed_sessions(base).list_sessions
 }

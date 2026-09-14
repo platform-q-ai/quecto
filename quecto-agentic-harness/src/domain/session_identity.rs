@@ -1,11 +1,8 @@
 //! The typed identity of a conversation session (#1970).
 //!
-//! Every session port and DTO of the sessions capability names a session by
-//! this value rather than by a raw string, so the persistence layout and the
-//! key grammar stay behind the ports. The identity carries the existing raw
-//! key only — no workspace, scope or path — and exposes it read-only: the
-//! callers that used to hold a `String` now hold an opaque value they can
-//! neither mutate nor turn into a path.
+//! Every session port and DTO names a session by this value, not by a raw
+//! string, so the layout and key grammar stay behind the ports. It carries
+//! the existing raw key only (no workspace, scope or path), read-only.
 //!
 //! Vocabulary, unchanged from the raw keys it wraps:
 //! - the **ephemeral** identity is the empty key: a `--no-session` run, which
@@ -30,11 +27,14 @@ impl SessionIdentity {
         Self(String::new())
     }
 
-    /// Rebuild the identity of a key as it was persisted or presented by a
-    /// caller that already holds one. Total on purpose: every historical key
-    /// category must round-trip (`persisted_key()` returns the same text),
-    /// and the empty key is the ephemeral identity — the only classification
-    /// the raw string ever carried.
+    /// Rebuild the identity of a persisted key. Total and unchecked on
+    /// purpose: the exact bytes are kept — no trimming, case folding,
+    /// validation or normalisation — so every historical key category round-trips
+    /// (`persisted_key()` returns the same text), and the empty key is the
+    /// ephemeral identity, the only classification the raw string ever
+    /// carried. A persistence round-trip, not a wire parser: interface sites
+    /// still holding a raw runtime key convert here until D2 (#1971) moves
+    /// that key into `ActiveSessionState`; wire input uses [`Self::named_cli`].
     pub fn from_persisted_key(key: impl Into<String>) -> Self {
         Self(key.into())
     }

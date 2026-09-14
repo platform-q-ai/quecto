@@ -382,7 +382,7 @@ pub(super) async fn multi_client_loop(
         last_persisted_message_index,
         durable_prefix_dirty: false,
         fleet_teardown,
-        list_sessions: Some(sessions.list_sessions.clone()),
+        list_sessions: sessions.list_sessions.clone(),
     };
 
     run_dispatch_loop(

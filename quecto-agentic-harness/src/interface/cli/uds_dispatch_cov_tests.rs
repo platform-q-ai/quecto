@@ -7,6 +7,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
@@ -248,7 +249,7 @@ impl Fixture {
             last_persisted_message_index: self.last_persisted_message_index,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }

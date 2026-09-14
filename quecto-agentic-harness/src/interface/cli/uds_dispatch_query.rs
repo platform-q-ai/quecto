@@ -70,13 +70,8 @@ pub(super) async fn dispatch_fieldless_command(
     // and presented here; the scope and order are the application's and
     // the store's, never decided at this edge.
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let listed = match ctx.list_sessions.clone() {
-            Some(list_sessions) => list_sessions.list_all().await,
-            None => Err(crate::domain::error::DomainError::Session(
-                "sessions capability not composed".to_string(),
-            )),
-        };
-        let event = match listed {
+        let list_sessions = ctx.list_sessions.clone();
+        let event = match list_sessions.list_all().await {
             Ok(sessions) => AgentEvent::ok(id, tn, Some(sessions_json(&sessions))),
             Err(err) => AgentEvent::err(id, tn, err.to_string()),
         };

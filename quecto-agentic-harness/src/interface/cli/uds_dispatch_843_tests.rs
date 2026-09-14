@@ -17,6 +17,7 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -109,7 +110,7 @@ impl Fx {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }

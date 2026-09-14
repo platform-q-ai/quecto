@@ -209,7 +209,7 @@ impl DispatchTestEnv {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: Some(self.sessions.list_sessions.clone()),
+            list_sessions: self.sessions.list_sessions.clone(),
         }
     }
 }

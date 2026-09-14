@@ -15,6 +15,11 @@
 //!   names; the layout is created at an exact, non-growing set of sites.
 //! - Retirement: no interface production code lists the store directly.
 //! - Ceilings: the per-owner line ceilings are non-empty and decrease-only.
+//!
+//! `LINE_CEILINGS` and `LAYOUT_CREATION_SITES` are decrease-only by review
+//! policy, not mechanically: the test asserts the current inventory/ceiling
+//! holds, and a change that raises a ceiling or adds a site is a reviewed
+//! edit of this file that the PR must justify.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -302,36 +307,71 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
         ))
         .collect();
     assert_eq!(sanitizer_callers, expected, "sanitizer callers are exact");
-    // No caller outside persistence forms a session path.
-    let outside: BTreeSet<String> = production_files()
+    // No caller outside persistence forms a session path: any path literal
+    // of the layout's vocabulary (a `sessions` segment being joined, an
+    // `.owner` stamp, the spill file, the sanitizer) is refused whatever
+    // the surrounding expression.
+    let outside: Vec<String> = production_files()
         .into_iter()
         .filter(|p| !p.starts_with("src/infrastructure/persistence/"))
-        .filter(|path| {
-            production_code(path).iter().any(|(_, line)| {
-                line.contains("join(\"sessions\")") || line.contains("spill.jsonl")
-            })
+        .flat_map(|path| {
+            production_code(&path)
+                .into_iter()
+                .filter(|(_, line)| forms_session_path(line))
+                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
         })
         .collect();
     assert!(
         outside.is_empty(),
-        "session paths formed outside persistence: {outside:?}"
+        "session paths formed outside persistence: {outside:#?}"
     );
+}
+
+/// A line that spells part of the flat layout: a `sessions` path segment
+/// (`join("sessions")`, `join("sessions/…")`, `"…/sessions/…"`), the
+/// ownership stamp suffix, the spill file, or the sanitizer.
+fn forms_session_path(line: &str) -> bool {
+    let joins_sessions = line.contains("join(\"sessions")
+        || line.contains("/sessions/")
+        || line.contains("\"sessions/");
+    joins_sessions
+        || line.contains(".owner\"")
+        || line.contains(".owner`")
+        || line.contains("spill.jsonl")
+        || line.contains("sanitize_session_key(")
+}
+
+/// A line that calls `list` on something that is (or is typed by) the
+/// session store port: the field, a binding named after it, or a `dyn
+/// SessionStore` handle — whatever the alias.
+fn lists_a_session_store(line: &str, file_names_store: bool) -> bool {
+    if !line.contains(".list(") {
+        return false;
+    }
+    line.contains("session_store")
+        || line.contains(".list(None")
+        || line.contains("SessionListQuery")
+        || (file_names_store && line.contains("store.list("))
 }
 
 #[test]
 fn interface_never_lists_the_store_directly() {
-    let direct: BTreeSet<String> = production_files()
+    let direct: Vec<String> = production_files()
         .into_iter()
         .filter(|p| p.starts_with("src/interface/"))
-        .filter(|path| {
-            production_code(path).iter().any(|(_, line)| {
-                line.contains("session_store.list(") || line.contains(".list(None")
-            })
+        .flat_map(|path| {
+            let code = production_code(&path);
+            let names_store = code
+                .iter()
+                .any(|(_, line)| line.contains("SessionStore") || line.contains("session_store"));
+            code.into_iter()
+                .filter(move |(_, line)| lists_a_session_store(line, names_store))
+                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
         })
         .collect();
     assert!(
         direct.is_empty(),
-        "interface lists the store directly in {direct:?}"
+        "interface lists the store directly in {direct:#?}"
     );
     let query = std::fs::read_to_string("src/interface/cli/uds_dispatch_query.rs").unwrap();
     assert!(

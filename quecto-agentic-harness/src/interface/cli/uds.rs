@@ -163,9 +163,8 @@ pub(crate) struct DispatchCtx<'a> {
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
     /// List saved sessions (#1861, #1970): the composed controller the
-    /// `list_sessions` command is answered through. `None` only in unit
-    /// rigs that run without the sessions handles.
-    pub list_sessions: Option<ListSessionsHandle>,
+    /// `list_sessions` command is answered through.
+    pub list_sessions: ListSessionsHandle,
 }
 type FleetTeardown =
     std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
@@ -712,7 +711,7 @@ mod abort_steer_tests;
 mod bounded_read_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_session_roster_tests.rs"]
-mod dispatch_session_roster_tests;
+pub(crate) mod dispatch_session_roster_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_test_env.rs"]
 mod dispatch_test_env;

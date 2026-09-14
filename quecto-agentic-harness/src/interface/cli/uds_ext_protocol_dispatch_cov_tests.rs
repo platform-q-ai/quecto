@@ -1,6 +1,7 @@
 use super::cov_tests::{cov_agent_with_registry, tool_reg};
 use super::*;
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[tokio::test]
 async fn dispatch_register_tools_rejects_disabled_core_shadow() {
@@ -81,7 +82,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
@@ -147,7 +148,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
@@ -214,7 +215,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
-        list_sessions: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;

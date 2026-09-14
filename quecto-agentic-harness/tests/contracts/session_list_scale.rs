@@ -40,13 +40,24 @@ fn build_fixture(base: &std::path::Path, count: usize) -> (usize, usize) {
     let mut clis = 0;
     for i in 0..count {
         let key = format!("chat-{:010}-{i:x}", 1_700_000_000 + i);
+        let record = dir.join(format!("{key}.json"));
         std::fs::write(
-            dir.join(format!("{key}.json")),
+            &record,
             format!(
                 r#"{{"key":"{key}","messages":[{{"role":"user","content":"question {i}","tool_calls":"not-an-array"}},{{"role":"assistant","content":"answer"}}]}}"#
             ),
         )
         .unwrap();
+        // Distinct, deliberately unordered mtimes (written ascending, stamped
+        // in a scrambled order) so "newest first" can actually fail.
+        let stamp = std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_600_000_000 + ((i * 7_919) % count) as u64);
+        std::fs::File::options()
+            .write(true)
+            .open(&record)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
         chats += 1;
         if i % 4 == 0 {
             let name = format!("legacy{i}");
@@ -100,6 +111,12 @@ async fn large_directory_lists_every_session_from_headers_only() {
         all.windows(2)
             .all(|w| w[0].updated_unix_secs >= w[1].updated_unix_secs),
         "newest first"
+    );
+    let stamps: std::collections::BTreeSet<_> = all.iter().map(|s| s.updated_unix_secs).collect();
+    assert!(
+        stamps.len() > 1
+            && all.first().unwrap().updated_unix_secs > all.last().unwrap().updated_unix_secs,
+        "the fixture carries distinct mtimes, so the order assertion is not vacuous"
     );
 
     let only_chats = store

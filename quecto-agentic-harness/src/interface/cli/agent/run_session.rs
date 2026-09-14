@@ -8,6 +8,7 @@ use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 use crate::domain::session_identity::SessionIdentity;
+
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
 use crate::interface::shared::scrub_ephemeral_spill;
 
@@ -22,8 +23,16 @@ pub(crate) fn run_agent_session(
     let session_key = if ephemeral {
         SessionIdentity::ephemeral()
     } else {
+        // The key grammar is the domain's: `--session <name>` was admitted
+        // by the same allowlist at flag parse, so a refusal here is defensive.
         let name = flags.session_name.as_deref().unwrap_or("default");
-        SessionIdentity::from_persisted_key(Session::build_key("cli", name))
+        match SessionIdentity::named_cli(name) {
+            Ok(identity) => identity,
+            Err(e) => {
+                out.stderr.push_str(&format!("{e}\n"));
+                return 1;
+            }
+        }
     };
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),

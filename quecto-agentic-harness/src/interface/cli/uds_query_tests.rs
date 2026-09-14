@@ -9,6 +9,7 @@ use crate::domain::workflow::{
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::infrastructure::tools::registration::ToolRegistration;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 struct CatalogueFixtureTool {
@@ -165,7 +166,7 @@ impl Fx {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
-            list_sessions: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
