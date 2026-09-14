@@ -155,9 +155,8 @@ async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
     conn.set_tab_for_tests(TabId::MASTER);
     a.attach_connection_to_tab(TabId::MASTER, conn, None);
 
-    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
-    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
+    let emitted_errors = a.take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
@@ -204,9 +203,8 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
             .unwrap();
     });
 
-    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
-    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
+    let emitted_errors = a.take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
@@ -351,9 +349,8 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
         }
     });
 
-    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
-    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
+    let emitted_errors = a.take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
