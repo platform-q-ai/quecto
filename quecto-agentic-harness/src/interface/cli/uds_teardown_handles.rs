@@ -1,12 +1,13 @@
-//! Inputs and outputs of the per-harness subagent teardown graph (#1935,
-//! #1938).
+//! What the dispatch loop needs from the subagent teardown capability
+//! (#1935, #1938), as plain handles.
 //!
-//! The interface owns the shape of what it needs; composition owns the
-//! concrete graph (`composition::subagent_teardown::build_teardown_graph`)
-//! and hands the builder in through [`crate::interface::cli::CliContext`],
-//! so no interface module ever names the composition layer.
+//! The interface declares the runtime inputs one loop hands over and the
+//! use-case and controller handles it holds back; composition owns the
+//! concrete graph between them (`composition::subagent_teardown`) and hands
+//! its builder in through [`crate::interface::cli::CliContext`] as a
+//! [`crate::interface::cli::TeardownHandlesBuilder`], so no interface
+//! module ever names the composition layer or assembles a graph.
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -24,40 +25,14 @@ use super::uds_multi::BusyFlag;
 use super::uds_parent_control::ConnectionTeardown;
 use super::uds_teardown_adapters::{DeferredLoopPersistence, LoopExitReadiness};
 
-/// Default time a launched harness waits for its parent to bind before it
-/// presumes the launcher gone (#1935 review: a parent that dies between
-/// spawning and presenting must not leave an unbound orphan: a launch-bound
-/// child ignores client churn, #1937).
-pub const DEFAULT_BIND_DEADLINE: Duration = Duration::from_secs(30);
-
-/// Test-only override of the bind deadline, in milliseconds. Read once at
-/// startup by the child.
-pub const BIND_DEADLINE_ENV: &str = "QUECTO_PARENT_BIND_DEADLINE_MS";
-
-/// When an `Unbound` launched harness gives up waiting for its parent.
-#[derive(Debug, Clone)]
-pub enum BindDeadline {
-    /// After this much wall-clock time (production).
-    After(Duration),
-    /// When this notification fires (tests drive the deadline explicitly
-    /// instead of racing a timer).
-    Triggered(Arc<Notify>),
-}
-
-/// How a launched harness was bound to its launcher.
-#[derive(Debug, Clone)]
-pub struct ParentControlLaunch {
-    pub binding: ParentControlBinding,
-    /// When the harness stops waiting for the presentation.
-    pub bind_deadline: BindDeadline,
-}
-
-pub struct TeardownGraphInputs {
+/// The runtime inputs of one dispatch loop that the teardown handles are
+/// composed over.
+pub struct TeardownLoopInputs {
     /// This harness's own identity, the `owner` of its lineage.
     pub owner: AgentUuid,
     pub registry: Option<SubagentRegistry>,
     /// The lifecycle cell the spawn tool admits registrations against
-    /// (#1938): the graph's lifecycle repository freezes it. `None` builds
+    /// (#1938): the composed lifecycle repository freezes it. `None` builds
     /// a private one (a harness without a spawn tool).
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
     /// This loop's event stream, on which the fleet compensation and a
@@ -77,9 +52,9 @@ pub struct TeardownGraphInputs {
     pub binding: ParentControlBinding,
 }
 
-/// The built graph: what the connection layer holds, plus the shared pieces
-/// tests and the loop observe.
-pub struct TeardownGraph {
+/// The handles one dispatch loop holds: what the connection layer needs,
+/// plus the shared pieces tests and the loop observe.
+pub struct TeardownHandles {
     pub connections: Arc<ConnectionTeardown>,
     /// The one controller every trigger without a wire — termination
     /// signal, last client — drives the common shutdown through.
@@ -90,6 +65,3 @@ pub struct TeardownGraph {
     pub exit: Arc<LoopExitReadiness>,
     pub persistence: Arc<DeferredLoopPersistence>,
 }
-
-/// Composition's graph builder, injected through the CLI context.
-pub type TeardownGraphBuilder = fn(TeardownGraphInputs) -> TeardownGraph;

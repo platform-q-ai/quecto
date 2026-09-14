@@ -422,7 +422,7 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
 fn test_observer(
     registry: &SubagentRegistry,
 ) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
-    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(registry.clone(), None, None)
+    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(registry.clone(), None, None)
         .observe_exit
 }
 
@@ -556,6 +556,7 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
     super::super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
         crate::domain::environment_retention::MemberFinalizeMode::ParentKill,
+        crate::composition::environments::build_member_finalizer,
     )
     .await;
 
@@ -592,7 +593,10 @@ async fn master_shutdown_teardown_retains_a_swarm_environment() {
 
     let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
     tokio::task::spawn_blocking(move || {
-        super::super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+        super::super::subagent_cleanup::cleanup_removed_entries_sync(
+            &mut removed,
+            crate::composition::environments::build_member_finalizer,
+        );
     })
     .await
     .unwrap();
@@ -620,7 +624,10 @@ async fn master_shutdown_teardown_still_kills_an_ordinary_environment() {
     let registry = register_member(dir.path(), &environments, &env_ref);
     let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
     tokio::task::spawn_blocking(move || {
-        super::super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+        super::super::subagent_cleanup::cleanup_removed_entries_sync(
+            &mut removed,
+            crate::composition::environments::build_member_finalizer,
+        );
     })
     .await
     .unwrap();

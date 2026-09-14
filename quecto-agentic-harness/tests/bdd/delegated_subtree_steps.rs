@@ -190,11 +190,13 @@ fn given_root(world: &mut QuectoWorld) {
     }
     let registry = AgentCmdTool::new_registry();
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn = SpawnTool::with_base_dir(vec![], base.clone())
-        .with_socket_dir(sockets)
-        .with_registry(registry.clone())
-        .with_parent_config_path(Some(config_path.clone()))
-        .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::with_base_dir(vec![], base.clone())
+            .with_socket_dir(sockets)
+            .with_registry(registry.clone())
+            .with_parent_config_path(Some(config_path.clone()))
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill =
         crate::agent_cmd_tool_steps::termination_owners(&registry, Some(broadcast_tx)).kill_tool;
     world.agent_cmd_registry = Some(registry.clone());

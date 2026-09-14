@@ -1,5 +1,5 @@
 pub mod agent_cmd;
-mod agent_cmd_containers;
+pub mod agent_cmd_containers;
 mod agent_cmd_parse;
 mod agent_cmd_report;
 pub mod bash;
@@ -35,6 +35,7 @@ mod spawn_inherited_policy;
 mod spawn_input;
 mod spawn_launch_args;
 mod spawn_launch_ports;
+mod spawn_lifecycle;
 mod spawn_proxy_bridge;
 pub mod spawn_reaper;
 mod spawn_registry;

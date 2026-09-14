@@ -3,8 +3,9 @@
 //! the fleet teardown over the registry-backed claim adapters, the UDS
 //! routing adapter to direct children, the supervised owned-handle fallback,
 //! and the launch-bound parent binding the connection layer consults. The
-//! interface receives this builder through its `CliContext` (`run_composed`)
-//! and never names this module.
+//! interface declares the loop inputs and the handles it holds
+//! (`interface::cli::uds_teardown_handles`) and receives this builder
+//! through its `CliContext` (`run_composed`); it never names this module.
 use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::use_cases::{
@@ -26,16 +27,16 @@ use crate::interface::cli::uds_teardown_adapters::{
 };
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
-pub use crate::interface::cli::uds_parent_control::{ConnectionRole, ConnectionTeardown};
+pub use crate::interface::cli::uds_parent_control::{
+    ConnectionRole, ConnectionTeardown, ParentControlLaunch,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use crate::interface::cli::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
 pub use crate::interface::cli::uds_teardown_adapters::{
     DeferredLoopPersistence as LoopPersistenceAdapter, LoopExitReadiness as LoopExitAdapter,
     RegistryLifecycleRepository as LifecycleAdapter,
 };
-pub use crate::interface::cli::uds_teardown_graph::{
-    ParentControlLaunch, TeardownGraph, TeardownGraphBuilder, TeardownGraphInputs,
-};
+pub use crate::interface::cli::uds_teardown_handles::{TeardownHandles, TeardownLoopInputs};
 
 /// What the fleet teardown of one harness is built over.
 pub struct FleetTeardownWiring {
@@ -72,6 +73,7 @@ fn build_fleet_over(
         registry.clone(),
         broadcast_tx,
         notify_tx,
+        super::environments::build_member_finalizer,
     ));
     Arc::new(TerminateAllDelegatedAgents::new(
         TerminateAllDelegatedAgentsPorts {
@@ -85,7 +87,7 @@ fn build_fleet_over(
     ))
 }
 
-pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
+pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
     let harness_lifecycle = inputs
         .harness_lifecycle
         .unwrap_or_else(new_shared_harness_lifecycle);
@@ -136,6 +138,7 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
         registry_for_claims.clone(),
         inputs.broadcast_tx,
         inputs.notify_tx,
+        super::environments::build_member_finalizer,
     ));
     let terminate = Arc::new(
         TerminateDelegatedAgent::new(lifecycle, routing).with_owner_conclusion(
@@ -147,7 +150,7 @@ pub fn build_teardown_graph(inputs: TeardownGraphInputs) -> TeardownGraph {
         ),
     );
     let controller = Arc::new(SubagentTeardownController::new(prepare, execute, terminate));
-    TeardownGraph {
+    TeardownHandles {
         connections: Arc::new(ConnectionTeardown {
             binding: Arc::new(Mutex::new(inputs.binding)),
             controller: controller.clone(),

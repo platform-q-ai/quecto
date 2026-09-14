@@ -50,8 +50,13 @@ fn tree() -> SubagentRegistry {
 }
 
 fn agents(registry: &SubagentRegistry) -> RegistryDelegatedAgents {
-    RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_millis(200))
+    RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .with_compensation_wait(Duration::from_millis(200))
 }
 
 #[test]
@@ -228,7 +233,12 @@ async fn compensation_removes_the_subtree_broadcasts_once_and_notifies_for_exits
         a.monitor_handle = Some(monitor.clone());
         entries.get_mut("B").unwrap().exit_signal_tx = Some(b_exit_tx.clone());
     }
-    let port = RegistryDelegatedAgents::new(registry.clone(), Some(broadcast_tx), Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        Some(broadcast_tx),
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let a = identity("A", 1);
     assert_eq!(port.claim_terminal(&a), TerminalClaim::Claimed);
     let compensated = port
@@ -291,7 +301,12 @@ async fn a_selected_termination_compensates_silently_and_an_unknown_row_removes_
     let registry = tree();
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
     let (notify_tx, mut notify_rx) = new_notification_channel();
-    let port = RegistryDelegatedAgents::new(registry.clone(), Some(broadcast_tx), Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        Some(broadcast_tx),
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let compensated = port
         .compensate(&identity("D", 2), TerminationCause::SelectedTermination)
         .await;
@@ -358,7 +373,12 @@ fn causes_map_to_the_cleanup_contract_and_exit_kind() {
 async fn an_exit_observed_for_a_claimed_kill_honours_the_kill_intent() {
     let registry = tree();
     let (notify_tx, mut notify_rx) = new_notification_channel();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let d = identity("D", 2);
     port.claim_stopping(&d, TerminationCause::SelectedTermination)
         .unwrap();
@@ -393,7 +413,12 @@ async fn an_exit_observed_for_a_claimed_kill_honours_the_kill_intent() {
     );
     // A row nobody claimed keeps the observed cause.
     let registry = tree();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None);
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    );
     assert_eq!(
         port.claim_terminal(&identity("A", 1)),
         TerminalClaim::Claimed
@@ -421,7 +446,12 @@ async fn compensation_reports_only_the_rows_it_moved_out_of_live_membership() {
         let next = super::super::subagent_cascade::next_roster_sequence(&entries);
         super::super::subagent_cascade::mark_entry_dead(entries.get_mut("C").unwrap(), next);
     }
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None);
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    );
     let compensated = port
         .compensate(&identity("A", 1), TerminationCause::SelectedTermination)
         .await;
@@ -443,8 +473,13 @@ async fn compensation_reports_only_the_rows_it_moved_out_of_live_membership() {
 async fn prune_releases_waiters_and_the_cascade_only_after_its_effects() {
     let registry = tree();
     let port = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(5)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5)),
     );
     // A's next snapshot omits B: the merge prunes it.
     let line = serde_json::json!({"type": "subagent_state_changed", "subagents": [{
@@ -537,8 +572,13 @@ async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
         .lock()
         .unwrap()
         .insert("b".into(), launched("b", "b", 2));
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_secs(5));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .with_compensation_wait(Duration::from_secs(5));
     let a = DelegatedAgentIdentity::new("a", LaunchGeneration::new(1));
     let b = DelegatedAgentIdentity::new("b", LaunchGeneration::new(2));
     // A is mid-compensation: claimed, terminal-claimed and marked exited.
@@ -565,8 +605,13 @@ async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
 
     // The compensation in flight completes and a joiner sees it.
     let joiner = tokio::spawn({
-        let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(5));
+        let port = RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5));
         let a = a.clone();
         async move { port.await_compensated(&a).await }
     });
@@ -611,8 +656,13 @@ async fn a_joiner_woken_on_compensated_finds_the_cleanup_and_exit_signal_already
         registry.lock().unwrap().insert("B".into(), descendant);
     }
     let port = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(10)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(10)),
     );
     let a = identity("A", 1);
     port.claim_stopping(&a, TerminationCause::SelectedTermination)

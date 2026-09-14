@@ -276,7 +276,7 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
 
 // ── Session switches settle the departing session's children (#1938) ─────────
 
-use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
+use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use std::sync::{Arc, Mutex};
 
@@ -348,13 +348,23 @@ async fn acking_child(
     entry.display_name = name.to_string();
     entry.launch_generation =
         Some(crate::infrastructure::processes::parent_control::next_launch_generation());
-    let monitor = Arc::new(spawn_monitor_task_unbound(
-        entry.agent_uuid.as_str().to_string(),
-        socket_path,
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
         None,
         None,
-        None,
+    )
+    .observe_exit;
+    let monitor = Arc::new(spawn_monitor_task(
+        crate::infrastructure::tools::subagent_monitor::MonitorSpec {
+            agent_id: entry.agent_uuid.as_str().to_string(),
+            socket_path,
+            registry: registry.clone(),
+            notify_tx: None,
+            broadcast_tx: None,
+            parent_id: None,
+            observer,
+            parent_control: None,
+        },
     ));
     entry.monitor_handle = Some(monitor.clone());
     tokio::time::timeout(SWITCH_BOUND, accepted.notified())

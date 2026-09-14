@@ -11,6 +11,9 @@ use quecto::application::subagents::dto::{
     CompensateFailedLaunchRequest, FailedLaunchCompensated, ObservedExit,
 };
 use quecto::application::tools::ports::Tool;
+use quecto::composition::subagent_lifecycle::{
+    SubagentLifecycleUseCases, build_lifecycle_use_cases,
+};
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::subagent_teardown::LaunchGeneration;
 use quecto::domain::tool::ToolResult;
@@ -19,9 +22,6 @@ use quecto::infrastructure::processes::owned_child_supervisor::{
 };
 use quecto::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentRegistry, TeardownPhase, new_exit_signal_channel, new_registry,
-};
-use quecto::infrastructure::tools::subagent_teardown_wiring::{
-    SubagentLifecycleUseCases, build_lifecycle_use_cases,
 };
 use quecto::interface::cli::KillToolWiring;
 
@@ -206,6 +206,8 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 notify_tx: None,
                 harness_lifecycle:
                     quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                environment_registry:
+                    quecto::domain::environment_registry::EnvironmentRegistry::new(),
                 slots: Default::default(),
             },
         ));

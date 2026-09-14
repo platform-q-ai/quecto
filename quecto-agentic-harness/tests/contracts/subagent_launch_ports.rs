@@ -209,7 +209,10 @@ PY
 "#;
 
     fn tool(dir: &Path) -> SpawnTool {
-        SpawnTool::with_base_dir(Vec::new(), dir.to_path_buf()).with_socket_dir(dir.to_path_buf())
+        quecto::composition::subagent_lifecycle::compose_launcher(
+            SpawnTool::with_base_dir(Vec::new(), dir.to_path_buf())
+                .with_socket_dir(dir.to_path_buf()),
+        )
     }
 
     fn config(container: ContainerSelection, config_path: Option<PathBuf>) -> SubagentConfig {

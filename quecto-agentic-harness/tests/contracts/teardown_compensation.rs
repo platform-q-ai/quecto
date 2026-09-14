@@ -70,6 +70,7 @@ async fn a_natural_exit_compensates_the_subtree_once_with_one_broadcast_and_one_
         registry.clone(),
         Some(broadcast_tx),
         Some(notify_tx),
+        quecto::composition::environments::build_member_finalizer,
     ));
     let compensation: Arc<dyn TeardownCompensation> = adapter.clone();
     let claims: Arc<dyn DelegatedAgentRegistry> = adapter;
@@ -138,6 +139,7 @@ async fn a_selected_termination_posts_no_note_and_a_launch_rollback_neither() {
             registry.clone(),
             Some(broadcast_tx),
             Some(notify_tx),
+            quecto::composition::environments::build_member_finalizer,
         ));
         let compensated = compensation.compensate(&identity("D"), cause).await;
         assert_eq!(compensated.removed, [AgentUuid::new("D")]);
@@ -157,8 +159,13 @@ async fn concurrent_observations_of_one_exit_compensate_exactly_once() {
     let registry = tree();
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
     let adapter = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), Some(broadcast_tx), None)
-            .with_compensation_wait(Duration::from_secs(5)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            Some(broadcast_tx),
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5)),
     );
     let observer = Arc::new(ObserveOwnedChildExit::new(adapter.clone(), adapter.clone()));
     let mut tasks = Vec::new();

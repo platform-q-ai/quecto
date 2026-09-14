@@ -299,9 +299,11 @@ pub(crate) fn build_tool_runtime(
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
     });
-    // The termination owners — `kill`, the environment member shutdown
-    // and the swarm member termination — are composed over the tools' own
-    // registry, channels, lifecycle cell and slots (#1936, #1939).
+    // The agent-control use cases — `kill`, the environment member
+    // shutdown, the swarm member termination, the spawn lifecycle and the
+    // environment control — are composed over the tools' own registry,
+    // channels, lifecycle cell, environment registry and slots (#1936,
+    // #1939).
     if let Some(install_termination_owners) = kill_tool {
         let installed = install_termination_owners(crate::interface::cli::KillToolWiring {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -313,6 +315,7 @@ pub(crate) fn build_tool_runtime(
             broadcast_tx: workflow.broadcast_tx.clone(),
             notify_tx: Some(agent_control.notification_tx.clone()),
             harness_lifecycle: agent_control.harness_lifecycle.clone(),
+            environment_registry: agent_control.environment_registry.clone(),
             slots: agent_control.termination_slots.clone(),
         });
         debug_assert!(

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quecto::application::subagents::ports::ExitReadiness;
-use quecto::composition::subagent_teardown::{TeardownGraphInputs, build_teardown_graph};
+use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::parent_control::{
     BindingState, ParentControlBinding, ParentControlCapability, ParentControlCredential,
@@ -15,10 +15,11 @@ use quecto::domain::parent_control::{
 use quecto::domain::subagent_teardown::{HarnessLifecycleState, LaunchGeneration, ShutdownReason};
 use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use quecto::interface::cli::uds_cancel::{CancelSlot, TurnControl};
+use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;
 use quecto::interface::uds::subagent_teardown::controller::{ControllerOutcome, DeliveryState};
 
 struct Graph {
-    graph: quecto::composition::subagent_teardown::TeardownGraph,
+    graph: quecto::interface::cli::uds_teardown_handles::TeardownHandles,
     notify: Arc<tokio::sync::Notify>,
     cancel: Arc<Mutex<CancelSlot>>,
     turn_control: Arc<TurnControl>,
@@ -35,7 +36,7 @@ fn graph(registry: Option<SubagentRegistry>, busy: bool) -> Graph {
     let notify = Arc::new(tokio::sync::Notify::new());
     let cancel: Arc<Mutex<CancelSlot>> = Arc::new(Mutex::new(CancelSlot::Idle));
     let turn_control: Arc<TurnControl> = Arc::new(TurnControl::default());
-    let graph = build_teardown_graph(TeardownGraphInputs {
+    let graph = build_teardown_graph(TeardownLoopInputs {
         owner: AgentUuid::new("me"),
         registry,
         harness_lifecycle: None,

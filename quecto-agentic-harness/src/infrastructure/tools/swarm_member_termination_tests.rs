@@ -81,8 +81,13 @@ fn member(id: &str, endpoint: Option<&std::path::Path>, pid: Option<u32>) -> Mem
 
 fn graph(registry: &SubagentRegistry) -> DelegatedSwarmMemberTermination {
     let agents = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_millis(300)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_millis(300)),
     );
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),

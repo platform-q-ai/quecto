@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::composition::subagent_teardown::{ParentControlLaunch, build_teardown_graph};
+use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::parent_control::{
     BindRejection, BindingState, ConnectionLoss, ParentControlBinding, ParentControlCapability,
     ParentControlCredential,
@@ -22,7 +22,8 @@ use quecto::infrastructure::processes::parent_control::{
     mint_credential, presentation_json, take_sidecar, write_sidecar,
 };
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
-use quecto::interface::cli::uds_teardown_graph::BindDeadline;
+use quecto::interface::cli::uds_parent_control::BindDeadline;
+use quecto::interface::cli::uds_parent_control::ParentControlLaunch;
 use quecto::interface::uds::parent_control::wire::BindParentControlWire;
 
 use crate::QuectoWorld;

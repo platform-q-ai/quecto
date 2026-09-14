@@ -53,10 +53,10 @@ pub struct UdsLoopArgs<'a> {
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
-    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
-    /// Composition's teardown graph builder; `None` runs the loop without
+    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
-    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
+    pub teardown_graph: Option<super::TeardownHandlesBuilder>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {

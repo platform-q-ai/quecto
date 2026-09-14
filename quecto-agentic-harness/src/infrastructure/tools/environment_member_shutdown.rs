@@ -101,58 +101,18 @@ impl EnvironmentMemberShutdown for DelegatedMemberShutdown {
     }
 }
 
-/// Where the composed member shutdown lives (#1936 review, #1939): the
-/// environment kill is built with the agent-control tools, before
-/// composition's termination owners exist, so it shuts members down through
-/// this slot; the interface fills it once. Empty, every member is reported
-/// unsettled and the environment stays retryable rather than running the
-/// retained kill under live members. A second install is ignored: one
-/// owner per harness.
-#[derive(Clone, Default)]
-pub struct MemberShutdownSlot(Arc<std::sync::OnceLock<Arc<dyn EnvironmentMemberShutdown>>>);
-
-impl MemberShutdownSlot {
-    /// Install the owner; `true` when this call filled the slot.
-    pub fn install(&self, owner: Arc<dyn EnvironmentMemberShutdown>) -> bool {
-        self.0.set(owner).is_ok()
-    }
-
-    pub fn get(&self) -> Option<Arc<dyn EnvironmentMemberShutdown>> {
-        self.0.get().cloned()
-    }
-}
-
-impl EnvironmentMemberShutdown for MemberShutdownSlot {
-    fn shutdown_members<'a>(
-        &'a self,
-        members: &'a [String],
-    ) -> PortFuture<'a, MemberShutdownReport> {
-        Box::pin(async move {
-            match self.get() {
-                Some(owner) => owner.shutdown_members(members).await,
-                None => MemberShutdownReport {
-                    settled: Vec::new(),
-                    unsettled: members
-                        .iter()
-                        .map(|member| UnsettledMember {
-                            member: member.clone(),
-                            detail: "no member shutdown is composed in this session".into(),
-                        })
-                        .collect(),
-                },
-            }
-        })
-    }
-}
-
-/// The slots the agent-control tools read their parent-hand termination
-/// owners from (#1936 review): built empty with the tools, handed to
-/// composition inside the interface's wiring, filled once by composition's
-/// graph. Cloning shares the slots.
+/// The slots the agent-control tools read their composed use cases from
+/// (#1936 review, #1939): the `agent_cmd kill` owner, the launch
+/// lifecycle the spawn tool hands its reaper and monitor, and the
+/// environment control `agent_cmd` serves (whose kill asks the composed
+/// member shutdown directly). Built empty with the tools,
+/// handed to composition inside the interface's wiring, filled once by
+/// composition's graph. Cloning shares the slots.
 #[derive(Clone, Default)]
 pub struct TerminationSlots {
     pub kill: super::agent_cmd::KillToolSlot,
-    pub member_shutdown: MemberShutdownSlot,
+    pub lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot,
+    pub environments: super::agent_cmd_containers::EnvironmentControlSlot,
 }
 
 #[cfg(test)]

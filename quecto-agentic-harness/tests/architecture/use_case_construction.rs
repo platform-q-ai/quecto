@@ -1,0 +1,565 @@
+//! Epic #1929 follow-up (#1666): composition is the only place that
+//! constructs the concrete runtime graph. Infrastructure's inbound event
+//! sources (reapers, socket monitors, cleanup workers) and the interface's
+//! dispatch loops invoke application use cases through handles composition
+//! injects; none of them constructs a use case or assembles a graph.
+//!
+//! What is checked, per production file under `src/infrastructure` and
+//! `src/interface`:
+//! - the inventory is tree-derived: every `pub struct` under any
+//!   `use_cases/` folder of the application, whatever its field shape, and
+//!   the hand-written [`USE_CASES`] / [`LEGACY_RECORDS`] lists must equal it;
+//! - `use … as` and `type … =` aliases are resolved to their targets first,
+//!   so an alias of a use case is matched like the use case;
+//! - a use case (or alias) may be named only as a handle — in a type
+//!   position — never followed by `::new(`, `::default(`, `::from(`, a
+//!   struct literal, or made constructible through `impl From<…> for` it;
+//! - the legacy use cases that live outside `use_cases/` folders are an
+//!   exact, non-growing baseline ([`LEGACY_CONSTRUCTIONS`]) tracked by #1666.
+//!
+//! Known evasions the text scan does not see: a construction spread over
+//! two lines with the path on one and `::new(` on the next; a struct
+//! literal at the start of a line (indistinguishable from a pattern); a
+//! constructor reached through a trait method or macro. A parse-based
+//! check would close them; the substring ratchets of this suite accept
+//! the same limits.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+use super::teardown_authority::{production_code, production_files, walk};
+
+/// Every use case and ports bundle declared under an application
+/// `use_cases` folder.
+const USE_CASES: &[&str] = &[
+    "CompensateFailedLaunch",
+    "CompensateFailedLaunchPorts",
+    "ExecuteHarnessShutdown",
+    "ExecuteHarnessShutdownPorts",
+    "FinalizeEnvironmentMember",
+    "FindUseCase",
+    "HarnessShutdownTransaction",
+    "KillDelegatedAgent",
+    "KillDelegatedAgentPorts",
+    "KillEnvironment",
+    "ListEnvironmentsQuery",
+    "ObserveOwnedChildExit",
+    "OwnerConclusionPorts",
+    "PrepareHarnessShutdown",
+    "SettleDelegatedChild",
+    "SettleDelegatedChildPorts",
+    "TerminateAllDelegatedAgents",
+    "TerminateAllDelegatedAgentsPorts",
+    "TerminateDelegatedAgent",
+    "WebFetchUseCase",
+];
+
+/// Request/response records declared beside the pre-#1929 find and
+/// web-fetch use cases (their capability has no `dto` folder yet, #1666).
+/// A port adapter builds these as the use case's inputs and outputs; they
+/// are values, not graph nodes, and are the only structs of the tree an
+/// adapter may construct. Exact: a new record joins here or the test fails.
+const LEGACY_RECORDS: &[&str] = &[
+    "FetchRequest",
+    "FindOutput",
+    "FindPathsRequest",
+    "FindRequest",
+    "FindResult",
+    "HttpStatus",
+    "KilledEnvironment",
+    "ParsedHttpUrl",
+];
+
+/// The use cases declared outside a `use_cases/` folder that the interface
+/// and infrastructure still construct themselves (pre-#1929, tracked by
+/// #1666): (file, construction). Exact and non-growing: a construction
+/// that moves to composition leaves the list; nothing may join it.
+const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[
+    (
+        "src/interface/catalogue_runtime.rs",
+        "ComposeProviderRuntimeUseCase::new(",
+    ),
+    (
+        "src/interface/catalogue_runtime.rs",
+        "ResolveModelSelectionUseCase::new(",
+    ),
+    (
+        "src/interface/cli/uds_models.rs",
+        "QueryCatalogueUseCase::new(",
+    ),
+    (
+        "src/infrastructure/tools/spawn.rs",
+        "SubagentLaunchUseCase::new(",
+    ),
+];
+
+fn ident_at_start(rest: &str) -> String {
+    rest.chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect()
+}
+
+/// Every `pub struct` under any `use_cases/` folder of the application
+/// tree, whatever its fields or generics.
+fn use_case_tree_inventory() -> BTreeSet<String> {
+    let mut files = Vec::new();
+    walk(Path::new("src/application"), &mut files);
+    let mut names = BTreeSet::new();
+    for path in files.iter().filter(|path| {
+        path.contains("/use_cases/") && !path.ends_with("_tests.rs") && !path.contains("fakes")
+    }) {
+        for (_, line) in production_code(path) {
+            if let Some(rest) = line.trim_start().strip_prefix("pub struct ") {
+                let name = ident_at_start(rest);
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+/// The use cases and ports bundles: the tree inventory minus the legacy
+/// records, both hand lists asserted against the tree.
+fn use_case_names() -> BTreeSet<String> {
+    let tree = use_case_tree_inventory();
+    let records: BTreeSet<String> = LEGACY_RECORDS.iter().map(|s| s.to_string()).collect();
+    let use_cases: BTreeSet<String> = USE_CASES.iter().map(|s| s.to_string()).collect();
+    assert!(
+        records.is_subset(&tree),
+        "LEGACY_RECORDS names a struct the tree no longer declares: shrink the list"
+    );
+    let expected: BTreeSet<String> = tree.difference(&records).cloned().collect();
+    assert_eq!(
+        use_cases, expected,
+        "the use-case inventory changed (every `pub struct` under a use_cases/ folder, minus LEGACY_RECORDS); update USE_CASES"
+    );
+    use_cases
+}
+
+/// Aliases a file declares for inventory names: `use …::X as Y;`, a grouped
+/// `{X as Y}`, and `type Y = …::X;` (with or without generics), mapped
+/// alias → target, applied transitively.
+fn aliases_in(code: &[(usize, String)], names: &BTreeSet<String>) -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+    for (_, line) in code {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ") || trimmed.starts_with("pub use ") {
+            for (index, _) in line.match_indices(" as ") {
+                let target = line[..index]
+                    .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let alias = ident_at_start(&line[index + 4..]);
+                if !alias.is_empty() {
+                    aliases.insert(alias, target);
+                }
+            }
+        }
+        let type_decl = trimmed
+            .strip_prefix("pub(crate) type ")
+            .or_else(|| trimmed.strip_prefix("pub(super) type "))
+            .or_else(|| trimmed.strip_prefix("pub type "))
+            .or_else(|| trimmed.strip_prefix("type "));
+        if let Some(rest) = type_decl {
+            let alias = ident_at_start(rest);
+            if let Some((_, target)) = rest.split_once('=') {
+                let target = target.trim().trim_end_matches(';');
+                let target = target.split('<').next().unwrap_or_default();
+                let target = target.rsplit("::").next().unwrap_or_default().to_string();
+                if !alias.is_empty() && !target.is_empty() {
+                    aliases.insert(alias, target);
+                }
+            }
+        }
+    }
+    // Resolve chains (an alias of an alias) to the inventory name.
+    let mut resolved = BTreeMap::new();
+    for alias in aliases.keys() {
+        let mut target = alias.clone();
+        for _ in 0..aliases.len() + 1 {
+            match aliases.get(&target) {
+                Some(next) => target = next.clone(),
+                None => break,
+            }
+        }
+        if names.contains(&target) && &target != alias {
+            resolved.insert(alias.clone(), target);
+        }
+    }
+    resolved
+}
+
+fn at_word_boundary_before(line: &str, index: usize) -> bool {
+    line[..index]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+}
+
+/// `line` constructs `name`: `name::new(` / `name::default(` / `name::from(`,
+/// a struct literal `name {` in expression position (after `=`, `(`, `,`,
+/// `[` or `>`), or an `impl From<…> for name` that makes `.into()` build it.
+fn constructs(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("impl") && trimmed.contains("From<") {
+        // `for <path>` names the constructed type, possibly fully
+        // qualified: compare its last segment.
+        if let Some(index) = trimmed.find("> for ") {
+            let target = trimmed[index + "> for ".len()..]
+                .split(|c: char| c == '{' || c == '<' || c.is_whitespace())
+                .next()
+                .unwrap_or_default();
+            return target.rsplit("::").next() == Some(name);
+        }
+    }
+    line.match_indices(name).any(|(index, _)| {
+        if !at_word_boundary_before(line, index) {
+            return false;
+        }
+        let after = &line[index + name.len()..];
+        if after.starts_with("::new(")
+            || after.starts_with("::default(")
+            || after.starts_with("::from(")
+        {
+            return true;
+        }
+        after.starts_with(" {")
+            && line[..index]
+                .trim_end()
+                .ends_with(['=', '(', ',', '[', '>'])
+    })
+}
+
+/// Every construction of an inventory name (or an alias of one) in the
+/// production files under `layer`.
+fn constructions_in(layer: &str, names: &BTreeSet<String>) -> Vec<String> {
+    let mut found = Vec::new();
+    for path in production_files()
+        .into_iter()
+        .filter(|path| path.starts_with(layer))
+    {
+        let code = production_code(&path);
+        let aliases = aliases_in(&code, names);
+        for (line_no, line) in &code {
+            for name in names {
+                if constructs(line, name) {
+                    found.push(format!(
+                        "{path}:{line_no} constructs `{name}`: `{}`",
+                        line.trim()
+                    ));
+                }
+            }
+            for (alias, target) in &aliases {
+                if constructs(line, alias) {
+                    found.push(format!(
+                        "{path}:{line_no} constructs `{target}` through alias `{alias}`: `{}`",
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// (a) No production file under `src/infrastructure` or `src/interface`
+/// constructs a use case or its ports bundle, directly, through an alias,
+/// or through a `From` impl; the fully qualified `use_cases::…::new(`
+/// spelling is refused outright. Adapters hold `Arc<UseCase>` handles (or
+/// a builder alias composition fills) and invoke them.
+#[test]
+fn infrastructure_and_interface_never_construct_a_use_case() {
+    let names = use_case_names();
+    let mut violations = constructions_in("src/infrastructure", &names);
+    violations.extend(constructions_in("src/interface", &names));
+    assert!(
+        violations.is_empty(),
+        "use cases are constructed in composition only:\n{}",
+        violations.join("\n")
+    );
+    for layer in ["src/infrastructure", "src/interface"] {
+        for path in production_files()
+            .into_iter()
+            .filter(|path| path.starts_with(layer))
+        {
+            for (line_no, line) in production_code(&path) {
+                assert!(
+                    !(line.contains("use_cases::") && line.contains("::new(")),
+                    "{path}:{line_no} names `use_cases::…::new(`: `{}`",
+                    line.trim()
+                );
+            }
+        }
+    }
+}
+
+/// (b) Composition is the only layer outside the application itself that
+/// constructs a use case: the application may compose a sibling use case
+/// from the ports it was built with, and composition builds the rest.
+/// Nothing else in the crate (entry points, lib) does.
+#[test]
+fn composition_is_the_only_layer_that_constructs_use_cases() {
+    let names = use_case_names();
+    let mut outside = Vec::new();
+    let mut in_composition = 0usize;
+    for path in production_files() {
+        let code = production_code(&path);
+        let aliases = aliases_in(&code, &names);
+        for (line_no, line) in &code {
+            let built = names.iter().any(|name| constructs(line, name))
+                || aliases.keys().any(|alias| constructs(line, alias));
+            if !built {
+                continue;
+            }
+            if path.starts_with("src/composition/") {
+                in_composition += 1;
+            } else if !path.starts_with("src/application/") {
+                outside.push(format!("{path}:{line_no}: `{}`", line.trim()));
+            }
+        }
+    }
+    assert!(outside.is_empty(), "{}", outside.join("\n"));
+    assert!(
+        in_composition >= 10,
+        "composition builds the graph ({in_composition} constructions seen)"
+    );
+    // The teardown, lifecycle and environment graphs each have a home.
+    for (file, builder) in [
+        (
+            "src/composition/subagent_teardown.rs",
+            "pub fn build_teardown_graph",
+        ),
+        (
+            "src/composition/subagent_termination.rs",
+            "pub fn install_termination_owners",
+        ),
+        (
+            "src/composition/subagent_lifecycle.rs",
+            "pub fn build_lifecycle_use_cases",
+        ),
+        (
+            "src/composition/environments.rs",
+            "pub fn build_environment_control",
+        ),
+        (
+            "src/composition/environments.rs",
+            "pub fn build_member_finalizer",
+        ),
+    ] {
+        assert!(
+            production_code(file)
+                .iter()
+                .any(|(_, l)| l.contains(builder)),
+            "{file} declares `{builder}`"
+        );
+    }
+}
+
+/// The use cases declared outside a `use_cases/` folder (`…UseCase`
+/// structs of the pre-#1929 catalogue, provider-runtime and launch
+/// modules) that the interface and infrastructure still construct are
+/// exactly [`LEGACY_CONSTRUCTIONS`]: each is present once, and no other
+/// `…UseCase::new(` / `::default(` appears in either layer.
+#[test]
+fn legacy_use_case_constructions_outside_use_cases_folders_do_not_grow() {
+    let mut seen = BTreeSet::new();
+    let mut unexpected = Vec::new();
+    for layer in ["src/infrastructure", "src/interface"] {
+        for path in production_files()
+            .into_iter()
+            .filter(|path| path.starts_with(layer))
+        {
+            for (line_no, line) in production_code(&path) {
+                for (index, _) in line.match_indices("UseCase::") {
+                    let after = &line[index + "UseCase::".len()..];
+                    if !(after.starts_with("new(") || after.starts_with("default(")) {
+                        continue;
+                    }
+                    let name_start = line[..index]
+                        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                        .map_or(0, |i| i + 1);
+                    let construction = &line[name_start..index + "UseCase::".len() + 4];
+                    match LEGACY_CONSTRUCTIONS
+                        .iter()
+                        .find(|(file, needle)| *file == path && construction.starts_with(needle))
+                    {
+                        Some(entry) => {
+                            seen.insert(*entry);
+                        }
+                        None => unexpected.push(format!(
+                            "{path}:{line_no} constructs a use case outside the #1666 baseline: `{}`",
+                            line.trim()
+                        )),
+                    }
+                }
+            }
+        }
+    }
+    assert!(unexpected.is_empty(), "{}", unexpected.join("\n"));
+    let baseline: BTreeSet<(&str, &str)> = LEGACY_CONSTRUCTIONS.iter().copied().collect();
+    assert_eq!(
+        seen, baseline,
+        "a baselined legacy construction moved or disappeared; update LEGACY_CONSTRUCTIONS"
+    );
+}
+
+/// The interface declares the handles it needs as plain structs and a
+/// builder alias, constructed by composition and passed down through
+/// `CliComposition`; it never names composition and never assembles a
+/// graph. The old graph module is gone without a re-export shim.
+#[test]
+fn interface_declares_handles_and_composition_fills_them() {
+    assert!(
+        !Path::new("src/interface/cli/uds_teardown_graph.rs").exists(),
+        "the interface graph module was retired"
+    );
+    let handles = production_code("src/interface/cli/uds_teardown_handles.rs");
+    for declared in [
+        "pub struct TeardownLoopInputs {",
+        "pub struct TeardownHandles {",
+        "pub fleet: Arc<TerminateAllDelegatedAgents>,",
+        "pub controller: Arc<SubagentTeardownController>,",
+    ] {
+        assert!(
+            handles.iter().any(|(_, l)| l.contains(declared)),
+            "uds_teardown_handles.rs declares `{declared}`"
+        );
+    }
+    for forbidden in ["::new(", "crate::composition", "TeardownGraph"] {
+        assert!(
+            !handles.iter().any(|(_, l)| l.contains(forbidden)),
+            "uds_teardown_handles.rs holds handles only, never `{forbidden}`"
+        );
+    }
+    let cli = production_code("src/interface/cli/mod.rs");
+    assert!(
+        cli.iter()
+            .any(|(_, l)| l.contains("pub type TeardownHandlesBuilder ="))
+    );
+    assert!(
+        cli.iter()
+            .any(|(_, l)| l.contains("pub teardown_graph: TeardownHandlesBuilder,")),
+        "CliComposition carries the handles builder"
+    );
+    let composition = production_code("src/composition/subagent_teardown.rs");
+    assert!(composition.iter().any(|(_, l)| {
+        l.contains("pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles")
+    }));
+    // The per-loop handles are built by the composition-provided builder
+    // the loop was handed, with the loop's own runtime inputs.
+    let multi = production_code("src/interface/cli/uds_multi.rs");
+    assert!(
+        multi
+            .iter()
+            .any(|(_, l)| l.contains("build(super::uds_teardown_handles::TeardownLoopInputs {")),
+        "the loop calls composition's builder with its runtime inputs"
+    );
+    // Infrastructure's inbound event sources hold handles or slots.
+    let spawn = production_code("src/infrastructure/tools/spawn_lifecycle.rs");
+    assert!(
+        spawn
+            .iter()
+            .any(|(_, l)| l.contains("pub fn with_lifecycle_slot("))
+    );
+    let wiring = production_code("src/infrastructure/tools/subagent_teardown_wiring.rs");
+    assert!(
+        wiring
+            .iter()
+            .any(|(_, l)| l.contains("pub struct SubagentLifecycleSlot("))
+    );
+    assert!(
+        !wiring
+            .iter()
+            .any(|(_, l)| l.contains("fn build_lifecycle_use_cases")),
+        "the wiring module declares handles, composition builds them"
+    );
+    let cleanup = production_code("src/infrastructure/tools/subagent_cleanup.rs");
+    assert!(cleanup.iter().any(|(_, l)| {
+        l.contains(
+            "pub type MemberFinalizer = fn(EnvironmentRegistry) -> FinalizeEnvironmentMember;",
+        )
+    }));
+    let native = production_code("src/infrastructure/extensions/native.rs");
+    assert!(
+        native.iter().any(|(_, l)| {
+            l.contains(".with_lifecycle_slot(termination_slots.lifecycle.clone())")
+        })
+    );
+    assert!(native.iter().any(|(_, l)| {
+        l.contains(".with_environment_control_slot(termination_slots.environments.clone())")
+    }));
+}
+
+/// The scan itself: each evasion shape is recognised, and handle positions
+/// are not.
+#[test]
+fn construction_scan_recognises_aliases_literals_and_from_impls() {
+    let names: BTreeSet<String> = ["KillEnvironment".to_string()].into_iter().collect();
+    let code = |src: &str| -> Vec<(usize, String)> {
+        src.lines()
+            .enumerate()
+            .map(|(i, l)| (i + 1, l.to_string()))
+            .collect()
+    };
+    let aliased = code(
+        "use crate::application::environments::use_cases::KillEnvironment as Y;\nlet k = Y::new(a, b, c);",
+    );
+    let aliases = aliases_in(&aliased, &names);
+    assert_eq!(
+        aliases.get("Y").map(String::as_str),
+        Some("KillEnvironment")
+    );
+    assert!(constructs(&aliased[1].1, "Y"));
+    let typed = code(
+        "type Q = crate::application::environments::use_cases::KillEnvironment;\nlet k = Q::default();",
+    );
+    assert_eq!(
+        aliases_in(&typed, &names).get("Q").map(String::as_str),
+        Some("KillEnvironment")
+    );
+    assert!(constructs(&typed[1].1, "Q"));
+    let grouped = code(
+        "use crate::application::environments::use_cases::{KillEnvironment as K, ListEnvironmentsQuery};",
+    );
+    assert_eq!(
+        aliases_in(&grouped, &names).get("K").map(String::as_str),
+        Some("KillEnvironment")
+    );
+    assert!(constructs(
+        "impl From<Parts> for KillEnvironment {",
+        "KillEnvironment"
+    ));
+    assert!(constructs(
+        "impl From<Parts> for crate::application::environments::use_cases::KillEnvironment {",
+        "KillEnvironment"
+    ));
+    assert!(constructs(
+        "impl<T> From<T> for KillEnvironment where T: Into<Parts> {",
+        "KillEnvironment"
+    ));
+    assert!(constructs(
+        "let k = KillEnvironment::from(parts);",
+        "KillEnvironment"
+    ));
+    assert!(constructs(
+        "    let ports = KillDelegatedAgentPorts {",
+        "KillDelegatedAgentPorts"
+    ));
+    assert!(constructs(
+        "    Arc::new(KillEnvironment {",
+        "KillEnvironment"
+    ));
+    for handle in [
+        "    kill: Option<Arc<KillEnvironment>>,",
+        "fn kill(&self, uc: &KillEnvironment) {",
+        "    KillEnvironment { .. } => (),",
+        "    Command::KillEnvironment { id } => id,",
+        "impl From<KillEnvironment> for Other {",
+        "impl Debug for KillEnvironment {",
+    ] {
+        assert!(!constructs(handle, "KillEnvironment"), "{handle}");
+    }
+}

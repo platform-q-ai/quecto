@@ -12,6 +12,34 @@ use crate::application::environments::use_cases::{
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
 use crate::domain::tool::ToolResult;
 
+/// The environment control use cases `agent_cmd` invokes (#1369, #1939):
+/// the side-effect-free inventory query and the kill owner, composed once
+/// per harness over the session's environment registry.
+#[derive(Clone)]
+pub struct EnvironmentControl {
+    pub list: Arc<ListEnvironmentsQuery>,
+    pub kill: Arc<KillEnvironment>,
+}
+
+/// Where the composed environment control lives: built empty with the
+/// agent-control tools, filled once by composition alongside the
+/// termination owners. Empty, `get_containers` and `kill_container` report
+/// the capability unavailable. A second install is ignored: one control
+/// per harness. Cloning shares the slot.
+#[derive(Clone, Default)]
+pub struct EnvironmentControlSlot(Arc<std::sync::OnceLock<EnvironmentControl>>);
+
+impl EnvironmentControlSlot {
+    /// Install the control; `true` when this call filled the slot.
+    pub fn install(&self, control: EnvironmentControl) -> bool {
+        self.0.set(control).is_ok()
+    }
+
+    pub fn get(&self) -> Option<EnvironmentControl> {
+        self.0.get().cloned()
+    }
+}
+
 pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
     matches!(
         args.get("command").and_then(|v| v.as_str()),

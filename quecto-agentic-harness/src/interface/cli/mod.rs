@@ -194,7 +194,7 @@ mod uds_lifecycle;
 pub mod uds_models;
 pub(crate) mod uds_multi;
 mod uds_multi_accept;
-pub(crate) mod uds_parent_control;
+pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
@@ -208,7 +208,7 @@ mod uds_state_projection;
 mod uds_state_projection_tests;
 mod uds_swarm_control;
 pub(crate) mod uds_teardown_adapters;
-pub mod uds_teardown_graph;
+pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
@@ -252,14 +252,14 @@ pub struct CliOutput {
 pub type WebFetchToolFactory =
     fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::application::tools::ports::Tool>;
 
-/// What the parent-hand termination owners are built over (#1936, #1939):
-/// the launcher registry the spawn tool populates, the event stream their
+/// What the agent-control use cases are built over (#1936, #1939): the
+/// launcher registry the spawn tool populates, the event stream their
 /// compensation broadcasts on, the notification channel it posts passive
 /// notes to, the lineage owner, the harness lifecycle cell a frozen
-/// harness refuses new control commands from, and the slots the built
-/// agent-control tools read the owners from. The interface hands it to
-/// composition's builder once those tools exist; composition builds the
-/// graph and fills the slots.
+/// harness refuses new control commands from, the session's environment
+/// registry, and the slots the built agent-control tools read their use
+/// cases from. The interface hands it to composition's installer once those
+/// tools exist; composition builds the graph and fills the slots.
 #[derive(Clone)]
 pub struct KillToolWiring {
     pub owner: crate::domain::ids::AgentUuid,
@@ -269,16 +269,27 @@ pub struct KillToolWiring {
     /// The harness lifecycle cell (#1938): a frozen harness refuses new
     /// control commands; shared with the spawn tool and the teardown graph.
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
-    /// Where `agent_cmd kill` and `kill_container` read their owners.
+    /// The session-scoped environment registry the spawn tool commits
+    /// members to; the environment control is composed over it.
+    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
+    /// Where the built agent-control tools read their composed use cases.
     pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
 }
 
-/// Composition's installer of the termination owners — the `agent_cmd
+/// Composition's installer of the agent-control use cases — the `agent_cmd
 /// kill` tool, the environment member shutdown and the swarm member
-/// termination over one shared graph — injected through the CLI context
-/// like the web-fetch factory and the teardown graph builder. `true` when
+/// termination over one shared graph, the spawn tool's launch lifecycle
+/// and the environment control — injected through the CLI context like
+/// the web-fetch factory and the teardown handles builder. `true` when
 /// every slot was empty and took its owner: one set per harness.
 pub type KillToolBuilder = fn(KillToolWiring) -> bool;
+
+/// Composition's builder of the handles one dispatch loop holds on the
+/// subagent teardown capability (#1935, #1938), injected through the CLI
+/// context; the loop hands over its runtime inputs and holds only the
+/// use-case and controller handles back, never the graph between them.
+pub type TeardownHandlesBuilder =
+    fn(uds_teardown_handles::TeardownLoopInputs) -> uds_teardown_handles::TeardownHandles;
 
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
@@ -298,10 +309,11 @@ pub struct CliContext {
     pub cwd: Option<PathBuf>,
     /// Opaque outer-layer constructor for the optional web-fetch graph.
     pub web_fetch_tool_factory: Option<WebFetchToolFactory>,
-    /// Composition's subagent teardown graph builder (#1935). Supplied by the
-    /// binary's `main` through [`run`]'s [`CliComposition`]; a launched child
-    /// (one started with `--parent-control`) refuses to start without it.
-    pub teardown_graph: Option<uds_teardown_graph::TeardownGraphBuilder>,
+    /// Composition's subagent teardown handles builder (#1935). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; a launched
+    /// child (one started with `--parent-control`) refuses to start without
+    /// it.
+    pub teardown_graph: Option<TeardownHandlesBuilder>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936). Without
     /// it `kill` is unavailable: the interface never composes a lifecycle.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
@@ -398,7 +410,7 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
 #[derive(Debug, Clone, Copy)]
 pub struct CliComposition {
     pub web_fetch_tool_factory: WebFetchToolFactory,
-    pub teardown_graph: uds_teardown_graph::TeardownGraphBuilder,
+    pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
 }
 

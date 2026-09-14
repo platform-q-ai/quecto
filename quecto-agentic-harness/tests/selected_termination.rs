@@ -195,12 +195,13 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
     }
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn =
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(sockets.clone())
             .with_registry(registry.clone())
             .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
         registry: registry.clone(),
@@ -208,6 +209,7 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
     });
 
@@ -345,12 +347,13 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
     }
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn =
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(sockets.clone())
             .with_registry(registry.clone())
             .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
         registry: registry.clone(),
@@ -358,6 +361,7 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
@@ -491,12 +495,13 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
     }
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn =
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(sockets.clone())
             .with_registry(registry.clone())
             .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
         registry: registry.clone(),
@@ -504,6 +509,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});

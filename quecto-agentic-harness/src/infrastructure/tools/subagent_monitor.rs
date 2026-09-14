@@ -196,34 +196,6 @@ pub fn spawn_monitor_task(spec: MonitorSpec) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// Test/coverage entry point that mirrors the legacy positional signature
-/// with no parent control credential.
-pub fn spawn_monitor_task_unbound(
-    agent_id: String,
-    socket_path: std::path::PathBuf,
-    registry: SubagentRegistry,
-    notify_tx: Option<NotificationTx>,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    parent_id: Option<String>,
-) -> tokio::task::JoinHandle<()> {
-    let observer = super::subagent_teardown_wiring::build_lifecycle_use_cases(
-        registry.clone(),
-        broadcast_tx.clone(),
-        notify_tx.clone(),
-    )
-    .observe_exit;
-    spawn_monitor_task(MonitorSpec {
-        agent_id,
-        socket_path,
-        registry,
-        notify_tx,
-        broadcast_tx,
-        parent_id,
-        parent_control: None,
-        observer,
-    })
-}
-
 #[path = "subagent_monitor_exit.rs"]
 mod exit;
 use exit::notify_child_exited;

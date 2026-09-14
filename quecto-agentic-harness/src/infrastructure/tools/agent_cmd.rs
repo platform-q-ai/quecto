@@ -30,11 +30,10 @@ pub struct AgentCmdTool {
     /// built. Empty, `kill` is refused: this tool never decides a
     /// lifecycle itself.
     kill: KillToolSlot,
-    /// Side-effect-free environment inventory query and kill owner.
-    list_environments:
-        Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
-    kill_environment:
-        Option<std::sync::Arc<crate::application::environments::use_cases::KillEnvironment>>,
+    /// The environment inventory query and kill owner (#1369, #1939),
+    /// installed by composition after this tool is built. Empty, the
+    /// container commands are refused: this tool composes no use case.
+    environments: super::agent_cmd_containers::EnvironmentControlSlot,
 }
 
 /// Where the composed `agent_cmd kill` owner lives (#1936): filled once by
@@ -68,28 +67,31 @@ impl AgentCmdTool {
         Self {
             registry,
             kill: KillToolSlot::default(),
-            list_environments: None,
-            kill_environment: None,
+            environments: super::agent_cmd_containers::EnvironmentControlSlot::default(),
         }
     }
 
-    /// Attach the session's side-effect-free inventory query.
-    pub fn with_list_environments(
-        mut self,
-        query: std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>,
+    /// Attach the composed environment control (inventory query and kill
+    /// owner) directly: fixtures that compose their own.
+    pub fn with_environment_control(
+        self,
+        control: super::agent_cmd_containers::EnvironmentControl,
     ) -> Self {
-        self.list_environments = Some(query);
+        let installed = self.environments.install(control);
+        debug_assert!(
+            installed,
+            "the environment control is composed once per tool"
+        );
         self
     }
 
-    /// Attach the existing kill owner; listing does not depend on this effectful use case.
-    pub fn with_kill_environment(
+    /// Read the environment control from a slot shared with whoever fills
+    /// it later (composition, once the tool is already registered).
+    pub fn with_environment_control_slot(
         mut self,
-        kill_environment: std::sync::Arc<
-            crate::application::environments::use_cases::KillEnvironment,
-        >,
+        slot: super::agent_cmd_containers::EnvironmentControlSlot,
     ) -> Self {
-        self.kill_environment = Some(kill_environment);
+        self.environments = slot;
         self
     }
 
@@ -426,9 +428,10 @@ impl Tool for AgentCmdTool {
                 // Session-level container commands decode/delegate/encode via
                 // the environment control use case (#1369 slice 2).
                 if super::agent_cmd_containers::is_container_command(value) {
+                    let control = self.environments.get();
                     return Ok(super::agent_cmd_containers::execute_container_command(
-                        self.list_environments.as_ref(),
-                        self.kill_environment.as_ref(),
+                        control.as_ref().map(|control| &control.list),
+                        control.as_ref().map(|control| &control.kill),
                         value,
                     )
                     .await);

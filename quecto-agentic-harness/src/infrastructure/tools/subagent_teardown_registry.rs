@@ -55,6 +55,9 @@ pub struct RegistryDelegatedAgents {
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     notify_tx: Option<NotificationTx>,
     compensation_wait: Duration,
+    /// Composition's builder of the final-member environment cleanup
+    /// (#1939) a compensation runs for each membership it removes.
+    finalizer: super::subagent_cleanup::MemberFinalizer,
 }
 
 impl RegistryDelegatedAgents {
@@ -62,12 +65,14 @@ impl RegistryDelegatedAgents {
         registry: SubagentRegistry,
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
         notify_tx: Option<NotificationTx>,
+        finalizer: super::subagent_cleanup::MemberFinalizer,
     ) -> Self {
         Self {
             registry,
             broadcast_tx,
             notify_tx,
             compensation_wait: DEFAULT_COMPENSATION_WAIT,
+            finalizer,
         }
     }
 
@@ -390,7 +395,13 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             // the row is marked exited and before any signal fires: a woken
             // observer must see the authoritative environment aggregate
             // already updated.
-            super::subagent_cleanup::cleanup_registered_once(&self.registry, key, mode).await;
+            super::subagent_cleanup::cleanup_registered_once(
+                &self.registry,
+                key,
+                mode,
+                self.finalizer,
+            )
+            .await;
             let sequence = super::subagent_monitor::update_entry_next_sequence(
                 &self.registry,
                 key,
@@ -420,7 +431,12 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             let (mut removed, already_ended): (Vec<_>, Vec<_>) = removed
                 .into_iter()
                 .partition(|(id, _)| live_before.contains(id));
-            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
+            super::subagent_cleanup::cleanup_removed_entries_once(
+                &mut removed,
+                mode,
+                self.finalizer,
+            )
+            .await;
             let kind = exit_kind(cause);
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
