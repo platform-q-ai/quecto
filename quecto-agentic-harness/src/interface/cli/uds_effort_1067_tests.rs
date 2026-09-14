@@ -69,7 +69,9 @@ impl EffortFx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: crate::infrastructure::persistence::session_store::FileSessionStore::new(
-                tmp.path(),
+                crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
+                    tmp.path(),
+                ),
             ),
             _tmp: tmp,
             writer: tokio::io::sink(),
@@ -119,6 +121,7 @@ impl EffortFx {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: None,
         }
     }
 }

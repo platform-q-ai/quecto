@@ -16,7 +16,9 @@ use quecto::domain::message::Role;
 use quecto::domain::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
 };
+use quecto::domain::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -414,6 +416,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             system_prompt,
             socket_path: socket_path_for_thread,
             socket_override: Some(server_tokio),
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
@@ -1783,8 +1786,8 @@ fn then_session_file_exists(world: &mut QuectoWorld, session_name: String) {
     let base = world.cli_context.base_dir.clone().expect("no base dir");
     let key = Session::build_key("cli", &session_name);
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let store = FileSessionStore::new(&base);
-    let result = rt.block_on(store.load(&key));
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
+    let result = rt.block_on(store.load(&SessionIdentity::from_persisted_key(&key)));
     assert!(
         matches!(result, Ok(Some(_))),
         "expected session {session_name:?} saved, got: {result:?}"
@@ -1796,9 +1799,9 @@ fn then_session_has_no_system_message(world: &mut QuectoWorld, session_name: Str
     let base = world.cli_context.base_dir.clone().expect("no base dir");
     let key = Session::build_key("cli", &session_name);
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let session = rt
-        .block_on(store.load(&key))
+        .block_on(store.load(&SessionIdentity::from_persisted_key(&key)))
         .expect("failed to load session")
         .expect("session not found");
     let has_system = session.messages.iter().any(|m| m.role == Role::System);
@@ -1808,14 +1811,14 @@ fn then_session_has_no_system_message(world: &mut QuectoWorld, session_name: Str
     );
 }
 
-fn uds_session_key(session_name: &str) -> String {
-    Session::build_key("cli", session_name)
+fn uds_session_key(session_name: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(Session::build_key("cli", session_name))
 }
 
 fn save_uds_session(world: &QuectoWorld, session: &Session) {
     let base = world.cli_context.base_dir.clone().expect("no base dir");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     rt.block_on(store.save(session))
         .expect("failed to save session");
 }
@@ -1824,7 +1827,7 @@ fn load_uds_session(world: &QuectoWorld, session_name: &str) -> Session {
     let base = world.cli_context.base_dir.clone().expect("no base dir");
     let key = uds_session_key(session_name);
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     rt.block_on(store.load(&key))
         .expect("failed to load session")
         .expect("session not found")
@@ -2086,6 +2089,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             system_prompt: String::new(),
             socket_path: sp,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
@@ -2503,6 +2507,7 @@ fn mc_spawn_agent(
             system_prompt,
             socket_path: sp,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: if persist {

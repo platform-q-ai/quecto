@@ -1,6 +1,6 @@
 use super::cov_tests::Fixture;
 use super::*;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::{message::Message, session::Session};
 
 /// Unit test of `persist_current_session`'s CONSUMER branch only: the dirty
@@ -13,7 +13,9 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     fx.messages = vec![Message::user("old-a"), Message::assistant("old-b", vec![])];
     fx.store
         .save(&Session {
-            key: fx.session_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                fx.session_key.clone(),
+            ),
             messages: fx.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -30,7 +32,14 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     ctx.durable_prefix_dirty = true;
     persist_current_session(&mut ctx).await.unwrap();
 
-    let resumed = fx.store.load(&fx.session_key).await.unwrap().unwrap();
+    let resumed = fx
+        .store
+        .load(
+            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     let contents: Vec<_> = resumed
         .messages
         .iter()
@@ -212,7 +221,9 @@ fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
 async fn persist_baseline(fx: &mut Fixture) {
     fx.store
         .save(&Session {
-            key: fx.session_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                fx.session_key.clone(),
+            ),
             messages: fx.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -223,7 +234,14 @@ async fn persist_baseline(fx: &mut Fixture) {
 }
 
 async fn assert_durable_matches_live(fx: &Fixture) {
-    let resumed = fx.store.load(&fx.session_key).await.unwrap().unwrap();
+    let resumed = fx
+        .store
+        .load(
+            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     let durable: Vec<&str> = resumed
         .messages
         .iter()

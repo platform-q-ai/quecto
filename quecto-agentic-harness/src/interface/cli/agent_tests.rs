@@ -12,7 +12,18 @@ fn args(s: &str) -> Vec<String> {
 }
 
 fn default_ctx() -> CliContext {
-    CliContext::default()
+    CliContext {
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        ..Default::default()
+    }
+}
+
+/// The composed context rooted at `tmp`.
+fn ctx_in(tmp: &tempfile::TempDir) -> CliContext {
+    CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..default_ctx()
+    }
 }
 
 /// Helper to check if a message appears in either stdout or stderr.
@@ -55,10 +66,7 @@ fn test_agent_no_message_shows_usage_error() {
         r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
     )
     .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(args("agent"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -77,10 +85,7 @@ fn test_agent_no_providers_shows_error() {
         r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#,
     )
     .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(args("agent -m hello"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -93,10 +98,7 @@ fn test_agent_no_providers_shows_error() {
 #[test]
 fn test_agent_parses_system_flag() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -115,10 +117,7 @@ fn test_agent_parses_system_flag() {
 #[test]
 fn test_agent_parses_model_flag() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -138,10 +137,7 @@ fn test_agent_parses_model_flag() {
 fn test_agent_system_flag_missing_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(args("agent --system"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(out.stderr.contains("--system requires a value"));
@@ -151,10 +147,7 @@ fn test_agent_system_flag_missing_value() {
 fn test_agent_model_flag_missing_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(args("agent --model"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(out.stderr.contains("--model requires a value"));
@@ -637,10 +630,7 @@ fn test_build_agent_from_config_with_model_override() {
 #[test]
 fn test_agent_with_system_and_model_no_config() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let v = vec![
         "quecto".into(),
         "agent".into(),
@@ -666,10 +656,7 @@ fn test_agent_with_system_and_model_no_config() {
 #[test]
 fn test_agent_run_with_output_rejects_no_workflow_without_uds_mode() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let out = run_with_output(args("agent --no-workflow -m hello"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -682,10 +669,7 @@ fn test_agent_run_with_output_rejects_no_workflow_without_uds_mode() {
 #[test]
 fn test_agent_with_ephemeral_session_no_config() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_in(&tmp);
     let v = vec![
         "quecto".into(),
         "agent".into(),

@@ -4,7 +4,7 @@ use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
-use quecto::application::session::ports::{ContextSpillStore, SessionStore};
+use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agent::{AgentInfo, AgentResult};
@@ -284,6 +284,7 @@ impl std::fmt::Debug for DebugSwarm {
 }
 
 #[derive(Debug, Default, World)]
+#[world(init = Self::new)]
 pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
@@ -1653,6 +1654,18 @@ fn ask_owned_child_to_stop(
     supervisor.request_termination(handle, Box::pin(protocol), TerminationBudget::DEFAULT);
 }
 
+impl QuectoWorld {
+    /// A fresh world whose CLI context carries composition's sessions
+    /// capability (#1970): every `quecto agent …` run through
+    /// `run_with_output` needs it or exits with "sessions capability not
+    /// composed", exactly as the binary's `main` supplies it.
+    fn new() -> Self {
+        let mut world = Self::default();
+        world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
+        world
+    }
+}
+
 impl Drop for QuectoWorld {
     fn drop(&mut self) {
         // Scenario-scoped cleanup for script-managed environment fixtures. The
@@ -1713,3 +1726,4 @@ mod inference_admission_observation_steps;
 mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
+mod list_sessions_steps;

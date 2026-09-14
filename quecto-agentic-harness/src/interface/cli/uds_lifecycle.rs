@@ -5,11 +5,12 @@ use super::uds_multi::MultiClientArgs;
 #[path = "uds/uds_session_load.rs"]
 mod uds_session_load;
 use super::uds_session::AgentSession;
+use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::Session;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::domain::session_identity::SessionIdentity;
 use uds_session_load::load_session;
 
 #[cfg(test)]
@@ -34,7 +35,12 @@ pub struct UdsLoopArgs<'a> {
     pub socket_path: std::path::PathBuf,
     /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
-    pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
+    /// A store the loop is handed instead of the composed file store
+    /// (tests); threaded into the sessions builder's inputs.
+    pub session_store_override: Option<std::sync::Arc<dyn SessionStore>>,
+    /// Composition's sessions handles builder (#1970): the loop hands over
+    /// its base directory (and any override) and holds the handles back.
+    pub sessions: super::SessionHandlesBuilder,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
@@ -82,6 +88,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         socket_path,
         socket_override,
         session_store_override,
+        sessions,
         ext_registry,
         lifetime,
         notification_rx,
@@ -95,24 +102,22 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         parent_control,
         teardown_graph,
     } = args;
-    let file_store;
-    let session_store: &dyn SessionStore = match session_store_override {
-        Some(ref s) => s.as_ref(),
-        None => {
-            file_store = FileSessionStore::new(base_dir);
-            &file_store
-        }
-    };
+    let sessions = sessions(SessionLoopInputs {
+        base_dir: base_dir.to_path_buf(),
+        store: session_store_override,
+    });
+    let session_store: &dyn SessionStore = sessions.store.as_ref();
+    let identity = SessionIdentity::from_persisted_key(session_key.as_str());
     // Refuse at open, not at first save (#1460): a key owned by another
     // live process must fail before any turn runs against it.
     if !ephemeral
         && !session_key.is_empty()
-        && let Err(err) = session_store.claim(&session_key)
+        && let Err(err) = session_store.claim(&identity)
     {
         eprintln!("{err}");
         return 1;
     }
-    let loaded_session = match load_session(session_store, &session_key, ephemeral).await {
+    let loaded_session = match load_session(session_store, &identity, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
             eprintln!("failed to load session: {err}");
@@ -147,7 +152,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 last_persisted_message_index: loaded_message_count,
             },
             std_stream,
-            session_store,
+            &sessions,
         )
         .await
     } else {
@@ -186,7 +191,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 teardown_graph,
             },
             listener,
-            session_store,
+            &sessions,
         )
         .await
     }
@@ -212,8 +217,9 @@ struct SingleClientArgs<'a> {
 async fn single_client_loop(
     args: SingleClientArgs<'_>,
     std_stream: std::os::unix::net::UnixStream,
-    session_store: &dyn SessionStore,
+    sessions: &SessionHandles,
 ) -> i32 {
+    let session_store: &dyn SessionStore = sessions.store.as_ref();
     let SingleClientArgs {
         mut agent,
         base_dir,
@@ -294,6 +300,7 @@ async fn single_client_loop(
             last_persisted_message_index,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: Some(sessions.list_sessions.clone()),
         },
     )
     .await;
@@ -301,7 +308,7 @@ async fn single_client_loop(
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
         let session = Session {
-            key: session_key,
+            key: SessionIdentity::from_persisted_key(session_key),
             messages: std::mem::take(&mut messages),
             workflow_run: workflow_state
                 .as_ref()

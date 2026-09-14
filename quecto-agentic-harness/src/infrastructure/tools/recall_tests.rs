@@ -1,5 +1,10 @@
 use super::*;
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 // In-memory spill store for testing
 #[derive(Debug)]
@@ -22,7 +27,7 @@ impl MemorySpillStore {
 impl ContextSpillStore for MemorySpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().push(entry.clone());
@@ -31,23 +36,23 @@ impl ContextSpillStore for MemorySpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
-        let id = id.to_string();
+        let id = id.as_str().to_string();
         let result = self
             .entries
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(result) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         let entries: Vec<SpillIndex> = self
             .entries
@@ -66,7 +71,7 @@ impl ContextSpillStore for MemorySpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().clear();
         Box::pin(async { Ok(()) })
@@ -98,36 +103,36 @@ impl KeyedMemorySpillStore {
 impl ContextSpillStore for KeyedMemorySpillStore {
     fn append(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.add(session_key, entry.clone());
+        self.add(session_key.runtime_key(), entry.clone());
         Box::pin(async { Ok(()) })
     }
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         let result = self
             .entries
             .lock()
             .unwrap()
-            .get(session_key)
-            .and_then(|entries| entries.iter().find(|e| e.id == id).cloned());
+            .get(session_key.runtime_key())
+            .and_then(|entries| entries.iter().find(|e| e.id == id.as_str()).cloned());
         Box::pin(async move { Ok(result) })
     }
 
     fn list_entries(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         let entries: Vec<SpillIndex> = self
             .entries
             .lock()
             .unwrap()
-            .get(session_key)
+            .get(session_key.runtime_key())
             .into_iter()
             .flatten()
             .map(|e| SpillIndex {
@@ -142,9 +147,12 @@ impl ContextSpillStore for KeyedMemorySpillStore {
 
     fn clear(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.entries.lock().unwrap().remove(session_key);
+        self.entries
+            .lock()
+            .unwrap()
+            .remove(session_key.runtime_key());
         Box::pin(async { Ok(()) })
     }
 }
@@ -176,7 +184,7 @@ async fn test_recall_by_id() {
 #[tokio::test]
 async fn test_spill_store_lifecycle() {
     let store = test_store_with_entry();
-    assert!(store.has_entries("test-session").await.unwrap());
+    assert!(store.has_entries(&id("test-session")).await.unwrap());
 
     let appended = SpillEntry {
         id: "turn7:grep:0".to_string(),
@@ -185,15 +193,15 @@ async fn test_spill_store_lifecycle() {
         tokens: 7,
         content: "match".to_string(),
     };
-    store.append("test-session", &appended).await.unwrap();
-    let listed = store.list_entries("test-session").await.unwrap();
+    store.append(&id("test-session"), &appended).await.unwrap();
+    let listed = store.list_entries(&id("test-session")).await.unwrap();
     assert!(listed.iter().any(|e| e.id == "turn7:grep:0"));
 
-    store.clear("test-session").await.unwrap();
-    assert!(!store.has_entries("test-session").await.unwrap());
+    store.clear(&id("test-session")).await.unwrap();
+    assert!(!store.has_entries(&id("test-session")).await.unwrap());
 
     // Appending after a clear starts a fresh, recallable generation.
-    store.append("test-session", &appended).await.unwrap();
+    store.append(&id("test-session"), &appended).await.unwrap();
     let tool = RecallTool::new(store, "test-session".to_string());
     let result = tool.execute(r#"{"id":"turn7:grep:0"}"#).await.unwrap();
     assert_eq!(result.content, "match");
@@ -222,8 +230,8 @@ async fn test_recall_uses_updated_session_key() {
             content: "new output".to_string(),
         },
     );
-    assert!(store.has_entries("old-session").await.unwrap());
-    assert!(store.has_entries("new-session").await.unwrap());
+    assert!(store.has_entries(&id("old-session")).await.unwrap());
+    assert!(store.has_entries(&id("new-session")).await.unwrap());
     let extra = SpillEntry {
         id: "turn2:bash:0".to_string(),
         tool: "bash".to_string(),
@@ -231,11 +239,14 @@ async fn test_recall_uses_updated_session_key() {
         tokens: 2,
         content: "extra output".to_string(),
     };
-    store.append("new-session", &extra).await.unwrap();
-    assert_eq!(store.list_entries("new-session").await.unwrap().len(), 2);
-    store.clear("old-session").await.unwrap();
-    assert!(!store.has_entries("old-session").await.unwrap());
-    assert!(store.has_entries("new-session").await.unwrap());
+    store.append(&id("new-session"), &extra).await.unwrap();
+    assert_eq!(
+        store.list_entries(&id("new-session")).await.unwrap().len(),
+        2
+    );
+    store.clear(&id("old-session")).await.unwrap();
+    assert!(!store.has_entries(&id("old-session")).await.unwrap());
+    assert!(store.has_entries(&id("new-session")).await.unwrap());
 
     let tool = RecallTool::new(store, "old-session".to_string());
 

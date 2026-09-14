@@ -3,7 +3,6 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::future::Future;
 use std::pin::Pin;
@@ -68,6 +67,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         socket_path,
         socket_override: None,
         session_store_override: None,
+        sessions: crate::composition::sessions::build_session_handles,
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
@@ -248,7 +248,12 @@ async fn single_client_socket_override_serves_get_state() {
             .build()
             .unwrap();
         rt.block_on(async move {
-            let store = FileSessionStore::new(dir.path());
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::cli::uds_session_handles::SessionLoopInputs {
+                    base_dir: dir.path().to_path_buf(),
+                    store: None,
+                },
+            );
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),

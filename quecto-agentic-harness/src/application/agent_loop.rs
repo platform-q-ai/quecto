@@ -8,7 +8,7 @@ use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
@@ -151,7 +151,9 @@ impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
             spill_store: config.spill_store.clone(),
-            session_key: config.session_key.clone(),
+            session_key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                config.session_key.as_str(),
+            ),
             context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,

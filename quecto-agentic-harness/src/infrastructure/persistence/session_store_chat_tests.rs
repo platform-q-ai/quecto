@@ -1,5 +1,12 @@
 use super::*;
+use crate::application::sessions::dto::SessionListQuery;
+use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn chat_message(role: Role, content: &str) -> Message {
     match role {
@@ -13,7 +20,7 @@ fn chat_message(role: Role, content: &str) -> Message {
 #[tokio::test]
 async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
     for key in [
         "cli_subagent",
@@ -23,7 +30,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
     ] {
         store
             .save(&Session {
-                key: key.to_string(),
+                key: id(key),
                 messages: vec![chat_message(Role::User, "internal")],
                 workflow_run: None,
                 subagent_roster: Vec::new(),
@@ -34,7 +41,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
 
     store
         .save(&Session {
-            key: "chat-old".to_string(),
+            key: id("chat-old"),
             messages: vec![
                 chat_message(Role::User, "older chat title"),
                 chat_message(Role::System, "sys"),
@@ -47,7 +54,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     store
         .save(&Session {
-            key: "chat-new".to_string(),
+            key: id("chat-new"),
             messages: vec![
                 chat_message(Role::System, "sys"),
                 chat_message(Role::User, "newer chat title"),
@@ -61,7 +68,9 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
         .unwrap();
 
     let summaries = store
-        .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+        .list(&SessionListQuery::ExistingKeyPrefix(
+            SessionKeyPrefix::new(crate::domain::session::USER_CHAT_PREFIX).unwrap(),
+        ))
         .await
         .unwrap();
 
@@ -78,13 +87,13 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
 #[tokio::test]
 async fn list_extracts_raw_first_user_message() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let huge = "x".repeat(500);
 
     store
         .save(&Session {
-            key: "chat-long".to_string(),
+            key: id("chat-long"),
             messages: vec![chat_message(Role::User, long)],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -93,7 +102,7 @@ async fn list_extracts_raw_first_user_message() {
         .unwrap();
     store
         .save(&Session {
-            key: "chat-empty".to_string(),
+            key: id("chat-empty"),
             messages: vec![chat_message(Role::Assistant, "hello")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -102,7 +111,7 @@ async fn list_extracts_raw_first_user_message() {
         .unwrap();
     store
         .save(&Session {
-            key: "chat-huge".to_string(),
+            key: id("chat-huge"),
             messages: vec![chat_message(Role::User, &huge)],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -111,7 +120,9 @@ async fn list_extracts_raw_first_user_message() {
         .unwrap();
 
     let summaries = store
-        .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+        .list(&SessionListQuery::ExistingKeyPrefix(
+            SessionKeyPrefix::new(crate::domain::session::USER_CHAT_PREFIX).unwrap(),
+        ))
         .await
         .unwrap();
     let long_summary = summaries.iter().find(|s| s.key == "chat-long").unwrap();

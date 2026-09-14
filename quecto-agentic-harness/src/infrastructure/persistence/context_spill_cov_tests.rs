@@ -1,6 +1,12 @@
 use super::*;
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn entry(id: &str) -> SpillEntry {
     SpillEntry {
@@ -15,39 +21,45 @@ fn entry(id: &str) -> SpillEntry {
 #[tokio::test]
 async fn append_updates_warmed_index_and_clear_invalidates_disk_and_cache() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let session = "s/with spaces";
 
-    assert!(store.list_entries(session).await.unwrap().is_empty());
-    store.append(session, &entry("one")).await.unwrap();
-    store.append(session, &entry("two")).await.unwrap();
+    assert!(store.list_entries(&id(session)).await.unwrap().is_empty());
+    store.append(&id(session), &entry("one")).await.unwrap();
+    store.append(&id(session), &entry("two")).await.unwrap();
 
-    let listed = store.list_entries(session).await.unwrap();
+    let listed = store.list_entries(&id(session)).await.unwrap();
     assert_eq!(
         listed.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
         vec!["one", "two"]
     );
-    assert!(store.has_entries(session).await.unwrap());
+    assert!(store.has_entries(&id(session)).await.unwrap());
 
-    store.clear(session).await.unwrap();
-    assert!(!store.has_entries(session).await.unwrap());
-    assert!(store.list_entries(session).await.unwrap().is_empty());
-    assert!(store.recall(session, "one").await.unwrap().is_none());
+    store.clear(&id(session)).await.unwrap();
+    assert!(!store.has_entries(&id(session)).await.unwrap());
+    assert!(store.list_entries(&id(session)).await.unwrap().is_empty());
+    assert!(
+        store
+            .recall(&id(session), &SpillId::new("one"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    store.clear(session).await.unwrap();
+    store.clear(&id(session)).await.unwrap();
 }
 
 #[tokio::test]
 async fn spill_index_from_record_and_corrupt_jsonl_is_skipped() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let rec = SpillRecord::from(&entry("idx"));
     let idx = SpillIndex::from(&rec);
     assert_eq!(idx.id, "idx");
     assert_eq!(idx.tool, "bash");
     assert_eq!(idx.tokens, 12);
 
-    let path = store.spill_path("session");
+    let path = store.spill_path(&id("session"));
     tokio::fs::create_dir_all(path.parent().unwrap())
         .await
         .unwrap();
@@ -56,12 +68,12 @@ async fn spill_index_from_record_and_corrupt_jsonl_is_skipped() {
         .await
         .unwrap();
 
-    let listed = store.list_entries("session").await.unwrap();
+    let listed = store.list_entries(&id("session")).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, "idx");
     assert_eq!(
         store
-            .recall("session", "idx")
+            .recall(&id("session"), &SpillId::new("idx"))
             .await
             .unwrap()
             .unwrap()
@@ -77,25 +89,28 @@ async fn spill_store_error_mapping_closures_surface_directory_and_write_failures
     // append: create_dir_all map_err when an ancestor is a regular file.
     let file_base = tmp.path().join("file-base");
     tokio::fs::write(&file_base, b"not a dir").await.unwrap();
-    let store = FileContextSpillStore::new(file_base);
-    let err = store.append("s", &entry("one")).await.unwrap_err();
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(file_base));
+    let err = store.append(&id("s"), &entry("one")).await.unwrap_err();
     assert!(
         err.to_string().contains("failed to create spill directory"),
         "{err}"
     );
 
     // append: OpenOptions::open map_err when spill.jsonl is a directory.
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
-    let path = store.spill_path("dir-spill");
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
+    let path = store.spill_path(&id("dir-spill"));
     tokio::fs::create_dir_all(&path).await.unwrap();
-    let err = store.append("dir-spill", &entry("two")).await.unwrap_err();
+    let err = store
+        .append(&id("dir-spill"), &entry("two"))
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("failed to open spill file"),
         "{err}"
     );
 
     // read_spill_content via has_entries: read_to_string map_err on a directory.
-    let err = store.has_entries("dir-spill").await.unwrap_err();
+    let err = store.has_entries(&id("dir-spill")).await.unwrap_err();
     assert!(
         err.to_string().contains("failed to read spill file"),
         "{err}"
@@ -107,8 +122,8 @@ async fn spill_store_error_mapping_closures_surface_directory_and_write_failures
     tokio::fs::write(blocked_base.join("sessions"), b"not a dir")
         .await
         .unwrap();
-    let blocked_store = FileContextSpillStore::new(blocked_base);
-    let err = blocked_store.clear("child").await.unwrap_err();
+    let blocked_store = FileContextSpillStore::new(FlatSessionLayout::new(blocked_base));
+    let err = blocked_store.clear(&id("child")).await.unwrap_err();
     assert!(
         err.to_string().contains("failed to stat spill file"),
         "{err}"
@@ -118,17 +133,17 @@ async fn spill_store_error_mapping_closures_surface_directory_and_write_failures
 #[tokio::test]
 async fn w5_context_spill_cache_recall_and_clear_error_paths() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     // Populate cache with an empty list; append updates already-warmed cache.
-    assert!(store.list_entries("warm").await.unwrap().is_empty());
-    store.append("warm", &entry("cached")).await.unwrap();
-    let listed = store.list_entries("warm").await.unwrap();
+    assert!(store.list_entries(&id("warm")).await.unwrap().is_empty());
+    store.append(&id("warm"), &entry("cached")).await.unwrap();
+    let listed = store.list_entries(&id("warm")).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, "cached");
 
     // Recall misses via cache fast-path, substring false positive, corrupt line, and empty line.
-    let path = store.spill_path("scan");
+    let path = store.spill_path(&id("scan"));
     tokio::fs::create_dir_all(path.parent().unwrap())
         .await
         .unwrap();
@@ -143,21 +158,44 @@ async fn w5_context_spill_cache_recall_and_clear_error_paths() {
     tokio::fs::write(&path, format!("\n{{bad json target\n{rec}\n"))
         .await
         .unwrap();
-    assert!(store.recall("scan", "target").await.unwrap().is_none());
+    assert!(
+        store
+            .recall(&id("scan"), &SpillId::new("target"))
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
-        store.recall("scan", "real").await.unwrap().unwrap().content,
+        store
+            .recall(&id("scan"), &SpillId::new("real"))
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         "mentions target but id differs"
     );
 
-    assert!(store.list_entries("cached-miss").await.unwrap().is_empty());
-    assert!(store.recall("cached-miss", "nope").await.unwrap().is_none());
+    assert!(
+        store
+            .list_entries(&id("cached-miss"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .recall(&id("cached-miss"), &SpillId::new("nope"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // clear: temp write failure when parent is a directory with colliding tmp path
     // is not deterministic because UUID is random; cover rename failure by making
     // the target path a directory after metadata succeeds and the temp write works.
-    let clear_path = store.spill_path("dir-target");
+    let clear_path = store.spill_path(&id("dir-target"));
     tokio::fs::create_dir_all(&clear_path).await.unwrap();
-    let err = store.clear("dir-target").await.unwrap_err();
+    let err = store.clear(&id("dir-target")).await.unwrap_err();
     assert!(
         err.to_string().contains("failed to write temp clear file")
             || err
@@ -166,8 +204,11 @@ async fn w5_context_spill_cache_recall_and_clear_error_paths() {
         "{err}"
     );
 
-    FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "warm");
-    assert!(!store.spill_path("warm").exists());
+    FileContextSpillStore::scrub_session_spill_sync(
+        &FlatSessionLayout::new(tmp.path()),
+        &id("warm"),
+    );
+    assert!(!store.spill_path(&id("warm")).exists());
 }
 
 #[tokio::test]
@@ -183,9 +224,9 @@ async fn append_reports_a_spill_file_that_cannot_be_opened() {
         .join("spill.jsonl");
     std::fs::create_dir_all(&spill).expect("create dir where the spill file belongs");
 
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let err = store
-        .append("blocked-session", &entry("turn1:bash:0"))
+        .append(&id("blocked-session"), &entry("turn1:bash:0"))
         .await
         .expect_err("an unopenable spill file must surface as an error");
 
@@ -204,9 +245,9 @@ async fn clear_reports_failure_when_the_temp_file_cannot_be_written() {
     // reported, not silently swallowed -- a caller that believes the spill was
     // cleared would keep recalling stale content.
     let tmp = TempDir::new().expect("tempdir");
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     store
-        .append("sess", &entry("turn1:bash:0"))
+        .append(&id("sess"), &entry("turn1:bash:0"))
         .await
         .expect("seed the spill file");
 
@@ -216,7 +257,7 @@ async fn clear_reports_failure_when_the_temp_file_cannot_be_written() {
     readonly.set_mode(0o500); // r-x: traversable, not writable
     std::fs::set_permissions(&dir, readonly).expect("make spill dir read-only");
 
-    let result = store.clear("sess").await;
+    let result = store.clear(&id("sess")).await;
 
     // Restore before asserting so the TempDir can always be cleaned up.
     std::fs::set_permissions(&dir, original).expect("restore permissions");

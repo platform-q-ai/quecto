@@ -5,15 +5,44 @@ use super::{
 };
 use crate::domain::ids::{CommandId, MessageId, ToolCallId};
 
+/// Presentation of a summary's raw title datum: the "(untitled)"
+/// placeholder and display truncation belong to this edge, not to
+/// persistence.
+pub(super) fn display_title(raw: &str) -> String {
+    const MAX_CHARS: usize = 50;
+    if raw.is_empty() {
+        return "(untitled)".to_string();
+    }
+    if raw.chars().count() <= MAX_CHARS {
+        return raw.to_string();
+    }
+    let mut out: String = raw.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
+}
+
 pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,
 ) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,
-        "title": super::display_title(&summary.title),
+        "title": display_title(&summary.title),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
+    })
+}
+
+/// The `list_sessions` response data: the summaries in store order under
+/// the `sessions` field the TUI resume selector reads.
+pub(super) fn sessions_json(
+    sessions: &[crate::domain::session::SessionSummary],
+) -> serde_json::Value {
+    serde_json::json!({
+        "sessions": sessions
+            .iter()
+            .map(session_summary_to_json)
+            .collect::<Vec<_>>()
     })
 }
 
@@ -37,18 +66,18 @@ pub(super) async fn dispatch_fieldless_command(
         emit_event_to_broadcast_or_writer(ctx, &event).await;
         return Some(false);
     }
+    // List saved sessions (#1861): invoked through the composed controller
+    // and presented here; the scope and order are the application's and
+    // the store's, never decided at this edge.
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx.session_store.list(None).await {
-            Ok(sessions) => AgentEvent::ok(
-                id,
-                tn,
-                Some(serde_json::json!({
-                    "sessions": sessions
-                        .iter()
-                        .map(session_summary_to_json)
-                        .collect::<Vec<_>>()
-                })),
-            ),
+        let listed = match ctx.list_sessions.clone() {
+            Some(list_sessions) => list_sessions.list_all().await,
+            None => Err(crate::domain::error::DomainError::Session(
+                "sessions capability not composed".to_string(),
+            )),
+        };
+        let event = match listed {
+            Ok(sessions) => AgentEvent::ok(id, tn, Some(sessions_json(&sessions))),
             Err(err) => AgentEvent::err(id, tn, err.to_string()),
         };
         emit_event_to_broadcast_or_writer(ctx, &event).await;

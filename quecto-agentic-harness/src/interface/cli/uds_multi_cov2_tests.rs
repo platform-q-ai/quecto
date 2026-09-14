@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
@@ -140,7 +140,12 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
             .build()
             .unwrap();
         rt.block_on(async move {
-            let store = FileSessionStore::new(dir.path());
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::cli::uds_session_handles::SessionLoopInputs {
+                    base_dir: dir.path().to_path_buf(),
+                    store: None,
+                },
+            );
             multi_client_loop(multi_args(dir.path()), listener, &store).await
         })
     });
@@ -256,7 +261,9 @@ async fn cov2_test_helpers_execute_their_trait_surfaces() {
 #[tokio::test]
 async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FileSessionStore::new(dir.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(dir.path()),
+    );
     let (broadcast_tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(8);
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
@@ -320,6 +327,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: None,
     };
 
     run_dispatch_loop(

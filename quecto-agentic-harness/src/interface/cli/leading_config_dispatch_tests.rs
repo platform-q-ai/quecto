@@ -17,6 +17,7 @@ fn leading_config_dispatches_to_following_agent_subcommand() {
     .unwrap();
     let ctx = CliContext {
         base_dir: Some(base.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
 

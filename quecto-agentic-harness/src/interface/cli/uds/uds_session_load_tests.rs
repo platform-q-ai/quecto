@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::session::SessionSummary;
@@ -29,9 +29,12 @@ impl StubStore {
 impl SessionStore for StubStore {
     fn load(
         &self,
-        key: &str,
+        key: &crate::domain::session_identity::SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>> {
-        self.load_keys.lock().unwrap().push(key.to_string());
+        self.load_keys
+            .lock()
+            .unwrap()
+            .push(key.runtime_key().to_string());
         let result = match &*self.loaded.lock().unwrap() {
             Ok(session) => Ok(session.clone()),
             Err(error) => Err(DomainError::Session(error.to_string())),
@@ -48,14 +51,14 @@ impl SessionStore for StubStore {
 
     fn exists(
         &self,
-        _key: &str,
+        _key: &crate::domain::session_identity::SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>> {
         Box::pin(async { Ok(false) })
     }
 
     fn list(
         &self,
-        _key_prefix: Option<&str>,
+        _query: &crate::application::sessions::dto::SessionListQuery,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
         Box::pin(async { Ok(Vec::new()) })
     }
@@ -65,9 +68,15 @@ impl SessionStore for StubStore {
 async fn ephemeral_session_does_not_touch_store() {
     let store = StubStore::with_loaded(Err(DomainError::Session("must not load".into())));
 
-    let session = load_session(&store, "cli:default", true).await.unwrap();
+    let session = load_session(
+        &store,
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:default"),
+        true,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(session.key, "cli:default");
+    assert_eq!(session.key.runtime_key(), "cli:default");
     assert!(session.messages.is_empty());
     assert_eq!(
         store.load_count(),
@@ -80,9 +89,15 @@ async fn ephemeral_session_does_not_touch_store() {
 async fn empty_key_does_not_touch_store() {
     let store = StubStore::with_loaded(Err(DomainError::Session("must not load".into())));
 
-    let session = load_session(&store, "", false).await.unwrap();
+    let session = load_session(
+        &store,
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key(""),
+        false,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(session.key, "");
+    assert_eq!(session.key.runtime_key(), "");
     assert_eq!(
         store.load_count(),
         0,
@@ -94,20 +109,34 @@ async fn empty_key_does_not_touch_store() {
 async fn missing_persisted_session_returns_fresh_session_with_requested_key() {
     let store = StubStore::with_loaded(Ok(None));
 
-    let session = load_session(&store, "cli:missing", false).await.unwrap();
+    let session = load_session(
+        &store,
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:missing"),
+        false,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(session.key, "cli:missing");
+    assert_eq!(session.key.runtime_key(), "cli:missing");
     assert!(session.messages.is_empty());
     assert_eq!(store.load_count(), 1);
 }
 
 #[tokio::test]
 async fn existing_persisted_session_is_returned() {
-    let mut existing = Session::new("cli:existing");
+    let mut existing = Session::new(
+        crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:existing"),
+    );
     existing.messages.push(Message::user("hello"));
     let store = StubStore::with_loaded(Ok(Some(existing.clone())));
 
-    let session = load_session(&store, "cli:existing", false).await.unwrap();
+    let session = load_session(
+        &store,
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:existing"),
+        false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(session.key, existing.key);
     assert_eq!(session.messages.len(), 1);
@@ -118,7 +147,13 @@ async fn existing_persisted_session_is_returned() {
 async fn load_error_is_stringified() {
     let store = StubStore::with_loaded(Err(DomainError::Session("disk is sad".into())));
 
-    let err = load_session(&store, "cli:bad", false).await.unwrap_err();
+    let err = load_session(
+        &store,
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:bad"),
+        false,
+    )
+    .await
+    .unwrap_err();
 
     assert!(err.contains("disk is sad"), "got: {err}");
     assert_eq!(store.load_count(), 1);

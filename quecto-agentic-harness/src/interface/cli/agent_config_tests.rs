@@ -245,6 +245,7 @@ fn test_agent_config_flag_loads_custom_path() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().into()),
         config_path: Some(cfg.clone()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let args = vec![
@@ -269,6 +270,7 @@ fn test_agent_config_flag_missing_value() {
     std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().into()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -284,6 +286,7 @@ fn test_agent_config_flag_nonexistent_path() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().into()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
         ..Default::default()
     };
     let args = vec![

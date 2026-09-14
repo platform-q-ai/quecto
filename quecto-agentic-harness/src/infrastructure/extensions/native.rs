@@ -163,7 +163,7 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
 }
 
 pub struct SessionToolDeps {
-    pub spill_store: Arc<dyn crate::application::session::ports::ContextSpillStore>,
+    pub spill_store: Arc<dyn crate::application::sessions::ports::ContextSpillStore>,
     pub session_key: String,
 }
 

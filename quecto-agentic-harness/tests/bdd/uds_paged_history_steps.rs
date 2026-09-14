@@ -10,12 +10,14 @@ use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
-use quecto::application::session::ports::{ContextSpillStore, SessionStore};
+use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::session::Session;
+use quecto::domain::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -557,7 +559,7 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
     ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", PAGED_SESSION);
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let oversized = "H".repeat(OVERSIZED_HISTORY_BODY_LEN);
     let mut messages: Vec<Message> = (0..2000)
         .map(|i| Message::user(format!("omitted older history message {i:04}")))
@@ -567,7 +569,7 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
     world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
     world._bounded_expected_body = Some(oversized);
     let session = Session {
-        key: session_key,
+        key: SessionIdentity::from_persisted_key(&session_key),
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -616,12 +618,12 @@ fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
         ],
     );
     let session = Session {
-        key: Session::build_key("cli", PAGED_SESSION),
+        key: SessionIdentity::from_persisted_key(Session::build_key("cli", PAGED_SESSION)),
         messages: vec![message],
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
-    let store = FileSessionStore::new(base_path(world));
+    let store = FileSessionStore::new(FlatSessionLayout::new(base_path(world)));
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         store
             .save(&session)
@@ -641,14 +643,14 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
     ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", PAGED_SESSION);
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let body = "x".repeat(body_len);
     let messages: Vec<Message> = (0..n)
         .map(|i| Message::user(format!("paged-msg-{i:04}-{body}")))
         .collect();
     world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
     let session = Session {
-        key: session_key,
+        key: SessionIdentity::from_persisted_key(&session_key),
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -694,11 +696,14 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", STUB_SESSION);
-    let store = FileSessionStore::new(&base);
-    let spill_store = Arc::new(FileContextSpillStore::new(base.clone()));
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
+    let spill_store = Arc::new(FileContextSpillStore::new(FlatSessionLayout::new(&base)));
     let rt = tokio::runtime::Runtime::new().unwrap();
     let messages = rt.block_on(async {
-        spill_store.clear(&session_key).await.expect("clear spill");
+        spill_store
+            .clear(&SessionIdentity::from_persisted_key(&session_key))
+            .await
+            .expect("clear spill");
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
             provider: Arc::new(StubSeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
@@ -730,7 +735,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
         messages
     });
     let session = Session {
-        key: session_key,
+        key: SessionIdentity::from_persisted_key(&session_key),
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -914,7 +919,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         &mut registry,
         &ext_registry,
     );
-    let spill_store = Arc::new(FileContextSpillStore::new(base.to_path_buf()));
+    let spill_store = Arc::new(FileContextSpillStore::new(FlatSessionLayout::new(base)));
     let session_key = Session::build_key("cli", session_name);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -952,6 +957,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             system_prompt: String::new(),
             socket_path: socket_for_thread,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_reg),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::Persistent,

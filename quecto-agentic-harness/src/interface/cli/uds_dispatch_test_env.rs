@@ -107,7 +107,11 @@ pub(super) struct DispatchTestEnv {
     pub(super) messages: Vec<crate::domain::message::Message>,
     pub(super) session: AgentSession,
     pub(super) session_key: String,
-    pub(super) store: crate::infrastructure::persistence::session_store::FileSessionStore,
+    /// The file store of `tmp`, shared with `sessions` so the context's
+    /// `session_store` and its `list_sessions` handle see the same files.
+    pub(super) store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    /// The composed sessions handles built over `store` (#1970).
+    pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
     pub(super) writer: tokio::io::Sink,
     pub(super) workflow: WorkflowStateHandle,
     pub(super) turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
@@ -126,8 +130,10 @@ impl DispatchTestEnv {
         provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
     ) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+        // The file store of `tmp` and the `list_sessions` handle are one
+        // composed graph, so both see the same session files.
+        let sessions = super::dispatch_session_roster_tests::composed_sessions(tmp.path());
+        let store = sessions.store.clone();
         Self {
             tmp,
             agent: make_dispatch_test_agent(provider),
@@ -135,6 +141,7 @@ impl DispatchTestEnv {
             session: AgentSession::new("stub".into(), "cli:test".into()),
             session_key: "cli:test".to_string(),
             store,
+            sessions,
             writer: tokio::io::sink(),
             workflow,
             turn_control: std::sync::Arc::default(),
@@ -183,7 +190,7 @@ impl DispatchTestEnv {
             session: &mut self.session,
             stdout: Some(&mut self.writer),
             session_key: &mut self.session_key,
-            session_store: &self.store,
+            session_store: self.store.as_ref(),
             ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
@@ -202,6 +209,7 @@ impl DispatchTestEnv {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: Some(self.sessions.list_sessions.clone()),
         }
     }
 }

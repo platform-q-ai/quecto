@@ -1,5 +1,11 @@
 use super::*;
+use crate::domain::session_identity::SessionIdentity;
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn make_message(role: Role, content: &str) -> Message {
     match role {
@@ -38,7 +44,7 @@ fn roster_entry(
 #[tokio::test]
 async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let mut live = roster_entry("live", crate::domain::session::SubagentLiveness::Live);
     live.delivered_message_ordinal = Some(4);
     live.pending_message_reports
@@ -48,7 +54,7 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
             ordinal: 8,
         });
     let session = Session {
-        key: "cli:roster".to_string(),
+        key: id("cli:roster"),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
         subagent_roster: vec![
@@ -62,10 +68,10 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     };
 
     store.save(&session).await.unwrap();
-    let loaded = store.load("cli:roster").await.unwrap().unwrap();
+    let loaded = store.load(&id("cli:roster")).await.unwrap().unwrap();
     assert_eq!(loaded.subagent_roster, session.subagent_roster);
 
-    let legacy_path = store.session_path("cli:legacy");
+    let legacy_path = store.session_path(&id("cli:legacy"));
     store.ensure_dir().await.unwrap();
     tokio::fs::write(
         legacy_path,
@@ -73,16 +79,16 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     )
     .await
     .unwrap();
-    let legacy = store.load("cli:legacy").await.unwrap().unwrap();
+    let legacy = store.load(&id("cli:legacy")).await.unwrap().unwrap();
     assert!(legacy.subagent_roster.is_empty());
 }
 
 #[tokio::test]
 async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     store.ensure_dir().await.unwrap();
-    let path = store.session_path("cli:lossy-roster");
+    let path = store.session_path(&id("cli:lossy-roster"));
     let snapshot = serde_json::json!({
         "type": "snapshot",
         "key": "cli:lossy-roster",
@@ -110,7 +116,7 @@ async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
         .await
         .unwrap();
 
-    let loaded = store.load("cli:lossy-roster").await.unwrap().unwrap();
+    let loaded = store.load(&id("cli:lossy-roster")).await.unwrap().unwrap();
 
     assert_eq!(
         loaded.messages.len(),
@@ -130,9 +136,9 @@ async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
 #[tokio::test]
 async fn legacy_pid_and_socket_are_dropped_on_the_next_save() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     store.ensure_dir().await.unwrap();
-    let path = store.session_path("cli:legacy-authority");
+    let path = store.session_path(&id("cli:legacy-authority"));
     let snapshot = serde_json::json!({
         "type": "snapshot",
         "key": "cli:legacy-authority",
@@ -151,7 +157,11 @@ async fn legacy_pid_and_socket_are_dropped_on_the_next_save() {
         .await
         .unwrap();
 
-    let mut loaded = store.load("cli:legacy-authority").await.unwrap().unwrap();
+    let mut loaded = store
+        .load(&id("cli:legacy-authority"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.subagent_roster.len(), 1);
     loaded.messages.push(Message::assistant("new", vec![]));
     store.save(&loaded).await.unwrap();
@@ -174,11 +184,11 @@ async fn legacy_pid_and_socket_are_dropped_on_the_next_save() {
 #[tokio::test]
 async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
     store
         .save(&Session {
-            key: "cli:roster-only".to_string(),
+            key: id("cli:roster-only"),
             messages: vec![],
             workflow_run: None,
             subagent_roster: vec![roster_entry(
@@ -188,10 +198,10 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
         })
         .await
         .unwrap();
-    assert!(store.exists("cli:roster-only").await.unwrap());
+    assert!(store.exists(&id("cli:roster-only")).await.unwrap());
     assert_eq!(
         store
-            .load("cli:roster-only")
+            .load(&id("cli:roster-only"))
             .await
             .unwrap()
             .unwrap()
@@ -202,22 +212,22 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
 
     store
         .save(&Session {
-            key: "cli:empty".to_string(),
+            key: id("cli:empty"),
             messages: vec![],
             workflow_run: None,
             subagent_roster: vec![],
         })
         .await
         .unwrap();
-    assert!(!store.exists("cli:empty").await.unwrap());
+    assert!(!store.exists(&id("cli:empty")).await.unwrap());
 }
 
 #[tokio::test]
 async fn roster_only_updates_replay_as_full_replacements() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let mut session = Session {
-        key: "cli:roster-delta".to_string(),
+        key: id("cli:roster-delta"),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
         subagent_roster: vec![roster_entry(
@@ -238,7 +248,7 @@ async fn roster_only_updates_replay_as_full_replacements() {
     ];
     store.save(&session).await.unwrap();
 
-    let loaded = store.load("cli:roster-delta").await.unwrap().unwrap();
+    let loaded = store.load(&id("cli:roster-delta")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.subagent_roster, session.subagent_roster);
 }
@@ -246,9 +256,9 @@ async fn roster_only_updates_replay_as_full_replacements() {
 #[tokio::test]
 async fn compaction_retains_current_subagent_roster() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let mut session = Session {
-        key: "cli:roster-compact".to_string(),
+        key: id("cli:roster-compact"),
         messages: vec![make_message(Role::User, "first")],
         workflow_run: None,
         subagent_roster: vec![roster_entry(
@@ -264,7 +274,11 @@ async fn compaction_retains_current_subagent_roster() {
     )];
     store.save(&session).await.unwrap();
 
-    let loaded = store.load("cli:roster-compact").await.unwrap().unwrap();
+    let loaded = store
+        .load(&id("cli:roster-compact"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.messages[0].content, "replacement");
     assert_eq!(loaded.subagent_roster, session.subagent_roster);
 }
@@ -272,9 +286,9 @@ async fn compaction_retains_current_subagent_roster() {
 #[tokio::test]
 async fn save_delta_compaction_preserves_persisted_subagent_roster() {
     let tmp = TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let session = Session {
-        key: "cli:roster-delta-compact".to_string(),
+        key: id("cli:roster-delta-compact"),
         messages: vec![make_message(Role::User, "first")],
         workflow_run: None,
         subagent_roster: vec![roster_entry(
@@ -286,7 +300,7 @@ async fn save_delta_compaction_preserves_persisted_subagent_roster() {
 
     store
         .save_delta(
-            "cli:roster-delta-compact",
+            &id("cli:roster-delta-compact"),
             &[make_message(Role::User, "replacement")],
             0,
             None,
@@ -295,7 +309,7 @@ async fn save_delta_compaction_preserves_persisted_subagent_roster() {
         .unwrap();
 
     let loaded = store
-        .load("cli:roster-delta-compact")
+        .load(&id("cli:roster-delta-compact"))
         .await
         .unwrap()
         .unwrap();

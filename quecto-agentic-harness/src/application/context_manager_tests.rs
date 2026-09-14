@@ -1,8 +1,9 @@
 use super::*;
 use crate::application::context_pruning;
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::Message;
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -15,7 +16,7 @@ struct MemSpillStore {
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -25,8 +26,8 @@ impl ContextSpillStore for MemSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -39,15 +40,15 @@ impl ContextSpillStore for MemSpillStore {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
-    ) -> crate::application::session::ports::SpillIndexList<'_> {
+        _session_key: &SessionIdentity,
+    ) -> crate::application::sessions::ports::SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()
@@ -65,7 +66,7 @@ impl ContextSpillStore for MemSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         self.entries.lock().unwrap().clear();
@@ -76,7 +77,7 @@ impl ContextSpillStore for MemSpillStore {
 fn manager(max_context_tokens: usize) -> ContextManager {
     ContextManager::new(ContextManagerConfig {
         spill_store: Some(Arc::new(MemSpillStore::default())),
-        session_key: "test-session".to_string(),
+        session_key: SessionIdentity::from_persisted_key("test-session"),
         context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
         max_context_tokens,
         pin_recent_turns: 2,

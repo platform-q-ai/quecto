@@ -1,6 +1,6 @@
 use super::cov_tests::Fixture;
 use super::persist_current_session;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 
@@ -25,7 +25,12 @@ async fn same_process_persist_then_prune_keeps_live_ordinals_durable_and_monoton
         assert_eq!(ctx.messages[2].ordinal, Some(43));
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         loaded
             .messages

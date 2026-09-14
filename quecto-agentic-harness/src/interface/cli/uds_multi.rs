@@ -7,7 +7,7 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::session::ports::SessionStore;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
 
@@ -168,8 +168,9 @@ impl Drop for ClientGuard {
 pub(super) async fn multi_client_loop(
     mut args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
-    session_store: &dyn SessionStore,
+    sessions: &super::uds_session_handles::SessionHandles,
 ) -> i32 {
+    let session_store: &dyn SessionStore = sessions.store.as_ref();
     let ext_registry = args.ext_registry;
     let lifetime = args.lifetime;
     let notification_rx = args.notification_rx;
@@ -381,6 +382,7 @@ pub(super) async fn multi_client_loop(
         last_persisted_message_index,
         durable_prefix_dirty: false,
         fleet_teardown,
+        list_sessions: Some(sessions.list_sessions.clone()),
     };
 
     run_dispatch_loop(
@@ -405,7 +407,7 @@ pub(super) async fn multi_client_loop(
             uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
         };
         let session = Session {
-            key: session_key,
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(session_key),
             messages: std::mem::take(&mut messages),
             workflow_run: wf_state
                 .as_ref()

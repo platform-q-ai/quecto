@@ -244,7 +244,11 @@ pub(super) async fn forward_subagent_get_messages(
             };
             match historical_session_key {
                 Ok(Some(session_key)) => {
-                    return match ctx.session_store.load(&session_key).await {
+                    let identity =
+                        crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                            session_key.as_str(),
+                        );
+                    return match ctx.session_store.load(&identity).await {
                         Ok(Some(session)) => {
                             if let Some(before) = before.as_ref()
                                 && uds_session::position_by_message_id(&session.messages, before)

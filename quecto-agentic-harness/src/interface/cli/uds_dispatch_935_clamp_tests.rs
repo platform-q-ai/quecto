@@ -50,7 +50,9 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     let mut messages = Vec::new();
     let mut session = AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
@@ -98,6 +100,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: None,
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
     }

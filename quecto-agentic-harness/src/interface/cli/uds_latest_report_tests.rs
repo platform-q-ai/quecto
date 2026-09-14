@@ -34,27 +34,30 @@ async fn raw_report_export_preserves_content_without_consuming_cursor() {
 
 mod export_control_tests {
     use super::*;
-    use crate::application::session::ports::{ContextSpillStore, SpillIndexList};
+    use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList};
     use crate::domain::{error::DomainError, session::SpillEntry};
     use std::{future::Future, pin::Pin, sync::Arc};
     struct SlowExportStore;
     impl ContextSpillStore for SlowExportStore {
         fn append(
             &self,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
             _: &SpillEntry,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Ok(()) })
         }
         fn recall(
             &self,
-            _: &str,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
+            _: &crate::domain::session_identity::SpillId,
         ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>
         {
             Box::pin(async { Ok(None) })
         }
-        fn list_entries(&self, _: &str) -> SpillIndexList<'_> {
+        fn list_entries(
+            &self,
+            _: &crate::domain::session_identity::SessionIdentity,
+        ) -> SpillIndexList<'_> {
             // Slow but finite and cancellable, so the export permit taken by
             // the spawned task is released and never leaks across tests.
             Box::pin(async {
@@ -64,7 +67,7 @@ mod export_control_tests {
         }
         fn clear(
             &self,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Ok(()) })
         }
@@ -138,7 +141,7 @@ async fn asynchronous_export_returns_correlated_artifact_or_storage_error() {
 
 mod unavailable_spill {
     use super::*;
-    use crate::application::session::ports::{ContextSpillStore, SpillIndexList};
+    use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList};
     use crate::domain::{
         error::DomainError,
         session::{SpillEntry, SpillIndex},
@@ -148,18 +151,21 @@ mod unavailable_spill {
     impl ContextSpillStore for Store {
         fn append(
             &self,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
             _: &SpillEntry,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Err(DomainError::Tool("read-only fixture".into())) })
         }
         fn clear(
             &self,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Err(DomainError::Tool("read-only fixture".into())) })
         }
-        fn list_entries(&self, _: &str) -> SpillIndexList<'_> {
+        fn list_entries(
+            &self,
+            _: &crate::domain::session_identity::SessionIdentity,
+        ) -> SpillIndexList<'_> {
             Box::pin(async move {
                 match self.0 {
                     "index unavailable" => Err(DomainError::Tool(self.0.into())),
@@ -174,8 +180,8 @@ mod unavailable_spill {
         }
         fn recall(
             &self,
-            _: &str,
-            _: &str,
+            _: &crate::domain::session_identity::SessionIdentity,
+            _: &crate::domain::session_identity::SpillId,
         ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>
         {
             Box::pin(async move {

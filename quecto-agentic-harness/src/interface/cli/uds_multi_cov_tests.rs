@@ -341,7 +341,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
 
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
     use crate::domain::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
@@ -368,7 +368,9 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     }
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let previous_roster = vec![
         row(
             "live-at-barrier",
@@ -381,7 +383,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     ];
     store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: previous_roster.clone(),
@@ -395,7 +397,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -407,7 +409,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
-    use crate::application::session::ports::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
     use crate::domain::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
@@ -416,10 +418,12 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     use crate::infrastructure::tools::subagent_registry::new_registry;
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -444,7 +448,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()

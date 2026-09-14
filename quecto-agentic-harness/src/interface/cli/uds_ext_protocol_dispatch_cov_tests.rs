@@ -37,8 +37,9 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -80,6 +81,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
@@ -101,8 +103,9 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -144,6 +147,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
@@ -164,8 +168,9 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -209,6 +214,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         last_persisted_message_index: 0,
         durable_prefix_dirty: false,
         fleet_teardown: None,
+        list_sessions: None,
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;

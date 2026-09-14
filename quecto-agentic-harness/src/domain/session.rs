@@ -1,11 +1,13 @@
 //! Pure session vocabulary: keys, summaries, the persisted roster and the
-//! conversation-history policies. The persistence ports (`SessionStore`,
-//! `ContextSpillStore`) are the application's (`application::session::ports`,
-//! #1960).
+//! conversation-history policies. The typed identity is
+//! [`super::session_identity::SessionIdentity`]; the persistence ports
+//! (`SessionStore`, `ContextSpillStore`) are the application's
+//! (`application::sessions::ports`, #1960).
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::message::Message;
+use super::session_identity::SessionIdentity;
 
 pub type SpillEntries = Arc<Vec<SpillIndex>>;
 
@@ -115,11 +117,12 @@ pub struct PersistedSubagentRosterEntry {
     pub pending_message_reports: std::collections::VecDeque<PendingMessageReport>,
 }
 
-/// A conversation session identified by a unique key.
+/// A conversation session identified by its typed identity.
 #[derive(Debug, Clone)]
 pub struct Session {
-    /// Unique key, e.g. "telegram:12345" or "cli:default".
-    pub key: String,
+    /// The session's identity: its unique key, e.g. "telegram:12345" or
+    /// "cli:default" (#1970).
+    pub key: SessionIdentity,
     /// Ordered conversation history.
     pub messages: Vec<Message>,
     /// Optional persisted workflow run for UDS-native workflow sessions.
@@ -130,9 +133,9 @@ pub struct Session {
 
 impl Session {
     /// Create a new empty session.
-    pub fn new(key: impl Into<String>) -> Self {
+    pub fn new(key: SessionIdentity) -> Self {
         Self {
-            key: key.into(),
+            key,
             messages: vec![],
             workflow_run: None,
             subagent_roster: Vec::new(),

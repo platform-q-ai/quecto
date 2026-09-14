@@ -4,6 +4,7 @@
 /// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
 /// re-exported from `uds` via `uds_session`.  Protocol types are imported from
 /// `cli::protocol`.
+use super::uds_dispatch_query::display_title;
 use super::*;
 use crate::interface::cli::protocol::*;
 

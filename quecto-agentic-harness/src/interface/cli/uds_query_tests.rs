@@ -104,7 +104,11 @@ impl Fx {
             session: AgentSession::new("stub".into(), "cli:test".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
-            store: FileSessionStore::new(tmp.path()),
+            store: FileSessionStore::new(
+                crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
+                    tmp.path(),
+                ),
+            ),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -161,6 +165,7 @@ impl Fx {
             last_persisted_message_index: 0,
             durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: None,
         }
     }
 }

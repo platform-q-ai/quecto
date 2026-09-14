@@ -14,7 +14,7 @@ use super::{
     COLLAPSE_DISABLED, collapse_message, drop_until_under_budget, estimate_message_tokens,
     estimate_tokens, estimate_total_tokens, truncate_utf8_safe,
 };
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
 
@@ -263,7 +263,7 @@ pub fn enforce_context_ceiling_ladder(
 pub async fn spill_conversation_message(
     msg: &mut Message,
     store: &dyn ContextSpillStore,
-    session_key: &str,
+    session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
     if !is_conversation(msg) || msg.is_collapsed || msg.content.is_empty() {
         return false;

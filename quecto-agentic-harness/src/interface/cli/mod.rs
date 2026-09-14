@@ -200,6 +200,7 @@ mod uds_reader;
 mod uds_reader_dispatch;
 mod uds_reload;
 pub mod uds_session;
+pub mod uds_session_handles;
 mod uds_shutdown;
 mod uds_snapshots;
 mod uds_socket;
@@ -291,6 +292,13 @@ pub type KillToolBuilder = fn(KillToolWiring) -> bool;
 pub type TeardownHandlesBuilder =
     fn(uds_teardown_handles::TeardownLoopInputs) -> uds_teardown_handles::TeardownHandles;
 
+/// Composition's builder of the handles one loop holds on the sessions
+/// capability (#1970): the session store and the saved-session queries,
+/// composed over the loop's base directory. Injected through the CLI
+/// context; the interface never constructs a store or a use case.
+pub type SessionHandlesBuilder =
+    fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -317,6 +325,11 @@ pub struct CliContext {
     /// Composition's builder of the `agent_cmd kill` owner (#1936). Without
     /// it `kill` is unavailable: the interface never composes a lifecycle.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's sessions handles builder (#1970). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
+    /// refuses to start without it, since the interface never constructs
+    /// a session store.
+    pub sessions: Option<SessionHandlesBuilder>,
 }
 
 impl CliContext {
@@ -412,6 +425,7 @@ pub struct CliComposition {
     pub web_fetch_tool_factory: WebFetchToolFactory,
     pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
+    pub sessions: SessionHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -431,6 +445,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
+        sessions: Some(composition.sessions),
         ..Default::default()
     };
 
@@ -596,12 +611,10 @@ pub(crate) fn explicit_config_missing(
         .then(|| format!("config not found: {}", config_path.display()))
 }
 
+/// Wire syntax of a session name: the domain's named-session allowlist
+/// (`-`, the ephemeral marker, is itself an admitted name).
 pub(crate) fn is_valid_session_name(name: &str) -> bool {
-    name == "-"
-        || (!name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    crate::domain::session_identity::SessionIdentity::is_valid_cli_name(name)
 }
 
 /// The harness runs a current-thread runtime whose blocking pool keeps a

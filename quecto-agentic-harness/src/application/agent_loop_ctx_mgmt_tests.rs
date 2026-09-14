@@ -8,13 +8,18 @@
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry, text_response};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
-use crate::application::session::ports::ContextSpillStore;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::audit::AuditEvent;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 #[derive(Debug, Default)]
 struct MemSpillStore {
@@ -24,7 +29,7 @@ struct MemSpillStore {
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -34,8 +39,8 @@ impl ContextSpillStore for MemSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -48,15 +53,15 @@ impl ContextSpillStore for MemSpillStore {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
-    ) -> crate::application::session::ports::SpillIndexList<'_> {
+        _session_key: &SessionIdentity,
+    ) -> crate::application::sessions::ports::SpillIndexList<'_> {
         let index: Vec<crate::domain::session::SpillIndex> = self
             .entries
             .lock()
@@ -74,7 +79,7 @@ impl ContextSpillStore for MemSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         self.entries.lock().unwrap().clear();
@@ -523,11 +528,22 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
         tokens: 2,
         content: "out".into(),
     };
-    store.append("s", &entry).await.unwrap();
+    store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(
-        store.recall("s", "id1").await.unwrap().unwrap().content,
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         "out"
     );
-    store.clear("s").await.unwrap();
-    assert!(store.recall("s", "id1").await.unwrap().is_none());
+    store.clear(&id("s")).await.unwrap();
+    assert!(
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

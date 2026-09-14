@@ -16,7 +16,7 @@ use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
-use crate::application::{agent_loop::AgentLoopImpl, session::ports::SessionStore};
+use crate::application::{agent_loop::AgentLoopImpl, sessions::ports::SessionStore};
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
@@ -162,9 +162,15 @@ pub(crate) struct DispatchCtx<'a> {
     pub durable_prefix_dirty: bool,
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
+    /// List saved sessions (#1861, #1970): the composed controller the
+    /// `list_sessions` command is answered through. `None` only in unit
+    /// rigs that run without the sessions handles.
+    pub list_sessions: Option<ListSessionsHandle>,
 }
 type FleetTeardown =
     std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
+type ListSessionsHandle =
+    std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController>;
 
 impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
@@ -247,20 +253,6 @@ pub(super) async fn emit_response_or_frame_limit_error_with_message(
     }
 }
 
-/// Apply display policy to a raw title: blank → "(untitled)", else truncate to 50 chars.
-fn display_title(raw: &str) -> String {
-    const MAX_CHARS: usize = 50;
-    if raw.is_empty() {
-        return "(untitled)".to_string();
-    }
-    if raw.chars().count() <= MAX_CHARS {
-        return raw.to_string();
-    }
-    let mut out: String = raw.chars().take(MAX_CHARS).collect();
-    out.push('…');
-    out
-}
-
 #[path = "uds_dispatch.rs"]
 mod uds_dispatch;
 #[path = "uds_dispatch_forwarding.rs"]
@@ -314,10 +306,13 @@ async fn persist_user_prompt_before_run(
         .and_then(|message| message.ordinal);
     let persisted_len = persisted_messages.len();
     let workflow_run = persisted_workflow_run(ctx);
+    let identity = crate::domain::session_identity::SessionIdentity::from_persisted_key(
+        ctx.session_key.as_str(),
+    );
     let result = if ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
-                key: ctx.session_key.to_string(),
+                key: identity,
                 messages: persisted_messages,
                 workflow_run,
                 subagent_roster: uds_dispatch_session::snapshot_subagent_roster(
@@ -328,7 +323,7 @@ async fn persist_user_prompt_before_run(
     } else {
         ctx.session_store
             .save_delta(
-                ctx.session_key,
+                &identity,
                 &persisted_messages,
                 ctx.last_persisted_message_index,
                 workflow_run,

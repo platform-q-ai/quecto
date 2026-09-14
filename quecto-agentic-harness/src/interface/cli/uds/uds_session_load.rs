@@ -6,15 +6,15 @@ mod tests;
 
 pub(super) async fn load_session(
     store: &dyn SessionStore,
-    key: &str,
+    identity: &SessionIdentity,
     ephemeral: bool,
 ) -> Result<Session, String> {
-    if ephemeral || key.is_empty() {
-        return Ok(Session::new(key));
+    if ephemeral || identity.is_ephemeral() {
+        return Ok(Session::new(identity.clone()));
     }
     store
-        .load(key)
+        .load(identity)
         .await
-        .map(|s| s.unwrap_or_else(|| Session::new(key)))
+        .map(|s| s.unwrap_or_else(|| Session::new(identity.clone())))
         .map_err(|e| e.to_string())
 }

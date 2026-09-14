@@ -275,7 +275,9 @@ pub(crate) fn build_tool_runtime(
         },
     );
 
-    let spill_store = std::sync::Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
+    let spill_store = std::sync::Arc::new(FileContextSpillStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(base_dir),
+    ));
     register_bundled_native_tools(
         &mut registry,
         build_session_tool_extensions(SessionToolDeps {
