@@ -660,3 +660,78 @@ fn stale_token_refused(world: &mut QuectoWorld) {
     let error = outcome.expect_err("a revoked token must not submit");
     assert!(error.contains("stale or unowned claim"), "{error}");
 }
+
+/// #1969: the store's read-side view of a task owner. The owner's board
+/// events are backdated straight in SQLite (the store clock is real time
+/// through the tool), which is exactly the quiet member the coordinator
+/// could not see in env-7GMSw7cZqQ.
+#[when(expr = "that owner has been silent on the board for {int} seconds")]
+fn owner_silent(world: &mut QuectoWorld, seconds: u64) {
+    let database = quecto::infrastructure::tools::swarm_bridge::store_database(
+        world.swarm_workspace.as_ref().unwrap(),
+    );
+    let output = std::process::Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            "import sqlite3, sys\ndb = sqlite3.connect(sys.argv[1])\ndb.execute(\"UPDATE events SET time = time - ? WHERE actor = 'worker'\", (float(sys.argv[2]),))\ndb.commit()",
+            database.to_str().unwrap(),
+            &seconds.to_string(),
+        ])
+        .output()
+        .expect("python3 backdates the owner's events");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[then(
+    expr = "the task row reads the owner as idle for at least {int} seconds with a send contact"
+)]
+fn owner_idle_on_task_row(world: &mut QuectoWorld, seconds: u64) {
+    super::run(
+        world,
+        json!({"op":"run","code":"from swarm import board\nimport json\ns=board.summary()\nprint(json.dumps({'task':board.task(1),'page':board.tasks()[0],'summary':s['tasks'][0],'counts':s['counts']}))"}),
+    );
+    assert!(
+        !super::result(world).is_error,
+        "{}",
+        super::result(world).content
+    );
+    let views: Value =
+        serde_json::from_str(result_json(world)["stdout"].as_str().unwrap()).unwrap();
+    for view in ["task", "page", "summary"] {
+        let row = &views[view];
+        assert_eq!(row["owner"], "worker", "{row}");
+        assert_eq!(row["status"], "claimed", "{row}");
+        assert_eq!(row["owner_state"], "idle", "{row}");
+        assert!(
+            row["owner_last_activity"].as_f64().unwrap() >= seconds as f64,
+            "{row}"
+        );
+        assert_eq!(
+            row["contact"], "board.send(request, 'worker', body)",
+            "{row}"
+        );
+    }
+    assert_eq!(views["counts"]["members_without_claim"], 0, "{views}");
+    assert_eq!(views["counts"]["members_dead"], 0, "{views}");
+}
+
+#[then("the swarm tool description says any member may message a task's owner")]
+fn description_names_owner_as_recipient(world: &mut QuectoWorld) {
+    use quecto::application::tools::ports::Tool;
+    let description = super::tool(world).definition().description;
+    for expected in [
+        "Any member may message any other member directly",
+        "belongs with that task's owner",
+        "contact: board.send(request, '<owner id>', body)",
+        "owner_last_activity",
+        "owner_state",
+        "members_without_claim",
+    ] {
+        assert!(description.contains(expected), "missing {expected:?}");
+    }
+}

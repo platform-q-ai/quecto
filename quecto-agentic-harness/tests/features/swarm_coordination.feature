@@ -174,6 +174,12 @@ Feature: Container swarm coordination
     Then the swarm result should be an error
     And the swarm result should contain "only the designated coordinator"
 
+  Scenario: A task row shows its quiet owner's liveness and names it as a send recipient
+    When a suspended member holds a claimed task with a reserved file
+    And that owner has been silent on the board for 400 seconds
+    Then the task row reads the owner as idle for at least 400 seconds with a send contact
+    And the swarm tool description says any member may message a task's owner
+
   @done @swarm-supervision
   Scenario: A member the coordinator kills is confirmed dead and its work recovered without pausing the run
     When a member the coordinator launched is killed while holding a claim and another member reconciles throughout

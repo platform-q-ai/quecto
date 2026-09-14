@@ -122,6 +122,31 @@ def notification_targets(run, actor, members, events, state):
     return [live[identity] for identity in sorted(targets) if identity in live]
 
 
+OWNER_STATES = ('active', 'idle', 'dead', 'unknown')
+# A task owner with no board event for this long reads as `idle` (#1969).
+# Board activity is the only liveness the store can see: an idle owner may be
+# mid-turn running a long command; the value is a prompt to look, not a stall.
+OWNER_IDLE_AFTER = 300.0
+
+
+def owner_state(member_status, last_activity, now, idle_after=OWNER_IDLE_AFTER):
+    """The store's conservative view of a task owner (#1969), read-side only.
+
+    `dead` is authoritative (the launcher's harness confirmed the exit);
+    `active`/`idle` come from the owner's most recent board event against the
+    store clock; `unknown` covers a missing member row or an owner that never
+    wrote an event. A provider suspension is a harness fact the store cannot
+    see, so it is never claimed here: `agent_cmd status` (get_state's
+    `automaticTurnsSuspended`) is the source for that."""
+    if member_status is None:
+        return 'unknown'
+    if member_status == 'dead':
+        return 'dead'
+    if not isinstance(last_activity, (int, float)):
+        return 'unknown'
+    return 'idle' if now - last_activity >= idle_after else 'active'
+
+
 def require_unsubmitted(task):
     if task['status'] == 'submitted':
         raise SwarmError('submitted evidence is immutable; release and reclaim before revising')

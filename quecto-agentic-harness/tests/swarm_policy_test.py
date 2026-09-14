@@ -7,7 +7,8 @@ import unittest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src'
 sys.path[:0] = [str(SRC / 'domain'), str(SRC / 'application')]
-from swarm_policy import SwarmError, authorize, completion, admission, notification_targets
+from swarm_policy import (SwarmError, OWNER_IDLE_AFTER, OWNER_STATES, admission, authorize, completion,
+                          notification_targets, owner_state)
 from swarm_use_cases import Coordination
 
 
@@ -129,6 +130,18 @@ class PolicyContract(unittest.TestCase):
         self.assertEqual(len(repo.state['events']), 1)
         with self.assertRaisesRegex(SwarmError, 'no new admission'):
             admission(repo.run(), first, 'token', 2, 100)
+
+
+class OwnerStateBehavior(unittest.TestCase):
+    def test_owner_state_is_conservative_and_never_claims_suspension(self):
+        self.assertEqual(owner_state(None, 10.0, 20.0), 'unknown')
+        self.assertEqual(owner_state('live', None, 20.0), 'unknown')
+        self.assertEqual(owner_state('dead', 19.0, 20.0), 'dead')
+        self.assertEqual(owner_state('dead', None, 20.0), 'dead')
+        self.assertEqual(owner_state('live', 20.0 - OWNER_IDLE_AFTER + 1, 20.0), 'active')
+        self.assertEqual(owner_state('live', 20.0 - OWNER_IDLE_AFTER, 20.0), 'idle')
+        self.assertEqual(owner_state('reserved', 0.0, 20.0, idle_after=30.0), 'active')
+        self.assertNotIn('suspended', OWNER_STATES)
 
 
 if __name__ == '__main__':

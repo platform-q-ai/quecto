@@ -15,6 +15,21 @@ def lost_after_activation(connection, member):
     return latest['scope_unknown'] > latest['activated']
 
 
+ACTIVE_CLAIM = "('claimed','blocked','submitted')"
+
+
+def member_claim_counts(connection, coordinator):
+    """Read-side membership counts (#1969): admitted members (live or
+    reserved, the coordinator excluded because it never claims by role) that
+    hold no active claim, and members whose death the harness confirmed."""
+    without_claim = connection.execute(
+        "SELECT count(*) FROM members m WHERE m.status IN ('live','reserved') AND m.id IS NOT ? "
+        "AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner=m.id AND t.status IN " + ACTIVE_CLAIM + ")",
+        (coordinator,)).fetchone()[0]
+    dead = connection.execute("SELECT count(*) FROM members WHERE status='dead'").fetchone()[0]
+    return {'members_without_claim': without_claim, 'members_dead': dead}
+
+
 class Transaction:
     def __init__(self, store, connection):
         self.store, self.connection = store, connection

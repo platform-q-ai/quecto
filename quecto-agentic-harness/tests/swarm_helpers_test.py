@@ -15,6 +15,7 @@ sys.path.insert(0, str(HELPERS))
 sys.path.insert(0, str(HELPERS.parents[2] / "domain"))
 sys.path.insert(0, str(HELPERS.parents[2] / "application"))
 from swarm import Workbench, SwarmError
+from swarm_policy import OWNER_IDLE_AFTER
 
 
 class WorkbenchBehavior(unittest.TestCase):
@@ -1084,6 +1085,106 @@ class WorkbenchBehavior(unittest.TestCase):
         observed = [e for e in self.parent.events(limit=100)['events'] if e['action'] == 'scope_observed']
         self.assertEqual([e['actor'] for e in observed], ['coordinator', 'other'])
         self.parent.coordination.clock = lambda: time.time()
+
+    def test_an_unclaimed_task_carries_no_owner_fields(self):
+        task = self.task()
+        for view in (self.parent.task(task['id']), self.parent.tasks()[0], self.parent.summary()['tasks'][0]):
+            self.assertIsNone(view['owner'])
+            for field in ('owner_last_activity', 'owner_state', 'contact'):
+                self.assertNotIn(field, view)
+
+    def test_a_completed_task_keeps_its_owner_column_but_carries_no_liveness(self):
+        done, live = self.task('done'), self.task('live')
+        claim = self.worker.claim(done['id'])
+        self.worker.submit(done['id'], claim['token'], [{'artifact': 'tests.log', 'revision': 'r1'}])
+        self.parent.verify_task(done['id'], claim['token'], 'r1')
+        self.worker.claim(live['id'])
+        page = self.parent.tasks()
+        self.assertEqual([t['status'] for t in page], ['completed', 'claimed'])
+        self.assertEqual(page[0]['owner'], 'worker')
+        for field in ('owner_last_activity', 'owner_state', 'contact'):
+            self.assertNotIn(field, page[0])
+        self.assertEqual(page[1]['owner_state'], 'active')
+
+    def test_a_claimed_task_names_its_active_owner_and_how_to_reach_it(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        view = self.parent.task(task['id'])
+        self.assertEqual(view['owner'], 'worker')
+        self.assertEqual(view['owner_state'], 'active')
+        self.assertGreaterEqual(view['owner_last_activity'], 0)
+        self.assertLess(view['owner_last_activity'], OWNER_IDLE_AFTER)
+        self.assertEqual(view['contact'], "board.send(request, 'worker', body)")
+        self.assertEqual(self.worker.tasks()[0]['contact'], view['contact'])
+
+    def test_a_quiet_owner_reads_as_idle_after_the_documented_threshold(self):
+        task = self.task()
+        claimed = self.worker.claim(task['id'])
+        base = time.time()
+        self.worker.coordination.clock = lambda: base
+        self.worker.block(task['id'], claimed['token'], 'waiting on W2')
+        # The reader's clock decides: the same row is active now and idle later.
+        self.parent.coordination.clock = lambda: base + OWNER_IDLE_AFTER - 1
+        self.assertEqual(self.parent.task(task['id'])['owner_state'], 'active')
+        self.parent.coordination.clock = lambda: base + OWNER_IDLE_AFTER
+        for view in (self.parent.task(task['id']), self.parent.tasks()[0], self.parent.summary()['tasks'][0]):
+            self.assertEqual(view['status'], 'blocked')
+            self.assertEqual(view['owner_state'], 'idle')
+            self.assertEqual(view['owner_last_activity'], OWNER_IDLE_AFTER)
+            self.assertEqual(view['contact'], "board.send(request, 'worker', body)")
+        # Reading writes nothing: the owner's last activity is still its block.
+        self.parent.coordination.clock = lambda: base + 2 * OWNER_IDLE_AFTER
+        self.assertEqual(self.parent.task(task['id'])['owner_last_activity'], 2 * OWNER_IDLE_AFTER)
+        self.parent.coordination.clock = lambda: time.time()
+        self.worker.coordination.clock = lambda: time.time()
+
+    def test_a_dead_owner_reads_as_dead_after_its_confirmed_death(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.parent._confirmed_dead('worker')
+        view = self.parent.task(task['id'])
+        self.assertEqual((view['status'], view['owner'], view['owner_state']), ('blocked', 'worker', 'dead'))
+        self.assertEqual(view['contact'], "board.send(request, 'worker', body)")
+        self.assertGreaterEqual(view['owner_last_activity'], 0)
+
+    def test_owner_liveness_is_one_grouped_events_scan_per_page(self):
+        other = self.other_worker()
+        for i in range(6):
+            task = self.task(f'task-{i}')
+            (self.worker if i % 2 else other).claim(task['id'])
+        # Trace the store's own connections: one grouped event scan per call.
+        statements = []
+        original = sqlite3.connect
+
+        def traced(*args, **kwargs):
+            connection = original(*args, **kwargs)
+            connection.set_trace_callback(statements.append)
+            return connection
+        sqlite3.connect = traced
+        try:
+            page = self.parent.tasks()
+        finally:
+            sqlite3.connect = original
+        self.assertEqual([t['owner_state'] for t in page], ['active'] * 6)
+        scans = [s for s in statements if 'max(time)' in s]
+        self.assertEqual(len(scans), 1, statements)
+
+    def test_status_and_summary_count_members_without_a_claim_and_dead_members(self):
+        # The coordinator never claims by role and is not counted as idle.
+        status = self.parent._status()
+        self.assertEqual((status['members_without_claim'], status['members_dead']), (1, 0))
+        self.assertEqual(self.parent.summary()['counts']['members_without_claim'], 1)
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.assertEqual(self.parent._status()['members_without_claim'], 0)
+        self.parent._admit('reserved-only', 'reservation-r')
+        self.assertEqual(self.parent._status()['members_without_claim'], 1)
+        self.parent._release_unlaunched('reserved-only')
+        self.parent._confirmed_dead('worker')
+        status = self.parent._status()
+        self.assertEqual((status['members_without_claim'], status['members_dead']), (0, 2))
+        counts = self.parent.summary()['counts']
+        self.assertEqual((counts['members_without_claim'], counts['members_dead'], counts['blocked']), (0, 2, 1))
 
 
 if __name__ == '__main__':

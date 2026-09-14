@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from swarm_repository import lost_after_activation
+from swarm_repository import lost_after_activation, member_claim_counts
 from swarm_store import Store, SwarmError, bounded, encode
 from swarm_tasks import Tasks
 from swarm_use_cases import Coordination
@@ -137,7 +137,7 @@ class Workbench(Tasks):
             run['members'] = [dict(r) for r in db.execute('SELECT * FROM members')]
             run['usage'] = sum(m['status'] in ('live', 'reserved') for m in run['members'])
             run['task_count'] = db.execute('SELECT count(*) FROM tasks').fetchone()[0]
-            run['tasks'] = [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks ORDER BY id LIMIT 50')]
+            run['tasks'] = self._with_owner_liveness(db, [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks ORDER BY id LIMIT 50')])
             run['file_count'] = db.execute('SELECT count(*) FROM files').fetchone()[0]
             run['files'] = [dict(r) for r in db.execute('SELECT * FROM files ORDER BY path LIMIT 50')]
             run['evidence'] = [dict(r) for r in db.execute('SELECT * FROM evidence')]
@@ -150,6 +150,7 @@ class Workbench(Tasks):
                 if status == 'ready' and any(states[d]['status'] != 'completed' for d in json.loads(task['dependencies'])):
                     status = 'blocked'
                 run['counts'][status] += 1
+            run['counts'].update(member_claim_counts(db, run['coordinator']))
             return run
 
     def events(self, after=0, limit=25):
@@ -165,12 +166,14 @@ class Workbench(Tasks):
 
     def _status(self):
         """Harness-only, membership-free: has a run been created in this container?
-        The bootstrap placeholder carries deadline 0; `create` requires a future one."""
+        The bootstrap placeholder carries deadline 0; `create` requires a future one.
+        Carries the #1969 membership counts (`members_without_claim`, `members_dead`)."""
         with self.store.transaction() as db:
             row = db.execute('SELECT status, deadline, coordinator, outcome FROM run').fetchone()
-        return {'status': row['status'] if row else 'setup', 'deadline': row['deadline'] if row else 0,
-                'coordinator': row['coordinator'] if row else None,
-                'outcome': row['outcome'] if row else None}
+            counts = member_claim_counts(db, row['coordinator'] if row else None)
+        return dict(counts, status=row['status'] if row else 'setup', deadline=row['deadline'] if row else 0,
+                    coordinator=row['coordinator'] if row else None,
+                    outcome=row['outcome'] if row else None)
 
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:
