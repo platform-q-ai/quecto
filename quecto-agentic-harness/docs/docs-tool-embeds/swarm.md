@@ -51,11 +51,11 @@ content in artifacts, not messages or evidence fields.
 
 | Call | Input and behavior |
 |---|---|
-| `summary(since=None)` | Current goal, members, counts (task statuses plus `members_without_claim` and `members_dead`), first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response |
+| `summary(since=None)` | Current goal, members, counts (task statuses plus `members_without_claim` and `members_dead`), first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response; an owner turning idle by clock alone since that cursor yields a full summary instead, and `next_liveness_check_at` says when the next one would |
 | `events(after=0, limit=25)` | Explicit chronological history; limit 1–100 |
 | `tasks(offset=0, limit=50)` / `file_owners(offset=0, limit=50)` | Integer offset ≥0; integer limit 1–100 |
 | `task_create(request, title, acceptance, dependencies=None)` | Stable request string, title string, **nonempty `list[str]` acceptance**, optional `list[int]` dependency IDs; returns a task |
-| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming. A claimed, blocked or submitted row (also from `tasks()` and the summary) adds `contact` (`board.send(request, '<owner id>', body)`), `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active`, `idle` (no board event for 300 s; a prompt to look, not proof of a stall), `dead` (exit confirmed by its launcher's harness) or `unknown`. A provider suspension is not visible on the board: use `agent_cmd status` |
+| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming. A claimed, blocked or submitted row (also from `tasks()` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown`. An active or idle owner is named in `contact` (`board.send(request, '<owner id>', body)`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
 | `claim(id)` | Returns owned task with a new claim `token`; unmet dependencies reject |
 | `block(id, token, reason)` | Nonempty string reason |
 | `unblock(id, token, reason)` | Resume your blocked claim, preserving token and reservations; submitted work cannot be reopened |

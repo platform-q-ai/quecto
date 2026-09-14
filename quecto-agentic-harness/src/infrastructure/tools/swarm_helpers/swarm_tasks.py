@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
-from swarm_policy import owner_state, require_unsubmitted
+from swarm_policy import ADDRESSABLE_OWNER_STATES, owner_recovery, owner_state, require_unsubmitted
+from swarm_repository import lost_members
 from swarm_store import SwarmError, bounded, encode
 
 
@@ -26,29 +27,44 @@ class Tasks:
             return self._with_owner_liveness(db, [self._task(db, task_id)])[0]
 
     def _with_owner_liveness(self, db, tasks):
-        """Read side only (#1969): a claimed, blocked or submitted task names
-        its owner as a `send` recipient (`contact`) and carries the store's
-        view of that owner: `owner_last_activity`, seconds since the owner's
-        most recent board event by the store clock, and `owner_state`
-        (`swarm_policy.owner_state`). Two bounded queries per call, never per
-        row: the owners' member rows and one grouped scan of their events.
+        """Read side only (#1969): a claimed, blocked or submitted task carries
+        the store's view of its owner: `owner_last_activity`, seconds since the
+        owner's most recent board event by the store clock, and `owner_state`
+        (`swarm_policy.owner_state`). An owner `send` would accept (active or
+        idle) is named as a recipient in `contact`; otherwise `contact` is
+        None and `recovery` says how the coordinator moves the work. Three
+        bounded queries per call, never per row: the owners' member rows, one
+        grouped scan of their events and one scan of loss/activation events.
         Unowned tasks carry none of these fields. Nothing is written."""
-        owned = [t for t in tasks if t['owner'] is not None and t['status'] in ('claimed', 'blocked', 'submitted')]
-        owners = sorted({t['owner'] for t in owned})
-        if not owners:
+        owned = self.owned_tasks(tasks)
+        if not owned:
             return tasks
+        now = self.store.clock()
+        for task, (last, state) in zip(owned, self._owner_views(db, owned, now)):
+            task['owner_last_activity'] = None if last is None else max(0.0, now - last)
+            task['owner_state'] = state
+            if state in ADDRESSABLE_OWNER_STATES:
+                task['contact'] = f"board.send(request, {task['owner']!r}, body)"
+            else:
+                task['contact'] = None
+                task['recovery'] = owner_recovery(state)
+        return tasks
+
+    @staticmethod
+    def owned_tasks(tasks):
+        return [t for t in tasks if t['owner'] is not None and t['status'] in ('claimed', 'blocked', 'submitted')]
+
+    @staticmethod
+    def _owner_views(db, owned, now):
+        """`(last_activity, owner_state)` per owned task, from bounded queries."""
+        owners = sorted({t['owner'] for t in owned})
         marks = ','.join('?' * len(owners))
         status = {r['id']: r['status'] for r in db.execute(f'SELECT id,status FROM members WHERE id IN ({marks})', owners)}
         latest = {r['actor']: r['latest'] for r in db.execute(
             f'SELECT actor, max(time) latest FROM events WHERE actor IN ({marks}) GROUP BY actor', owners)}
-        now = self.store.clock()
-        for task in owned:
-            owner = task['owner']
-            last = latest.get(owner)
-            task['owner_last_activity'] = None if last is None else max(0.0, now - last)
-            task['owner_state'] = owner_state(status.get(owner), last, now)
-            task['contact'] = f"board.send(request, {owner!r}, body)"
-        return tasks
+        lost = lost_members(db, owners)
+        return [(latest.get(t['owner']), owner_state(status.get(t['owner']), t['owner'] in lost, latest.get(t['owner']), now))
+                for t in owned]
 
     @staticmethod
     def _task(db, task_id):

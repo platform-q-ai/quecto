@@ -16,6 +16,7 @@ sys.path.insert(0, str(HELPERS.parents[2] / "domain"))
 sys.path.insert(0, str(HELPERS.parents[2] / "application"))
 from swarm import Workbench, SwarmError
 from swarm_policy import OWNER_IDLE_AFTER
+HELPER_SOURCES = HELPERS.parents[3]
 
 
 class WorkbenchBehavior(unittest.TestCase):
@@ -143,7 +144,7 @@ class WorkbenchBehavior(unittest.TestCase):
 
     def test_summary_cursor_avoids_unchanged_payload_and_history_cursor_is_validated(self):
         cursor = self.parent.summary()['event_cursor']
-        self.assertEqual(self.parent.summary(since=cursor), {'unchanged': True, 'event_cursor': cursor, 'status': 'running'})
+        self.assertEqual(self.parent.summary(since=cursor), {'unchanged': True, 'event_cursor': cursor, 'status': 'running', 'next_liveness_check_at': None})
         self.task('new change')
         self.assertFalse(self.parent.summary(since=cursor).get('unchanged', False))
         for invalid in [-1, True, '1']:
@@ -1115,10 +1116,12 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertGreaterEqual(view['owner_last_activity'], 0)
         self.assertLess(view['owner_last_activity'], OWNER_IDLE_AFTER)
         self.assertEqual(view['contact'], "board.send(request, 'worker', body)")
+        self.assertNotIn('recovery', view)
         self.assertEqual(self.worker.tasks()[0]['contact'], view['contact'])
 
     def test_a_quiet_owner_reads_as_idle_after_the_documented_threshold(self):
         task = self.task()
+        self.parent._extend_deadline(3600)  # the fixture's deadline is 300 s away
         claimed = self.worker.claim(task['id'])
         base = time.time()
         self.worker.coordination.clock = lambda: base
@@ -1138,14 +1141,74 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.coordination.clock = lambda: time.time()
         self.worker.coordination.clock = lambda: time.time()
 
-    def test_a_dead_owner_reads_as_dead_after_its_confirmed_death(self):
+    def test_a_dead_owner_reads_as_dead_with_recovery_instead_of_a_contact(self):
         task = self.task()
         self.worker.claim(task['id'])
         self.parent._confirmed_dead('worker')
         view = self.parent.task(task['id'])
         self.assertEqual((view['status'], view['owner'], view['owner_state']), ('blocked', 'worker', 'dead'))
-        self.assertEqual(view['contact'], "board.send(request, 'worker', body)")
+        self.assertIsNone(view['contact'])
+        self.assertEqual(view['recovery'], 'recover(task) or revoke(task, reason)')
         self.assertGreaterEqual(view['owner_last_activity'], 0)
+        with self.assertRaisesRegex(SwarmError, 'out-of-swarm recipient'):
+            self.parent.send('to-the-dead', 'worker', 'anyone there?')
+
+    def test_a_lost_owner_reads_as_lost_with_the_resume_note_and_no_contact(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.lose(self.parent, 'worker')
+        self.assertEqual(self.parent.summary()['status'], 'paused')
+        for view in (self.parent.task(task['id']), self.parent.tasks()[0]):
+            self.assertEqual((view['owner'], view['owner_state'], view['contact']), ('worker', 'lost', None))
+            self.assertIn('resume the run', view['recovery'])
+            self.assertIn('revoke(task, reason)', view['recovery'])
+        # Not idle, not active: the loss record outranks the clock.
+        self.parent.coordination.clock = lambda: time.time() + 2 * OWNER_IDLE_AFTER
+        self.assertEqual(self.parent.task(task['id'])['owner_state'], 'lost')
+        self.parent.coordination.clock = lambda: time.time()
+
+    def test_the_advertised_contact_is_a_send_the_board_accepts(self):
+        task = self.task()
+        self.worker.claim(task['id'])
+        contact = self.parent.task(task['id'])['contact']
+        receipt = eval(contact, {'board': self.parent, 'request': 'dependency-question-1', 'body': 'which schema?'})
+        self.assertEqual(receipt['status'], 'accepted')
+        inbox = self.worker.inbox()
+        self.assertEqual([(m['sender'], m['body']) for m in inbox], [('coordinator', 'which schema?')])
+
+    def test_summary_cursor_reports_an_owner_turning_idle_by_clock_alone(self):
+        task = self.task()
+        self.parent._extend_deadline(3600)  # the fixture's deadline is 300 s away
+        base = time.time()
+        self.worker.coordination.clock = lambda: base
+        self.worker.claim(task['id'])
+        self.parent.coordination.clock = lambda: base + OWNER_IDLE_AFTER - 1
+        first = self.parent.summary()
+        self.assertEqual(first['next_liveness_check_at'], base + OWNER_IDLE_AFTER)
+        again = self.parent.summary(since=first['event_cursor'])
+        self.assertEqual(again['unchanged'], True)
+        self.assertEqual(again['next_liveness_check_at'], base + OWNER_IDLE_AFTER)
+        self.parent.coordination.clock = lambda: base + OWNER_IDLE_AFTER
+        crossed = self.parent.summary(since=first['event_cursor'])
+        self.assertNotIn('unchanged', crossed)
+        self.assertEqual(crossed['event_cursor'], first['event_cursor'])
+        self.assertEqual(crossed['tasks'][0]['owner_state'], 'idle')
+        self.assertIsNone(crossed['next_liveness_check_at'])
+        # A later board event moves the cursor; the fast path is back.
+        self.worker.coordination.clock = lambda: base + OWNER_IDLE_AFTER + 5
+        self.worker.send('ping', 'coordinator', 'still here')
+        moved = self.parent.summary()
+        self.assertEqual(moved['tasks'][0]['owner_state'], 'active')
+        self.assertEqual(self.parent.summary(since=moved['event_cursor'])['unchanged'], True)
+        self.parent.coordination.clock = lambda: time.time()
+        self.worker.coordination.clock = lambda: time.time()
+
+    def test_the_idle_threshold_prose_matches_the_constant(self):
+        seconds = f'{OWNER_IDLE_AFTER:g}'
+        description = (HELPERS / 'tool_description.txt').read_text()
+        self.assertIn(f'{seconds} s', description)
+        self.assertIn(f'{seconds} s', (HELPER_SOURCES / 'docs/docs-tool-embeds/swarm.md').read_text())
+        self.assertIn(f'{seconds} seconds', (HELPER_SOURCES / 'docs/swarm.md').read_text())
 
     def test_owner_liveness_is_one_grouped_events_scan_per_page(self):
         other = self.other_worker()
@@ -1175,10 +1238,15 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual((status['members_without_claim'], status['members_dead']), (1, 0))
         self.assertEqual(self.parent.summary()['counts']['members_without_claim'], 1)
         task = self.task()
-        self.worker.claim(task['id'])
+        claim = self.worker.claim(task['id'])
         self.assertEqual(self.parent._status()['members_without_claim'], 0)
+        # A member whose only claim is submitted still holds it.
+        self.worker.submit(task['id'], claim['token'], [{'artifact': 'tests.log', 'revision': 'r1'}])
+        self.assertEqual(self.parent._status()['members_without_claim'], 0)
+        # A reserved member is alive: without a claim, and never counted dead.
         self.parent._admit('reserved-only', 'reservation-r')
-        self.assertEqual(self.parent._status()['members_without_claim'], 1)
+        status = self.parent._status()
+        self.assertEqual((status['members_without_claim'], status['members_dead']), (1, 0))
         self.parent._release_unlaunched('reserved-only')
         self.parent._confirmed_dead('worker')
         status = self.parent._status()

@@ -176,21 +176,31 @@ unowned claim`). Revoking an unowned task is a no-op returning the task. There
 are no expiring ownership leases.
 
 A claimed, blocked or submitted task row (`task(id)`, `tasks()`, the summary's
-first 50 tasks) also says how its owner is doing, read side only (#1969):
-`contact` names the owner as a `send` recipient
-(`board.send(request, '<owner id>', body)`), `owner_last_activity` is the
-number of seconds since the owner's most recent board event by the store
-clock, and `owner_state` is the store's conservative view of that member:
-`dead` when the harness that launched it confirmed its exit, `idle` when it has
-written no board event for 300 seconds, `active` otherwise, `unknown` for a
-member row or activity the store cannot find. Board activity is the only
-liveness the store sees: an idle owner may be mid-turn running a long command,
-so `idle` is a prompt to look (or `send`), not proof of a stall, and nothing
-follows from it automatically. A provider suspension is a harness fact the
-board cannot see; `agent_cmd status` (get_state's `automaticTurnsSuspended`)
-is the source for that. Unowned tasks carry none of these fields. The
-summary's `counts` add `members_without_claim` (live or reserved members other
-than the coordinator holding no active claim) and `members_dead`.
+first 50 tasks) also says how its owner is doing, read side only (#1969).
+`owner_last_activity` is the number of seconds since the owner's most recent
+board event by the store clock. `owner_state` is the store's affirmative view
+of that member, authoritative signals first: `dead` when the harness that
+launched it confirmed its exit; `lost` when its harness loss was recorded
+(`scope_unknown` after its latest activation, #1924/#1961); `reserved` when it
+was admitted but never launched; `active` or `idle` only for a live launched
+member, `idle` meaning it has written no board event for 300 seconds; and
+`unknown` for anything else. An `active` or `idle` owner is named as a `send`
+recipient in `contact` (`board.send(request, '<owner id>', body)`); for every
+other owner `contact` is null and `recovery` says how the coordinator moves the
+work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
+then `revoke`, for a lost one). Board activity is the only liveness the store
+sees: an idle owner may be mid-turn running a long command, so `idle` is a
+prompt to look (or `send`), not proof of a stall, and nothing follows from it
+automatically. A provider suspension is a harness fact the board cannot see;
+`agent_cmd status` (get_state's `automaticTurnsSuspended`) is the source for
+that. Unowned tasks carry none of these fields. The summary's `counts` add
+`members_without_claim` (live or reserved members other than the coordinator
+holding no active claim) and `members_dead`. Because an owner turns idle by
+the clock alone, with no event to move the cursor, `summary(since=cursor)`
+returns a full summary rather than `unchanged` while an owner is idle who was
+not at the time of the cursor's event, and both responses carry
+`next_liveness_check_at`, the store-clock instant the earliest active owner
+would turn idle (null when none would), so a caller knows when to look again.
 
 These are **cooperative reservations**, not mandatory locks: Bash and arbitrary
 Python can bypass them. The container is the external containment boundary,
