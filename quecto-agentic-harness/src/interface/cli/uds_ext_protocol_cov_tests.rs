@@ -434,6 +434,9 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -470,6 +473,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         provider_reload: None,
         provider_reload_inputs: None,
         save_session,
+        rewrite,
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };
@@ -535,6 +539,9 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     let tools = [tool_reg("weather"), tool_reg("blocked_ext")];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -571,6 +578,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         provider_reload: None,
         provider_reload_inputs: None,
         save_session,
+        rewrite,
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };

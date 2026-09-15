@@ -1,7 +1,7 @@
 //! Capability-local ports of the sessions capability (#1960, #1970, #1972,
-//! #1974): session persistence and the context spill store here, the
-//! outbound export port in [`export`], the session-runtime observations
-//! the save transaction snapshots in [`session_runtime`]. Infrastructure
+//! #1974, #1975): session persistence and the context spill store here,
+//! the outbound export port in [`export`], the session-runtime ports the
+//! save, clear and rewind transactions reach in [`session_runtime`]. Infrastructure
 //! implements them over files. Signatures name only domain values and the
 //! capability's own DTOs: every operation is keyed by the typed
 //! [`SessionIdentity`], never by a raw string, filename or path.

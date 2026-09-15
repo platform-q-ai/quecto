@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -20,6 +20,10 @@
 //! - D5: one owner of the save transaction: the interface holds no
 //!   persistence policy (watermark, dirty latch, killing exit, roster
 //!   snapshot, ordinal assignment) and never writes the store directly.
+//! - D6: one owner each of the clear and rewind transactions: the
+//!   interface neither edits the conversation, resolves a rewind target,
+//!   resets the ledger or the watermark, nor clears the retention
+//!   namespace itself; the handlers admit, request and present.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -48,6 +52,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/export_session_report.rs",
     "src/application/sessions/use_cases/synchronize_transcript.rs",
     "src/application/sessions/use_cases/save_session.rs",
+    "src/application/sessions/use_cases/clear_conversation.rs",
+    "src/application/sessions/use_cases/rewind_conversation.rs",
     "src/application/sessions/ports/export.rs",
     "src/application/sessions/ports/session_runtime.rs",
     "src/application/sessions/dto/history.rs",
@@ -55,6 +61,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/session_report.rs",
     "src/application/sessions/dto/sync.rs",
     "src/application/sessions/dto/save_session.rs",
+    "src/application/sessions/dto/clear_conversation.rs",
+    "src/application/sessions/dto/rewind_conversation.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
@@ -65,13 +73,16 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/session_report.rs",
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/uds_sync.rs",
+    "src/interface/cli/uds_turn_accounting.rs",
     "src/interface/uds/sessions/controller.rs",
     "src/interface/uds/sessions/read_history_controller.rs",
     "src/interface/uds/sessions/recover_message_controller.rs",
     "src/interface/uds/sessions/export_report_controller.rs",
     "src/infrastructure/session_export.rs",
     "src/interface/uds/sessions/synchronize_transcript_controller.rs",
+    "src/interface/uds/sessions/rewind_conversation_controller.rs",
     "src/domain/conversation_view.rs",
+    "src/domain/conversation_edit.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/session_identity.rs",
 ];
@@ -98,6 +109,10 @@ const SESSION_PORTS: &[(&str, &str)] = &[
     (
         "HistoricalRosterSource",
         "tests/contracts/historical_roster_source.rs",
+    ),
+    (
+        "TurnAccountingReset",
+        "tests/contracts/turn_accounting_reset.rs",
     ),
 ];
 
@@ -160,6 +175,14 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "RegistryRosterSource::new(",
         "src/composition/active_session.rs",
     ),
+    (
+        "ClearConversation::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "RewindConversation::new(",
+        "src/composition/active_session.rs",
+    ),
 ];
 
 /// The one production file that may spell the export root (D4): the loop's
@@ -200,6 +223,21 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "fn inject_system_prompt(",
     "fn remove_injected_system_prompt(",
     "session_store_ordinals",
+    // D6 (#1975): the clear and rewind transactions' edits, target
+    // resolution, ledger reset and refusal texts live in the domain and the
+    // application; the interface admits, requests and presents. (The fresh
+    // session's own watermark reset and spill clear are D7 #1976's.)
+    "fn clear_conversation(",
+    "fn resolve_rewind_target(",
+    "fn rewind_to_message_index(",
+    "fn truncate_at_user_message(",
+    "fn remove_spill_references(",
+    "fn reset_to(",
+    "rewind target not found",
+    "invalid rewind target",
+    "rewind requires messageId",
+    "failed to save cleared session",
+    "failed to save rewound session",
 ];
 
 /// The interface files still holding a raw persisted key the active session
@@ -276,10 +314,14 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/session_report.rs", 150),
     ("src/application/sessions/dto/sync.rs", 65),
     ("src/application/sessions/dto/save_session.rs", 68),
+    ("src/application/sessions/dto/clear_conversation.rs", 50),
+    ("src/application/sessions/dto/rewind_conversation.rs", 90),
     ("src/application/sessions/history_paging.rs", 65),
     ("src/application/sessions/ports.rs", 135),
     ("src/application/sessions/ports/export.rs", 30),
-    ("src/application/sessions/ports/session_runtime.rs", 29),
+    // D6 #1975 adds the accounting-reset port beside the save observations
+    // (was 29 before D6).
+    ("src/application/sessions/ports/session_runtime.rs", 42),
     (
         "src/application/sessions/use_cases/export_session_report.rs",
         180,
@@ -292,9 +334,17 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         110,
     ),
     ("src/application/sessions/use_cases/save_session.rs", 268),
-    // D3 #1973, D4 #1974 and D5 #1972 each add a use case to this graph;
-    // the ceiling follows their merge (was 68 on the D5 branch alone).
-    ("src/composition/active_session.rs", 77),
+    (
+        "src/application/sessions/use_cases/clear_conversation.rs",
+        105,
+    ),
+    (
+        "src/application/sessions/use_cases/rewind_conversation.rs",
+        145,
+    ),
+    // D3 #1973, D4 #1974, D5 #1972 and D6 #1975 each add use cases to this
+    // graph; the ceiling follows their merge (was 77 before D6).
+    ("src/composition/active_session.rs", 93),
     ("src/composition/session_report.rs", 40),
     ("src/composition/sessions.rs", 38),
     (
@@ -316,16 +366,17 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/agent/run_session.rs", 140),
     ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
-    ("src/interface/cli/uds_dispatch_session.rs", 570),
+    ("src/interface/cli/uds_dispatch_session.rs", 540),
     ("src/interface/cli/uds_latest_report.rs", 85),
     ("src/interface/cli/uds_lifecycle.rs", 330),
     ("src/interface/cli/uds_multi.rs", 642),
-    // Same merge of D3/D4/D5 handles (was 97 on the D5 branch alone).
-    ("src/interface/cli/uds_session_handles.rs", 105),
+    // Same merge of D3/D4/D5/D6 handles (was 105 before D6).
+    ("src/interface/cli/uds_session_handles.rs", 111),
+    ("src/interface/cli/uds_turn_accounting.rs", 40),
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
-    ("src/interface/cli/uds_snapshots.rs", 320),
+    ("src/interface/cli/uds_snapshots.rs", 282),
     ("src/interface/cli/uds_sync.rs", 135),
     ("src/interface/uds/sessions/controller.rs", 36),
     ("src/interface/uds/sessions/export_report_controller.rs", 45),
@@ -338,6 +389,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/synchronize_transcript_controller.rs",
         85,
     ),
+    (
+        "src/interface/uds/sessions/rewind_conversation_controller.rs",
+        40,
+    ),
+    ("src/domain/conversation_edit.rs", 100),
 ];
 
 fn files_under(root: &str) -> Vec<String> {
@@ -670,6 +726,35 @@ fn interface_never_saves_the_store_directly() {
             "{file} requests `{trigger}`"
         );
     }
+}
+
+/// D6 retirement (#1975): the clear and rewind commands are requested from
+/// exactly one interface site through the injected handles — the idle
+/// dispatch handlers — with the protocol page size handed to the rewind
+/// controller; no other interface production line requests either
+/// transaction, and no interface file implements the rewind edit or
+/// target resolution itself (the forbidden-needle check above).
+#[test]
+fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
+    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    for needle in [
+        ".rewrite.clear.clone()",
+        ".rewrite.rewind.clone()",
+        ".into_request(HISTORY_PAGE_SIZE)",
+        "LoopTurnAccounting::new(",
+    ] {
+        let sites: BTreeSet<String> = production_files_calling(needle)
+            .into_iter()
+            .filter(|path| path.starts_with("src/interface/"))
+            .collect();
+        assert_eq!(sites, set(&[handlers]), "{needle} is the handlers' alone");
+    }
+    let adapters = production_files_calling("impl TurnAccountingReset for");
+    assert_eq!(
+        adapters,
+        set(&["src/interface/cli/uds_turn_accounting.rs"]),
+        "one production adapter of the accounting-reset port"
+    );
 }
 
 #[test]

@@ -177,3 +177,59 @@ async fn rewind_to_drops_rewound_away_message_ref() {
         "a surviving message must still resolve after rewind"
     );
 }
+
+// ─── D6 (#1975): the streaming refusals are admission, pinned on the wire ──
+
+/// Drive `handler` with the agent streaming over a two-turn conversation
+/// and a valid user target; returns the events the handler emitted.
+async fn refused_while_streaming(
+    handler: impl AsyncFnOnce(&mut crate::interface::cli::uds::DispatchCtx<'_>) -> bool,
+) -> Vec<serde_json::Value> {
+    let mut fx = Fixture::new();
+    fx.messages.push(Message::user("first"));
+    fx.messages.push(Message::assistant("answer", vec![]));
+    fx.messages.push(Message::user("second"));
+    let before: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    fx.session.set_streaming(true);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    {
+        let mut ctx = fx.ctx();
+        ctx.broadcast_tx = Some(tx);
+        assert!(!handler(&mut ctx).await);
+    }
+    let mut events = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        events.push(serde_json::from_str(line.trim()).unwrap());
+    }
+    let after: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(after, before, "a refused command changes nothing");
+    events
+}
+
+#[tokio::test]
+async fn clear_history_while_streaming_answers_the_refusal_and_touches_nothing() {
+    let events = refused_while_streaming(async |ctx| {
+        handle_clear_history(ctx, Some("c"), "clear_history").await
+    })
+    .await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(
+        events[0]["error"],
+        "cannot clear history while agent is running"
+    );
+}
+
+#[tokio::test]
+async fn rewind_to_while_streaming_answers_the_refusal_and_touches_nothing() {
+    let events = refused_while_streaming(async |ctx| {
+        let target = ctx.messages[2].id().to_string();
+        handle_rewind_to(ctx, Some("r"), "rewind_to", None, Some(target)).await
+    })
+    .await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(events[0]["error"], "cannot rewind while agent is running");
+}

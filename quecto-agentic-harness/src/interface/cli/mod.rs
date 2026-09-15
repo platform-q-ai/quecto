@@ -20,7 +20,7 @@ pub mod uds_cancel;
 mod uds_cancel_history;
 mod uds_control_forward;
 mod uds_delete_all_subagents;
-mod uds_execution_state;
+pub mod uds_execution_state;
 mod uds_progress_forward;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -214,6 +214,7 @@ pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
+pub mod uds_turn_accounting;
 pub mod uds_wire;
 mod uds_workflow_nudge;
 

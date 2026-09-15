@@ -1,20 +1,24 @@
-//! Boundary DTOs of the sessions capability (#1970–#1974). Scope-neutral:
+//! Boundary DTOs of the sessions capability (#1970–#1975). Scope-neutral:
 //! they name sessions by [`SessionIdentity`] and never by a filename or
 //! path, and carry domain values (messages, ids, ranges, ledger positions)
 //! — never a wire value or event.
 
 use crate::domain::session_identity::SessionKeyPrefix;
 
+pub mod clear_conversation;
 pub mod history;
 pub mod message_recovery;
+pub mod rewind_conversation;
 pub mod save_session;
 pub mod session_report;
 pub mod sync;
 
+pub use clear_conversation::{ClearConversationError, ClearedConversation};
 pub use history::{HistoryError, HistoryPage, HistoryQuery};
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
 };
+pub use rewind_conversation::{RewindConversationError, RewindRequest, RewoundConversation};
 pub use save_session::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
 pub use session_report::{
     ExportManifest, ExportRecord, RawExportReceipt, ReportError, ReportPreview, ReportRecovery,

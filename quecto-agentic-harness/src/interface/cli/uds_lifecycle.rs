@@ -312,6 +312,7 @@ async fn single_client_loop(
             fleet_teardown: None,
             list_sessions: sessions.list_sessions.clone(),
             save_session: sessions.save_session.clone(),
+            rewrite: sessions.rewrite.clone(),
         },
     )
     .await;

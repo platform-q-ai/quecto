@@ -1,7 +1,8 @@
-//! The active-session graph of one harness loop (#1971–#1974): the one
+//! The active-session graph of one harness loop (#1971–#1975): the one
 //! application-owned `ActiveSessionState` (R7a), the live-conversation
-//! read, sync and report use cases and the save transaction over it, and
-//! the loop's session handles around them. The loop's raw session key
+//! read, sync and report use cases, the save transaction and the clear
+//! and rewind transactions over it, and the loop's session handles around
+//! them. The loop's raw session key
 //! becomes the typed identity here: the exact persisted-key round-trip,
 //! the only conversion outside persistence. The runtime sources the save
 //! transaction snapshots — the workflow engine and the sub-agent registry
@@ -14,13 +15,16 @@ use crate::application::sessions::ports::{
     HistoricalRosterSource, SessionStore, WorkflowRunSource,
 };
 use crate::application::sessions::use_cases::{
-    ReadHistory, RecoverMessage, SaveSession, SynchronizeTranscript,
+    ClearConversation, ReadHistory, RecoverMessage, RewindConversation, SaveSession,
+    SynchronizeTranscript,
 };
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_snapshot_sources::{
     RegistryRosterSource, WorkflowEngineRunSource,
 };
-use crate::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
+use crate::interface::cli::uds_session_handles::{
+    ConversationRewriteHandles, SessionHandles, SessionLoopInputs,
+};
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
@@ -29,8 +33,9 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 /// The handles of a loop opened on `inputs.session_key` with the loop's
 /// retention backstop, injected prompt, dirty latch, workflow and roster
 /// runtime: the one active-session state, the history, recovery, sync,
-/// report and save use cases over it, `store` and `export`, and the list
-/// controller the sessions composition already built.
+/// report, save, clear and rewind use cases over it, `store` and
+/// `export`, and the list controller the sessions composition already
+/// built.
 pub fn assemble_session_handles(
     inputs: SessionLoopInputs,
     store: Arc<dyn SessionStore>,
@@ -60,6 +65,16 @@ pub fn assemble_session_handles(
         roster,
         inputs.ephemeral,
     ));
+    let rewrite = ConversationRewriteHandles {
+        clear: Arc::new(ClearConversation::new(
+            active_session.clone(),
+            save_session.clone(),
+        )),
+        rewind: Arc::new(RewindConversation::new(
+            active_session.clone(),
+            save_session.clone(),
+        )),
+    };
     SessionHandles {
         store,
         list_sessions,
@@ -67,6 +82,7 @@ pub fn assemble_session_handles(
         read_history: Arc::new(ReadHistoryController::new(read_history)),
         recover_message: Arc::new(RecoverMessageController::new(recover_message)),
         save_session,
+        rewrite,
         export_report,
         synchronize_transcript: Arc::new(SynchronizeTranscriptController::new(synchronize)),
     }

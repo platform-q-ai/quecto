@@ -88,6 +88,10 @@ impl EffortFx {
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,
             );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
         DispatchCtx {
             execution_state: self.execution_state.clone(),
             base_dir: self._tmp.path(),
@@ -126,6 +130,7 @@ impl EffortFx {
             provider_reload: None,
             provider_reload_inputs: None,
             save_session,
+            rewrite,
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }

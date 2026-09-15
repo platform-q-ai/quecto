@@ -8,8 +8,7 @@ use super::uds_cancel::{
 use super::uds_session::AgentSession;
 #[cfg(test)]
 use super::uds_session::{
-    clear_conversation, compute_session_stats, compute_session_stats_with_usage,
-    messages_page_json, resolve_rewind_target, rewind_to_message_index,
+    compute_session_stats, compute_session_stats_with_usage, messages_page_json,
 };
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
@@ -19,8 +18,6 @@ use super::uds_workflow_nudge::{
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::{agent_loop::AgentLoopImpl, sessions::ports::SessionStore};
 use crate::domain::message::Message;
-#[cfg(test)]
-use crate::domain::message::Role;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -169,6 +166,9 @@ pub(crate) struct DispatchCtx<'a> {
     /// persistence trigger of this loop requests; it owns the watermark,
     /// the dirty latch and the killing-exit state on the active session.
     pub save_session: SaveSessionHandle,
+    /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
+    /// history-replacing transactions this loop requests once admitted.
+    pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
 }
 type FleetTeardown =
     std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
