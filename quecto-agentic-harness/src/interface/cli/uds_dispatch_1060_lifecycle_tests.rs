@@ -233,3 +233,53 @@ async fn rewind_to_while_streaming_answers_the_refusal_and_touches_nothing() {
     assert_eq!(events[0]["success"], false);
     assert_eq!(events[0]["error"], "cannot rewind while agent is running");
 }
+
+/// D7 (#1976): `new_session` while streaming is refused by the interface's
+/// admission before the transaction runs — nothing is saved, no key is
+/// generated or propagated, the conversation and the identity stay.
+#[tokio::test]
+async fn new_session_while_streaming_answers_the_refusal_and_keeps_the_session() {
+    let mut fx = Fixture::new();
+    fx.messages.push(Message::user("first"));
+    fx.messages.push(Message::assistant("answer", vec![]));
+    let before: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    fx.session.set_streaming(true);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    {
+        let mut ctx = fx.ctx();
+        ctx.broadcast_tx = Some(tx);
+        assert!(!handle_new_session(&mut ctx, Some("n"), "new_session").await);
+    }
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        events.push(serde_json::from_str(line.trim()).unwrap());
+    }
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["id"], "n");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(
+        events[0]["error"],
+        "cannot start a new session while agent is running"
+    );
+    let after: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(after, before, "a refused switch changes nothing");
+    assert_eq!(fx.current_session_key(), "cli:test");
+    assert_eq!(
+        fx.sessions
+            .active_session
+            .read()
+            .await
+            .identity()
+            .runtime_key(),
+        "cli:test"
+    );
+    assert!(
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .is_none(),
+        "no save ran before the admission refusal"
+    );
+}
