@@ -8,6 +8,10 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 
 ## Where config lives
 
+- Global default model: `~/.quecto/config.json` at `agents.defaults.model`, using a qualified `provider/model` id, for example:
+  ```json
+  {"agents": {"defaults": {"model": "openai-oauth/gpt-5.6-sol"}}}
+  ```
 - User registry: `~/.quecto/models.json` (do **not** edit harness source to add a model).
 - API keys / OAuth tokens: credential store via `quecto auth` or env (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Catalogue files carry credential *references* like `"apiKey": "$MY_KEY"` — never literal secrets (a literal in `overrides` is rejected).
 - Valid edits hot-reload into a new catalogue generation — no restart of Quecto or the TUI needed.
