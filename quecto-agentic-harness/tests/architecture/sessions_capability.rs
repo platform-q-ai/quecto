@@ -379,7 +379,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/durable_prefix.rs", 42),
     // D7 #1976 folds the interface reset composition into `switch_to`
     // (was 277 before D7).
-    ("src/application/sessions/active_session.rs", 289),
+    ("src/application/sessions/active_session.rs", 287),
     ("src/application/sessions/conversation_ledger.rs", 295),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
@@ -390,7 +390,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/rewind_conversation.rs", 90),
     (
         "src/application/sessions/dto/start_fresh_conversation.rs",
-        140,
+        136,
     ),
     ("src/application/sessions/history_paging.rs", 65),
     // D7 #1976 declares and re-exports the transition ports module (was
@@ -423,29 +423,29 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/application/sessions/use_cases/start_fresh_conversation.rs",
-        120,
+        116,
     ),
     (
         "src/application/sessions/use_cases/departing_children.rs",
-        115,
+        112,
     ),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975 and D7 #1976 each add use
     // cases to this graph; the ceiling follows their merge (was 93 before
     // D7).
-    ("src/composition/active_session.rs", 115),
+    ("src/composition/active_session.rs", 113),
     ("src/composition/session_report.rs", 40),
     // D7 #1976 adds the fresh-identity generator builder (was 38 before D7).
     ("src/composition/sessions.rs", 48),
-    ("src/composition/fleet_settlement.rs", 45),
+    ("src/composition/fleet_settlement.rs", 39),
     (
         "src/infrastructure/persistence/session_snapshot_sources.rs",
         61,
     ),
     (
         "src/infrastructure/persistence/fresh_session_identity.rs",
-        45,
+        41,
     ),
-    ("src/infrastructure/tools/delegated_roster.rs", 45),
+    ("src/infrastructure/tools/delegated_roster.rs", 40),
     (
         "src/infrastructure/persistence/session_store_ordinals.rs",
         23,
@@ -466,9 +466,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_lifecycle.rs", 330),
     ("src/interface/cli/uds_multi.rs", 639),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
-    ("src/interface/cli/uds_session_handles.rs", 128),
+    ("src/interface/cli/uds_session_handles.rs", 125),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
-    ("src/interface/cli/uds_session_switch_runtime.rs", 100),
+    ("src/interface/cli/uds_session_switch_runtime.rs", 93),
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),

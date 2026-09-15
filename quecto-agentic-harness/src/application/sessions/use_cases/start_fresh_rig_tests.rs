@@ -4,7 +4,9 @@
 //! exact order in which the transaction settled, saved, replaced,
 //! released, generated, propagated, switched and cleared is observable —
 //! and so a `claim` of the fresh identity, which must never happen, would
-//! be journaled too.
+//! be journaled too. The store's `release` and the runtime's key
+//! propagation also journal the active session's identity at call time,
+//! so a switch that ran too early is visible in the journal.
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,10 +37,26 @@ fn note(journal: &Journal, entry: impl Into<String>) {
     journal.lock().unwrap().push(entry.into());
 }
 
-/// A store that journals every write, claim and release.
+fn active_identity(state: &Option<ActiveSessionHandle>) -> String {
+    state
+        .as_ref()
+        .map(|state| {
+            state
+                .try_read()
+                .unwrap()
+                .identity()
+                .runtime_key()
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// A store that journals every write, claim and release (a release with the
+/// identity the active session stands for at that moment).
 pub(crate) struct RecordingStore {
     journal: Journal,
     fail_save: bool,
+    state: Mutex<Option<ActiveSessionHandle>>,
     pub(crate) saved: Mutex<Vec<Vec<Message>>>,
     pub(crate) claimed: Mutex<Vec<String>>,
     pub(crate) released: Mutex<Vec<String>>,
@@ -72,9 +90,10 @@ impl SessionStore for RecordingStore {
         Ok(())
     }
     fn release(&self, identity: &SessionIdentity) {
+        let active = active_identity(&self.state.lock().unwrap());
         note(
             &self.journal,
-            format!("store.release({})", identity.runtime_key()),
+            format!("store.release({})@active={active}", identity.runtime_key()),
         );
         self.released
             .lock()
@@ -193,9 +212,11 @@ impl DelegatedChildrenRoster for FakeRoster {
     }
 }
 
-/// Journals every runtime effect with its argument.
+/// Journals every runtime effect with its argument (the key propagation
+/// with the identity the active session stands for at that moment).
 pub(crate) struct RecordingRuntime {
     journal: Journal,
+    state: Option<ActiveSessionHandle>,
     pub(crate) propagated: Vec<String>,
     pub(crate) resets: Vec<usize>,
 }
@@ -212,9 +233,10 @@ impl TurnAccountingReset for RecordingRuntime {
 
 impl SessionKeyPropagation for RecordingRuntime {
     fn session_key_changed(&mut self, identity: &SessionIdentity) {
+        let active = active_identity(&self.state);
         note(
             &self.journal,
-            format!("key.propagate({})", identity.runtime_key()),
+            format!("key.propagate({})@active={active}", identity.runtime_key()),
         );
         self.propagated.push(identity.runtime_key().to_string());
     }
@@ -269,6 +291,7 @@ impl FreshRig {
     pub(crate) fn runtime(&self) -> RecordingRuntime {
         RecordingRuntime {
             journal: self.journal.clone(),
+            state: Some(self.state.clone()),
             propagated: Vec::new(),
             resets: Vec::new(),
         }
@@ -357,6 +380,7 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
     let store = Arc::new(RecordingStore {
         journal: journal.clone(),
         fail_save: options.save_fails,
+        state: Mutex::new(Some(state.clone())),
         saved: Mutex::new(Vec::new()),
         claimed: Mutex::new(Vec::new()),
         released: Mutex::new(Vec::new()),
@@ -472,12 +496,12 @@ async fn the_fakes_journal_and_fail_as_told() {
         rig.journal(),
         [
             "store.claim(cli:departing)",
-            "store.release(cli:departing)",
+            "store.release(cli:departing)@active=cli:departing",
             "store.save",
             "retention.clear(cli:departing)",
             "roster.clear",
             "accounting.reset(4)",
-            "key.propagate(cli:departing)",
+            "key.propagate(cli:departing)@active=cli:departing",
             "effort.reset",
             "workflow.reset",
             "fleet.settle",

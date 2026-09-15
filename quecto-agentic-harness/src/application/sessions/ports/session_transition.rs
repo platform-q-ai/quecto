@@ -50,7 +50,10 @@ pub trait SessionKeyPropagation: Send {
 /// Port: the loop runtime a session switch moves besides the conversation
 /// — its turn accounting, the key propagation, and the session-scoped
 /// settings that must not follow the client into the new session: the
-/// effort override (#1067) and the workflow run.
+/// effort override (#1067) and the workflow run. Whether a reset is made
+/// visible to clients (the tracker's generation bumps only when the effort
+/// or the workflow snapshot actually changed) is the adapter's rule,
+/// master-verbatim and contract-tested; the transaction only orders it.
 pub trait SessionSwitchRuntime: TurnAccountingReset + SessionKeyPropagation {
     fn reset_effort_to_default(&mut self);
     fn reset_workflow(&mut self);

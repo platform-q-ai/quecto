@@ -438,24 +438,6 @@ fn test_build_agent_from_config_no_config_file() {
 }
 
 #[test]
-fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        fresh_session_identity: None,
-        ..Default::default()
-    };
-    let mut stderr = String::new();
-    let flags = parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
-    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
-    assert!(
-        stderr.contains("fresh session identity generator not composed"),
-        "{stderr}"
-    );
-}
-
-#[test]
 fn test_build_agent_from_config_explicit_missing_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {

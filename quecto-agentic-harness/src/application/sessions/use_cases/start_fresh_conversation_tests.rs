@@ -45,8 +45,11 @@ async fn success_runs_every_baseline_step_in_order_and_never_claims_the_fresh_ke
             "roster.clear",
             "accounting.reset(0)",
             "identity.generate(chat-1700000000-2a)",
-            "store.release(cli:departing)",
-            "key.propagate(chat-1700000000-2a)",
+            // The old ownership is released and the key propagated while
+            // the active session still stands for the departing identity:
+            // the switch comes after.
+            "store.release(cli:departing)@active=cli:departing",
+            "key.propagate(chat-1700000000-2a)@active=cli:departing",
             "effort.reset",
             "workflow.reset",
             "retention.clear(chat-1700000000-2a)",
@@ -297,8 +300,8 @@ async fn without_a_retention_store_or_a_roster_the_switch_still_completes() {
             "store.save_clean_delta",
             "accounting.reset(0)",
             "identity.generate(chat-1700000000-2a)",
-            "store.release(cli:departing)",
-            "key.propagate(chat-1700000000-2a)",
+            "store.release(cli:departing)@active=cli:departing",
+            "key.propagate(chat-1700000000-2a)@active=cli:departing",
             "effort.reset",
             "workflow.reset",
         ]

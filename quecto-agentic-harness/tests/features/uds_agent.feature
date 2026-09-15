@@ -241,7 +241,7 @@ Feature: UDS mode for headless agent operation
   # ─── new_session command (#1862, D7 #1976) ──────────────────────────────────
 
   @done @issue-1976 @issue-1862
-  Scenario: new_session moves the loop to a fresh, distinct chat key and empties the conversation
+  Scenario: new_session moves an ephemeral loop to a fresh, distinct chat key and empties the conversation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "first reply"
