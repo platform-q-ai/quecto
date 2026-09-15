@@ -14,6 +14,7 @@ fn args(s: &str) -> Vec<String> {
 fn default_ctx() -> CliContext {
     CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     }
 }
@@ -427,6 +428,7 @@ fn test_build_agent_from_config_no_config_file() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -466,6 +468,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -508,6 +511,7 @@ fn test_build_agent_from_config_invalid_json() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -552,6 +556,7 @@ fn test_build_agent_from_config_no_providers() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -596,6 +601,7 @@ fn test_build_agent_from_config_with_model_override() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };

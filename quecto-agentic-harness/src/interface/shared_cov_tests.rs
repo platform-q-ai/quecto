@@ -596,6 +596,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 sandbox,
                 exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
                 session_key: "shared-runtime".into(),
+                recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
                 spawned: false,
                 parent_session_name: Some("parent".into()),
                 parent_config_path: None,

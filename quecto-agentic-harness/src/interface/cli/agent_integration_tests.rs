@@ -75,6 +75,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     }
@@ -104,7 +105,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         model: "test-model".to_string(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -137,6 +138,7 @@ fn test_agent_with_valid_config_provider_error() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test"), &ctx);
@@ -160,6 +162,7 @@ fn test_agent_ephemeral_session_no_file_created() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -200,6 +203,7 @@ fn test_agent_with_system_prompt_and_config() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -225,6 +229,7 @@ fn test_agent_with_max_time_reaches_deadline_path() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -255,6 +260,7 @@ fn test_agent_named_session_creates_no_file_on_error() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -280,6 +286,7 @@ fn test_agent_with_model_override_and_config() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -304,6 +311,7 @@ fn test_agent_with_max_iterations_and_config() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -328,6 +336,7 @@ fn test_agent_with_all_flags_and_config() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -376,6 +385,7 @@ fn test_run_agent_session_ephemeral_no_save() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -411,6 +421,7 @@ fn test_run_agent_session_ephemeral_scrubs_spill_file() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -449,6 +460,7 @@ fn test_run_agent_session_named_session_keeps_spill_file() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -473,6 +485,7 @@ fn test_run_agent_session_default_session_key() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -495,6 +508,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -518,6 +532,7 @@ fn test_run_agent_session_with_deadline() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -552,7 +567,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         model: "test-model".to_string(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -625,6 +640,7 @@ fn test_run_agent_session_loads_existing_session() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -662,6 +678,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
+        &crate::composition::sessions::build_retention_handles(tmp.path()),
         &flags,
         &mut out,
     );
@@ -719,6 +736,7 @@ fn test_agent_with_anthropic_provider_reaches_session() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test-anthropic"), &ctx);
@@ -738,6 +756,7 @@ fn test_agent_with_both_providers_reaches_session() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         ..Default::default()
     };
     let out = run_with_output(args("agent -m test-both"), &ctx);

@@ -39,6 +39,9 @@ pub(super) struct Fixture {
     pub(super) provider_reload_inputs:
         Option<crate::interface::cli::provider_reload::ProviderReloadInputs>,
     pub(super) provider_reload: Option<crate::interface::cli::provider_reload::ProviderReload>,
+    /// The retention store paired with the active session (D9 #1978): the
+    /// loop hands it to the sessions graph itself, never via the agent.
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
 }
 
 impl Fixture {
@@ -64,6 +67,7 @@ impl Fixture {
             subagent_registry: None,
             provider_reload_inputs: None,
             provider_reload: None,
+            spill_store: None,
         };
         fixture.compose_sessions();
         fixture
@@ -85,7 +89,7 @@ impl Fixture {
         inputs.store = Some(self.store.clone());
         inputs.ephemeral = self.ephemeral;
         inputs.system_prompt = self.system_prompt.clone();
-        inputs.spill_store = self.agent.spill_store().cloned();
+        inputs.spill_store = self.spill_store.clone();
         inputs.durable_prefix = self.latch.clone();
         inputs.subagent_registry = self.subagent_registry.clone();
         self.sessions = crate::composition::sessions::build_session_handles(inputs);
@@ -102,11 +106,20 @@ impl Fixture {
         self
     }
 
-    /// Replace the agent; it adopts the fixture's shared dirty latch and
-    /// pairs its retention store with the active session.
+    /// Replace the agent; it adopts the fixture's shared dirty latch.
     pub(super) fn set_agent(&mut self, mut agent: AgentLoopImpl) {
         agent.adopt_durable_prefix_latch(self.latch.clone());
         self.agent = agent;
+        self.compose_sessions();
+    }
+
+    /// Pair a retention store with the active session, as the loop pairs
+    /// the run's one store at startup (D9 #1978).
+    pub(super) fn set_retention(
+        &mut self,
+        store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+    ) {
+        self.spill_store = store;
         self.compose_sessions();
     }
 

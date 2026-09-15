@@ -108,7 +108,9 @@ async fn test_spill_preserves_message_content_after_spill() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store.clone()),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store.clone(),
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -153,7 +155,9 @@ fn tight_budget_agent(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store,
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
@@ -352,7 +356,9 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(Arc::new(FailingSpillStore)),
+        retention: Some(crate::composition::retention::context_retention_over(
+            Arc::new(FailingSpillStore),
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -412,7 +418,9 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store.clone()),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store.clone(),
+        )),
         session_key: String::new(), // ephemeral: --no-session
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,

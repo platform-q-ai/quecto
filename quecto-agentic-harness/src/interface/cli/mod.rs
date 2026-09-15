@@ -183,6 +183,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 #[cfg(any(test, feature = "test-support"))]
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
+pub mod retention_handles;
 #[cfg(test)]
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
@@ -302,6 +303,13 @@ pub type TeardownHandlesBuilder =
 pub type SessionHandlesBuilder =
     fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
 
+/// Composition's builder of the handles one run holds on retained context
+/// (D9 #1978): the retention store, the recall use case and the pruning
+/// policy's writer/reader, composed over the run's base directory.
+/// Injected through the CLI context; the interface never constructs the
+/// store or the recall graph.
+pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::RetentionHandles;
+
 /// Composition's builder of the fresh user-chat identity generator (D7
 /// #1976): the one source of a fresh key, for the startup identity of an
 /// unnamed chat run. The fresh-session transaction holds its own injected
@@ -340,6 +348,11 @@ pub struct CliContext {
     /// refuses to start without it, since the interface never constructs
     /// a session store.
     pub sessions: Option<SessionHandlesBuilder>,
+    /// Composition's retained-context handles builder (#1978). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
+    /// run refuses to start without it, since the interface never
+    /// constructs the retention store or the recall graph.
+    pub retention: Option<RetentionHandlesBuilder>,
     /// Composition's fresh-identity generator builder (#1976). Supplied by
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
     /// chat run refuses to start without it.
@@ -440,6 +453,7 @@ pub struct CliComposition {
     pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
     pub sessions: SessionHandlesBuilder,
+    pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
 }
 
@@ -461,6 +475,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
         sessions: Some(composition.sessions),
+        retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         ..Default::default()
     };

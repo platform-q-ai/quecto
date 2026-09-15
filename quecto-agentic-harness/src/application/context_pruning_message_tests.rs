@@ -7,6 +7,7 @@ use std::{future::Future, pin::Pin};
 
 use super::messages::*;
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::ports::SpillIndexList;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{SpillEntry, SpillIndex};
@@ -14,6 +15,12 @@ use crate::domain::session_identity::{SessionIdentity, SpillId};
 
 fn id(k: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(k)
+}
+
+/// The narrow handles the policy consumes, composed over the test store
+/// exactly as the runtime composes them (D9 #1978).
+fn retention(store: &Arc<MemStore>) -> crate::application::context::ContextRetention {
+    crate::composition::retention::context_retention_over(store.clone())
 }
 
 /// Minimal in-memory spill store for the creation-time spill path.
@@ -434,10 +441,10 @@ fn ladder_never_demotes_pinned_or_exempt_and_reports_unmet_budget() {
 
 #[tokio::test]
 async fn spill_conversation_message_appends_full_content_and_stamps_id() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut msg = Message::assistant("the full assistant reply text", vec![]);
     msg.turn = Some(3);
-    spill_conversation_message(&mut msg, &store, &id("s")).await;
+    spill_conversation_message(&mut msg, &retention(&store).retain, &id("s")).await;
     assert_eq!(
         msg.spill_id.as_deref(),
         Some("turn3:msg:assistant"),
@@ -460,13 +467,13 @@ async fn spill_conversation_message_appends_full_content_and_stamps_id() {
 async fn spill_conversation_message_dedups_ids_across_prompts() {
     // Turn numbering restarts each prompt: two turn-1 assistant replies in one
     // session must get distinct, individually recallable ids.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut first = Message::assistant("prompt A reply", vec![]);
     first.turn = Some(1);
-    spill_conversation_message(&mut first, &store, &id("s")).await;
+    spill_conversation_message(&mut first, &retention(&store).retain, &id("s")).await;
     let mut second = Message::assistant("prompt B reply", vec![]);
     second.turn = Some(1);
-    spill_conversation_message(&mut second, &store, &id("s")).await;
+    spill_conversation_message(&mut second, &retention(&store).retain, &id("s")).await;
     assert_eq!(second.spill_id.as_deref(), Some("turn1:msg:assistant:2"));
     let entry = store
         .recall(&id("s"), &SpillId::new("turn1:msg:assistant:2"))
@@ -573,10 +580,10 @@ fn current_run_recent_turns_are_exempt_from_message_collapse() {
 
 #[tokio::test]
 async fn spill_conversation_message_persists_for_ephemeral_sessions() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut msg = Message::assistant("ephemeral reply text", vec![]);
     msg.turn = Some(1);
-    let written = spill_conversation_message(&mut msg, &store, &id("")).await;
+    let written = spill_conversation_message(&mut msg, &retention(&store).retain, &id("")).await;
     assert!(
         written,
         "an ephemeral (empty-key) session must still spill conversation \
@@ -674,14 +681,14 @@ fn ladder_second_rung_drops_the_oldest_stub_first() {
 
 #[tokio::test]
 async fn creation_spill_third_collision_mints_suffix_3() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     for (i, text) in ["prompt A reply", "prompt B reply", "prompt C reply"]
         .iter()
         .enumerate()
     {
         let mut msg = Message::assistant(*text, vec![]);
         msg.turn = Some(1);
-        spill_conversation_message(&mut msg, &store, &id("s")).await;
+        spill_conversation_message(&mut msg, &retention(&store).retain, &id("s")).await;
         let expected = match i {
             0 => "turn1:msg:assistant".to_string(),
             n => format!("turn1:msg:assistant:{}", n + 1),
@@ -709,7 +716,7 @@ async fn mem_store_default_has_entries_is_false() {
 
 #[tokio::test]
 async fn mem_store_trait_surface_clear_empties_entries() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let entry = SpillEntry {
         id: "id1".into(),
         tool: "bash".into(),

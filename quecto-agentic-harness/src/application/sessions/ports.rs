@@ -1,5 +1,5 @@
 //! Capability-local ports of the sessions capability (#1960, #1970, #1972,
-//! #1974, #1975, #1976): session persistence and the context spill store
+//! #1974, #1975, #1976, #1978): session persistence and the context spill store
 //! here, the outbound export port in [`export`], the session-runtime ports
 //! the save, clear and rewind transactions reach in [`session_runtime`],
 //! the transition ports the fresh session reaches in
@@ -135,6 +135,12 @@ pub trait ContextSpillStore: Send + Sync {
         &self,
         identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
+
+    /// Remove the namespace of `identity` entirely, synchronously and
+    /// best-effort (D9 #1978): the run-end scrub of an ephemeral run's
+    /// retained content, reached from exit paths without a live runtime.
+    /// Stores without durable state need nothing.
+    fn scrub_sync(&self, _identity: &SessionIdentity) {}
 }
 
 #[cfg(test)]

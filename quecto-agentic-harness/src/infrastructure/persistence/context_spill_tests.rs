@@ -320,7 +320,7 @@ async fn test_recall_finds_entry_among_many() {
 }
 
 #[tokio::test]
-async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
+async fn scrub_sync_removes_ephemeral_spill_file_and_dir() {
     let tmp = TempDir::new().unwrap();
     let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     // Ephemeral runs spill under the sanitized empty key.
@@ -328,7 +328,7 @@ async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
     let path = store.spill_path(&id(""));
     assert!(path.exists(), "positive control: the spill file must exist");
 
-    FileContextSpillStore::scrub_session_spill_sync(&FlatSessionLayout::new(tmp.path()), &id(""));
+    store.scrub_sync(&id(""));
 
     assert!(
         !path.exists(),
@@ -341,10 +341,10 @@ async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
 }
 
 #[test]
-fn scrub_session_spill_sync_is_a_noop_when_nothing_was_spilled() {
+fn scrub_sync_is_a_noop_when_nothing_was_spilled() {
     let tmp = TempDir::new().unwrap();
     // Must not panic or create anything when no spill file exists.
-    FileContextSpillStore::scrub_session_spill_sync(&FlatSessionLayout::new(tmp.path()), &id(""));
+    FileContextSpillStore::new(FlatSessionLayout::new(tmp.path())).scrub_sync(&id(""));
     assert!(!tmp.path().join("sessions").exists());
 }
 

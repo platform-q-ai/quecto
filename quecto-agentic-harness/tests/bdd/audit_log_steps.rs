@@ -385,7 +385,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         model: "test-model".into(),
         max_tokens: 1000,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "bdd".into(),
         context_collapse_after_tool_calls: 100,
         max_context_tokens: 100_000,

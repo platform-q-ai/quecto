@@ -21,12 +21,30 @@
 //!   and physical drops.
 
 use crate::application::context_pruning;
-use crate::application::sessions::ports::ContextSpillStore;
+use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::SpillEntry;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
+
+/// The narrow handles the pruning policy holds on the sessions
+/// capability's retention namespace (D9 #1978): the writer that appends
+/// an entry under the caller's id and the reader that says whether the
+/// namespace holds anything. Composition builds both over the one
+/// retention store; the policy never reaches the store, its file or its
+/// cache. `None` on the loop config means the loop retains nothing.
+#[derive(Clone)]
+pub struct ContextRetention {
+    pub retain: Arc<RetainContext>,
+    pub list: Arc<ListRetainedContext>,
+}
+
+impl std::fmt::Debug for ContextRetention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextRetention").finish_non_exhaustive()
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct ContextGaugeCalibration {
@@ -80,7 +98,7 @@ impl ContextGaugeCalibration {
 }
 
 pub struct ContextManagerConfig {
-    pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    pub retention: Option<ContextRetention>,
     pub session_key: SessionIdentity,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
@@ -90,7 +108,7 @@ pub struct ContextManagerConfig {
 }
 
 pub(crate) struct ContextManager {
-    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    retention: Option<ContextRetention>,
     session_key: SessionIdentity,
     context_collapse_after_tool_calls: u32,
     max_context_tokens: usize,
@@ -121,7 +139,7 @@ pub(crate) struct ToolMessageBuild<'a> {
 impl ContextManager {
     pub fn new(config: ContextManagerConfig) -> Self {
         Self {
-            spill_store: config.spill_store,
+            retention: config.retention,
             session_key: config.session_key,
             context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
@@ -207,7 +225,7 @@ impl ContextManager {
     }
 
     pub async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
-        let Some(spill_store) = self.spill_store.as_ref() else {
+        let Some(retention) = self.retention.as_ref() else {
             return;
         };
 
@@ -222,11 +240,11 @@ impl ContextManager {
             tokens: context_pruning::estimate_tokens(&content),
             content,
         };
-        let result = spill_store.append(&self.session_key, &entry).await;
+        let result = retention.retain.retain(&self.session_key, &entry).await;
         tool_msg.content = entry.content;
         tool_msg.invalidate_token_cache();
         match result {
-            Ok(()) => tool_msg.spill_id = Some(entry.id),
+            Ok(retained) => tool_msg.spill_id = Some(retained.id),
             Err(e) => {
                 tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
             }
@@ -234,10 +252,10 @@ impl ContextManager {
     }
 
     pub async fn spill_conversation_message(&self, msg: &mut Message) {
-        if let Some(spill_store) = self.spill_store.as_ref() {
+        if let Some(retention) = self.retention.as_ref() {
             context_pruning::messages::spill_conversation_message(
                 msg,
-                spill_store.as_ref(),
+                &retention.retain,
                 &self.session_key,
             )
             .await;
@@ -268,10 +286,10 @@ impl ContextManager {
         );
         let mut manifest_shifted = false;
         if spills_dirty || message_spilled {
-            if let Some(spill_store) = self.spill_store.as_ref() {
+            if let Some(retention) = self.retention.as_ref() {
                 manifest_shifted = context_pruning::update_spill_manifest(
                     messages,
-                    spill_store.as_ref(),
+                    &retention.list,
                     &self.session_key,
                 )
                 .await;
@@ -294,7 +312,7 @@ impl ContextManager {
     }
 
     async fn spill_unspilled_conversation_messages(&self, messages: &mut [Message]) -> bool {
-        let Some(spill_store) = self.spill_store.as_ref() else {
+        let Some(retention) = self.retention.as_ref() else {
             return false;
         };
         let mut spilled = false;
@@ -304,7 +322,7 @@ impl ContextManager {
         {
             spilled |= context_pruning::messages::spill_conversation_message(
                 msg,
-                spill_store.as_ref(),
+                &retention.retain,
                 &self.session_key,
             )
             .await;

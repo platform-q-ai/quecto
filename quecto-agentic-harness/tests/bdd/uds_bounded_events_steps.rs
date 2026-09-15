@@ -1569,7 +1569,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: None,
+        retention: None,
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -1594,6 +1594,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            spill_store: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,

@@ -4,6 +4,14 @@ use quecto::domain::session::{SpillEntry, SpillIndex};
 use quecto::domain::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::tools::recall::RecallTool;
 
+/// The recall use case over `store`, composed as the runtime composes it
+/// (D9 #1978): the tool adapts the use case, never the store.
+fn recall_over(
+    store: Arc<dyn quecto::application::sessions::ports::ContextSpillStore>,
+) -> Arc<quecto::application::sessions::use_cases::RecallContext> {
+    quecto::composition::retention::retention_handles_over(store).recall
+}
+
 #[derive(Debug, Default)]
 pub struct BddMemorySpillStore {
     entries_by_session: Mutex<HashMap<String, Vec<SpillEntry>>>,
@@ -120,7 +128,7 @@ fn execute_recall(world: &mut QuectoWorld, id: &str) {
 fn given_recall_tool_with_no_spills(world: &mut QuectoWorld, session_key: String) {
     let store = Arc::new(BddMemorySpillStore::default());
     world.recall_spill_store = Some(store.clone());
-    world.recall_tool = Some(RecallTool::new(store, session_key));
+    world.recall_tool = Some(RecallTool::new(recall_over(store), session_key));
     world.recall_result = None;
 }
 

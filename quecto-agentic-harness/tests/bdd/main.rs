@@ -226,6 +226,14 @@ impl std::ops::Deref for DebugSpillStore {
     }
 }
 
+impl DebugSpillStore {
+    /// The narrow handles the pruning policy consumes, composed over this
+    /// store exactly as the runtime composes them (D9 #1978).
+    fn retention(&self) -> quecto::application::context::ContextRetention {
+        quecto::composition::retention::context_retention_over(self.0.clone())
+    }
+}
+
 // Opaque Debug wrapper for the headless TUI render harness (#805). The harness
 // holds a live `App` (and background tokio tasks) and isn't `Debug`, so wrap it
 // to satisfy the derived `Debug`/`Default` on `QuectoWorld`.

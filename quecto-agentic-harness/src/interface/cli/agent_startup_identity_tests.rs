@@ -9,6 +9,7 @@ fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
     use crate::domain::session::USER_CHAT_PREFIX;
     let ctx = CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..Default::default()
     };
@@ -48,6 +49,7 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
         fresh_session_identity: None,
         ..Default::default()
     };

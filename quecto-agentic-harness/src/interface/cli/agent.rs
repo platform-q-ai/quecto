@@ -5,7 +5,6 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
-use crate::interface::shared::scrub_ephemeral_spill;
 use std::{collections::HashMap, sync::Arc};
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -199,6 +198,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: None,
         admission_context,
         parent_control,
     };
@@ -270,12 +270,22 @@ pub(crate) fn cmd_agent(
             .push_str("agent: sessions capability not composed\n");
         return 1;
     };
-    let code = run_agent_session(&base_dir, sessions, build.agent, &flags, &mut out);
+    let code = run_agent_session(
+        &base_dir,
+        sessions,
+        build.agent,
+        &build.retention,
+        &flags,
+        &mut out,
+    );
     admission_startup::shutdown();
     code
 }
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
+    /// The run's retained-context handles (D9 #1978): the store the loop's
+    /// session recovers through and the scrub the ephemeral exit reaches.
+    pub retention: crate::interface::cli::retention_handles::RetentionHandles,
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     pub extension_prompt_snippets: String,
     pub model: String,
@@ -352,7 +362,7 @@ pub(crate) fn build_agent_from_config(
     });
     let ToolRegistryBuild {
         registry,
-        spill_store,
+        retention,
         session_key,
         model,
         ext_registry,
@@ -417,7 +427,7 @@ pub(crate) fn build_agent_from_config(
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: Some(spill_store),
+        retention: Some(retention.context.clone()),
         session_key,
         context_collapse_after_tool_calls: config.agents.defaults.context_collapse_after_tool_calls,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -447,6 +457,7 @@ pub(crate) fn build_agent_from_config(
     );
     Some(AgentBuildResult {
         agent,
+        retention,
         workflow_config: wf_config,
         extension_prompt_snippets,
         model,
@@ -610,8 +621,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     }
     let mut provider_reload = build.provider_reload;
+    let retention = build.retention;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
+        spill_store: Some(retention.store.clone()),
         base_dir: &base_dir,
         workspace: &build.workspace,
         session_key,
@@ -637,7 +650,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
-    scrub_ephemeral_spill(&base_dir, ephemeral);
+    retention.recall.scrub_ephemeral(ephemeral);
     code
 }
 

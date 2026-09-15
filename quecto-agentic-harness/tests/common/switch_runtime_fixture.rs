@@ -93,7 +93,7 @@ pub fn runtime(session_key: &str) -> Runtime {
         model: "stub".into(),
         max_tokens: 16,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: session_key.into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 10_000,

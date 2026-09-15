@@ -3,22 +3,6 @@
 use crate::infrastructure::auth::credential_store::Credential;
 use std::collections::HashMap;
 
-/// Scrub the ephemeral (empty-key) spill file at run end; no-op for named
-/// sessions. Shared by every ephemeral interface exit path (one-shot CLI,
-/// UDS server). See `FileContextSpillStore::scrub_session_spill_sync`:
-/// ephemeral runs persist spilled content only so the run's own recall()
-/// stubs resolve, and it must never survive the run (PR #1048 security
-/// review).
-pub fn scrub_ephemeral_spill(base_dir: &std::path::Path, ephemeral: bool) {
-    if ephemeral {
-        crate::infrastructure::persistence::context_spill::FileContextSpillStore::
-            scrub_session_spill_sync(
-                &crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(base_dir),
-                &crate::domain::session_identity::SessionIdentity::ephemeral(),
-            );
-    }
-}
-
 /// Merge an optional user-provided system prompt.
 pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     match user_prompt {

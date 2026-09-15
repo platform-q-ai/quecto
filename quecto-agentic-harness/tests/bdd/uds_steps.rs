@@ -199,7 +199,7 @@ pub(crate) fn build_uds_agent(
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: None,
+        retention: None,
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -408,6 +408,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
     let exit_code = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            spill_store: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,
@@ -2114,6 +2115,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            spill_store: None,
             base_dir: &base_dir,
             workspace: &base_dir,
             session_key,
@@ -2532,6 +2534,7 @@ fn mc_spawn_agent(
     let handle = std::thread::spawn(move || {
         quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
             agent,
+            spill_store: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,

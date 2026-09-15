@@ -31,7 +31,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,

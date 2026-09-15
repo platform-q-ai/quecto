@@ -76,7 +76,9 @@ impl ContextSpillStore for MemSpillStore {
 
 fn manager(max_context_tokens: usize) -> ContextManager {
     ContextManager::new(ContextManagerConfig {
-        spill_store: Some(Arc::new(MemSpillStore::default())),
+        retention: Some(crate::composition::retention::context_retention_over(
+            Arc::new(MemSpillStore::default()),
+        )),
         session_key: SessionIdentity::from_persisted_key("test-session"),
         context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
         max_context_tokens,

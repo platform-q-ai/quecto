@@ -98,28 +98,6 @@ impl FileContextSpillStore {
     fn spill_path(&self, identity: &SessionIdentity) -> PathBuf {
         self.layout.spill_file(identity)
     }
-
-    /// Best-effort synchronous removal of a session's on-disk spill file
-    /// (plus its parent directory when that leaves it empty).
-    ///
-    /// Privacy scrub for ephemeral runs (PR #1048 security review): the spill
-    /// writers deliberately persist `--no-session` content under the sanitized
-    /// empty-key path so in-run `recall()` stubs stay resolvable, so ephemeral
-    /// interface paths (one-shot CLI, UDS, REPL) call this at run end to
-    /// guarantee that content does not outlive the run. Synchronous and
-    /// instance-free so exit paths without a live runtime or store handle can
-    /// scrub. Best-effort only: all ephemeral runs share the empty-key path,
-    /// so a concurrent ephemeral run's entries may be scrubbed early (the same
-    /// pre-existing shared-file caveat as the writers themselves).
-    pub fn scrub_session_spill_sync(layout: &FlatSessionLayout, identity: &SessionIdentity) {
-        let path = layout.spill_file(identity);
-        let _ = std::fs::remove_file(&path);
-        if let Some(dir) = path.parent() {
-            // Only succeeds when the directory is now empty — never removes
-            // unrelated session files.
-            let _ = std::fs::remove_dir(dir);
-        }
-    }
 }
 
 /// Lightweight index record for list_entries — avoids deserializing content.
@@ -364,6 +342,29 @@ impl ContextSpillStore for FileContextSpillStore {
                 DomainError::Session(format!("failed to atomically clear spill file: {}", e))
             })
         })
+    }
+
+    /// Best-effort synchronous removal of a session's on-disk spill file
+    /// (plus its parent directory when that leaves it empty).
+    ///
+    /// Privacy scrub for ephemeral runs (PR #1048 security review): the spill
+    /// writers deliberately persist `--no-session` content under the sanitized
+    /// empty-key path so in-run `recall()` stubs stay resolvable, so the
+    /// sessions capability scrubs it at run end (D9 #1978:
+    /// `RecallContext::scrub_ephemeral`) to guarantee that content does not
+    /// outlive the run. Synchronous so exit paths without a live runtime can
+    /// scrub. Best-effort only: all ephemeral runs share the empty-key path,
+    /// so a concurrent ephemeral run's entries may be scrubbed early (the same
+    /// pre-existing shared-file caveat as the writers themselves). The cache
+    /// is not touched: no runtime outlives the scrub.
+    fn scrub_sync(&self, identity: &SessionIdentity) {
+        let path = self.spill_path(identity);
+        let _ = std::fs::remove_file(&path);
+        if let Some(dir) = path.parent() {
+            // Only succeeds when the directory is now empty — never removes
+            // unrelated session files.
+            let _ = std::fs::remove_dir(dir);
+        }
     }
 }
 

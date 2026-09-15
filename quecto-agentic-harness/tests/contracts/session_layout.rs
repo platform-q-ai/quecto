@@ -111,7 +111,7 @@ async fn ephemeral_spill_keeps_the_sanitized_empty_key_file_and_scrubs_it() {
     assert!(file.is_file());
     assert_eq!(layout.spill_file(&ephemeral), file);
 
-    FileContextSpillStore::scrub_session_spill_sync(&layout, &ephemeral);
+    retention.scrub_sync(&ephemeral);
     assert!(!file.exists(), "scrub removes the ephemeral retention file");
     assert!(
         !file.parent().unwrap().exists(),

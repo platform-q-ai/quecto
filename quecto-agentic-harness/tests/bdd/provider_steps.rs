@@ -138,7 +138,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         model: "fireworks/qwen3p7-plus".to_string(),
         max_tokens: configured,
         temperature: 0.7,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
