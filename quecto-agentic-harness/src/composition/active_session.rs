@@ -1,8 +1,8 @@
-//! The active-session graph of one harness loop (#1971–#1976): the one
+//! The active-session graph of one harness loop (#1971–#1977): the one
 //! application-owned `ActiveSessionState` (R7a), the live-conversation
 //! read, sync and report use cases, the save transaction, the clear and
-//! rewind transactions and the fresh-session transaction over it, and the
-//! loop's session handles around them. The loop's raw session key
+//! rewind transactions, the fresh-session and resume transactions over it,
+//! and the loop's session handles around them. The loop's raw session key
 //! becomes the typed identity here: the exact persisted-key round-trip,
 //! the only conversion outside persistence. The runtime sources the save
 //! transaction snapshots — the workflow engine and the sub-agent registry
@@ -18,8 +18,8 @@ use crate::application::sessions::ports::{
     WorkflowRunSource,
 };
 use crate::application::sessions::use_cases::{
-    ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, RewindConversation,
-    SaveSession, StartFreshConversation, SynchronizeTranscript,
+    ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, ResumeSavedSession,
+    RewindConversation, SaveSession, StartFreshConversation, SynchronizeTranscript,
 };
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_snapshot_sources::{
@@ -92,7 +92,13 @@ pub fn assemble_session_handles(
             identities,
             departing_children.clone(),
         )),
-        departing_children,
+        resume: Arc::new(ResumeSavedSession::new(
+            active_session.clone(),
+            save_session.clone(),
+            store.clone(),
+            departing_children,
+            inputs.ephemeral,
+        )),
     };
     SessionHandles {
         store,

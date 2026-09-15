@@ -9,8 +9,8 @@
 //! row here would be a child the teardown did not own, so it is refused
 //! rather than dropped.
 //!
-//! Shared by the fresh-session transaction and, until D8 (#1977) owns it,
-//! by the interface's resume; the two remain distinct transactions.
+//! Shared by the fresh-session and the resume transactions (D8 #1977);
+//! the two remain distinct transactions.
 use std::sync::Arc;
 
 use crate::application::sessions::dto::{
@@ -90,6 +90,21 @@ impl DepartingChildren {
             );
         }
         Ok(dropped)
+    }
+
+    /// Note what a resumed session's persisted rows are: history only
+    /// (#1937). A launcher-created child is lifetime-scoped to the harness
+    /// that launched it, so no persisted record can describe a live child
+    /// of *this* harness. Nothing is probed, compared, monitored or
+    /// readopted; the master re-spawns what it needs. Logged only when the
+    /// loop tracks a roster the rows would otherwise have joined.
+    pub fn note_persisted_rows_are_history(&self, persisted_rows: usize) {
+        if self.roster.is_some() && persisted_rows > 0 {
+            tracing::info!(
+                ignored_rows = persisted_rows,
+                "session restore: persisted subagent rows are history only; no child readopted"
+            );
+        }
     }
 
     fn live_delegated_rows(&self) -> usize {

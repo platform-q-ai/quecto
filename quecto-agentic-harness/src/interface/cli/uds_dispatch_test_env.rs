@@ -204,8 +204,6 @@ impl DispatchTestEnv {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_store: self.store.as_ref(),
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: self.turn_control.clone(),

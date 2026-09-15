@@ -3,10 +3,10 @@
 //! clear/rewind adapter already performs, the raw-key holders the new
 //! identity is propagated to (the [`AgentSession`] tracker, the agent loop
 //! and its session-aware tools), and the session-scoped settings a switch
-//! resets — the effort override (#1067) and the workflow engine's run —
-//! each bumping the tracker's visible generation only when something
-//! changed. The transaction orders these; this adapter performs them and
-//! decides nothing.
+//! resets or restores (D8 #1977) — the effort override (#1067) and the
+//! workflow engine's run — each bumping the tracker's visible generation
+//! only when something changed. The transactions order these; this adapter
+//! performs them and decides nothing.
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;
@@ -66,12 +66,16 @@ impl SessionSwitchRuntime for LoopSessionSwitchRuntime<'_> {
     fn reset_workflow(&mut self) {
         apply_workflow_run(self.workflow_state, self.session, None);
     }
+
+    fn restore_workflow(&mut self, run: crate::domain::workflow::WorkflowRunPersisted) {
+        apply_workflow_run(self.workflow_state, self.session, Some(run));
+    }
 }
 
 /// Replace the bound workflow engine's run — restore `run`, or reset the
 /// engine when there is none — and bump the tracker's visible generation
-/// when the engine's snapshot changed. Shared with the resume handler.
-pub(crate) fn apply_workflow_run(
+/// when the engine's snapshot changed.
+fn apply_workflow_run(
     workflow_state: Option<&WorkflowStateHandle>,
     session: &mut AgentSession,
     run: Option<crate::domain::workflow::WorkflowRunPersisted>,

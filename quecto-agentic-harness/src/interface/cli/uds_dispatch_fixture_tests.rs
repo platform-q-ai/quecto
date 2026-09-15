@@ -165,8 +165,6 @@ impl Fixture {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_store: self.store.as_ref(),
-            ephemeral: self.ephemeral,
             system_prompt: self.system_prompt.as_str(),
             cancel_handle: self.cancel.clone(),
             turn_control: std::sync::Arc::default(),

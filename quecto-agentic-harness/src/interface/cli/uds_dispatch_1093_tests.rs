@@ -201,8 +201,6 @@ impl Fixture {
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: None,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: self.cancel.clone(),
             turn_control: Arc::default(),

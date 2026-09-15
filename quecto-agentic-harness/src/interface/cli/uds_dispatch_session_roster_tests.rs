@@ -11,7 +11,6 @@ use crate::domain::session::{
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
-use crate::interface::cli::uds::uds_dispatch_session::note_persisted_roster_is_history;
 
 /// The roster rows the save transaction records for `registry` under an
 /// explicit `restore_reason` (#1860): a real save through the composed
@@ -75,19 +74,21 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
 
 /// What a resume does with the departing roster once its children have
 /// settled (#1938): note the persisted rows as history, replace the records
-/// through the application's departing-children collaborator (#1976).
+/// through the application's departing-children collaborator (#1976,
+/// #1977).
 pub(crate) fn reset_roster_for_restore(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
-    note_persisted_roster_is_history(registry, persisted);
     let roster = registry.clone().map(|registry| {
         std::sync::Arc::new(
             crate::infrastructure::tools::delegated_roster::RegistryDelegatedRoster::new(registry),
         )
             as std::sync::Arc<dyn crate::application::sessions::ports::DelegatedChildrenRoster>
     });
-    crate::application::sessions::use_cases::DepartingChildren::new(roster)
+    let children = crate::application::sessions::use_cases::DepartingChildren::new(roster);
+    children.note_persisted_rows_are_history(persisted.len());
+    children
         .reset_roster(crate::application::sessions::dto::SessionTransition::Resume)
         .expect("no live delegated row remains");
 }

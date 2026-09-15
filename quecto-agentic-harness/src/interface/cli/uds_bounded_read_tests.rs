@@ -15,7 +15,6 @@
 //! `super` = `uds`.
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -46,9 +45,6 @@ fn make_agent() -> AgentLoopImpl {
 #[tokio::test]
 async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_command() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-    );
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
     let mut session = AgentSession::new("stub".into(), "cli:test".into());
@@ -81,8 +77,6 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut tokio::io::sink()),
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
         turn_control: std::sync::Arc::default(),

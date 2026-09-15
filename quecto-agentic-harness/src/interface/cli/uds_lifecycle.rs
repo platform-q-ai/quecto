@@ -1,8 +1,6 @@
 use super::uds::{DispatchCtx, run_command_loop};
 use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_multi::MultiClientArgs;
-#[path = "uds/uds_session_load.rs"]
-mod uds_session_load;
 use super::uds_session::AgentSession;
 use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use crate::application::agent_loop::AgentLoopImpl;
@@ -14,8 +12,6 @@ pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session_identity::SessionIdentity;
-use uds_session_load::load_session;
 
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
@@ -117,32 +113,18 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         workflow_state: workflow_state.clone(),
         subagent_registry: subagent_registry.clone(),
     });
-    let session_store: &dyn SessionStore = sessions.store.as_ref();
-    let identity = sessions.active_session.read().await.identity().clone();
-    // Refuse at open, not at first save (#1460): a key owned by another
-    // live process must fail before any turn runs against it.
-    if !ephemeral
-        && !session_key.is_empty()
-        && let Err(err) = session_store.claim(&identity)
-    {
-        eprintln!("{err}");
-        return 1;
-    }
-    let loaded_session = match load_session(session_store, &identity, ephemeral).await {
-        Ok(m) => m,
+    // Open the loop's session (#1863, D8 #1977): the transaction claims it
+    // (a key owned by another live process is refused at open, #1460),
+    // loads it and lets the watermark stand for what the store holds.
+    let opened = match sessions.switch.resume.open_at_startup().await {
+        Ok(opened) => opened,
         Err(err) => {
-            eprintln!("failed to load session: {err}");
+            eprintln!("{err}");
             return 1;
         }
     };
-    // What the store holds is the durable prefix the first delta may trust.
-    sessions
-        .active_session
-        .write()
-        .await
-        .set_persisted_watermark(loaded_session.messages.len());
-    let messages = loaded_session.messages;
-    if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
+    let messages = opened.messages;
+    if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
         }
@@ -158,7 +140,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 messages,
                 model,
                 session_key,
-                ephemeral,
                 system_prompt,
                 ext_registry,
                 subagent_registry,
@@ -189,7 +170,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 messages,
                 model,
                 session_key,
-                ephemeral,
                 system_prompt,
                 ext_registry,
                 lifetime,
@@ -218,7 +198,6 @@ struct SingleClientArgs<'a> {
     messages: Vec<Message>,
     model: String,
     session_key: String,
-    ephemeral: bool,
     system_prompt: String,
     ext_registry: Option<ExtRegistry>,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -232,7 +211,6 @@ async fn single_client_loop(
     std_stream: std::os::unix::net::UnixStream,
     sessions: &SessionHandles,
 ) -> i32 {
-    let session_store: &dyn SessionStore = sessions.store.as_ref();
     let SingleClientArgs {
         mut agent,
         base_dir,
@@ -240,7 +218,6 @@ async fn single_client_loop(
         mut messages,
         model,
         session_key,
-        ephemeral,
         system_prompt,
         ext_registry,
         subagent_registry,
@@ -293,8 +270,6 @@ async fn single_client_loop(
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: Some(&mut *writer),
-            session_store,
-            ephemeral,
             system_prompt: &system_prompt,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::<TurnControl>::default(),

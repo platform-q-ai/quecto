@@ -13,7 +13,6 @@ use std::sync::atomic::AtomicU32;
 use super::{ClientCommand, ClientMessage, DispatchCtx, handle_client_msg};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
@@ -46,7 +45,6 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     cancel: CancelHandle,
@@ -56,9 +54,6 @@ struct Fixture {
 impl Fixture {
     fn new() -> (Self, tokio::sync::broadcast::Receiver<String>) {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(
-            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-        );
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
         (
             Self {
@@ -66,7 +61,6 @@ impl Fixture {
                 messages: Vec::new(),
                 session: AgentSession::new("stub".into(), "cli:test".into()),
                 session_key: "cli:test".to_string(),
-                store,
                 _tmp: tmp,
                 writer: tokio::io::sink(),
                 cancel: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
@@ -105,8 +99,6 @@ impl Fixture {
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: self.cancel.clone(),
             turn_control: Arc::default(),

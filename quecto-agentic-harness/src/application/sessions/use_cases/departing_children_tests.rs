@@ -116,3 +116,26 @@ fn the_roster_is_replaced_only_when_no_live_delegated_row_remains() {
     );
     assert!(format!("{:?}", rig.children).contains("tracks_roster: false"));
 }
+
+/// #1937: a resumed session's persisted rows are noted as history only —
+/// nothing is probed, replaced or dropped by the note itself, with or
+/// without a tracked roster.
+#[test]
+fn persisted_rows_are_noted_as_history_and_change_nothing() {
+    let rig = build_fresh_rig(FreshOptions {
+        roster: Some((1, 2)),
+        ..FreshOptions::default()
+    });
+    rig.children.note_persisted_rows_are_history(3);
+    rig.children.note_persisted_rows_are_history(0);
+    let roster = rig.roster.clone().unwrap();
+    assert_eq!(roster.live.load(Ordering::SeqCst), 1);
+    assert_eq!(roster.records.load(Ordering::SeqCst), 2);
+    assert!(rig.journal().is_empty());
+    let rig = build_fresh_rig(FreshOptions {
+        roster: None,
+        ..FreshOptions::default()
+    });
+    rig.children.note_persisted_rows_are_history(3);
+    assert!(rig.journal().is_empty());
+}

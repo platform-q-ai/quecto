@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976, D8 #1977): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -30,6 +30,11 @@
 //!   session-key copy on the dispatch context, and switches no identity
 //!   itself; the loop's raw-key holders adopt the identity through the
 //!   propagation port from exactly one adapter.
+//! - D8: one owner of the resume transaction and of the startup open: the
+//!   interface admits no target, builds no key, claims, loads or releases
+//!   no session, holds no store on the dispatch context and spells none of
+//!   the resume refusal texts; the persisted-roster policy (#1937) and the
+//!   settle-before-switch order (#1938) are the application's.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -62,6 +67,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/rewind_conversation.rs",
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/application/sessions/use_cases/departing_children.rs",
+    "src/application/sessions/use_cases/resume_saved_session.rs",
     "src/application/sessions/ports/export.rs",
     "src/application/sessions/ports/session_runtime.rs",
     "src/application/sessions/ports/session_transition.rs",
@@ -73,6 +79,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/clear_conversation.rs",
     "src/application/sessions/dto/rewind_conversation.rs",
     "src/application/sessions/dto/start_fresh_conversation.rs",
+    "src/application/sessions/dto/resume_saved_session.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
@@ -224,6 +231,11 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "DepartingChildren::new(",
         "src/composition/active_session.rs",
     ),
+    // D8 #1977.
+    (
+        "ResumeSavedSession::new(",
+        "src/composition/active_session.rs",
+    ),
     (
         "RegistryDelegatedRoster::new(",
         "src/composition/active_session.rs",
@@ -303,25 +315,46 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "subagent teardown was interrupted",
     "no fleet teardown is available",
     "remain after the teardown",
-    // (`failed to save current session` stays spelled by the interface's
-    // resume until D8 #1977 owns that transaction.)
     "fn reset_to_with_spill_store(",
     ".switch_identity(",
     "session_key: &'a mut String",
+    // D8 (#1977): the resume transaction — target admission and key
+    // building, the claim/load/release sequence and its refusal texts, the
+    // startup open, the history/workflow restore and the persisted-roster
+    // policy — lives in the application; the handler and the startup paths
+    // admit, request and present. No interface production line claims,
+    // loads or releases a session, or holds the store on the dispatch
+    // context.
+    "fn note_persisted_roster_is_history(",
+    "fn set_workflow_run(",
+    "fn sync_message_count(",
+    "fn load_session(",
+    "cannot resume sessions in ephemeral mode",
+    "failed to save current session",
+    "session not found:",
+    "failed to load session",
+    "strip_prefix(\"cli:\")",
+    "USER_CHAT_PREFIX",
+    "session_store.claim(",
+    "session_store.load(",
+    "session_store.release(",
+    "session_store: &'a dyn SessionStore",
+    ".departing_children",
+    "SessionTransition::Resume",
 ];
 
 /// The interface files still holding a raw persisted key the active session
-/// does not stand for (exact, decrease-only): the resume target a client
-/// names on the wire (D8 #1977 owns its admission).
-const RAW_KEY_CONVERSION_SITES: &[&str] = &["src/interface/cli/uds_dispatch_session.rs"];
+/// does not stand for (exact, decrease-only): none since D8 #1977 moved the
+/// resume target's admission into the application.
+const RAW_KEY_CONVERSION_SITES: &[&str] = &[];
 
 /// The exact production files that request the injected save transaction
-/// (D5 #1972): the interface's persistence triggers. Decrease-only.
+/// (D5 #1972): the interface's persistence triggers. Decrease-only (D8
+/// #1977 moved the resume's transition save into the application).
 const SAVE_REQUESTERS: &[&str] = &[
     "src/interface/cli/agent/run_session.rs",
     "src/interface/cli/uds.rs",
     "src/interface/cli/uds_dispatch.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
     "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/uds_multi.rs",
 ];
@@ -335,10 +368,6 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
     ),
     ("src/interface/cli/uds.rs", "SaveTrigger::Routine"),
     ("src/interface/cli/uds.rs", ".save_with_pending_prompt("),
-    (
-        "src/interface/cli/uds_dispatch_session.rs",
-        "SaveTrigger::Routine",
-    ),
     (
         "src/interface/cli/uds_lifecycle.rs",
         "SaveTrigger::OrdinaryExit",
@@ -400,7 +429,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D6 #1975 adds the accounting-reset port beside the save observations
     // (was 29 before D6).
     ("src/application/sessions/ports/session_runtime.rs", 42),
-    ("src/application/sessions/ports/session_transition.rs", 60),
+    // D8 #1977 adds the workflow restore to the switch runtime port (was
+    // 60 before D8).
+    ("src/application/sessions/ports/session_transition.rs", 66),
     (
         "src/application/sessions/use_cases/export_session_report.rs",
         180,
@@ -425,14 +456,21 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/start_fresh_conversation.rs",
         116,
     ),
+    // D8 #1977 adds the history-only note of a resumed roster (was 112
+    // before D8).
     (
         "src/application/sessions/use_cases/departing_children.rs",
-        112,
+        127,
     ),
-    // D3 #1973, D4 #1974, D5 #1972, D6 #1975 and D7 #1976 each add use
-    // cases to this graph; the ceiling follows their merge (was 93 before
-    // D7).
-    ("src/composition/active_session.rs", 113),
+    (
+        "src/application/sessions/use_cases/resume_saved_session.rs",
+        191,
+    ),
+    ("src/application/sessions/dto/resume_saved_session.rs", 114),
+    // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
+    // add use cases to this graph; the ceiling follows their merge (was 113
+    // before D8).
+    ("src/composition/active_session.rs", 119),
     ("src/composition/session_report.rs", 40),
     // D7 #1976 adds the fresh-identity generator builder (was 38 before D7).
     ("src/composition/sessions.rs", 48),
@@ -450,7 +488,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_store_ordinals.rs",
         23,
     ),
-    ("src/domain/session_identity.rs", 133),
+    // D8 #1977 adds the wire-admitted user-chat constructor (was 133
+    // before D8).
+    ("src/domain/session_identity.rs", 148),
     ("src/infrastructure/persistence/context_spill.rs", 376),
     ("src/infrastructure/persistence/session_layout.rs", 83),
     ("src/infrastructure/persistence/session_ownership.rs", 229),
@@ -458,17 +498,18 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_store_list.rs", 99),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
-    ("src/interface/cli/agent/run_session.rs", 140),
+    ("src/interface/cli/agent/run_session.rs", 130),
     ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
-    ("src/interface/cli/uds_dispatch_session.rs", 371),
+    ("src/interface/cli/uds_dispatch_session.rs", 239),
     ("src/interface/cli/uds_latest_report.rs", 85),
-    ("src/interface/cli/uds_lifecycle.rs", 330),
-    ("src/interface/cli/uds_multi.rs", 639),
+    ("src/interface/cli/uds_lifecycle.rs", 305),
+    ("src/interface/cli/uds_multi.rs", 633),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
     ("src/interface/cli/uds_session_handles.rs", 125),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
-    ("src/interface/cli/uds_session_switch_runtime.rs", 93),
+    // D8 #1977 adds the workflow restore (was 93 before D8).
+    ("src/interface/cli/uds_session_switch_runtime.rs", 97),
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
@@ -866,24 +907,24 @@ fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
     );
 }
 
-/// D7 retirement (#1976): the fresh-session transaction is requested from
-/// exactly one interface site — the idle `new_session` handler — through
-/// the injected handle; the departing-children collaborator is requested
-/// by the same file only (the interface's resume, until D8); the switch
-/// runtime and the transition ports have exactly one production adapter
-/// each; the raw session key is generated in one infrastructure adapter
-/// and the dispatch context carries no raw copy; the retired helpers are
-/// gone without a facade.
+/// D7/D8 retirement (#1976, #1977): the fresh-session and resume
+/// transactions are requested from exactly one interface site — the idle
+/// `new_session`/`resume_session` handlers — through the injected handles;
+/// the startup open is requested by exactly the two startup paths; the
+/// departing-children collaborator is no interface handle at all; the
+/// switch runtime and the transition ports have exactly one production
+/// adapter each; the raw session key is generated in one infrastructure
+/// adapter and the dispatch context carries no raw copy and no store; the
+/// retired helpers are gone without a facade.
 #[test]
 fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     let handlers = "src/interface/cli/uds_dispatch_session.rs";
     let adapter = "src/interface/cli/uds_session_switch_runtime.rs";
     for needle in [
         ".switch.fresh.clone()",
-        ".switch.departing_children.clone()",
+        ".switch.resume.clone()",
         "LoopSessionSwitchRuntime::new(",
         "fleet_settlement_of(",
-        ".reset_roster(SessionTransition::Resume)",
     ] {
         let sites: BTreeSet<String> = production_files_calling(needle)
             .into_iter()
@@ -891,6 +932,36 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
             .collect();
         assert_eq!(sites, set(&[handlers]), "{needle} is the handler's alone");
     }
+    // The startup open (#1863): the UDS loop and the one-shot run, and no
+    // other interface line claims or loads a session.
+    let openers: BTreeSet<String> = production_files_calling(".resume.open_at_startup()")
+        .into_iter()
+        .filter(|path| path.starts_with("src/interface/"))
+        .collect();
+    assert_eq!(
+        openers,
+        set(&[
+            "src/interface/cli/agent/run_session.rs",
+            "src/interface/cli/uds_lifecycle.rs",
+        ]),
+        "the startup open is requested by exactly the two startup paths"
+    );
+    for needle in [".claim(&", ".release(&", "store.load(&"] {
+        let sites: BTreeSet<String> = production_files_calling(needle)
+            .into_iter()
+            .filter(|path| path.starts_with("src/interface/cli/"))
+            .collect();
+        assert!(
+            sites.is_empty(),
+            "{needle} survives in the interface's cli tree: {sites:?}"
+        );
+    }
+    assert!(
+        production_files_calling(".reset_roster(")
+            .into_iter()
+            .all(|path| path.starts_with("src/application/")),
+        "the roster is replaced by the application's transactions only"
+    );
     for (needle, owner) in [
         ("impl SessionSwitchRuntime for", adapter),
         ("impl SessionKeyPropagation for", adapter),
@@ -925,8 +996,8 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         .collect();
     assert_eq!(
         propagators,
-        set(&[adapter, handlers, "src/interface/cli/agent.rs"]),
-        "the raw session key is propagated by the switch adapter, the startup path and the interface resume (D8 #1977) only"
+        set(&[adapter, "src/interface/cli/agent.rs"]),
+        "the raw session key is propagated by the switch adapter and the startup path only"
     );
     // The typed identity is the agent loop's only session-key input.
     let loop_session =
@@ -934,6 +1005,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     assert!(loop_session.contains("pub fn set_session_key(&mut self, identity: SessionIdentity)"));
     // Retired without a facade.
     assert!(!Path::new("src/interface/cli/agent_session_identity.rs").exists());
+    assert!(!Path::new("src/interface/cli/uds/uds_session_load.rs").exists());
     for retired in [
         "generate_chat_key",
         "generate_chat_identity",
@@ -941,6 +1013,10 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         "reset_to_with_spill_store",
         "settle_departing_children",
         "reset_subagent_roster",
+        "note_persisted_roster_is_history",
+        "set_workflow_run",
+        "sync_message_count",
+        "load_session(",
     ] {
         assert!(
             production_files_calling(retired).is_empty(),
@@ -980,8 +1056,8 @@ fn interface_never_lists_the_store_directly() {
 }
 
 /// R7a/R9: the interface declares no conversation read model of its own and
-/// re-implements none of the history/recovery policy; the raw-key
-/// conversion survives only at the exact resume-target site.
+/// re-implements none of the history/recovery policy; no raw-key
+/// conversion survives in the interface (D8 #1977).
 #[test]
 fn interface_owns_no_conversation_state_or_history_policy() {
     let interface: Vec<String> = production_files()

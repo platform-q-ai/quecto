@@ -23,16 +23,12 @@ struct ActEnv {
     messages: Vec<crate::domain::message::Message>,
     session: AgentSession,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
     writer: tokio::io::Sink,
 }
 
 impl ActEnv {
     fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-        );
         Self {
             tmp,
             agent: crate::application::agent_loop::AgentLoopImpl::new(
@@ -61,7 +57,6 @@ impl ActEnv {
             messages: Vec::new(),
             session: AgentSession::new("stub".into(), "cli:test".into()),
             session_key: "cli:test".to_string(),
-            store,
             writer: tokio::io::sink(),
         }
     }
@@ -97,8 +92,6 @@ impl ActEnv {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),

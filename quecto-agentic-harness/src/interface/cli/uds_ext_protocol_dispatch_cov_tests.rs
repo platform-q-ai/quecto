@@ -38,9 +38,6 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let session_key = "cli:test".to_string();
-    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -68,8 +65,6 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -113,9 +108,6 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let session_key = "cli:test".to_string();
-    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -143,8 +135,6 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -187,9 +177,6 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
     let session_key = "cli:test".to_string();
-    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-    );
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot(0, None, 0, None);
@@ -219,8 +206,6 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,

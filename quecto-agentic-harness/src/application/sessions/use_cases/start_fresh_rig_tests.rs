@@ -9,10 +9,10 @@
 //! so a switch that ran too early is visible in the journal.
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{DepartingChildren, SaveSession, StartFreshConversation};
+use super::{DepartingChildren, ResumeSavedSession, SaveSession, StartFreshConversation};
 use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::{FleetSettled, FleetSettlementOutcome, SessionListQuery};
@@ -51,8 +51,10 @@ fn active_identity(state: &Option<ActiveSessionHandle>) -> String {
         .unwrap_or_default()
 }
 
-/// A store that journals every write, claim and release (a release with the
-/// identity the active session stands for at that moment).
+/// A store that journals every write, claim, load and release (a release
+/// with the identity the active session stands for at that moment). It
+/// holds the sessions it was seeded with (the resume targets, D8 #1977) and
+/// can be told to refuse a claim of one key or to fail every load.
 pub(crate) struct RecordingStore {
     journal: Journal,
     fail_save: bool,
@@ -60,9 +62,16 @@ pub(crate) struct RecordingStore {
     pub(crate) saved: Mutex<Vec<Vec<Message>>>,
     pub(crate) claimed: Mutex<Vec<String>>,
     pub(crate) released: Mutex<Vec<String>>,
+    pub(crate) sessions: Mutex<Vec<Session>>,
+    pub(crate) owned_elsewhere: Mutex<Option<String>>,
+    pub(crate) fail_load: AtomicBool,
 }
 
 impl RecordingStore {
+    pub(crate) fn seed(&self, session: Session) {
+        self.sessions.lock().unwrap().push(session);
+    }
+
     fn write(&self, op: &str, messages: &[Message]) -> Fut<'_, ()> {
         note(&self.journal, format!("store.{op}"));
         let messages = messages.to_vec();
@@ -87,6 +96,12 @@ impl SessionStore for RecordingStore {
             .lock()
             .unwrap()
             .push(identity.runtime_key().to_string());
+        if self.owned_elsewhere.lock().unwrap().as_deref() == Some(identity.runtime_key()) {
+            return Err(DomainError::Session(format!(
+                "session {} is owned by another live process",
+                identity.runtime_key()
+            )));
+        }
         Ok(())
     }
     fn release(&self, identity: &SessionIdentity) {
@@ -100,8 +115,22 @@ impl SessionStore for RecordingStore {
             .unwrap()
             .push(identity.runtime_key().to_string());
     }
-    fn load(&self, _: &SessionIdentity) -> Fut<'_, Option<Session>> {
-        Box::pin(async { Ok(None) })
+    fn load(&self, identity: &SessionIdentity) -> Fut<'_, Option<Session>> {
+        note(
+            &self.journal,
+            format!("store.load({})", identity.runtime_key()),
+        );
+        if self.fail_load.load(Ordering::SeqCst) {
+            return Box::pin(async { Err(DomainError::Session("corrupt session file".into())) });
+        }
+        let found = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|session| &session.key == identity)
+            .cloned();
+        Box::pin(async { Ok(found) })
     }
     fn save(&self, session: &Session) -> Fut<'_, ()> {
         self.write("save", &session.messages)
@@ -249,6 +278,12 @@ impl SessionSwitchRuntime for RecordingRuntime {
     fn reset_workflow(&mut self) {
         note(&self.journal, "workflow.reset");
     }
+    fn restore_workflow(&mut self, run: WorkflowRunPersisted) {
+        note(
+            &self.journal,
+            format!("workflow.restore({})", run.template_id.unwrap_or_default()),
+        );
+    }
 }
 
 pub(crate) struct FreshRig {
@@ -257,6 +292,8 @@ pub(crate) struct FreshRig {
     pub(crate) roster: Option<Arc<FakeRoster>>,
     pub(crate) journal: Journal,
     pub(crate) fresh: StartFreshConversation,
+    /// The resume transaction over the same graph (D8 #1977).
+    pub(crate) resume: ResumeSavedSession,
     pub(crate) children: Arc<DepartingChildren>,
 }
 
@@ -384,6 +421,9 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
         saved: Mutex::new(Vec::new()),
         claimed: Mutex::new(Vec::new()),
         released: Mutex::new(Vec::new()),
+        sessions: Mutex::new(Vec::new()),
+        owned_elsewhere: Mutex::new(None),
+        fail_load: AtomicBool::new(false),
     });
     let save = Arc::new(SaveSession::new(
         state.clone(),
@@ -412,10 +452,17 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
     FreshRig {
         fresh: StartFreshConversation::new(
             state.clone(),
-            save,
+            save.clone(),
             store.clone(),
             identities,
             children.clone(),
+        ),
+        resume: ResumeSavedSession::new(
+            state.clone(),
+            save,
+            store.clone(),
+            children.clone(),
+            options.ephemeral,
         ),
         state,
         store,
@@ -484,6 +531,11 @@ async fn the_fakes_journal_and_fail_as_told() {
     runtime.session_key_changed(&identity);
     runtime.reset_effort_to_default();
     runtime.reset_workflow();
+    runtime.restore_workflow(WorkflowRunPersisted {
+        template_id: Some("feature".into()),
+        done: vec![],
+        active_issue: None,
+    });
     assert_eq!(runtime.resets, [4]);
     assert_eq!(runtime.propagated, [OLD_KEY]);
     assert!(matches!(
@@ -498,18 +550,28 @@ async fn the_fakes_journal_and_fail_as_told() {
             "store.claim(cli:departing)",
             "store.release(cli:departing)@active=cli:departing",
             "store.save",
+            "store.load(cli:departing)",
             "retention.clear(cli:departing)",
             "roster.clear",
             "accounting.reset(4)",
             "key.propagate(cli:departing)@active=cli:departing",
             "effort.reset",
             "workflow.reset",
+            "workflow.restore(feature)",
             "fleet.settle",
         ]
     );
     assert_eq!(rig.store.claimed.lock().unwrap().as_slice(), [OLD_KEY]);
     assert_eq!(rig.store.released.lock().unwrap().as_slice(), [OLD_KEY]);
     assert!(rig.store.saved.lock().unwrap().is_empty());
+    // Seeded sessions load; a claim of the key owned elsewhere is refused;
+    // a failing load fails every key.
+    rig.store.seed(Session::new(identity.clone()));
+    assert!(rig.store.load(&identity).await.unwrap().is_some());
+    *rig.store.owned_elsewhere.lock().unwrap() = Some(OLD_KEY.into());
+    assert!(rig.store.claim(&identity).is_err());
+    rig.store.fail_load.store(true, Ordering::SeqCst);
+    assert!(rig.store.load(&identity).await.is_err());
     assert!(format!("{:?}", rig.children).contains("tracks_roster: true"));
     assert!(format!("{:?}", rig.fresh).starts_with("StartFreshConversation"));
 }
