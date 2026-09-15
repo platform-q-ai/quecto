@@ -25,7 +25,9 @@ use crate::application::sessions::ports::export::SessionExportPort;
 use crate::domain::message::{Message, Role};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
 
-/// How many raw exports may run at once.
+/// How many raw exports may run at once, per composed loop (one loop per
+/// process today: `uds_lifecycle.rs`, single or multi client), so the
+/// bound is the process-wide one it always was.
 pub const MAX_CONCURRENT_EXPORTS: usize = 2;
 
 pub struct ExportSessionReport {
@@ -61,7 +63,7 @@ impl ExportSessionReport {
 
     /// The latest eligible report of `messages`, each candidate resolved
     /// through `full_copy` (the id-addressable ledger) before use.
-    pub fn latest_report<'a>(
+    fn latest_report<'a>(
         messages: &'a [Message],
         full_copy: impl Fn(&str) -> Option<&'a Message>,
     ) -> Option<ReportPreview> {

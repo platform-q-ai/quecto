@@ -27,10 +27,13 @@ impl FileSessionExport {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
+}
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
+/// A writer task that did not complete (it panicked or was cancelled):
+/// reported by the runtime's own text, unprefixed, exactly as the report
+/// path always surfaced it.
+fn join_failure(error: tokio::task::JoinError) -> DomainError {
+    DomainError::Other(error.to_string())
 }
 
 impl SessionExportPort for FileSessionExport {
@@ -43,7 +46,7 @@ impl SessionExportPort for FileSessionExport {
         Box::pin(async move {
             tokio::task::spawn_blocking(move || write(&root, &records, &manifest))
                 .await
-                .map_err(|error| DomainError::Tool(error.to_string()))?
+                .map_err(join_failure)?
         })
     }
 }

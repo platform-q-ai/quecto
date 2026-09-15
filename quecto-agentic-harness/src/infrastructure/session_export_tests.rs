@@ -38,7 +38,6 @@ async fn an_export_writes_records_and_manifest_under_the_root_and_returns_the_re
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("artifacts/session-exports");
     let exporter = FileSessionExport::new(root.clone());
-    assert_eq!(exporter.root(), root);
     let message = rich_message();
     let receipt = exporter
         .write_export(
@@ -146,6 +145,18 @@ async fn an_unwritable_root_fails_as_a_session_export_error_without_an_artifact(
             .starts_with("tool error: session export: "),
         "{error}"
     );
+}
+
+#[tokio::test]
+async fn a_panicking_writer_task_is_reported_by_the_bare_runtime_text() {
+    let error = tokio::task::spawn_blocking(|| panic!("writer exploded"))
+        .await
+        .unwrap_err();
+    let expected = error.to_string();
+    assert!(expected.contains("writer exploded"), "{expected}");
+    let mapped = join_failure(error);
+    assert_eq!(mapped.to_string(), expected, "no `tool error:` prefix");
+    assert!(matches!(mapped, DomainError::Other(_)));
 }
 
 #[test]
