@@ -1,9 +1,9 @@
 //! The Responses API also emits top-level error fields, not only nested
 //! response.failed payloads. Preserve its established display while forwarding
 //! the structured throttle receipt from the real wire event.
-#[path = "common/admission_feedback_fixture.rs"]
+#[path = "../common/admission_feedback_fixture.rs"]
 pub mod fixture;
-#[path = "common/admission_leaf_error_oracle.rs"]
+#[path = "../common/admission_leaf_error_oracle.rs"]
 mod oracle;
 use fixture::*;
 use std::sync::Arc;

@@ -69,7 +69,11 @@ fn config_only_invocation_uses_the_live_repl() {
     );
 }
 
+// Both OAuth tests start the provider callback listeners on fixed ports
+// (127.0.0.1:1455 and :56121), a real shared resource: run concurrently, one
+// child's listener answers the other test's probe (observed as a broken pipe).
 #[test]
+#[serial_test::serial(oauth_callback_ports)]
 fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
     use std::io::Read;
     use std::net::TcpStream;
@@ -119,6 +123,7 @@ fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
 }
 
 #[test]
+#[serial_test::serial(oauth_callback_ports)]
 fn piped_repl_oauth_fails_promptly_for_both_providers() {
     for provider in ["openai", "xai"] {
         let output = run_repl(

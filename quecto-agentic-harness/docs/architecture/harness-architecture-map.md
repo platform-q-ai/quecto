@@ -140,13 +140,13 @@ remains authoritative before a PR is handed off.
 
 | Subsystem | Focused check |
 |---|---|
-| Repo docs / Phase 0 links | `cargo test -p quecto-agentic-harness --test repo_docs` |
-| Architecture boundaries | `cargo test -p quecto-agentic-harness --test architecture` |
-| Context management | `cargo test -p quecto-agentic-harness --lib context_pruning` |
-| Agent loop | `cargo test -p quecto-agentic-harness --lib agent_loop` |
-| UDS protocol/dispatch | `cargo test -p quecto-agentic-harness --lib uds` |
-| Subagent lifecycle | `cargo test -p quecto-agentic-harness --lib subagent` |
-| Workflow/session recovery | `cargo test -p quecto-agentic-harness --lib workflow` |
+| Repo docs / Phase 0 links | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::` |
+| Architecture boundaries | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture` |
+| Context management | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib context_pruning` |
+| Agent loop | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib agent_loop` |
+| UDS protocol/dispatch | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib uds` |
+| Subagent lifecycle | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib subagent` |
+| Workflow/session recovery | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib workflow` |
 
 ## Baseline longest files
 
@@ -165,7 +165,7 @@ cap.
 | 1468 | `tests/bdd/main.rs` |
 | 1380 | `tests/bdd/auth_steps.rs` |
 | 1227 | `tests/bdd/tui_architecture_steps.rs` |
-| 1099 | `tests/workflow_config_template.rs` |
+| 1099 | `tests/docs/workflow_config_template.rs` |
 | 1032 | `tests/bdd/uds_paged_history_steps.rs` |
 | 894 | `tests/architecture.rs` |
 | 859 | `tests/bdd/subagent_monitor_steps.rs` |

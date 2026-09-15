@@ -21,6 +21,9 @@
 //! of a receiver, cancellation intent, or requesting JoinHandle::abort. Dropping
 //! an uncertain permit never frees capacity. No transport types leak inward.
 //! This fake is deliberately NOT an LlmProvider decorator or policy substitute.
+// Shared by several modules of the consolidated `integration` target, each
+// using a different subset of the fixture.
+#![allow(dead_code)]
 
 use std::future::Future;
 use std::pin::Pin;

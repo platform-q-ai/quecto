@@ -110,10 +110,7 @@ CLIPPY_PID=$!
     cargo test "${TEST_SHAPE[@]}" \
         --test architecture \
         --test contracts \
-        --test repo_docs \
-        --test workflow_docs \
-        --test workflow_config_template \
-        --test workflow_config_refactor_template
+        --test docs
 ) &
 ARCH_PID=$!
 

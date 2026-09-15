@@ -1,6 +1,6 @@
 //! Receipt observation must respect the provider parser's dispatch and terminal
 //! state, even while assembled calls keep consuming the HTTP body to EOF.
-#[path = "common/admission_feedback_fixture.rs"]
+#[path = "../common/admission_feedback_fixture.rs"]
 pub mod fixture;
 use fixture::*;
 use quecto::domain::inference_admission::Feedback;

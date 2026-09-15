@@ -1,5 +1,5 @@
 //! Anthropic terminal dispatch depends on event name even when data is not JSON.
-#[path = "common/admission_feedback_fixture.rs"]
+#[path = "../common/admission_feedback_fixture.rs"]
 pub mod fixture;
 use fixture::*;
 use quecto::domain::{

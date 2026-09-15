@@ -11,7 +11,7 @@ use quecto::domain::provider::StreamEvent;
 use quecto::infrastructure::providers::{
     SingleAttemptClient, anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };
-#[path = "common/admission_redirect_oracle.rs"]
+#[path = "../common/admission_redirect_oracle.rs"]
 mod oracle;
 
 use wiremock::{

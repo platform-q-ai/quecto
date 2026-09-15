@@ -105,7 +105,7 @@ fn then_architecture_map_records_baseline_checks(world: &mut QuectoWorld) {
     for required in [
         "## Baseline subsystem checks",
         "## Baseline longest files",
-        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::",
         "tests/bdd/uds_steps.rs",
     ] {
         assert!(

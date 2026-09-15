@@ -1,6 +1,6 @@
 //! P2 AC3/4: existing retry owns attempts and sleeps outside transport permits.
 // This target reuses the loopback fixture subset; other surfaces run separately.
-#[path = "common/admission_attempt_fixture.rs"]
+#[path = "../common/admission_attempt_fixture.rs"]
 pub mod fixture;
 use fixture::{Gate, Leaf, Surface, bounded, invoke};
 use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};

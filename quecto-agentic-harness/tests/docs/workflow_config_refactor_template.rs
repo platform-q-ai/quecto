@@ -5,15 +5,13 @@
 //! ban, a deletion ledger, four-class parity evidence, and shape-based
 //! template routing.
 
-mod common;
-
 use serde_json::Value;
 
 // Slice 2 (workflow-composable-templates PRD §3.2 / AC7): the refactor
 // template is pinned against the canonical `workflows/` folder — the single
 // source of truth — via the same directory loader the runtime uses.
 fn read_native_config() -> Value {
-    common::canonical_workflow_config()
+    crate::common::canonical_workflow_config()
 }
 
 fn template<'a>(config: &'a Value, id: &str) -> &'a Value {

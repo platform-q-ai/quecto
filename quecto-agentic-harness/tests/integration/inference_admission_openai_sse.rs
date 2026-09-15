@@ -1,8 +1,8 @@
 //! Enabled OpenAI SSE errors are terminal structured failures; disabled behavior
 //! remains characterized separately. Provider message text is displayed, not classified.
-#[path = "common/admission_feedback_fixture.rs"]
+#[path = "../common/admission_feedback_fixture.rs"]
 pub mod fixture;
-#[path = "common/admission_leaf_error_oracle.rs"]
+#[path = "../common/admission_leaf_error_oracle.rs"]
 mod oracle;
 use fixture::*;
 use quecto::infrastructure::providers::openai::OpenAiProvider;

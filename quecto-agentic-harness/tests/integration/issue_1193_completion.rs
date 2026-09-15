@@ -9,7 +9,7 @@
 //! docs logic itself lives in `tests/common/catalogue_conformance.rs`, shared
 //! with the BDD convergence steps and the consumer contract tests.
 
-#[path = "common/catalogue_conformance.rs"]
+#[path = "../common/catalogue_conformance.rs"]
 mod conformance;
 
 use conformance::{harness_root, production_sources};

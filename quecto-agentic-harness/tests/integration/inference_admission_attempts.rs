@@ -2,7 +2,7 @@
 //! Each macro expansion is an independently executable test (including both
 //! Responses auth modes and Codex's assembled-stream default delegation).
 //! Wall timeouts are cleanup/failure bounds, never absence-of-send oracles.
-#[path = "common/admission_attempt_fixture.rs"]
+#[path = "../common/admission_attempt_fixture.rs"]
 mod fixture;
 
 use std::sync::Arc;

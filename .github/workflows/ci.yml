@@ -95,10 +95,10 @@ jobs:
           cargo test "${SHAPE[@]}" --lib
           # Explicit names are retained as executable documentation and architecture guards.
           cargo test "${SHAPE[@]}" --test architecture --test contracts
-          mapfile -t targets < <(find quecto-agentic-harness/tests -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | grep -v -x -e architecture -e contracts | sort)
-          args=()
-          for target in "${targets[@]}"; do args+=(--test "$target"); done
-          cargo test "${SHAPE[@]}" "${args[@]}"
+          # Harness integration targets (tests/integration, tests/docs, and the two
+          # real-process proofs that must run alone; see quecto-agentic-harness/Cargo.toml).
+          # The architecture suite asserts this list matches the targets on disk.
+          cargo test "${SHAPE[@]}" --test integration --test docs --test parent_loss --test selected_termination
           # quecto-api and quecto-mcp BDD scenarios (their unit tests ran in the --lib pass above).
           cargo test "${SHAPE[@]}" --test api_bdd --test mcp_bdd
 

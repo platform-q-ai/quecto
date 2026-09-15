@@ -1,11 +1,9 @@
 //! Structural assertions for the canonical planned-feature workflow.
 
-mod common;
-
 use serde_json::Value;
 
 fn config() -> Value {
-    common::canonical_workflow_config()
+    crate::common::canonical_workflow_config()
 }
 
 fn feature(config: &Value) -> &Value {

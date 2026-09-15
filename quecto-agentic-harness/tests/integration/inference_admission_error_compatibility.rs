@@ -1,6 +1,6 @@
 //! Local-review regression contracts: enabling admission must not rewrite the
 //! existing leaf's observable errors, retry classification or assembled result.
-#[path = "common/admission_error_fixture.rs"]
+#[path = "../common/admission_error_fixture.rs"]
 mod fixture;
 use fixture::*;
 use quecto::domain::provider_error::ProviderErrorClass;

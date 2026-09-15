@@ -1,4 +1,4 @@
-#[path = "common/uds_event_reader.rs"]
+#[path = "../common/uds_event_reader.rs"]
 mod uds_event_reader;
 
 #[cfg(test)]

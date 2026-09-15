@@ -1,6 +1,6 @@
 //! P2 AC5 executable RED oracle: real unproxied loopback HTTP/SSE only.
 //! No credentials, paid requests, production changes, or replacement policy.
-#[path = "common/admission_feedback_fixture.rs"]
+#[path = "../common/admission_feedback_fixture.rs"]
 mod fixture;
 
 use fixture::*;

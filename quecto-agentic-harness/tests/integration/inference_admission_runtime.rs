@@ -659,5 +659,5 @@ restart_only_case!(
     "fallback-base"
 );
 
-#[path = "common/admission_runtime_oracle_tests.rs"]
+#[path = "../common/admission_runtime_oracle_tests.rs"]
 mod oracle_tests;
