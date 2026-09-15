@@ -7,7 +7,7 @@ use crate::domain::tool::ToolProfileContext;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
-    list_handle, read_handles_for, resolve_message,
+    read_handles_for, resolve_message,
 };
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
@@ -126,7 +126,12 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
+    /// The file store of `_tmp`, shared with `handles`, so the store the
+    /// tests seed is the one the transactions (save, resume) run against.
+    store: Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    /// The one composed sessions graph of the fixture; every `ctx()`
+    /// publishes the fixture's messages into it and borrows its handles.
+    handles: crate::interface::cli::uds_session_handles::SessionHandles,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
 }
@@ -134,8 +139,16 @@ struct Fixture {
 impl Fixture {
     fn new(spill_store: Option<Arc<dyn ContextSpillStore>>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-            FlatSessionLayout::new(tmp.path()),
+        let store = Arc::new(
+            crate::infrastructure::persistence::session_store::FileSessionStore::new(
+                FlatSessionLayout::new(tmp.path()),
+            ),
+        );
+        let handles = crate::interface::cli::uds::dispatch_session_roster_tests::handles_over(
+            store.clone(),
+            "cli:test",
+            spill_store.clone(),
+            &[],
         );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
@@ -163,6 +176,7 @@ impl Fixture {
             session: AgentSession::new("stub".into(), "cli:test".into()),
             session_key: "cli:test".into(),
             store,
+            handles,
             _tmp: tmp,
             cancel: Arc::new(Mutex::new(CancelSlot::Idle)),
         }
@@ -173,19 +187,18 @@ impl Fixture {
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     ) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
-        let sessions = read_handles_for(
-            &self.session_key,
-            self.agent.spill_store().cloned(),
-            &self.messages,
-        );
-        let save_session =
-            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
-                &self.session_key,
-            );
-        let rewrite =
-            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
-                &self.session_key,
-            );
+        let _ = self
+            .handles
+            .active_session
+            .try_write()
+            .expect("fixture session is uncontended")
+            .publish(&self.messages);
+        let handles = &self.handles;
+        let sessions = handles.read_handles();
+        let save_session = handles.save_session.clone();
+        let rewrite = handles.rewrite.clone();
+        let switch = handles.switch.clone();
+        let list_sessions = handles.list_sessions.clone();
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -216,11 +229,9 @@ impl Fixture {
             provider_reload_inputs: None,
             save_session,
             rewrite,
-            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
-                &self.session_key,
-            ),
+            switch,
             fleet_teardown: None,
-            list_sessions: list_handle(self._tmp.path()),
+            list_sessions,
         }
     }
 }
@@ -691,13 +702,9 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         .await
         .unwrap();
     let snapshot = {
-        let ctx = fx.ctx(None);
-        ctx.sessions.clone()
-    };
-    {
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let mut ctx = fx.ctx(Some(tx));
-        ctx.sessions = snapshot.clone();
+        let snapshot = ctx.sessions.clone();
         assert!(
             !super::handle_resume_session(
                 &mut ctx,
@@ -707,7 +714,8 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             )
             .await
         );
-    }
+        snapshot
+    };
     let message_id = snapshot
         .active_session
         .read()

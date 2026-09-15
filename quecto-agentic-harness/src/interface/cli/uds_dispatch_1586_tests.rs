@@ -392,9 +392,14 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
     );
     fx.set_subagent_registry(registry);
     fx.store
-        .save(&crate::domain::session::Session::new(
-            crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:another"),
-        ))
+        .save(&crate::domain::session::Session {
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                "cli:another",
+            ),
+            messages: vec![Message::user("elsewhere")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
         .await
         .unwrap();
     {
@@ -412,8 +417,21 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         .await
         .unwrap();
         assert!(!killing_exit(&ctx));
-        // A session switch (a resume to a saved session, D8 #1977) drops the
-        // killing exit armed for the departing session.
+    }
+    assert_eq!(
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .unwrap()
+            .subagent_roster
+            .len(),
+        1
+    );
+    // A session switch (a resume to a saved session, D8 #1977) drops the
+    // killing exit armed for the departing session.
+    {
+        let mut ctx = fx.ctx();
         ctx.sessions
             .active_session
             .write()
@@ -426,14 +444,4 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         assert_eq!(ctx.session.session_key(), "cli:another");
         assert!(!killing_exit(&ctx));
     }
-    assert_eq!(
-        fx.store
-            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
-            .await
-            .unwrap()
-            .unwrap()
-            .subagent_roster
-            .len(),
-        1
-    );
 }
