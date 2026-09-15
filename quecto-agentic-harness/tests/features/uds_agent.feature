@@ -238,6 +238,45 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output should contain a response command "rewind_to" with error "rewind requires messageId or messageIndex"
 
+  # ─── new_session command (#1862, D7 #1976) ──────────────────────────────────
+
+  @done @issue-1976 @issue-1862
+  Scenario: new_session moves the loop to a fresh, distinct chat key and empties the conversation
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send command "new_session" with id "ns-1"
+    And I send get_state with id "gs-1"
+    And I send command "get_messages" with id "gm-1"
+    And I send command "new_session" with id "ns-2"
+    And I close the UDS connection
+    Then the agent output should contain a response command "new_session" with success true
+    And the new_session response with id "ns-1" should carry a fresh chat session key
+    And the new_session response with id "ns-2" should carry a fresh chat session key
+    And the session keys of the responses with ids "gs-0" and "ns-1" should differ
+    And the session keys of the responses with ids "ns-1" and "gs-1" should match
+    And the session keys of the responses with ids "ns-1" and "ns-2" should differ
+    And the get_messages response data should include a "messages" array with 0 messages
+    And the get_state response effort should be unset
+
+  @done @issue-1976 @issue-1862
+  Scenario: new_session saves the departing conversation and starts the fresh one clean on disk
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    When I start the UDS agent with session "departing"
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send command "new_session" with id "ns-1"
+    And I send prompt "second"
+    And I close the UDS connection
+    Then the session keys of the responses with ids "gs-0" and "ns-1" should differ
+    And the session file for the key of the response with id "gs-0" should hold 2 messages
+    And the session file for the key of the response with id "ns-1" should hold 2 messages
+
   # ─── get_session_stats command ──────────────────────────────────────────────
 
   @done
