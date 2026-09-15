@@ -12,7 +12,8 @@ fn snapshot_for(size: usize) -> serde_json::Value {
     let line = build_get_messages_line(
         handles
             .read_history
-            .newest_page_of(&messages, HISTORY_PAGE_SIZE),
+            .tail(&messages, "", HISTORY_PAGE_SIZE)
+            .expect("cursorless"),
     );
     let event: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot event json");
     event["data"].clone()

@@ -45,7 +45,7 @@ fn get_messages_pages_the_resolved_count_before_a_cursor() {
 }
 
 #[test]
-fn the_tail_alias_is_the_newest_count_and_newest_page_of_pages_a_published_view() {
+fn the_tail_alias_is_the_newest_count_of_a_published_view() {
     let tmp = tempfile::tempdir().unwrap();
     let controller = controller(tmp.path(), &[]);
     let conversation = messages(5);
@@ -59,7 +59,7 @@ fn the_tail_alias_is_the_newest_count_and_newest_page_of_pages_a_published_view(
             .messages
             .is_empty()
     );
-    let newest = controller.newest_page_of(&messages(9), 4);
+    let newest = controller.tail(&messages(9), "", 4).unwrap();
     assert_eq!(newest.messages.len(), 4);
     assert!(newest.has_more_before);
 }

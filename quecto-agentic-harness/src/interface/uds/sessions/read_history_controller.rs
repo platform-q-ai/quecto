@@ -50,15 +50,6 @@ impl ReadHistoryController {
         self.page(conversation, injected_prompt, count, None)
     }
 
-    /// The newest `count` messages of an already published (user-visible)
-    /// transcript: the busy `sync` resync body, read under the caller's
-    /// consistent view.
-    pub fn newest_page_of(&self, published: &[Message], count: usize) -> HistoryPage {
-        self.read_history
-            .page_of(published, "", &HistoryQuery::newest(count))
-            .expect("a cursorless query has no unknown cursor")
-    }
-
     /// The newest `count` messages of the published live transcript: the
     /// connect-time `get_messages` snapshot a busy harness pushes.
     pub async fn newest_live_page(&self, count: usize) -> HistoryPage {

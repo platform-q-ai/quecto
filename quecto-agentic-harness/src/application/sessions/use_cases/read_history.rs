@@ -4,14 +4,15 @@
 //! the store holds.
 //!
 //! The application owns which messages a page holds and what its cursor
-//! and `has_more_before` mean; the transport owns how many of them a frame
-//! can carry ([`HistoryPage::keeping_newest`]).
+//! and `has_more_before` mean (`history_paging`, shared with the sync use
+//! case); the transport owns how many of them a frame can carry
+//! ([`HistoryPage::keeping_newest`]).
 use std::sync::Arc;
 
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery};
+use crate::application::sessions::history_paging;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::conversation_view::{position_by_id, user_visible_messages};
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
@@ -28,26 +29,15 @@ impl ReadHistory {
 
     /// The window `query` selects from `conversation`, whose injected
     /// system prompt (`injected_prompt`, empty when none) is not part of the
-    /// visible transcript.
-    ///
-    /// A cursor must name a message of the conversation, else it is refused
-    /// as unknown. A cursor naming a message outside the visible transcript
-    /// selects the newest window. `count: 0` is the empty page and reports
-    /// no cursor. An explicit `count` above one page keeps the "last N"
-    /// contract.
+    /// visible transcript: the shared paging rule
+    /// ([`history_paging::page_of`]) over the caller's view.
     pub fn page_of(
         &self,
         conversation: &[Message],
         injected_prompt: &str,
         query: &HistoryQuery,
     ) -> Result<HistoryPage, HistoryError> {
-        if let Some(cursor) = &query.before
-            && position_by_id(conversation, cursor).is_none()
-        {
-            return Err(HistoryError::UnknownCursor(cursor.clone()));
-        }
-        let visible = user_visible_messages(conversation, injected_prompt);
-        Ok(Self::window(&visible, query))
+        history_paging::page_of(conversation, injected_prompt, query)
     }
 
     /// The window `query` selects from the live transcript the loop last
@@ -78,21 +68,6 @@ impl ReadHistory {
             before: before.cloned(),
         };
         self.page_of(&session.messages, "", &query)
-    }
-
-    fn window(visible: &[Message], query: &HistoryQuery) -> HistoryPage {
-        let end = query
-            .before
-            .as_ref()
-            .and_then(|cursor| position_by_id(visible, cursor))
-            .unwrap_or(visible.len());
-        let start = end.saturating_sub(query.count);
-        let has_more_before = query.count > 0 && start > 0;
-        HistoryPage {
-            messages: visible[start..end].to_vec(),
-            before: has_more_before.then(|| MessageId::from(visible[start].id().to_string())),
-            has_more_before,
-        }
     }
 }
 

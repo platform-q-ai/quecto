@@ -6,3 +6,4 @@ pub mod controller;
 pub mod export_report_controller;
 pub mod read_history_controller;
 pub mod recover_message_controller;
+pub mod synchronize_transcript_controller;

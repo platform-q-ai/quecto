@@ -28,7 +28,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         ctx.turn_control.mark_abort();
         super::uds_cancel::fire_cancel(ctx.cancel_handle);
     }
-    if super::uds_busy_sync::intercept(&ctx.line, ctx.session, ctx.registry, ctx.client_id).await {
+    if super::uds_sync::intercept(&ctx.line, ctx.session, ctx.registry, ctx.client_id).await {
         return true;
     }
     if super::uds_busy_subagents::intercept(super::uds_busy_subagents::BusySubagentCtx {

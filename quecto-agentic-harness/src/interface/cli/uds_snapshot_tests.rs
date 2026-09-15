@@ -22,7 +22,8 @@ fn messages_line(messages: &[Message]) -> String {
     build_get_messages_line(
         handles
             .read_history
-            .newest_page_of(messages, HISTORY_PAGE_SIZE),
+            .tail(messages, "", HISTORY_PAGE_SIZE)
+            .expect("cursorless"),
     )
 }
 
@@ -479,4 +480,20 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         prior_generation,
         "poison recovery and an older frozen session snapshot must not change the cursor: {recovered}"
     );
+}
+
+#[test]
+fn reset_to_bumps_epoch_once_without_double_counting_republished_messages() {
+    let mut snap = crate::application::sessions::active_session::ActiveSessionState::new(
+        crate::domain::session_identity::SessionIdentity::ephemeral(),
+    );
+    snap.publish(&[Message::user("old")]);
+    let epoch = snap.conversation().epoch();
+    let rev = snap.conversation().rev();
+    let replacement = vec![Message::user("new")];
+    let advance = crate::interface::cli::uds_snapshots::reset_to(&mut snap, &replacement);
+    assert_eq!(advance.epoch, epoch + 1);
+    assert_eq!(advance.rev, rev + 1);
+    assert_eq!(snap.conversation().epoch(), epoch + 1);
+    assert_eq!(snap.conversation().rev(), rev + 1);
 }

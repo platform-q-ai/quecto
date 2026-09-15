@@ -46,17 +46,24 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/message_recovery.rs",
     "src/application/sessions/dto/session_report.rs",
     "src/application/sessions/ports/export.rs",
+    "src/application/sessions/use_cases/synchronize_transcript.rs",
+    "src/application/sessions/dto/history.rs",
+    "src/application/sessions/dto/message_recovery.rs",
+    "src/application/sessions/dto/sync.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
+    "src/application/sessions/history_paging.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
     "src/composition/session_report.rs",
     "src/interface/cli/uds_session_handles.rs",
+    "src/interface/cli/uds_sync.rs",
     "src/interface/uds/sessions/controller.rs",
     "src/interface/uds/sessions/read_history_controller.rs",
     "src/interface/uds/sessions/recover_message_controller.rs",
     "src/interface/uds/sessions/export_report_controller.rs",
     "src/infrastructure/session_export.rs",
+    "src/interface/uds/sessions/synchronize_transcript_controller.rs",
     "src/domain/conversation_view.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/session_identity.rs",
@@ -118,6 +125,14 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "FileSessionExport::new(",
         "src/composition/session_report.rs",
     ),
+    (
+        "SynchronizeTranscript::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "SynchronizeTranscriptController::new(",
+        "src/composition/active_session.rs",
+    ),
 ];
 
 /// The one production file that may spell the export root (D4): the loop's
@@ -125,9 +140,11 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
 /// by a dispatch branch or a loop.
 const EXPORT_ROOT_OWNER: &str = "src/composition/session_report.rs";
 
-/// The history/recovery policy vocabulary no interface production file may
-/// declare or spell (R9): the read model, the paging and ranging
-/// primitives, and the raw-key conversion the active session retired.
+/// The history/recovery/sync policy vocabulary no interface production
+/// file may declare or spell (R9): the read model, the paging and ranging
+/// primitives, the raw-key conversion the active session retired, and the
+/// epoch/revision reconciliation the sync use case owns (D3 #1973: the
+/// interface never reads the ledger frontier or decides reset-or-delta).
 const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "struct ConversationSnapshotData",
     "fn messages_page_json_for_id(",
@@ -142,6 +159,10 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "static EXPORTS: tokio::sync::Semaphore",
     "session_export::",
     "artifacts/session-exports",
+    "fn sync_json(",
+    "fn sync_message_json(",
+    ".frontier()",
+    "resync =",
 ];
 
 /// The interface files still holding a raw persisted key the active session
@@ -177,6 +198,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
     ("src/application/sessions/dto/session_report.rs", 150),
+    ("src/application/sessions/dto/sync.rs", 65),
+    ("src/application/sessions/history_paging.rs", 65),
     ("src/application/sessions/ports.rs", 135),
     ("src/application/sessions/ports/export.rs", 30),
     (
@@ -184,8 +207,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         180,
     ),
     ("src/application/sessions/use_cases/list_sessions.rs", 46),
-    ("src/application/sessions/use_cases/read_history.rs", 110),
+    ("src/application/sessions/use_cases/read_history.rs", 90),
     ("src/application/sessions/use_cases/recover_message.rs", 140),
+    (
+        "src/application/sessions/use_cases/synchronize_transcript.rs",
+        110,
+    ),
     ("src/composition/active_session.rs", 50),
     ("src/composition/session_report.rs", 40),
     ("src/composition/sessions.rs", 38),
@@ -202,13 +229,18 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_session_handles.rs", 85),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
-    ("src/interface/cli/uds_snapshots.rs", 375),
+    ("src/interface/cli/uds_snapshots.rs", 320),
+    ("src/interface/cli/uds_sync.rs", 135),
     ("src/interface/uds/sessions/controller.rs", 36),
     ("src/interface/uds/sessions/export_report_controller.rs", 45),
-    ("src/interface/uds/sessions/read_history_controller.rs", 100),
+    ("src/interface/uds/sessions/read_history_controller.rs", 90),
     (
         "src/interface/uds/sessions/recover_message_controller.rs",
         80,
+    ),
+    (
+        "src/interface/uds/sessions/synchronize_transcript_controller.rs",
+        85,
     ),
 ];
 
@@ -546,6 +578,41 @@ fn interface_owns_no_conversation_state_or_history_policy() {
         set(&["src/application/sessions/active_session.rs"]),
         "one active-session state, owned by the application"
     );
+}
+
+/// D3 (#1973): both transports answer `sync` through the composed
+/// controller and one presenter. The idle dispatch and the reader fast
+/// path name the sync wire module; that module invokes the controller;
+/// and the sync frame's vocabulary (`resync`, `caughtUp`, `nextRev`) is
+/// spelled by exactly one interface production file.
+#[test]
+fn sync_is_answered_through_the_composed_controller_on_both_transports() {
+    let idle = std::fs::read_to_string("src/interface/cli/uds_dispatch_query.rs").unwrap();
+    assert!(
+        idle.contains("uds_sync::sync_data("),
+        "the idle loop presents sync through the shared presenter"
+    );
+    let reader = std::fs::read_to_string("src/interface/cli/uds_reader_dispatch.rs").unwrap();
+    assert!(
+        reader.contains("uds_sync::intercept("),
+        "the reader fast path is the sync wire module's"
+    );
+    let wire = std::fs::read_to_string("src/interface/cli/uds_sync.rs").unwrap();
+    assert!(
+        wire.contains(".sync(epoch, since_rev, HISTORY_PAGE_SIZE, carry)"),
+        "the presenter invokes the composed controller with the protocol page size"
+    );
+    for field in ["\"resync\"", "\"caughtUp\"", "\"nextRev\""] {
+        let presenters: BTreeSet<String> = production_files_calling(field)
+            .into_iter()
+            .filter(|path| path.starts_with("src/interface/"))
+            .collect();
+        assert_eq!(
+            presenters,
+            set(&["src/interface/cli/uds_sync.rs"]),
+            "{field} is presented by the sync wire module alone"
+        );
+    }
 }
 
 #[test]

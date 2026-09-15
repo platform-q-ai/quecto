@@ -16,9 +16,6 @@ mod uds_busy_get_message;
 mod uds_busy_subagents;
 #[cfg(test)]
 mod uds_busy_subagents_tests;
-mod uds_busy_sync;
-#[cfg(test)]
-mod uds_busy_sync_tests;
 pub mod uds_cancel;
 mod uds_cancel_history;
 mod uds_control_forward;
@@ -135,7 +132,7 @@ pub async fn ledger_hint_lines_for_turn_events(
 /// is true when the command was answered on the reader task and never queued
 /// behind the dispatch loop. Covers the TUI's DIRECT child-feed path — a
 /// plain `sync` with no `agent_id` on the child's own socket — which is
-/// served by the child-local `uds_busy_sync` fast path even while the child's
+/// served by the child-local `uds_sync` fast path even while the child's
 /// dispatch loop is occupied (PR #1307 review).
 #[cfg(any(test, feature = "test-support"))]
 pub async fn busy_reader_dispatch(
@@ -209,6 +206,9 @@ mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
 mod uds_swarm_control;
+mod uds_sync;
+#[cfg(test)]
+mod uds_sync_tests;
 pub(crate) mod uds_teardown_adapters;
 pub mod uds_teardown_handles;
 #[cfg(test)]

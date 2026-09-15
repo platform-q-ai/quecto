@@ -137,7 +137,7 @@ async fn child_targeted_sync_reports_unknown_child_as_error() {
 async fn parent_scoped_sync_falls_through_to_the_ledger_fast_path() {
     let (clients, mut rx) = registry_with_writer();
 
-    // No agent_id: this is the parent's own sync, owned by uds_busy_sync.
+    // No agent_id: this is the parent's own sync, owned by uds_sync.
     let handled = run(
         r#"{"type":"sync","id":"ps-1","epoch":0,"sinceRev":0}"#,
         &None,
@@ -146,7 +146,7 @@ async fn parent_scoped_sync_falls_through_to_the_ledger_fast_path() {
     )
     .await;
 
-    assert!(!handled, "parent-scoped sync belongs to uds_busy_sync");
+    assert!(!handled, "parent-scoped sync belongs to uds_sync");
     assert!(rx.try_recv().is_err(), "no response may be written here");
 }
 
@@ -189,7 +189,7 @@ async fn unrelated_commands_and_junk_fall_through() {
 async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
     // The TUI child feed sends a PLAIN sync (no agent_id) on the child's own
     // socket. Through the full reader dispatch it must be answered inline by
-    // uds_busy_sync — never queued behind the dispatch loop (PR #1307 review).
+    // uds_sync — never queued behind the dispatch loop (PR #1307 review).
     let (served_inline, response) = crate::interface::cli::busy_reader_dispatch(
         r#"{"type":"sync","id":"feed-9","epoch":1,"sinceRev":0}"#,
         &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]),
