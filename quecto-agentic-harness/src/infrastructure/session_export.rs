@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 #[path = "session_export_records.rs"]
 mod records;
 
-/// The largest records file an export may write.
+/// The largest records file an export may write (a `write_bounded` parameter).
 const MAX_EXPORT_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct FileSessionExport {
@@ -44,24 +44,14 @@ impl SessionExportPort for FileSessionExport {
     ) -> ExportOutcome<'_> {
         let root = self.root.clone();
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || write(&root, &records, &manifest))
+            let bound = MAX_EXPORT_BYTES;
+            tokio::task::spawn_blocking(move || write_bounded(&root, &records, &manifest, bound))
                 .await
                 .map_err(join_failure)?
         })
     }
 }
 
-fn write(
-    root: &Path,
-    records: &[ExportRecord],
-    manifest: &ExportManifest,
-) -> Result<RawExportReceipt, DomainError> {
-    write_bounded(root, records, manifest, MAX_EXPORT_BYTES)
-}
-
-/// `write` with an explicit size bound. Production always uses
-/// [`MAX_EXPORT_BYTES`]; the refusal test lowers it rather than building a
-/// 256 MiB message.
 fn write_bounded(
     root: &Path,
     records: &[ExportRecord],
@@ -75,8 +65,8 @@ fn write_bounded(
         .prefix("session-")
         .tempdir_in(root)
         .map_err(io_error)?;
-    let path = temporary.path().join("records.jsonl");
-    let mut output = std::fs::File::create(&path).map_err(io_error)?;
+    let mut output =
+        std::fs::File::create(temporary.path().join("records.jsonl")).map_err(io_error)?;
     let mut hash = Sha256::new();
     let mut bytes = 0_u64;
     for record in records {
@@ -84,15 +74,13 @@ fn write_bounded(
             .map_err(|error| DomainError::Tool(error.to_string()))?;
         line.push(b'\n');
         bytes = bytes.saturating_add(line.len() as u64);
-        if bytes <= max_bytes {
-            output.write_all(&line).map_err(io_error)?;
-            hash.update(&line);
-        } else {
-            return Err(DomainError::Tool(format!(
-                "session export exceeds {} MiB; use paginated recovery",
-                max_bytes / (1024 * 1024)
-            )));
+        if bytes > max_bytes {
+            let mib = max_bytes / (1024 * 1024);
+            let reason = format!("session export exceeds {mib} MiB; use paginated recovery");
+            return Err(DomainError::Tool(reason));
         }
+        output.write_all(&line).map_err(io_error)?;
+        hash.update(&line);
     }
     output.sync_all().map_err(io_error)?;
     let sha256 = format!("{:x}", hash.finalize());
