@@ -1,12 +1,12 @@
 //! What a dispatch loop needs from the sessions capability (#1970, #1971,
-//! #1974), as plain handles.
+//! #1973, #1974), as plain handles.
 //!
 //! The interface declares the runtime inputs one loop hands over and the
 //! store, state and controller handles it holds back; composition owns the
-//! concrete graph between them (`composition::sessions`) and hands its
-//! builder in through [`crate::interface::cli::CliContext`] as a
+//! graph between them and hands its builder in through
+//! [`crate::interface::cli::CliContext`] as a
 //! [`crate::interface::cli::SessionHandlesBuilder`], so no interface module
-//! ever names the composition layer, constructs a store, a use case or the
+//! names the composition layer, constructs a store, a use case or the
 //! active-session state, or forms a path.
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
+use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
 
 /// The runtime inputs of one loop the session handles are composed over.
 pub struct SessionLoopInputs {
@@ -29,15 +30,13 @@ pub struct SessionLoopInputs {
     /// run): the persisted key a resumed or named session was admitted
     /// under, or the fresh chat key generated at startup.
     pub session_key: String,
-    /// The retention store of the loop's agent, paired with the active
-    /// session for collapsed-message recovery.
+    /// The loop agent's retention store, for collapsed-message recovery.
     pub spill_store: Option<Arc<dyn ContextSpillStore>>,
 }
 
 /// The handles one loop holds on the sessions capability.
 pub struct SessionHandles {
-    /// The session store every session transaction of the loop runs
-    /// against.
+    /// The session store every session transaction of the loop runs against.
     pub store: Arc<dyn SessionStore>,
     /// List saved sessions (#1861): the UDS `list_sessions` command.
     pub list_sessions: Arc<ListSessionsController>,
@@ -48,9 +47,10 @@ pub struct SessionHandles {
     pub read_history: Arc<ReadHistoryController>,
     /// Recover full message/tool-call content (#1858): `get_message`.
     pub recover_message: Arc<RecoverMessageController>,
-    /// Export a retained session report (#1859): `get_report`, exporting
-    /// under the root composition supplied.
+    /// Export a retained session report (#1859): `get_report`.
     pub export_report: Arc<ExportSessionReportController>,
+    /// Synchronize a client transcript (#1857): `sync` on both transports.
+    pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
 }
 
 impl SessionHandles {
@@ -62,6 +62,7 @@ impl SessionHandles {
             read_history: self.read_history.clone(),
             recover_message: self.recover_message.clone(),
             export_report: self.export_report.clone(),
+            synchronize_transcript: self.synchronize_transcript.clone(),
         }
     }
 }
@@ -74,6 +75,7 @@ pub struct SessionReadHandles {
     pub read_history: Arc<ReadHistoryController>,
     pub recover_message: Arc<RecoverMessageController>,
     pub export_report: Arc<ExportSessionReportController>,
+    pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
 }
 
 impl std::fmt::Debug for SessionReadHandles {

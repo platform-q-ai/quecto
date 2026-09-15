@@ -250,10 +250,12 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
     let line = build_get_messages_line(
         crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .read_history
-            .newest_page_of(
+            .tail(
                 &messages,
+                "",
                 crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
-            ),
+            )
+            .expect("cursorless"),
     );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
     let assistant = got["data"]["messages"]
@@ -298,10 +300,12 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
     let line = build_get_messages_line(
         crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .read_history
-            .newest_page_of(
+            .tail(
                 &messages,
+                "",
                 crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
-            ),
+            )
+            .expect("cursorless"),
     );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 

@@ -5,8 +5,10 @@ pub mod export_session_report;
 pub mod list_sessions;
 pub mod read_history;
 pub mod recover_message;
+pub mod synchronize_transcript;
 
 pub use export_session_report::ExportSessionReport;
 pub use list_sessions::ListSessions;
 pub use read_history::ReadHistory;
 pub use recover_message::RecoverMessage;
+pub use synchronize_transcript::SynchronizeTranscript;

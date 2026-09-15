@@ -52,6 +52,7 @@ const USE_CASES: &[&str] = &[
     "RecoverMessage",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
+    "SynchronizeTranscript",
     "TerminateAllDelegatedAgents",
     "TerminateAllDelegatedAgentsPorts",
     "TerminateDelegatedAgent",

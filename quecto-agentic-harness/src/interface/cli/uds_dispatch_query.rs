@@ -115,25 +115,26 @@ pub(super) async fn dispatch_fieldless_command(
         emit_response_or_frame_limit_error(ctx, id, tn, ev).await;
         return Some(false);
     }
+    // Synchronize a client transcript (#1857, #1973): the composed
+    // controller reconciles the client's position; this edge frames the
+    // typed result and presents it (the busy reader task shares the
+    // presenter).
     if let AgentCommand::Sync {
         epoch, since_rev, ..
     } = cmd
     {
-        let data = {
-            let state = ctx.sessions.active_session.read().await;
-            super::super::uds_snapshots::sync_json(
-                &state,
-                &ctx.sessions.read_history,
-                *epoch,
-                *since_rev,
-            )
-        };
+        let data = super::super::uds_sync::sync_data(
+            &ctx.sessions.synchronize_transcript,
+            *epoch,
+            *since_rev,
+        )
+        .await;
         emit_response_or_frame_limit_error_with_message(
             ctx,
             id,
             tn,
             AgentEvent::ok(id, tn, Some(data)),
-            super::super::uds_busy_sync::SYNC_OVERSIZED_ERROR,
+            super::super::uds_sync::SYNC_OVERSIZED_ERROR,
         )
         .await;
         return Some(false);

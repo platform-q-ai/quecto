@@ -1479,6 +1479,7 @@ mod uds_paged_history_steps;
 mod uds_report_export_steps;
 mod uds_steps;
 mod uds_subagent_liveness_steps;
+mod uds_transcript_sync_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
 mod workflow_nudge_steps;

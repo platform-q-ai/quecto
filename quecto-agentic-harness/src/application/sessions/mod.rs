@@ -12,5 +12,6 @@
 pub mod active_session;
 pub mod conversation_ledger;
 pub mod dto;
+pub mod history_paging;
 pub mod ports;
 pub mod use_cases;

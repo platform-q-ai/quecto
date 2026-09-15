@@ -1,13 +1,14 @@
-//! Boundary DTOs of the sessions capability (#1970, #1971, #1974). Scope-neutral:
-//! they name sessions by [`SessionIdentity`] and never by a filename or
-//! path, and carry domain values (messages, ids, ranges) — never a wire
-//! value or event.
+//! Boundary DTOs of the sessions capability (#1970, #1971, #1973, #1974).
+//! Scope-neutral: they name sessions by [`SessionIdentity`] and never by a
+//! filename or path, and carry domain values (messages, ids, ranges,
+//! ledger positions) — never a wire value or event.
 
 use crate::domain::session_identity::SessionKeyPrefix;
 
 pub mod history;
 pub mod message_recovery;
 pub mod session_report;
+pub mod sync;
 
 pub use history::{HistoryError, HistoryPage, HistoryQuery};
 pub use message_recovery::{
@@ -17,6 +18,7 @@ pub use session_report::{
     ExportManifest, ExportRecord, RawExportReceipt, ReportError, ReportPreview, ReportRecovery,
     SessionReport,
 };
+pub use sync::{SyncRequest, TranscriptDelta, TranscriptReset, TranscriptSync};
 
 /// Which saved sessions a list query covers (#1861).
 ///
