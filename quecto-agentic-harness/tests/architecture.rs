@@ -4134,3 +4134,71 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
     assert!(composition.contains("DelegatedMemberShutdown::new("));
 }
+
+/// The consolidated `integration` and `docs` targets run every former per-file
+/// target in one process, so no module may mutate process-wide state: a
+/// `set_var` leaks into every `quecto` child a concurrently running test
+/// spawns. The two real-process proofs that depend on running alone stay their
+/// own targets: `selected_termination` sets process environment, and
+/// `parent_loss` kills a launcher ~100 ms after its child binds, which under
+/// the load of the other modules met a not-yet-bound child (see
+/// tests/integration/main.rs).
+#[test]
+fn consolidated_integration_target_has_no_process_wide_mutation() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("tests/integration"), &mut files);
+    assert!(files.len() > 20, "the integration modules must be scanned");
+    collect_rs_files(Path::new("tests/docs"), &mut files);
+    assert!(files.len() > 26, "the docs modules must be scanned");
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        for forbidden in ["set_var(", "remove_var(", "set_current_dir("] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} mutates process-wide state ({forbidden}) inside a shared test process"
+            );
+        }
+    }
+    for standalone in ["tests/selected_termination.rs", "tests/parent_loss.rs"] {
+        assert!(
+            Path::new(standalone).exists(),
+            "{standalone} depends on running alone and stays its own test target"
+        );
+    }
+    // CI names the targets explicitly (no `find` discovery): every harness test
+    // target on disk except the sharded cucumber `bdd` runner must be invoked
+    // as a whole `--test <name>` token inside the `workspace-tests` job.
+    let ci = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
+    let mut lines = ci.lines().skip_while(|line| *line != "  workspace-tests:");
+    assert!(lines.next().is_some(), "ci.yml has a workspace-tests job");
+    let job = lines
+        .take_while(|line| !(line.starts_with("  ") && !line.starts_with("   ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let invoked: std::collections::HashSet<&str> = job
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|pair| pair[0] == "--test")
+        .map(|pair| pair[1])
+        .collect();
+    let mut targets = Vec::new();
+    for entry in fs::read_dir("tests").expect("read tests dir") {
+        let path = entry.expect("dir entry").path();
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        if path.extension().is_some_and(|ext| ext == "rs") || path.join("main.rs").exists() {
+            targets.push(name);
+        }
+    }
+    targets.sort();
+    assert!(targets.len() >= 6, "test targets found: {targets:?}");
+    for target in targets {
+        if target == "bdd" {
+            continue;
+        }
+        assert!(
+            invoked.contains(target.as_str()),
+            "the CI workspace-tests job must invoke the harness test target `{target}` as a whole `--test {target}` token"
+        );
+    }
+}

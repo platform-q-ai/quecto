@@ -18,14 +18,14 @@ runs after `merge-requested` is applied.
 
 | Subsystem | Focused local command |
 |---|---|
-| Agent loop | `cargo test -p quecto-agentic-harness --lib agent_loop` |
-| Context management | `cargo test -p quecto-agentic-harness --lib context_pruning` |
-| UDS protocol/dispatch | `cargo test -p quecto-agentic-harness --lib uds` |
-| Subagents | `cargo test -p quecto-agentic-harness --lib subagent` |
-| Protocol docs / repo docs | `cargo test -p quecto-agentic-harness --test repo_docs` |
-| Architecture boundaries | `cargo test -p quecto-agentic-harness --test architecture` |
-| Domain/application contracts | `cargo test -p quecto-agentic-harness --test contracts` |
-| Workflow configuration/docs | `cargo test -p quecto-agentic-harness --test workflow_config_template` and `cargo test -p quecto-agentic-harness --test workflow_docs` |
+| Agent loop | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib agent_loop` |
+| Context management | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib context_pruning` |
+| UDS protocol/dispatch | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib uds` |
+| Subagents | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib subagent` |
+| Protocol docs / repo docs | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::` |
+| Architecture boundaries | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture` |
+| Domain/application contracts | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test contracts` |
+| Workflow configuration/docs | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs workflow_config_template::` and `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs workflow_docs::` |
 
 Use BDD tags or shards only when the change touches scenario-level behaviour.
 Do not run live provider lanes unless the task explicitly requires them.

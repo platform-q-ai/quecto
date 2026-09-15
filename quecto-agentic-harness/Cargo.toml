@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.29"
+version = "0.107.30"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -80,9 +80,16 @@ tokio-rustls = "0.26"
 # target can drive the real TUI render/key path without a TTY (#805).
 quecto-tui = { version = "0.77.3", path = "../quecto-tui", features = ["test-harness"] }
 
-# The real-process selected-termination proof launches the `quecto` binary
-# with the `test-support` hold gate (`QUECTO_TEST_HOLD_EXIT_AFTER_ACK`),
-# which a production build does not compile in.
+# Integration tests are consolidated into a few targets (tests/integration/main.rs,
+# tests/docs/main.rs, plus architecture, contracts, bdd, parent_loss and the
+# one below): every `tests/*.rs` file is its own binary linking the whole
+# harness, so 36 of them made a one-file edit relink 36 executables.
+#
+# The real-process selected-termination proof stays its own binary: it sets
+# process-wide environment (`QUECTO_TEST_HOLD_EXIT_AFTER_ACK`, `QUECTO_BASE_DIR`,
+# `QUECTO_CHILD_BINARY`) that every `quecto` child spawned by a concurrently
+# running test would inherit. It launches the `quecto` binary with the
+# `test-support` hold gate, which a production build does not compile in.
 [[test]]
 name = "selected_termination"
 required-features = ["test-support"]

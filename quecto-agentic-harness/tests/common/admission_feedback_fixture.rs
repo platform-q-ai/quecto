@@ -10,6 +10,9 @@
 //! headers, and call `feedback` before any body await. No transport/header
 //! types need cross the inward port. Exact timestamp arithmetic remains the
 //! normalizer's executable unit contract, independently of this recording gate.
+// Shared by several modules of the consolidated `integration` target, each
+// using a different subset of the fixture.
+#![allow(dead_code)]
 
 use std::future::Future;
 use std::pin::Pin;

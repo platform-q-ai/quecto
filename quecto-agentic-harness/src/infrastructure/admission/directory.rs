@@ -156,4 +156,25 @@ impl SingletonLock {
         }
         Ok(Self { _file: file })
     }
+
+    /// A duplicate of the lock's descriptor sharing its open file description,
+    /// as a child forked while the lock is held would inherit it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inherited_descriptor(&self) -> io::Result<fs::File> {
+        self._file.try_clone()
+    }
+}
+
+impl Drop for SingletonLock {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Release explicitly rather than relying on the descriptor closing. The
+        // lock belongs to the open file description, so a child forked anywhere
+        // in this process holds a duplicate until it reaches exec; closing only
+        // our copy would leave the directory locked in the meantime, and a
+        // legitimate restart would be refused as `Busy` (the same fork/flock
+        // ownership bug as `SessionOwnershipGuard`, #1492). Unlocking releases
+        // it for every duplicate.
+        let _ = self._file.unlock();
+    }
 }

@@ -1,6 +1,7 @@
 //! Anthropic terminal dispatch depends on event name even when data is not JSON.
-#[path = "common/admission_feedback_fixture.rs"]
-pub mod fixture;
+// One copy per crate (clippy::duplicate_mod): the fixture is loaded by
+// `inference_admission_feedback_transport`.
+use crate::inference_admission_feedback_transport::fixture;
 use fixture::*;
 use quecto::domain::{
     error::DomainError,

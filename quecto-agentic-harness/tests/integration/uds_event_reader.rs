@@ -1,9 +1,9 @@
-#[path = "common/uds_event_reader.rs"]
-mod uds_event_reader;
+#[path = "../common/uds_event_reader.rs"]
+mod reader;
 
 #[cfg(test)]
 mod tests {
-    use super::uds_event_reader::EventReader;
+    use super::reader::EventReader;
     use std::io::Write;
     use std::os::unix::net::UnixStream;
 

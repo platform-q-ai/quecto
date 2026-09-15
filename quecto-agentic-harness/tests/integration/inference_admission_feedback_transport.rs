@@ -1,7 +1,10 @@
 //! P2 AC5 executable RED oracle: real unproxied loopback HTTP/SSE only.
 //! No credentials, paid requests, production changes, or replacement policy.
-#[path = "common/admission_feedback_fixture.rs"]
-mod fixture;
+// Also loaded by tests/contracts/attempt_permit.rs and the lib coverage
+// include, so this module owns the fixture; sibling integration modules
+// import it from here (clippy::duplicate_mod).
+#[path = "../common/admission_feedback_fixture.rs"]
+pub(crate) mod fixture;
 
 use fixture::*;
 use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};

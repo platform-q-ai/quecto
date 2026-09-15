@@ -128,7 +128,7 @@ descendant pid the suite ever targeted would receive the signal there.
     quecto-box:local python3 /pid2_signal_log.py \
     bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
       QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
-      cargo test -p quecto-agentic-harness --features test-support --test bdd || status=1; done; exit $status'
+      cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
   ```
 
   The suite runs as four sequential shards (one `bdd` process each) under
@@ -687,7 +687,7 @@ A matching configuration:
 CI has no container runtime, so the Docker/Podman adapter is not exercised by
 the CI BDD lanes; it is verified manually against local rootless Podman, and its
 shape (existence, fail-fast mode, contract needles, cross-links) is pinned
-by `quecto-agentic-harness/tests/container_runtime_docs.rs`.
+by `quecto-agentic-harness/tests/docs/container_runtime_docs.rs`.
 
 ## How to author another runtime adapter
 
@@ -728,7 +728,7 @@ connects the parent to the child and is not proof of this reverse capability.
 Never expose the entire agent-control socket directory as an admission endpoint.
 
 The P0 prototype in
-`quecto-agentic-harness/tests/inference_admission_transport.rs` uses real local
+`quecto-agentic-harness/tests/integration/inference_admission_transport.rs` uses real local
 processes and a test-only stdio bridge, not Docker or production admission.
 Actual supported-runtime create/join/nested, cancellation and restart evidence is
 required in P3 before activation. Unsupported enabled transport must fail closed,

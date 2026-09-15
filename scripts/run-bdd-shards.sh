@@ -5,8 +5,18 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 SUITE_NAME="bdd"
+# `--package` names the crate whose coverage is reported; the build itself is
+# always `cargo test --workspace --features quecto-agentic-harness/test-support
+# --bins --test <target>`, the one feature unification every other test
+# invocation shares (a `-p` build, or a bare `--test <target>` that builds a
+# single crate, resolves a different dependency feature set and rebuilds the
+# harness library and shared deps; `--bins` are five empty bin test harnesses
+# that keep every member's dev-dependencies in the resolution). Non-harness
+# BDD runners are named `<crate>_bdd`, so a `--test` filter selects exactly
+# one target.
 PACKAGE="quecto-agentic-harness"
-FEATURES="test-support"
+TEST_TARGET="bdd"
+FEATURES="quecto-agentic-harness/test-support"
 SHARDS="24"
 TIMEOUT_PER_SHARD="5m"
 TAG=""
@@ -36,7 +46,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --features)
+            # Workspace-qualified, e.g. `quecto-agentic-harness/test-support`.
             FEATURES="$2"
+            shift 2
+            ;;
+        --test-target)
+            TEST_TARGET="$2"
             shift 2
             ;;
         --shards)
@@ -121,7 +136,7 @@ cleanup_shard_dir() {
 }
 trap cleanup_shard_dir EXIT
 
-echo "Running ${SUITE_NAME} in ${SHARDS} shard(s); package: ${PACKAGE}; features: ${FEATURES}; timeout per shard: ${TIMEOUT_PER_SHARD}"
+echo "Running ${SUITE_NAME} in ${SHARDS} shard(s); package: ${PACKAGE}; test target: ${TEST_TARGET}; features: ${FEATURES}; timeout per shard: ${TIMEOUT_PER_SHARD}"
 [[ -n "$TAG" ]] && echo "Tag filter: ${TAG}"
 [[ "$REAL_LLM" == "1" ]] && echo "QUECTO_REAL_LLM=1"
 echo "Logs: ${TMP_DIR}"
@@ -150,7 +165,7 @@ for i in $(seq 0 $((SHARDS - 1))); do
         [[ "$REAL_LLM" == "1" ]] && env_args+=("QUECTO_REAL_LLM=1")
 
         set +e
-        timeout "$TIMEOUT_PER_SHARD" env "${env_args[@]}" cargo test -p "$PACKAGE" --no-fail-fast --features "$FEATURES" --test bdd 2>&1 | "$ROOT/scripts/test-filter.sh"
+        timeout "$TIMEOUT_PER_SHARD" env "${env_args[@]}" cargo test --workspace --no-fail-fast --features "$FEATURES" --bins --test "$TEST_TARGET" 2>&1 | "$ROOT/scripts/test-filter.sh"
         code="${PIPESTATUS[0]}"
         set -e
         end="$(date +%s)"

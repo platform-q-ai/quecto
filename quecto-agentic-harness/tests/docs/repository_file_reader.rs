@@ -1,6 +1,4 @@
-mod common;
-
-use common::read_repository_file;
+use crate::common::read_repository_file;
 
 #[test]
 fn read_repository_file_reads_within_repo_root() {

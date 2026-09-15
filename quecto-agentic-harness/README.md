@@ -711,8 +711,8 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 | Quality scripts | `scripts/check-quality.sh`, `scripts/check-bdd-quality.sh` |
 | Format | `cargo fmt --check` |
 | Lint | `cargo clippy -p quecto -- -D warnings` (zero warnings) |
-| Unit tests | `cargo test -p quecto --no-fail-fast --lib 2>&1 \| scripts/test-filter.sh` |
-| Architecture | `cargo test -p quecto --no-fail-fast --test architecture 2>&1 \| scripts/test-filter.sh` |
+| Unit tests | `cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --lib 2>&1 \| scripts/test-filter.sh` |
+| Architecture | `cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test architecture 2>&1 \| scripts/test-filter.sh` |
 | BDD (sharded) | See [Sharded BDD](#sharded-bdd-24-way-parallel) below |
 
 All test commands pipe through `scripts/test-filter.sh` which strips the per-test `... ok` noise and shows only:
@@ -729,14 +729,14 @@ Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and fo
 Non-real-LLM (fast, no API key needed):
 ```bash
 (for i in $(seq 0 23); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```
 
 Provider smoke (paid, opt-in, minimal live request):
 ```bash
-QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh
 ```
 
 Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `OPENAI_API_KEY`, Anthropic uses `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
@@ -747,7 +747,7 @@ Legacy live behavioral suites are tagged `@manual-real-llm` and still gated by `
 
 To debug a single scenario, add a temporary tag (e.g. `@focus`) to the scenario in the `.feature` file, then run:
 ```bash
-QUECTO_TAG=focus cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
+QUECTO_TAG=focus cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh
 ```
 Remove the tag before committing.
 
@@ -755,7 +755,7 @@ Remove the tag before committing.
 
 ```bash
 # Core suite (no real provider calls)
-cargo test -p quecto --features test-support --test bdd
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd
 
 # Core suite (24-way sharded, fastest local full run)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
@@ -764,7 +764,7 @@ bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
 
 # Provider smoke subset (paid, opt-in; filters providers without credentials)
-QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto --no-fail-fast --features test-support --test bdd
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd
 
 # Live Real-LLM full suite (paid, manual/on-demand — needs OPENAI_API_KEY in .env)
 bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag manual-real-llm --real-llm
@@ -783,7 +783,7 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, changed-package strict Clippy, and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
+`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, strict workspace-shape Clippy (one feature unification, plus the standalone per-crate shapes), and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
 
 Pre-push control:
 - `QUECTO_PREPUSH_BASE` overrides the comparison base used to identify changed workspace packages (default `origin/master`, falling back to local `master`).

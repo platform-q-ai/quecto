@@ -11,6 +11,13 @@
 //! bound connection (or, on Linux, the parent-death signal as defence in
 //! depth — over the proxy transport the child is not even the launcher's
 //! process child, so only the connection can tell it).
+//!
+//! Standalone target on purpose: this proof SIGKILLs a launcher ~100 ms after
+//! its child binds. Run beside the other real-process modules (the
+//! consolidated `integration` target, see tests/integration/main.rs) it met a
+//! not-yet-bound child 3 times in 14 runs, which then exits at the 30 s
+//! `DEFAULT_BIND_DEADLINE` instead of on connection loss, past `EXIT_BOUND`.
+//! Alone it is stable; tests/architecture.rs asserts the file stays separate.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

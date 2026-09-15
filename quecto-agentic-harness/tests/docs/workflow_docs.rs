@@ -1,10 +1,8 @@
-mod common;
-
-use common::{assert_pure_move_refactor_guidance, read_repo_file};
+use crate::common::{assert_pure_move_refactor_guidance, read_repo_file};
 use serde_json::Value;
 
 fn config() -> Value {
-    common::canonical_workflow_config()
+    crate::common::canonical_workflow_config()
 }
 
 fn feature(config: &Value) -> &Value {

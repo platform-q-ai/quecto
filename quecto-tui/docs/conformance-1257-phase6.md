@@ -26,8 +26,8 @@ No command ordering, protocol handling, render semantics, or user-visible behavi
 
 - `cargo test -p quecto-agentic-harness --test architecture` — TUI architecture suite green (20 `tui_*` tests)
 - `cargo test -p quecto-tui --lib` — 1668 passed
-- `QUECTO_TAG=tui cargo test -p quecto-agentic-harness --features test-support --test bdd` — architecture feature green
-- `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` — 28 features / 175 scenarios passed
+- `QUECTO_TAG=tui cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd` — architecture feature green
+- `QUECTO_TAG=tui cargo test --workspace --features quecto-agentic-harness/test-support --bins --test tui_bdd` — 28 features / 175 scenarios passed
 
 ## Final issue reconciliation
 

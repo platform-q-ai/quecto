@@ -33,10 +33,16 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 cucumber = { version = "0.21", features = ["macros"] }
 futures = "0.3"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+# `default-features = false`: the default `native-tls` stack would otherwise be
+# the only openssl/native-tls user in the workspace, compiled solely for these
+# tests under the shared workspace feature unification.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 tempfile = "3"
 
+# Named `api_bdd` so `cargo test --workspace --test bdd` selects only the
+# harness BDD runner (one workspace feature unification).
 [[test]]
-name = "bdd"
+name = "api_bdd"
+path = "tests/bdd/main.rs"
 harness = false

@@ -1,7 +1,8 @@
 //! Receipt observation must respect the provider parser's dispatch and terminal
 //! state, even while assembled calls keep consuming the HTTP body to EOF.
-#[path = "common/admission_feedback_fixture.rs"]
-pub mod fixture;
+// One copy per crate (clippy::duplicate_mod): the fixture is loaded by
+// `inference_admission_feedback_transport`.
+use crate::inference_admission_feedback_transport::fixture;
 use fixture::*;
 use quecto::domain::inference_admission::Feedback;
 use std::sync::Arc;

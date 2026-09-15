@@ -22,6 +22,9 @@ cucumber = { version = "0.21", features = ["macros"] }
 tempfile = "3"
 wiremock = "0.6"
 
+# Named `mcp_bdd` so `cargo test --workspace --test bdd` selects only the
+# harness BDD runner (one workspace feature unification).
 [[test]]
-name = "bdd"
+name = "mcp_bdd"
+path = "tests/bdd/main.rs"
 harness = false

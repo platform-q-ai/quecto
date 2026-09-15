@@ -1,7 +1,5 @@
-mod common;
-
-use common::read_repo_file;
-use common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
+use crate::common::read_repo_file;
+use crate::common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
 use std::path::Path;
 
 #[test]
@@ -140,7 +138,7 @@ fn architecture_hardening_phase_0_docs_are_linked() {
     for baseline in [
         "## Baseline subsystem checks",
         "## Baseline longest files",
-        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::",
         "tests/bdd/uds_steps.rs",
     ] {
         assert!(
@@ -164,12 +162,12 @@ fn architecture_hardening_phase_0_docs_are_linked() {
         );
     }
     for local_check in [
-        "cargo test -p quecto-agentic-harness --lib agent_loop",
-        "cargo test -p quecto-agentic-harness --lib context_pruning",
-        "cargo test -p quecto-agentic-harness --lib uds",
-        "cargo test -p quecto-agentic-harness --lib subagent",
-        "cargo test -p quecto-agentic-harness --test repo_docs",
-        "cargo test -p quecto-agentic-harness --test architecture",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib agent_loop",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib context_pruning",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib uds",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib subagent",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::",
+        "cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture",
     ] {
         assert!(
             cookbooks.contains(local_check),
