@@ -15,3 +15,14 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Debug info for `cargo build`/`cargo test` (the `test` profile inherits `dev`):
+# line tables only. Panic backtraces and `#[track_caller]` locations keep
+# file:line, while the variable/type DWARF that only a debugger uses is not
+# emitted. Measured cold `cargo test --workspace --all-targets --no-run`:
+# 231 s -> 172 s; warm one-file recompile 38 s -> 24 s; target dir 22 GB -> 12 GB.
+# `debug = 0` is only ~15 s faster cold and loses line numbers in backtraces.
+# Overflow checks and debug assertions stay at their dev defaults (on).
+# For a debugger session, override once: CARGO_PROFILE_DEV_DEBUG=2 cargo build.
+[profile.dev]
+debug = "line-tables-only"
