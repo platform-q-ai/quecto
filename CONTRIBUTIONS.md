@@ -36,13 +36,14 @@ cargo fmt --all -- --check
 Run package or workspace tests relevant to your change:
 
 ```bash
-cargo test --workspace --lib --bins
-cargo test -p quecto-agentic-harness
-cargo test -p quecto-tui
-cargo test -p quecto-api
-cargo test -p quecto-mcp
-cargo test -p quecto-runtime-manager
-cargo test -p quecto-line-io
+# One workspace shape for every invocation (see README "Common checks"):
+# `-p <crate>` resolves a different dependency feature set and forces rebuilds.
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture --test contracts
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test api_bdd
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test mcp_bdd
+bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
+bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 12m
 ```
 
 Run clippy for touched packages, or the strict workspace command when practical:

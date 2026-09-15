@@ -90,8 +90,8 @@ The operational limits and cooperative trust model are documented in `docs/swarm
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 quecto-agentic-harness/tests/swarm_helpers_test.py
-cargo test --workspace --lib --bins
-QUECTO_TAG=swarm cargo test -p quecto-agentic-harness --features test-support --test bdd
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib
+QUECTO_TAG=swarm cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd
 cargo test -p quecto-agentic-harness --test swarm_coordination --test architecture --test contracts
 cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
 scripts/check-quality.sh

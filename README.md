@@ -149,9 +149,19 @@ Common checks:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --workspace --lib --bins
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib
 cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings
 ```
+
+Every test and lint invocation in the repository uses the same
+`--workspace --features quecto-agentic-harness/test-support --bins` shape. Cargo
+resolves dependency features over the packages whose targets it builds, so a
+`-p <crate>` run, a run without the feature, or a bare `--test <harness target>`
+resolves a different feature set and rebuilds the harness library and shared
+dependencies on every switch; one shape means one build. `--bins` are five
+empty bin test harnesses (0.2 s) that keep every member's dev-dependencies in
+the resolution when only one crate's test targets run. Select a single crate's
+tests with target filters (`--lib`, `--test <target>`) plus a test-name filter.
 
 Some crates also have BDD test targets and package-specific quality scripts. Before requesting review, contributors must run at least two complete built-in Quecto adversarial-review workflow loops and include the evidence in the PR description. See [CONTRIBUTIONS.md](CONTRIBUTIONS.md) and the package READMEs for details.
 

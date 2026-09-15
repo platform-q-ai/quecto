@@ -74,19 +74,33 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
       - name: All workspace unit and integration tests except sharded BDD targets
+        # One feature unification for every invocation. Cargo resolves
+        # dependency features over the packages whose targets it builds, so a
+        # `-p <crate>` run, a run without `test-support`, or a bare
+        # `--test <harness target>` (which builds only the harness) each
+        # resolve a different feature set for tokio/reqwest/serde/... and
+        # rebuild the harness library and shared deps whenever the shape
+        # changes. The shape below matches `--workspace --all-targets`:
+        # `--workspace` selects every member and `--bins` (five empty bin test
+        # harnesses, 0.2 s) keeps every member's dev-dependencies in the
+        # resolution even when the test targets belong to one crate.
+        # `test-support` is additive test-only surface; the real-process
+        # selected-termination target requires it (its child harness is the
+        # `quecto` binary built with the test-only exit hold, #1936 review).
+        # Non-harness BDD targets are named `<crate>_bdd`, so `--test <name>`
+        # selects exactly one target across the workspace.
         run: |
-          cargo test --workspace --lib --bins
-          mapfile -t targets < <(find quecto-agentic-harness/tests -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
+          SHAPE=(--workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins)
+          # Unit tests of every crate (harness, tui, api, mcp, runtime-manager, line-io).
+          cargo test "${SHAPE[@]}" --lib
+          # Explicit names are retained as executable documentation and architecture guards.
+          cargo test "${SHAPE[@]}" --test architecture --test contracts
+          mapfile -t targets < <(find quecto-agentic-harness/tests -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | grep -v -x -e architecture -e contracts | sort)
           args=()
           for target in "${targets[@]}"; do args+=(--test "$target"); done
-          # Explicit names are retained as executable documentation and architecture guards.
-          cargo test -p quecto-agentic-harness --no-fail-fast --test architecture --test contracts
-          # `test-support` is additive test-only surface; the real-process
-          # selected-termination target requires it (its child harness is the
-          # `quecto` binary built with the test-only exit hold, #1936 review).
-          cargo test -p quecto-agentic-harness --no-fail-fast --features test-support "${args[@]}"
-          cargo test -p quecto-api --no-fail-fast --all-targets
-          cargo test -p quecto-tui --lib
+          cargo test "${SHAPE[@]}" "${args[@]}"
+          # quecto-api and quecto-mcp BDD scenarios (their unit tests ran in the --lib pass above).
+          cargo test "${SHAPE[@]}" --test api_bdd --test mcp_bdd
 
   non-real-bdd:
     needs: [static-quality, dependency-policy]
@@ -125,7 +139,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m --coverage --coverage-threshold 62
+      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 5m --coverage --coverage-threshold 62
 
   mock-llm-e2e:
     needs: [static-quality, dependency-policy]

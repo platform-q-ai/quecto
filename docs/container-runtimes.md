@@ -128,7 +128,7 @@ descendant pid the suite ever targeted would receive the signal there.
     quecto-box:local python3 /pid2_signal_log.py \
     bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
       QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
-      cargo test -p quecto-agentic-harness --features test-support --test bdd || status=1; done; exit $status'
+      cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
   ```
 
   The suite runs as four sequential shards (one `bdd` process each) under

@@ -76,17 +76,23 @@ CLIPPY_ARGS=(--all-targets -- -D warnings
     -W clippy::too_many_arguments
     -W clippy::too_many_lines)
 
+# One workspace feature unification everywhere: cargo resolves dependency
+# features over the packages whose targets it builds, so a `-p <crate>` clippy
+# or a bare `--test <harness target>` resolves a different feature set from the
+# `--workspace --all-targets --features quecto-agentic-harness/test-support`
+# shape CI uses, and every switch rebuilds the harness library and shared deps.
+# `--bins` (five empty bin test harnesses) keeps every member's
+# dev-dependencies in the resolution when only harness test targets run.
+WORKSPACE_FEATURES=(--features quecto-agentic-harness/test-support)
+TEST_SHAPE=(--workspace --no-fail-fast "${WORKSPACE_FEATURES[@]}" --bins)
+
 # The two compilation-based gates are independent. Run them concurrently and
 # preserve both statuses so either failure blocks the push.
 (
-    step 5 "Strict Clippy for changed packages"
-    if (( WORKSPACE_CLIPPY == 1 )); then
-        cargo clippy --workspace --features quecto-agentic-harness/test-support "${CLIPPY_ARGS[@]}"
-    elif (( ${#PACKAGES[@]} > 0 )); then
-        PACKAGE_ARGS=()
-        while IFS= read -r package; do PACKAGE_ARGS+=(-p "$package"); done < <(printf '%s\n' "${!PACKAGES[@]}" | sort)
-        echo "  Changed packages: ${!PACKAGES[*]}"
-        cargo clippy "${PACKAGE_ARGS[@]}" "${CLIPPY_ARGS[@]}"
+    step 5 "Strict Clippy (workspace shape)"
+    if (( WORKSPACE_CLIPPY == 1 || ${#PACKAGES[@]} > 0 )); then
+        (( ${#PACKAGES[@]} > 0 )) && echo "  Changed packages: ${!PACKAGES[*]}"
+        cargo clippy --workspace "${WORKSPACE_FEATURES[@]}" "${CLIPPY_ARGS[@]}"
     else
         echo "  No Rust workspace package changed; skipped."
     fi
@@ -101,7 +107,7 @@ CLIPPY_PID=$!
 
 (
     step 6 "Architecture and repository invariants"
-    cargo test -p quecto-agentic-harness --no-fail-fast \
+    cargo test "${TEST_SHAPE[@]}" \
         --test architecture \
         --test contracts \
         --test repo_docs \
