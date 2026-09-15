@@ -303,7 +303,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             None,
             &[],
         ),
-        export_root: std::sync::Arc::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0, None),
         )),

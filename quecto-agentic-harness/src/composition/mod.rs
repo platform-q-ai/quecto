@@ -1,6 +1,7 @@
 pub mod active_session;
 pub mod environments;
 pub mod find;
+pub mod session_report;
 pub mod sessions;
 pub mod subagent_lifecycle;
 pub mod subagent_teardown;

@@ -1,10 +1,10 @@
-//! Capability-local ports of the sessions capability (#1960, #1970).
-//!
-//! Session persistence and the context spill store are effects the
-//! open/switch/save/clear and recall use cases require; infrastructure
-//! implements them over files. Signatures name only domain values and the
-//! capability's own DTOs: every operation is keyed by the typed
-//! [`SessionIdentity`], never by a raw string, filename or path.
+//! Capability-local ports of the sessions capability (#1960, #1970, #1974):
+//! session persistence and the context spill store here, the outbound
+//! export port in [`export`]. Infrastructure implements them over files.
+//! Signatures name only domain values and the capability's own DTOs: every
+//! operation is keyed by the typed [`SessionIdentity`], never by a raw
+//! string, filename or path.
+pub mod export;
 use std::future::Future;
 use std::pin::Pin;
 

@@ -36,6 +36,7 @@ const USE_CASES: &[&str] = &[
     "CompensateFailedLaunchPorts",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",
+    "ExportSessionReport",
     "FinalizeEnvironmentMember",
     "FindUseCase",
     "HarnessShutdownTransaction",

@@ -68,7 +68,6 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
             None,
             &[],
         ),
-        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0, None),
         )),

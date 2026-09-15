@@ -81,7 +81,6 @@ impl Fx {
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: read_handles_over(self.store.clone(), &self.session_key, None, &[]),
-            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),

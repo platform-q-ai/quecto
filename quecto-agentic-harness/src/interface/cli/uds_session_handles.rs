@@ -1,5 +1,5 @@
-//! What a dispatch loop needs from the sessions capability (#1970, #1971),
-//! as plain handles.
+//! What a dispatch loop needs from the sessions capability (#1970, #1971,
+//! #1974), as plain handles.
 //!
 //! The interface declares the runtime inputs one loop hands over and the
 //! store, state and controller handles it holds back; composition owns the
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::interface::uds::sessions::controller::ListSessionsController;
+use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 
@@ -47,6 +48,9 @@ pub struct SessionHandles {
     pub read_history: Arc<ReadHistoryController>,
     /// Recover full message/tool-call content (#1858): `get_message`.
     pub recover_message: Arc<RecoverMessageController>,
+    /// Export a retained session report (#1859): `get_report`, exporting
+    /// under the root composition supplied.
+    pub export_report: Arc<ExportSessionReportController>,
 }
 
 impl SessionHandles {
@@ -57,6 +61,7 @@ impl SessionHandles {
             active_session: self.active_session.clone(),
             read_history: self.read_history.clone(),
             recover_message: self.recover_message.clone(),
+            export_report: self.export_report.clone(),
         }
     }
 }
@@ -68,6 +73,7 @@ pub struct SessionReadHandles {
     pub active_session: ActiveSessionHandle,
     pub read_history: Arc<ReadHistoryController>,
     pub recover_message: Arc<RecoverMessageController>,
+    pub export_report: Arc<ExportSessionReportController>,
 }
 
 impl std::fmt::Debug for SessionReadHandles {

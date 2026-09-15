@@ -339,7 +339,15 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 ["crate", "application", _, "ports", ..] => true,
                 // The sessions list port takes the capability's own query
                 // DTO (#1970); the file store names it to implement `list`.
-                ["crate", "application", "sessions", "dto", "SessionListQuery"] => true,
+                // The export port (#1974) takes the records and manifest the
+                // use case assembled and returns the artifact receipt.
+                [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "dto",
+                    "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
+                ] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the

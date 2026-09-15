@@ -76,7 +76,6 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
                 None,
                 &[],
             ),
-            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 session.state_snapshot(0, None, 0, None),
             )),

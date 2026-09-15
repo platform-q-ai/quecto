@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D4 #1974): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -10,9 +10,12 @@
 //! - R5: every sessions use case, controller, the file store and the one
 //!   active-session state (R7a) are constructed only at their named
 //!   composition file; interface and infrastructure hold injected handles.
-//! - R7a/R9: one owner of live-conversation state and of history/recovery
-//!   policy: the interface neither declares a conversation ledger nor pages
-//!   or ranges history itself, and converts no raw key into an identity.
+//! - R7a/R9: one owner of live-conversation state and of history/recovery/
+//!   report policy: the interface neither declares a conversation ledger nor
+//!   pages or ranges history, selects reports, bounds or writes exports
+//!   itself, and converts no raw key into an identity.
+//! - D4: the export root literal is composition's alone; no interface file
+//!   names the export adapter.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -38,16 +41,22 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
+    "src/application/sessions/use_cases/export_session_report.rs",
     "src/application/sessions/dto/history.rs",
     "src/application/sessions/dto/message_recovery.rs",
+    "src/application/sessions/dto/session_report.rs",
+    "src/application/sessions/ports/export.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
+    "src/composition/session_report.rs",
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/uds/sessions/controller.rs",
     "src/interface/uds/sessions/read_history_controller.rs",
     "src/interface/uds/sessions/recover_message_controller.rs",
+    "src/interface/uds/sessions/export_report_controller.rs",
+    "src/infrastructure/session_export.rs",
     "src/domain/conversation_view.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/session_identity.rs",
@@ -60,6 +69,18 @@ const SESSION_PORTS: &[(&str, &str)] = &[
         "ContextSpillStore",
         "tests/contracts/context_spill_store.rs",
     ),
+    (
+        "SessionExportPort",
+        "tests/contracts/session_export_port.rs",
+    ),
+];
+
+/// The exact files a sessions port may be declared in: the persistence
+/// ports (D1) and the outbound export port (D4). Nothing else under the
+/// capability declares a trait.
+const PORT_FILES: &[&str] = &[
+    "src/application/sessions/ports.rs",
+    "src/application/sessions/ports/export.rs",
 ];
 
 /// Where each sessions graph node may be constructed (R5, R7a): exactly one
@@ -85,7 +106,24 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "RecoverMessageController::new(",
         "src/composition/active_session.rs",
     ),
+    (
+        "ExportSessionReport::new(",
+        "src/composition/session_report.rs",
+    ),
+    (
+        "ExportSessionReportController::new(",
+        "src/composition/session_report.rs",
+    ),
+    (
+        "FileSessionExport::new(",
+        "src/composition/session_report.rs",
+    ),
 ];
+
+/// The one production file that may spell the export root (D4): the loop's
+/// `artifacts/session-exports` is a composition runtime input, never formed
+/// by a dispatch branch or a loop.
+const EXPORT_ROOT_OWNER: &str = "src/composition/session_report.rs";
 
 /// The history/recovery policy vocabulary no interface production file may
 /// declare or spell (R9): the read model, the paging and ranging
@@ -98,6 +136,12 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "fn nearest_char_boundary_at_or_before(",
     "fn resolve_get_message(",
     "SessionIdentity::from_persisted_key(",
+    "fn latest_report_resolving(",
+    "fn export_source(",
+    "ExportRootSlot",
+    "static EXPORTS: tokio::sync::Semaphore",
+    "session_export::",
+    "artifacts/session-exports",
 ];
 
 /// The interface files still holding a raw persisted key the active session
@@ -132,11 +176,18 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/conversation_ledger.rs", 295),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
+    ("src/application/sessions/dto/session_report.rs", 150),
     ("src/application/sessions/ports.rs", 135),
+    ("src/application/sessions/ports/export.rs", 30),
+    (
+        "src/application/sessions/use_cases/export_session_report.rs",
+        180,
+    ),
     ("src/application/sessions/use_cases/list_sessions.rs", 46),
     ("src/application/sessions/use_cases/read_history.rs", 110),
     ("src/application/sessions/use_cases/recover_message.rs", 140),
     ("src/composition/active_session.rs", 50),
+    ("src/composition/session_report.rs", 40),
     ("src/composition/sessions.rs", 38),
     ("src/domain/session_identity.rs", 133),
     ("src/infrastructure/persistence/context_spill.rs", 376),
@@ -144,11 +195,16 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     ("src/infrastructure/persistence/session_store.rs", 687),
     ("src/infrastructure/persistence/session_store_list.rs", 99),
-    ("src/interface/cli/uds_dispatch_query.rs", 195),
+    ("src/infrastructure/session_export.rs", 110),
+    ("src/infrastructure/session_export_records.rs", 80),
+    ("src/interface/cli/uds_dispatch_query.rs", 190),
+    ("src/interface/cli/uds_latest_report.rs", 85),
+    ("src/interface/cli/uds_session_handles.rs", 85),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
-    ("src/interface/cli/uds_snapshots.rs", 395),
+    ("src/interface/cli/uds_snapshots.rs", 375),
     ("src/interface/uds/sessions/controller.rs", 36),
+    ("src/interface/uds/sessions/export_report_controller.rs", 45),
     ("src/interface/uds/sessions/read_history_controller.rs", 100),
     (
         "src/interface/uds/sessions/recover_message_controller.rs",
@@ -264,9 +320,9 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
-                assert_eq!(
-                    path, "src/application/sessions/ports.rs",
-                    "port {name} must be declared in the capability's ports.rs, found in {path}"
+                assert!(
+                    PORT_FILES.contains(&path.as_str()),
+                    "port {name} must be declared in one of the capability's port files, found in {path}"
                 );
                 declared.insert(name);
             }
@@ -312,6 +368,12 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
         layout_sites,
         set(LAYOUT_CREATION_SITES),
         "FlatSessionLayout creation sites changed; the list is decrease-only"
+    );
+    let export_root_sites = production_files_calling("artifacts/session-exports");
+    assert_eq!(
+        export_root_sites,
+        set(&[EXPORT_ROOT_OWNER]),
+        "the export root is spelled by composition only"
     );
     // The builder reaches the interface only through the entry point.
     let main = std::fs::read_to_string("src/main.rs").unwrap();

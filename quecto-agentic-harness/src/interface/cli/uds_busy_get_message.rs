@@ -5,7 +5,6 @@ use crate::interface::uds::sessions::recover_message_controller::GetMessageField
 pub(super) struct BusyCommandCtx<'a> {
     pub line: &'a str,
     pub session: &'a SessionReadHandles,
-    pub export_root: &'a super::uds_snapshots::ExportRootSlot,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub client_id: u64,
 }

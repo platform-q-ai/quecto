@@ -94,7 +94,6 @@ impl EffortFx {
                 None,
                 &[],
             ),
-            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),

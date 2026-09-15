@@ -133,3 +133,23 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     Given a persisted UDS session containing a collapsed message whose spill entry is missing
     When a client requests the collapsed message by its stable reference
     Then the collapsed message should be served as its stub
+
+  # ─── Export a retained session report owner (#1859; D4 #1974) ─────────────
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: The latest substantive assistant report is previewed with recovery metadata
+    Given a persisted UDS session whose latest assistant report is longer than the report preview
+    When a client requests the latest report
+    Then the report should be the latest substantive assistant message bounded to the preview with a recovery reference
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: A session without a substantive assistant message reports null
+    Given a persisted UDS session containing a small message with a tool call
+    When a client requests the latest report
+    Then the report should be null
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: A raw export writes the retained records and a checksum manifest under the artifacts directory
+    Given a persisted UDS session whose latest assistant report is longer than the report preview
+    When a client requests the latest report with a raw export
+    Then the raw export should record the retained messages under the artifacts directory with a checksum manifest
