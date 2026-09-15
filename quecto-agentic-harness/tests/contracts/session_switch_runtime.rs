@@ -1,9 +1,10 @@
-//! Contract for the `SessionSwitchRuntime` port (D7 #1976): the loop
-//! runtime a switch moves besides the conversation. `reset_effort_to_default`
-//! restores the startup effort and makes the change visible only when
-//! something changed; `reset_workflow` clears a bound engine's run the same
-//! way; and the accounting reset it inherits still zeroes usage, drops the
-//! pending queue and reports the visible count.
+//! Contract for the `SessionSwitchRuntime` port (D7 #1976, D8 #1977): the
+//! loop runtime a switch moves besides the conversation.
+//! `reset_effort_to_default` restores the startup effort and makes the
+//! change visible only when something changed; `reset_workflow` clears a
+//! bound engine's run and `restore_workflow` replaces it with a saved run
+//! the same way; and the accounting reset it inherits still zeroes usage,
+//! drops the pending queue and reports the visible count.
 use quecto::application::sessions::ports::SessionSwitchRuntime;
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
 use quecto::domain::provider::EffortLevel;
