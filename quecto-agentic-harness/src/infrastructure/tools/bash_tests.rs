@@ -708,29 +708,26 @@ async fn test_exec_drop_kills_whole_process_group() {
         marker.display(),
     );
 
-    let published_pid = || {
-        std::fs::read_to_string(&pid_file)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
+    // Drop only once the subshell exists (it publishes its pid first), so a
+    // slow spawn under load cannot turn into a missing-pid failure.
+    let publish = async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     };
     let pid = {
         let fut = tool.execute(&cmd);
         tokio::pin!(fut);
-        // Drop only once the subshell exists (it publishes its pid first), so
-        // a slow spawn under load cannot turn into a missing-pid failure.
-        let publish = async {
-            loop {
-                if let Some(pid) = published_pid() {
-                    return pid;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        };
-        let pid = tokio::select! {
+        tokio::select! {
             pid = tokio::time::timeout(Duration::from_secs(10), publish) => pid.expect("the subshell publishes its pid"),
             _ = &mut fut => panic!("the command must still be running when its pid is published"),
-        };
-        pid
+        }
         // `fut` dropped here → ProcessGroupGuard must kill the whole group.
     };
     let alive = |pid: u32| {
