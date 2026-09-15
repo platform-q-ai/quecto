@@ -7,15 +7,14 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
 
 use super::protocol::AgentEvent;
-use super::uds::uds_dispatch_session;
 use super::uds::{
     DispatchCtx, LineResult, dispatch_command, emit_event_to_broadcast_or_writer,
-    inject_system_prompt, parse_line, remove_injected_system_prompt,
+    inject_system_prompt, parse_line,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
@@ -106,7 +105,6 @@ pub(super) struct MultiClientArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-    pub last_persisted_message_index: usize,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
     pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
@@ -181,7 +179,6 @@ pub(super) async fn multi_client_loop(
     let pre_broadcast_tx = args.broadcast_tx;
     let provider_reload = args.provider_reload;
     let provider_reload_inputs = args.provider_reload_inputs;
-    let last_persisted_message_index = args.last_persisted_message_index;
     let parent_control = args.parent_control.take();
     let teardown_graph = args.teardown_graph.take();
     let MultiClientArgs {
@@ -379,10 +376,9 @@ pub(super) async fn multi_client_loop(
         workflow_config: wf_config,
         provider_reload,
         provider_reload_inputs,
-        last_persisted_message_index,
-        durable_prefix_dirty: false,
         fleet_teardown,
         list_sessions: sessions.list_sessions.clone(),
+        save_session: sessions.save_session.clone(),
     };
 
     run_dispatch_loop(
@@ -399,22 +395,15 @@ pub(super) async fn multi_client_loop(
 
     accept_task.abort();
 
-    if !ephemeral && !session_key.is_empty() {
-        remove_injected_system_prompt(&mut messages, &system_prompt);
-        let subagent_roster = if agent_session.killing_exit {
-            Vec::new()
-        } else {
-            uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
-        };
-        let session = Session {
-            key: session_reads.active_session.read().await.identity().clone(),
-            messages: std::mem::take(&mut messages),
-            workflow_run: wf_state
-                .as_ref()
-                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster,
-        };
-        let _ = session_store.save(&session).await;
+    // The final save of an ordinary exit (#1860, #1938): the fleet settled
+    // before the loop returned; the transaction records no operational
+    // child on a killing exit.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
     }
 
     0
@@ -456,7 +445,11 @@ async fn run_dispatch_loop(
                 // The common shutdown settled the fleet before signalling
                 // exit readiness; persist an empty roster rather than
                 // reviving torn-down rows on the next resume.
-                ctx.session.killing_exit = true;
+                ctx.sessions
+                    .active_session
+                    .write()
+                    .await
+                    .set_killing_exit(true);
                 break;
             }
             DispatchMsg::Client(client_msg) => {
@@ -468,7 +461,11 @@ async fn run_dispatch_loop(
                     // notification it fires has no waiter left, which is
                     // fine: this loop is already leaving.
                     shutdown.last_client_disconnected().await;
-                    ctx.session.killing_exit = true;
+                    ctx.sessions
+                        .active_session
+                        .write()
+                        .await
+                        .set_killing_exit(true);
                     break;
                 }
             }

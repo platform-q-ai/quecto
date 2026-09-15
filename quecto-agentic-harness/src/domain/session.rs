@@ -148,6 +148,25 @@ impl Session {
     }
 }
 
+/// Give every message of a persisted conversation a durable ordinal
+/// (#1586): existing ordinals are kept, the missing ones are assigned in
+/// conversation order strictly above the largest ordinal already present,
+/// so ordinals stay unique and monotonic across prunes and resumes.
+pub fn assign_missing_ordinals(messages: &mut [Message]) {
+    let mut next = messages
+        .iter()
+        .filter_map(|message| message.ordinal)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    for message in messages {
+        if message.ordinal.is_none() {
+            message.ordinal = Some(next);
+            next = next.saturating_add(1);
+        }
+    }
+}
+
 /// A single spilled tool output entry.
 #[derive(Debug, Clone)]
 pub struct SpillEntry {

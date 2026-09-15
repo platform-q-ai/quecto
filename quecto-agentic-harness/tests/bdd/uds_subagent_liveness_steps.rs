@@ -37,7 +37,12 @@ fn liveness_read_handles(
             base_dir: base,
             store: None,
             session_key: String::new(),
+            ephemeral: true,
+            system_prompt: String::new(),
             spill_store: None,
+            durable_prefix: quecto::application::durable_prefix::DurablePrefixLatch::shared(),
+            workflow_state: None,
+            subagent_registry: None,
         },
     )
     .read_handles()

@@ -249,12 +249,10 @@ async fn single_client_socket_override_serves_get_state() {
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds_session_handles::SessionLoopInputs {
-                    base_dir: dir.path().to_path_buf(),
-                    store: None,
-                    session_key: "cli:cov".into(),
-                    spill_store: None,
-                },
+                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
             );
             single_client_loop(
                 SingleClientArgs {
@@ -271,7 +269,6 @@ async fn single_client_socket_override_serves_get_state() {
                     workflow_state: None,
                     provider_reload: None,
                     provider_reload_inputs: None,
-                    last_persisted_message_index: 0,
                 },
                 server_std,
                 &store,

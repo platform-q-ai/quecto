@@ -43,12 +43,16 @@ mod catalogue_source;
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
+#[path = "contracts/durable_prefix_observation.rs"]
+mod durable_prefix_observation;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
 #[path = "contracts/environment_process_commands.rs"]
 mod environment_process_commands;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/historical_roster_source.rs"]
+mod historical_roster_source;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
@@ -142,3 +146,5 @@ mod teardown_loop_adapters;
 mod turn_cancellation;
 #[path = "contracts/uds_direct_child_routing.rs"]
 mod uds_direct_child_routing;
+#[path = "contracts/workflow_run_source.rs"]
+mod workflow_run_source;

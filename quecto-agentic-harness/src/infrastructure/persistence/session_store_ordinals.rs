@@ -1,24 +1,14 @@
+//! Ordinal mechanics of the file store: the domain's ordinal policy
+//! (`domain::session::assign_missing_ordinals`) applied to what the store
+//! reads back and to the records it is about to write.
 use crate::domain::message::Message;
-use crate::domain::session::Session;
+use crate::domain::session::{
+    Session, assign_missing_ordinals as assign_missing_ordinals_in_place,
+};
 
 pub(super) fn with_assigned_ordinals(mut session: Session) -> Session {
     assign_missing_ordinals_in_place(&mut session.messages);
     session
-}
-
-pub(crate) fn assign_missing_ordinals_in_place(messages: &mut [Message]) {
-    let mut next = messages
-        .iter()
-        .filter_map(|message| message.ordinal)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    for message in messages {
-        if message.ordinal.is_none() {
-            message.ordinal = Some(next);
-            next = next.saturating_add(1);
-        }
-    }
 }
 
 pub(super) fn assign_missing_ordinals(mut messages: Vec<Message>) -> Vec<Message> {

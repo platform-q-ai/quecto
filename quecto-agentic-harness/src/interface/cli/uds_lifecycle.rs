@@ -1,4 +1,3 @@
-use super::uds::uds_dispatch_session;
 use super::uds::{DispatchCtx, run_command_loop};
 use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_multi::MultiClientArgs;
@@ -7,9 +6,14 @@ mod uds_session_load;
 use super::uds_session::AgentSession;
 use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::{Message, Role};
-use crate::domain::session::Session;
+pub(crate) use crate::domain::conversation_view::inject_system_prompt;
+#[cfg(test)]
+pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
+use crate::domain::message::Message;
+#[cfg(test)]
+use crate::domain::message::Role;
 use crate::domain::session_identity::SessionIdentity;
 use uds_session_load::load_session;
 
@@ -106,7 +110,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         base_dir: base_dir.to_path_buf(),
         store: session_store_override,
         session_key: session_key.clone(),
+        ephemeral,
+        system_prompt: system_prompt.clone(),
         spill_store: agent.spill_store().cloned(),
+        durable_prefix: agent.durable_prefix_latch(),
+        workflow_state: workflow_state.clone(),
+        subagent_registry: subagent_registry.clone(),
     });
     let session_store: &dyn SessionStore = sessions.store.as_ref();
     let identity = sessions.active_session.read().await.identity().clone();
@@ -126,7 +135,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             return 1;
         }
     };
-    let loaded_message_count = loaded_session.messages.len();
+    // What the store holds is the durable prefix the first delta may trust.
+    sessions
+        .active_session
+        .write()
+        .await
+        .set_persisted_watermark(loaded_session.messages.len());
     let messages = loaded_session.messages;
     if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
@@ -151,7 +165,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 workflow_state,
                 provider_reload,
                 provider_reload_inputs,
-                last_persisted_message_index: loaded_message_count,
             },
             std_stream,
             &sessions,
@@ -188,7 +201,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 broadcast_tx,
                 provider_reload,
                 provider_reload_inputs,
-                last_persisted_message_index: loaded_message_count,
                 parent_control,
                 teardown_graph,
             },
@@ -213,7 +225,6 @@ struct SingleClientArgs<'a> {
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-    last_persisted_message_index: usize,
 }
 
 async fn single_client_loop(
@@ -236,7 +247,6 @@ async fn single_client_loop(
         workflow_state,
         provider_reload,
         provider_reload_inputs,
-        last_persisted_message_index,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -299,58 +309,21 @@ async fn single_client_loop(
             workflow_config: None,
             provider_reload,
             provider_reload_inputs,
-            last_persisted_message_index,
-            durable_prefix_dirty: false,
             fleet_teardown: None,
             list_sessions: sessions.list_sessions.clone(),
+            save_session: sessions.save_session.clone(),
         },
     )
     .await;
 
-    if !ephemeral && !session_key.is_empty() {
-        remove_injected_system_prompt(&mut messages, &system_prompt);
-        let session = Session {
-            key: session_reads.active_session.read().await.identity().clone(),
-            messages: std::mem::take(&mut messages),
-            workflow_run: workflow_state
-                .as_ref()
-                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster: uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
-                &subagent_registry,
-                if agent_session.killing_exit {
-                    crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
-                } else {
-                    crate::domain::session::SubagentRestoreReason::LegacyUnspecified
-                },
-            ),
-        };
-        let _ = session_store.save(&session).await;
+    // The final save of an ordinary exit (#1860): the transaction decides
+    // whether there is anything to save.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
     }
     0
-}
-
-pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if prompt.is_empty() {
-        return;
-    }
-    let has_real_system = messages
-        .first()
-        .is_some_and(|m| m.role == Role::System && !m.is_manifest);
-    if !has_real_system {
-        messages.insert(0, Message::system(prompt.to_string()));
-    }
-}
-
-pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if prompt.is_empty() {
-        return;
-    }
-    let is_injected_prompt = messages.first().is_some_and(|m| {
-        m.role == Role::System
-            && !m.is_manifest
-            && (m.content == prompt || m.content.starts_with(prompt))
-    });
-    if is_injected_prompt {
-        messages.remove(0);
-    }
 }

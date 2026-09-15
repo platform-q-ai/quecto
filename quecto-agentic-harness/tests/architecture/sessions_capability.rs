@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D4 #1974): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -11,11 +11,15 @@
 //!   active-session state (R7a) are constructed only at their named
 //!   composition file; interface and infrastructure hold injected handles.
 //! - R7a/R9: one owner of live-conversation state and of history/recovery/
-//!   report policy: the interface neither declares a conversation ledger nor
-//!   pages or ranges history, selects reports, bounds or writes exports
-//!   itself, and converts no raw key into an identity.
+//!   sync/report policy: the interface neither declares a conversation
+//!   ledger nor pages or ranges history, reconciles revisions, selects
+//!   reports, bounds or writes exports itself, and converts no raw key
+//!   into an identity.
 //! - D4: the export root literal is composition's alone; no interface file
 //!   names the export adapter.
+//! - D5: one owner of the save transaction: the interface holds no
+//!   persistence policy (watermark, dirty latch, killing exit, roster
+//!   snapshot, ordinal assignment) and never writes the store directly.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -42,17 +46,20 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
+    "src/application/sessions/use_cases/synchronize_transcript.rs",
+    "src/application/sessions/use_cases/save_session.rs",
+    "src/application/sessions/ports/export.rs",
+    "src/application/sessions/ports/session_runtime.rs",
     "src/application/sessions/dto/history.rs",
     "src/application/sessions/dto/message_recovery.rs",
     "src/application/sessions/dto/session_report.rs",
-    "src/application/sessions/ports/export.rs",
-    "src/application/sessions/use_cases/synchronize_transcript.rs",
-    "src/application/sessions/dto/history.rs",
-    "src/application/sessions/dto/message_recovery.rs",
     "src/application/sessions/dto/sync.rs",
+    "src/application/sessions/dto/save_session.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
+    "src/application/durable_prefix.rs",
+    "src/infrastructure/persistence/session_snapshot_sources.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
     "src/composition/session_report.rs",
@@ -80,15 +87,26 @@ const SESSION_PORTS: &[(&str, &str)] = &[
         "SessionExportPort",
         "tests/contracts/session_export_port.rs",
     ),
+    (
+        "DurablePrefixObservation",
+        "tests/contracts/durable_prefix_observation.rs",
+    ),
+    (
+        "WorkflowRunSource",
+        "tests/contracts/workflow_run_source.rs",
+    ),
+    (
+        "HistoricalRosterSource",
+        "tests/contracts/historical_roster_source.rs",
+    ),
 ];
 
-/// The exact files a sessions port may be declared in: the persistence
-/// ports (D1) and the outbound export port (D4). Nothing else under the
-/// capability declares a trait.
-const PORT_FILES: &[&str] = &[
-    "src/application/sessions/ports.rs",
-    "src/application/sessions/ports/export.rs",
-];
+/// Where the capability's ports may be declared: the ports file and the
+/// files under its `ports/` directory (D5 #1972).
+fn is_ports_file(path: &str) -> bool {
+    path == "src/application/sessions/ports.rs"
+        || path.starts_with("src/application/sessions/ports/")
+}
 
 /// Where each sessions graph node may be constructed (R5, R7a): exactly one
 /// composition file per constructor (constructor, file).
@@ -133,6 +151,15 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "SynchronizeTranscriptController::new(",
         "src/composition/active_session.rs",
     ),
+    ("SaveSession::new(", "src/composition/active_session.rs"),
+    (
+        "WorkflowEngineRunSource::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "RegistryRosterSource::new(",
+        "src/composition/active_session.rs",
+    ),
 ];
 
 /// The one production file that may spell the export root (D4): the loop's
@@ -163,12 +190,60 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "fn sync_message_json(",
     ".frontier()",
     "resync =",
+    // D5 (#1972): the save transaction's policy lives in the application.
+    "fn persist_current_session",
+    "fn snapshot_subagent_roster",
+    "assign_missing_ordinals",
+    "last_persisted_message_index",
+    "durable_prefix_dirty",
+    "killing_exit =",
+    "fn inject_system_prompt(",
+    "fn remove_injected_system_prompt(",
+    "session_store_ordinals",
 ];
 
 /// The interface files still holding a raw persisted key the active session
 /// does not stand for (exact, decrease-only): the resume target a client
 /// names on the wire (D8 #1977 owns its admission).
 const RAW_KEY_CONVERSION_SITES: &[&str] = &["src/interface/cli/uds_dispatch_session.rs"];
+
+/// The exact production files that request the injected save transaction
+/// (D5 #1972): the interface's persistence triggers. Decrease-only.
+const SAVE_REQUESTERS: &[&str] = &[
+    "src/interface/cli/agent/run_session.rs",
+    "src/interface/cli/uds.rs",
+    "src/interface/cli/uds_dispatch.rs",
+    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/cli/uds_lifecycle.rs",
+    "src/interface/cli/uds_multi.rs",
+];
+
+/// The trigger each persistence site requests: explicit, post-turn and
+/// transition saves, the pre-turn prompt save, and the ordinary exits.
+const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
+    (
+        "src/interface/cli/uds_dispatch.rs",
+        "SaveTrigger::Explicit {",
+    ),
+    ("src/interface/cli/uds.rs", "SaveTrigger::Routine"),
+    ("src/interface/cli/uds.rs", ".save_with_pending_prompt("),
+    (
+        "src/interface/cli/uds_dispatch_session.rs",
+        "SaveTrigger::Routine",
+    ),
+    (
+        "src/interface/cli/uds_lifecycle.rs",
+        "SaveTrigger::OrdinaryExit",
+    ),
+    (
+        "src/interface/cli/uds_multi.rs",
+        "SaveTrigger::OrdinaryExit",
+    ),
+    (
+        "src/interface/cli/agent/run_session.rs",
+        "SaveTrigger::OrdinaryExit",
+    ),
+];
 
 /// The exact sites that create a `FlatSessionLayout` (R7). Decrease-only:
 /// the two interface sites (the ephemeral spill scrub and the tool
@@ -193,15 +268,18 @@ const SANITIZER_CALLERS: &[&str] = &[
 /// Decrease-only line ceilings of the list/owner files (file, ceiling).
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
 const LINE_CEILINGS: &[(&str, usize)] = &[
-    ("src/application/sessions/active_session.rs", 210),
+    ("src/application/durable_prefix.rs", 42),
+    ("src/application/sessions/active_session.rs", 277),
     ("src/application/sessions/conversation_ledger.rs", 295),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
     ("src/application/sessions/dto/session_report.rs", 150),
     ("src/application/sessions/dto/sync.rs", 65),
+    ("src/application/sessions/dto/save_session.rs", 68),
     ("src/application/sessions/history_paging.rs", 65),
     ("src/application/sessions/ports.rs", 135),
     ("src/application/sessions/ports/export.rs", 30),
+    ("src/application/sessions/ports/session_runtime.rs", 29),
     (
         "src/application/sessions/use_cases/export_session_report.rs",
         180,
@@ -213,9 +291,20 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/synchronize_transcript.rs",
         110,
     ),
-    ("src/composition/active_session.rs", 50),
+    ("src/application/sessions/use_cases/save_session.rs", 268),
+    // D3 #1973, D4 #1974 and D5 #1972 each add a use case to this graph;
+    // the ceiling follows their merge (was 68 on the D5 branch alone).
+    ("src/composition/active_session.rs", 77),
     ("src/composition/session_report.rs", 40),
     ("src/composition/sessions.rs", 38),
+    (
+        "src/infrastructure/persistence/session_snapshot_sources.rs",
+        61,
+    ),
+    (
+        "src/infrastructure/persistence/session_store_ordinals.rs",
+        23,
+    ),
     ("src/domain/session_identity.rs", 133),
     ("src/infrastructure/persistence/context_spill.rs", 376),
     ("src/infrastructure/persistence/session_layout.rs", 83),
@@ -224,9 +313,16 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_store_list.rs", 99),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
+    ("src/interface/cli/agent/run_session.rs", 140),
+    ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
+    ("src/interface/cli/uds_dispatch_session.rs", 570),
     ("src/interface/cli/uds_latest_report.rs", 85),
-    ("src/interface/cli/uds_session_handles.rs", 85),
+    ("src/interface/cli/uds_lifecycle.rs", 330),
+    ("src/interface/cli/uds_multi.rs", 642),
+    // Same merge of D3/D4/D5 handles (was 97 on the D5 branch alone).
+    ("src/interface/cli/uds_session_handles.rs", 105),
+    ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 320),
@@ -353,8 +449,8 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
                 assert!(
-                    PORT_FILES.contains(&path.as_str()),
-                    "port {name} must be declared in one of the capability's port files, found in {path}"
+                    is_ports_file(path),
+                    "port {name} must be declared under the capability's ports, found in {path}"
                 );
                 declared.insert(name);
             }
@@ -509,6 +605,71 @@ fn lists_a_session_store(line: &str, file_names_store: bool) -> bool {
         || line.contains(".list(None")
         || line.contains("SessionListQuery")
         || (file_names_store && line.contains("store.list("))
+}
+
+/// A line that requests the injected save transaction (`x.save_session`
+/// followed by a call), as opposed to a handle copy (`.save_session.clone()`)
+/// or the field/constructor sites of the handles and composition.
+fn requests_a_save(line: &str) -> bool {
+    line.contains(".save_session") && !line.contains(".clone()")
+}
+
+/// A line that writes through something typed by the session store port:
+/// `save`, `save_delta` or `save_clean_delta` on the field, a binding named
+/// after it, or a `dyn SessionStore` handle.
+fn saves_a_session_store(line: &str, file_names_store: bool) -> bool {
+    let writes = line.contains(".save(")
+        || line.contains(".save_delta(")
+        || line.contains(".save_clean_delta(");
+    if !writes {
+        return false;
+    }
+    line.contains("session_store") || (file_names_store && line.contains("store."))
+}
+
+/// D5 retirement (#1972): every persistence trigger of the interface goes
+/// through the injected `SaveSession`; no interface production line writes
+/// the store, and the exact set of save requesters is known.
+#[test]
+fn interface_never_saves_the_store_directly() {
+    let direct: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with("src/interface/"))
+        .flat_map(|path| {
+            let code = production_code(&path);
+            let names_store = code
+                .iter()
+                .any(|(_, line)| line.contains("SessionStore") || line.contains("session_store"));
+            code.into_iter()
+                .filter(move |(_, line)| saves_a_session_store(line, names_store))
+                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
+        })
+        .collect();
+    assert!(
+        direct.is_empty(),
+        "interface writes the store directly in {direct:#?}"
+    );
+    let requesters: BTreeSet<String> = production_files()
+        .into_iter()
+        .filter(|path| {
+            production_code(path)
+                .iter()
+                .any(|(_, line)| requests_a_save(line))
+        })
+        .collect();
+    assert_eq!(
+        requesters,
+        set(SAVE_REQUESTERS),
+        "the save transaction's requesters are exact; a new trigger is a reviewed edit"
+    );
+    for (file, trigger) in SAVE_TRIGGER_SITES {
+        assert!(
+            production_code(file)
+                .iter()
+                .any(|(_, line)| line.contains(trigger)),
+            "{file} requests `{trigger}`"
+        );
+    }
 }
 
 #[test]

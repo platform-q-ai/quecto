@@ -3,6 +3,7 @@
 //! Restore keeps history and creates no operational child row: a
 //! launcher-created child cannot outlive its launcher, so persisted rows are
 //! read only to be ignored. No socket probe, no pid compare, no readoption.
+use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
@@ -11,9 +12,68 @@ use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 use crate::interface::cli::uds::uds_dispatch_session::{
-    note_persisted_roster_is_history, reset_subagent_roster, snapshot_subagent_roster,
-    snapshot_subagent_roster_with_restore_reason,
+    note_persisted_roster_is_history, reset_subagent_roster,
 };
+
+/// The roster rows the save transaction records for `registry` under an
+/// explicit `restore_reason` (#1860): a real save through the composed
+/// graph over a throwaway store, read back through the store.
+pub(crate) fn persisted_roster_via_save(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    restore_reason: SubagentRestoreReason,
+) -> Vec<PersistedSubagentRosterEntry> {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(persisted_roster_via_save_async(registry, restore_reason))
+}
+
+/// [`persisted_roster_via_save`] for tests already on a runtime.
+pub(crate) async fn persisted_roster_via_save_async(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    restore_reason: SubagentRestoreReason,
+) -> Vec<PersistedSubagentRosterEntry> {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut inputs = loop_inputs(tmp.path(), "cli:roster");
+    inputs.subagent_registry = registry.clone();
+    let handles = composed_sessions_from(inputs);
+    handles
+        .save_session
+        .save(
+            &mut vec![crate::domain::message::Message::user("history")],
+            SaveTrigger::Explicit { restore_reason },
+        )
+        .await
+        .expect("the save succeeds");
+    handles
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:roster"))
+        .await
+        .expect("load")
+        .expect("saved")
+        .subagent_roster
+}
+
+/// The composed sessions handles of `inputs` (#1970): the one place the
+/// dispatch rigs reach composition, so no rig file names the layer itself.
+pub(crate) fn composed_sessions_from(
+    inputs: crate::interface::cli::uds_session_handles::SessionLoopInputs,
+) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    crate::composition::sessions::build_session_handles(inputs)
+}
+
+/// The rows a routine (legacy-reason) save records for `registry`.
+pub(crate) fn snapshot_subagent_roster(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> Vec<PersistedSubagentRosterEntry> {
+    persisted_roster_via_save(registry, SubagentRestoreReason::LegacyUnspecified)
+}
+
+/// The rows a save under `restore_reason` records for `registry`.
+pub(crate) fn snapshot_subagent_roster_with_restore_reason(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    restore_reason: SubagentRestoreReason,
+) -> Vec<PersistedSubagentRosterEntry> {
+    persisted_roster_via_save(registry, restore_reason)
+}
 
 /// What a resume does with the departing roster once its children have
 /// settled (#1938): note the persisted rows as history, replace the records.
@@ -467,6 +527,26 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
     );
 }
 
+/// The loop inputs of a rig opened on `session_key` over `base`: not
+/// ephemeral, no injected prompt, a fresh dirty latch, no workflow and no
+/// roster. Rigs override the fields they exercise.
+pub(crate) fn loop_inputs(
+    base: &std::path::Path,
+    session_key: &str,
+) -> crate::interface::cli::uds_session_handles::SessionLoopInputs {
+    crate::interface::cli::uds_session_handles::SessionLoopInputs {
+        base_dir: base.to_path_buf(),
+        store: None,
+        session_key: session_key.to_string(),
+        ephemeral: false,
+        system_prompt: String::new(),
+        spill_store: None,
+        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        workflow_state: None,
+        subagent_registry: None,
+    }
+}
+
 /// The composed sessions handles over `base` (#1970), built here so the
 /// shared dispatch test env never names the composition layer itself.
 pub(crate) fn composed_sessions(
@@ -482,14 +562,30 @@ pub(crate) fn composed_sessions_for(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
 ) -> crate::interface::cli::uds_session_handles::SessionHandles {
-    crate::composition::sessions::build_session_handles(
-        crate::interface::cli::uds_session_handles::SessionLoopInputs {
-            base_dir: base.to_path_buf(),
-            store: None,
-            session_key: session_key.to_string(),
-            spill_store,
-        },
-    )
+    let mut inputs = loop_inputs(base, session_key);
+    inputs.spill_store = spill_store;
+    crate::composition::sessions::build_session_handles(inputs)
+}
+
+/// The composed handles of a session opened on `session_key` over the
+/// rig's own `store`, with `messages` already published as its live
+/// transcript.
+pub(crate) fn handles_over(
+    store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    session_key: &str,
+    spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
+    messages: &[crate::domain::message::Message],
+) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    let mut inputs = loop_inputs(std::path::Path::new(""), session_key);
+    inputs.store = Some(store);
+    inputs.spill_store = spill_store;
+    let handles = crate::composition::sessions::build_session_handles(inputs);
+    let _ = handles
+        .active_session
+        .try_write()
+        .expect("fresh session is uncontended")
+        .publish(messages);
+    handles
 }
 
 /// The read handles of a session opened on `session_key` over the rig's
@@ -500,21 +596,18 @@ pub(crate) fn read_handles_over(
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[crate::domain::message::Message],
 ) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
-    let handles = crate::composition::sessions::build_session_handles(
-        crate::interface::cli::uds_session_handles::SessionLoopInputs {
-            base_dir: std::path::PathBuf::new(),
-            store: Some(store),
-            session_key: session_key.to_string(),
-            spill_store,
-        },
-    )
-    .read_handles();
-    let _ = handles
-        .active_session
-        .try_write()
-        .expect("fresh session is uncontended")
-        .publish(messages);
-    handles
+    handles_over(store, session_key, spill_store, messages).read_handles()
+}
+
+/// The save transaction of a session opened on `session_key` over a
+/// throwaway base directory, for rigs that never inspect what was saved.
+pub(crate) fn save_handle_for(
+    session_key: &str,
+) -> std::sync::Arc<crate::application::sessions::use_cases::SaveSession> {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let base = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    composed_sessions_for(&base, session_key, None).save_session
 }
 
 /// The read handles of a session opened on `session_key` over `base`, with

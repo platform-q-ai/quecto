@@ -16,18 +16,19 @@ use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
+use crate::application::sessions::dto::SaveTrigger;
 use crate::application::{agent_loop::AgentLoopImpl, sessions::ports::SessionStore};
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session::Session;
-use crate::domain::workflow::WorkflowRunPersisted;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
+pub(crate) use super::uds_lifecycle::inject_system_prompt;
+#[cfg(test)]
+pub(crate) use super::uds_lifecycle::remove_injected_system_prompt;
 pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
-pub(crate) use super::uds_lifecycle::{inject_system_prompt, remove_injected_system_prompt};
 // `pub` (not `pub(crate)`) solely so the out-of-crate BDD suite can drive the
 // real reaper; hidden because it is not a supported library API.
 #[doc(hidden)]
@@ -159,19 +160,21 @@ pub(crate) struct DispatchCtx<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-    pub last_persisted_message_index: usize,
-    /// The agent changed history that existed before its latest run.
-    pub durable_prefix_dirty: bool,
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
     /// List saved sessions (#1861, #1970): the composed controller the
     /// `list_sessions` command is answered through.
     pub list_sessions: ListSessionsHandle,
+    /// Save current session (#1860, #1972): the one transaction every
+    /// persistence trigger of this loop requests; it owns the watermark,
+    /// the dirty latch and the killing-exit state on the active session.
+    pub save_session: SaveSessionHandle,
 }
 type FleetTeardown =
     std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
 type ListSessionsHandle =
     std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController>;
+type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
 
 impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
@@ -283,56 +286,16 @@ pub(super) struct PromptCommand {
     pub(super) streaming_behavior: Option<StreamingBehavior>,
 }
 
-fn persisted_workflow_run(ctx: &DispatchCtx<'_>) -> Option<WorkflowRunPersisted> {
-    ctx.workflow_state
-        .as_ref()
-        .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()))
-}
-
+/// Persist the user prompt about to run so it survives an ungraceful exit
+/// mid-turn; the transaction stamps its durable ordinal (#1322).
 async fn persist_user_prompt_before_run(
     ctx: &mut DispatchCtx<'_>,
     message: &mut Message,
-) -> Result<(), crate::domain::error::DomainError> {
-    if ctx.ephemeral || ctx.session_key.is_empty() {
-        return Ok(());
-    }
-    let mut persisted_messages = ctx.messages.clone();
-    remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
-    persisted_messages.push(message.clone());
-    crate::infrastructure::persistence::session_store::session_store_ordinals::assign_missing_ordinals_in_place(
-        &mut persisted_messages,
-    );
-    message.ordinal = persisted_messages
-        .last()
-        .and_then(|message| message.ordinal);
-    let persisted_len = persisted_messages.len();
-    let workflow_run = persisted_workflow_run(ctx);
-    let identity = ctx.sessions.active_session.read().await.identity().clone();
-    let result = if ctx.subagent_registry.is_some() {
-        ctx.session_store
-            .save(&Session {
-                key: identity,
-                messages: persisted_messages,
-                workflow_run,
-                subagent_roster: uds_dispatch_session::snapshot_subagent_roster(
-                    &ctx.subagent_registry,
-                ),
-            })
-            .await
-    } else {
-        ctx.session_store
-            .save_delta(
-                &identity,
-                &persisted_messages,
-                ctx.last_persisted_message_index,
-                workflow_run,
-            )
-            .await
-    };
-    if result.is_ok() {
-        ctx.last_persisted_message_index = persisted_len;
-    }
-    result
+) -> Result<(), crate::application::sessions::dto::SaveSessionError> {
+    ctx.save_session
+        .save_with_pending_prompt(ctx.messages, message)
+        .await
+        .map(|_| ())
 }
 
 pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
@@ -384,10 +347,10 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     if let Err(err) = persist_user_prompt_before_run(ctx, &mut message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
     }
-    // On success, persist_user_prompt_before_run already set last_persisted_message_index
-    // to the durable (system-stripped) length. Do not overwrite with live len+1: live
-    // messages may include an injected system prompt, which skews clean-delta appends
-    // and freezes load()/resume history (#1322).
+    // On success the save transaction already set the persisted watermark to
+    // the durable (system-stripped) length. Never overwrite it with live
+    // len+1: live messages may include an injected system prompt, which skews
+    // clean-delta appends and freezes load()/resume history (#1322).
     ctx.session.record_control(
         id.as_deref(),
         &type_name,
@@ -397,7 +360,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
-    // #1072: persist_current_session drains the durable-prefix dirty latch after every outcome.
+    // #1072: the save transaction drains the durable-prefix dirty latch after every outcome.
     if matches!(outcome, PromptOutcome::Success) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -406,7 +369,11 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // Publish completed-turn state before any post-turn query queues behind the next command (#1104).
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;
     // Persist after every turn so the conversation survives an ungraceful exit.
-    if let Err(err) = uds_dispatch_session::persist_current_session(ctx).await {
+    if let Err(err) = ctx
+        .save_session
+        .save(ctx.messages, SaveTrigger::Routine)
+        .await
+    {
         tracing::warn!("failed to persist session after turn: {err}");
     }
     false
@@ -696,8 +663,8 @@ async fn run_drained_message_guarded(
     disarm_cancel(&ctx.cancel_handle);
     // #1072: drained runs (steer follow-ups, workflow auto-continue,
     // coalesced sub-agent notes) can prune too. Their dirty latch is
-    // sticky on the agent; `persist_current_session` drains it
-    // centrally before choosing a persistence path.
+    // sticky on the agent; the save transaction drains it centrally
+    // before choosing a persistence path.
     // #899: keep busy-child snapshots fresh across auto-continue nudges
     // instead of frozen at the pre-turn snapshot until dispatch returns.
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;

@@ -376,11 +376,12 @@ async fn advance_then_abort_provider_uses_trait_default_stream_surface() {
 #[tokio::test]
 async fn abort_stops_an_already_running_auto_continue_loop() {
     let mut env = Env::with_selected_feature();
-    env.agent = make_dispatch_test_agent(std::sync::Arc::new(AdvanceThenAbortProvider {
+    let agent = make_dispatch_test_agent(std::sync::Arc::new(AdvanceThenAbortProvider {
         workflow: env.workflow.clone(),
         turn_control: env.turn_control.clone(),
         calls: std::sync::atomic::AtomicU32::new(0),
     }));
+    env.set_agent(agent);
 
     {
         let mut ctx = env.ctx();
@@ -469,9 +470,10 @@ impl LlmProvider for SteerDuringPendingTurn {
 #[tokio::test]
 async fn trial_steer_arriving_during_pending_batch_retains_remaining_work() {
     let mut env = Env::with_unselected_workflow();
-    env.agent = make_dispatch_test_agent(std::sync::Arc::new(SteerDuringPendingTurn(
+    let agent = make_dispatch_test_agent(std::sync::Arc::new(SteerDuringPendingTurn(
         env.turn_control.clone(),
     )));
+    env.set_agent(agent);
     env.session.enqueue_pending("first hint".into());
     env.session.enqueue_pending("second hint".into());
     env.session.enqueue_pending("third hint".into());
@@ -594,7 +596,9 @@ impl LlmProvider for QuotaExhausted {
 async fn quota_failure_stops_pending_turn_amplification_and_retains_work() {
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut env = Env::with_unselected_workflow();
-    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls.clone())));
+    env.set_agent(make_dispatch_test_agent(std::sync::Arc::new(
+        QuotaExhausted(calls.clone()),
+    )));
     for hint in ["wake one", "wake two", "operator clarification"] {
         env.session.enqueue_pending(hint.into());
     }
@@ -655,7 +659,9 @@ async fn aborted_queued_clarification_receipt_is_cancelled_without_inference() {
 async fn failed_clarification_receipt_is_failed_and_later_controls_remain_queued() {
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut env = Env::with_unselected_workflow();
-    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls.clone())));
+    env.set_agent(make_dispatch_test_agent(std::sync::Arc::new(
+        QuotaExhausted(calls.clone()),
+    )));
     let mut ctx = env.ctx();
     for id in ["first", "second"] {
         super::pending::queue_prompt(&mut ctx, Some(id), "follow_up", "approved".into(), false)
@@ -672,7 +678,9 @@ async fn failed_clarification_receipt_is_failed_and_later_controls_remain_queued
 async fn session_stats_expose_request_diagnostics_after_failed_prompt() {
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut env = Env::with_unselected_workflow();
-    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls)));
+    env.set_agent(make_dispatch_test_agent(std::sync::Arc::new(
+        QuotaExhausted(calls),
+    )));
     let mut ctx = env.ctx();
     super::handle_prompt(
         &mut ctx,

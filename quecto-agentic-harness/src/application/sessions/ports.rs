@@ -1,12 +1,16 @@
-//! Capability-local ports of the sessions capability (#1960, #1970, #1974):
-//! session persistence and the context spill store here, the outbound
-//! export port in [`export`]. Infrastructure implements them over files.
-//! Signatures name only domain values and the capability's own DTOs: every
-//! operation is keyed by the typed [`SessionIdentity`], never by a raw
-//! string, filename or path.
+//! Capability-local ports of the sessions capability (#1960, #1970, #1972,
+//! #1974): session persistence and the context spill store here, the
+//! outbound export port in [`export`], the session-runtime observations
+//! the save transaction snapshots in [`session_runtime`]. Infrastructure
+//! implements them over files. Signatures name only domain values and the
+//! capability's own DTOs: every operation is keyed by the typed
+//! [`SessionIdentity`], never by a raw string, filename or path.
 pub mod export;
 use std::future::Future;
 use std::pin::Pin;
+
+pub mod session_runtime;
+pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
 
 use super::dto::SessionListQuery;
 use crate::domain::error::DomainError;
@@ -86,13 +90,9 @@ pub trait SessionStore: Send + Sync {
     /// available. A [`SessionListQuery::ExistingKeyPrefix`] returns only the
     /// sessions whose identity starts with the prefix; the adapter uses it
     /// to skip non-matching files cheaply (without reading/parsing them).
-    ///
-    /// This is a SUMMARY-ONLY view and is NOT a load guarantee: an
-    /// implementation may derive summaries from a lightweight projection of
-    /// each session and therefore surface entries whose full bodies are
-    /// malformed. A returned [`SessionSummary`] does not guarantee that the
-    /// corresponding [`Self::load`] will succeed — callers that open a listed
-    /// session must handle a subsequent load failure gracefully.
+    /// A SUMMARY-ONLY view, not a load guarantee: summaries may come from a
+    /// lightweight projection, so a listed [`SessionSummary`] does not
+    /// guarantee [`Self::load`] succeeds; callers handle a load failure.
     fn list(
         &self,
         query: &SessionListQuery,

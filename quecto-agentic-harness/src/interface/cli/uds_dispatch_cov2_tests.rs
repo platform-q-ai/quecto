@@ -1,4 +1,4 @@
-use super::cov_tests::Fixture;
+use super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::domain::session::Session;

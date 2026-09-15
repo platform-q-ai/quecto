@@ -12,7 +12,12 @@ async fn handles_over_the_file_store_list_what_the_store_saved() {
         base_dir: tmp.path().to_path_buf(),
         store: None,
         session_key: "cli:composed".into(),
+        ephemeral: false,
+        system_prompt: String::new(),
         spill_store: None,
+        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        workflow_state: None,
+        subagent_registry: None,
     });
     let mut session = Session::new(SessionIdentity::named_cli("composed").unwrap());
     session.messages.push(Message::user("hello"));
@@ -36,7 +41,12 @@ async fn a_supplied_store_is_used_as_is() {
         base_dir: tmp.path().to_path_buf(),
         store: Some(store),
         session_key: "cli:composed".into(),
+        ephemeral: false,
+        system_prompt: String::new(),
         spill_store: None,
+        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        workflow_state: None,
+        subagent_registry: None,
     });
     let mut session = Session::new(SessionIdentity::named_cli("override").unwrap());
     session.messages.push(Message::user("hello"));

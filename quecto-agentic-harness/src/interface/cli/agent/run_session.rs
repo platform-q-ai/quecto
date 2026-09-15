@@ -5,8 +5,8 @@
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
+use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
 use crate::domain::session_identity::SessionIdentity;
 
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
@@ -38,9 +38,16 @@ pub(crate) fn run_agent_session(
         base_dir: base_dir.to_path_buf(),
         store: None,
         session_key: session_key.runtime_key().to_string(),
+        ephemeral,
+        // The one-shot run appends its prompt by id (below) rather than at
+        // the head, so the save transaction has no injected head to strip.
+        system_prompt: String::new(),
         spill_store: agent.spill_store().cloned(),
+        durable_prefix: agent.durable_prefix_latch(),
+        workflow_state: None,
+        subagent_registry: None,
     });
-    let session_store = sessions.store;
+    let session_store = sessions.store.clone();
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
@@ -112,13 +119,11 @@ pub(crate) fn run_agent_session(
                 {
                     messages.remove(idx);
                 }
-                let session = Session {
-                    key: session_key,
-                    messages: std::mem::take(&mut messages),
-                    workflow_run: None,
-                    subagent_roster: Vec::new(),
-                };
-                if let Err(e) = rt.block_on(session_store.save(&session)) {
+                if let Err(e) = rt.block_on(
+                    sessions
+                        .save_session
+                        .save(&mut messages, SaveTrigger::OrdinaryExit),
+                ) {
                     out.stderr
                         .push_str(&format!("warning: failed to save session: {}\n", e));
                 }

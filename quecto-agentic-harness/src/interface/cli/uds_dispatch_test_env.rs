@@ -103,6 +103,9 @@ pub(super) fn make_dispatch_test_agent(
 /// control flags, session store) or swap the agent before borrowing a context.
 pub(super) struct DispatchTestEnv {
     pub(super) tmp: tempfile::TempDir,
+    /// The dirty latch shared between the agent and the save transaction;
+    /// a swapped agent adopts it (`set_agent`).
+    latch: std::sync::Arc<crate::application::durable_prefix::DurablePrefixLatch>,
     pub(super) agent: crate::application::agent_loop::AgentLoopImpl,
     pub(super) messages: Vec<crate::domain::message::Message>,
     pub(super) session: AgentSession,
@@ -130,13 +133,20 @@ impl DispatchTestEnv {
         provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
     ) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        // The file store of `tmp` and the `list_sessions` handle are one
-        // composed graph, so both see the same session files.
-        let sessions = super::dispatch_session_roster_tests::composed_sessions(tmp.path());
+        let agent = make_dispatch_test_agent(provider);
+        let latch = agent.durable_prefix_latch();
+        // The file store of `tmp`, the `list_sessions` handle, the active
+        // session and the save transaction are one composed graph, so they
+        // all see the same session files and the same state.
+        let mut inputs = super::dispatch_session_roster_tests::loop_inputs(tmp.path(), "cli:test");
+        inputs.durable_prefix = latch.clone();
+        inputs.workflow_state = Some(workflow.clone());
+        let sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
         let store = sessions.store.clone();
         Self {
             tmp,
-            agent: make_dispatch_test_agent(provider),
+            latch,
+            agent,
             messages: Vec::new(),
             session: AgentSession::new("stub".into(), "cli:test".into()),
             session_key: "cli:test".to_string(),
@@ -168,6 +178,13 @@ impl DispatchTestEnv {
         )
     }
 
+    /// Replace the agent; it adopts the env's shared dirty latch so the
+    /// save transaction still drains what its pruning latched.
+    pub(super) fn set_agent(&mut self, mut agent: crate::application::agent_loop::AgentLoopImpl) {
+        agent.adopt_durable_prefix_latch(self.latch.clone());
+        self.agent = agent;
+    }
+
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
             &self.session_key,
@@ -180,12 +197,7 @@ impl DispatchTestEnv {
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_over(
-                self.store.clone(),
-                &self.session_key,
-                None,
-                &[],
-            ),
+            sessions: self.sessions.read_handles(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -209,10 +221,9 @@ impl DispatchTestEnv {
             workflow_config: Some(workflow_test_config()),
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
             fleet_teardown: None,
             list_sessions: self.sessions.list_sessions.clone(),
+            save_session: self.sessions.save_session.clone(),
         }
     }
 }

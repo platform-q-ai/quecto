@@ -40,7 +40,7 @@ impl Tool for NamedTool {
 
 #[tokio::test]
 async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let cmd = AgentCommand::SetToolPolicy {
@@ -74,7 +74,7 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
 
 #[tokio::test]
 async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     fx.agent
@@ -123,7 +123,7 @@ async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
 
 #[tokio::test]
 async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let alpha_id = fx
@@ -164,7 +164,7 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
 
 #[tokio::test]
 async fn immediate_persist_failure_dispatch_returns_error_without_retained_policy() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let tmp = tempfile::TempDir::new().unwrap();
@@ -204,7 +204,7 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
 
 #[tokio::test]
 async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let alpha_id = fx
@@ -265,7 +265,7 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
 
 #[tokio::test]
 async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
-    let mut fx = cov_tests::Fixture::new();
+    let mut fx = fixture_tests::Fixture::new();
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let tmp = tempfile::TempDir::new().unwrap();
