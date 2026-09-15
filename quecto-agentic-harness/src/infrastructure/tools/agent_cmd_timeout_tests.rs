@@ -1,7 +1,9 @@
 use super::*;
 use std::time::Duration;
 
-#[tokio::test]
+// Paused clock: the stalled server only sleeps, so the inspection deadline
+// is reached by advancing time rather than waiting 5 s for it.
+#[tokio::test(start_paused = true)]
 async fn public_get_state_uses_inspection_deadline_without_accept_marker() {
     let tmp = tempfile::tempdir().unwrap();
     let socket = tmp.path().join("stalled.sock");

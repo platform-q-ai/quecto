@@ -688,9 +688,17 @@ async fn journal_outage_holds_queued_work_and_reports_the_ledger_not_cancellatio
 async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    // The production deadline is 15 s; the session logic is identical at any
+    // value, so run it at 300 ms and assert the production constant separately.
+    assert_eq!(
+        quecto::infrastructure::admission::protocol::FRAME_DEADLINE,
+        Duration::from_secs(15)
+    );
+    let frame_deadline = Duration::from_millis(300);
+    let server = AuthorityServer::start_with_frame_deadline(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
+        frame_deadline,
     )
     .await
     .unwrap();
@@ -699,12 +707,9 @@ async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
         .unwrap();
     raw.write_all(&[0, 0, 0, 40]).await.unwrap();
     let mut buf = [0u8; 16];
-    let closed = timeout(
-        quecto::infrastructure::admission::protocol::FRAME_DEADLINE + Duration::from_secs(5),
-        raw.read(&mut buf),
-    )
-    .await
-    .expect("server closes the stalled session");
+    let closed = timeout(frame_deadline + Duration::from_secs(5), raw.read(&mut buf))
+        .await
+        .expect("server closes the stalled session");
     assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
     server.shutdown().await;
 }
@@ -735,14 +740,19 @@ async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
     assert_eq!(permit.maximum_cooldown_ms(), 10_000);
     let (receipt_ms, wall) = permit.receipt_clock();
     assert!(wall > std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000));
-    permit.feedback(ThrottleFeedback::Until(receipt_ms + 5_000));
+    // The probe acquire below waits this cooldown out for real; 1 s keeps
+    // that wait genuinely exercised (the 200 ms attempt deadline and two
+    // admin round-trips come first) without the 5 s the test used to spend.
+    let cooldown_ms = 1_000;
+    permit.feedback(ThrottleFeedback::Until(receipt_ms + cooldown_ms));
     permit.feedback(ThrottleFeedback::NoHint { jitter: 0 });
     let admin = AdminConnection::connect(&server.directory().admin_socket())
         .await
         .unwrap();
     timeout(LIMIT, async {
         loop {
-            if admin.inspect().await.unwrap().groups[&group()].cooldown_until >= receipt_ms + 5_000
+            if admin.inspect().await.unwrap().groups[&group()].cooldown_until
+                >= receipt_ms + cooldown_ms
             {
                 break;
             }

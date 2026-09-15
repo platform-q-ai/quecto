@@ -601,7 +601,9 @@ mod oracle_counterexamples {
         }
     }
 
-    #[tokio::test]
+    // Paused clock: the only thing to observe is the LIMIT timer firing on a
+    // pending future, so the runtime advances to it instead of sleeping 5 s.
+    #[tokio::test(start_paused = true)]
     async fn bounded_liveness_oracle_rejects_nonterminating_observation() {
         use futures::FutureExt;
         // The same deadline wrapper bounds recv, queue transition, server EOF,

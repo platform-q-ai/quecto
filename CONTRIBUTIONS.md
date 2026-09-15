@@ -46,6 +46,21 @@ bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 12m
 ```
 
+CI runs the libtest targets (everything but the cucumber `*_bdd` targets) under
+`cargo nextest run … --profile ci`, one process per test scheduled across
+binaries; with `cargo-nextest` installed the pre-push gate does the same and
+the `--lib` row above drops from ~26 s to ~20 s on 32 cpus:
+
+```bash
+cargo nextest run --workspace --features quecto-agentic-harness/test-support --bins --profile ci --lib
+```
+
+`run-bdd-shards.sh` builds the test binary once and runs it per shard; with
+`--coverage` the instrumented build lives in a persistent `target/llvm-cov-<suite>`
+directory, so a second coverage run only re-executes the scenarios (~70 s instead
+of ~200 s for the non-real lane). CI uses 8 shards on its 4-vcpu runners; 24 is
+still the fastest local setting on a large box.
+
 Run clippy for touched packages, or the strict workspace command when practical:
 
 ```bash

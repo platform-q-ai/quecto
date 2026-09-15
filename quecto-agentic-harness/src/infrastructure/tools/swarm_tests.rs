@@ -687,22 +687,29 @@ async fn snapshot_depth_cap_bounds_reported_changes() {
     );
 }
 
-#[tokio::test]
-async fn wide_directory_snapshot_is_bounded() {
+#[test]
+fn wide_directory_snapshot_is_bounded() {
     // The entry cap was only checked per directory, so one flat directory with
-    // more files than the cap was walked in full.
+    // more files than the cap was walked in full. The cap is injected: the
+    // walk is the same code the tool runs with `SNAPSHOT_MAX_ENTRIES`, and a
+    // small cap keeps this off the 25 000-file python run that overran the
+    // tool's 2 s foreground budget under process-per-test scheduling.
+    use super::swarm::{SNAPSHOT_MAX_ENTRIES, snapshot_files, snapshot_files_bounded};
     let tmp = tempfile::tempdir().unwrap();
-    let result = tool(tmp.path())
-        .execute(
-            r#"{"op":"run","code":"import os\nos.mkdir('many')\nfor i in range(25000):\n    open(f'many/f{i}','w').close()\n","timeout_seconds":20}"#,
-        )
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["status"], "completed", "{}", result.content);
-    let changed = v["files_created_or_modified"].as_array().unwrap().len();
+    let many = tmp.path().join("many");
+    std::fs::create_dir(&many).unwrap();
+    for i in 0..250 {
+        std::fs::File::create(many.join(format!("f{i}"))).unwrap();
+    }
+    let changed = snapshot_files_bounded(tmp.path(), 200).len();
     assert!(
-        changed <= 20_000,
+        changed <= 200,
         "snapshot should be bounded by the entry cap, reported {changed}"
+    );
+    assert_eq!(SNAPSHOT_MAX_ENTRIES, 20_000, "production cap");
+    assert_eq!(
+        snapshot_files(tmp.path()).len(),
+        250,
+        "the production cap does not truncate a small tree"
     );
 }

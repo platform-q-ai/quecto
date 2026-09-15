@@ -162,13 +162,18 @@ async fn a_panicking_writer_task_is_reported_by_the_bare_runtime_text() {
 #[test]
 fn an_export_over_the_size_bound_is_refused_and_its_directory_removed() {
     let directory = tempfile::tempdir().unwrap();
-    let huge = Message::user("x".repeat(MAX_EXPORT_BYTES as usize + 1));
-    let error = write(
+    // The bound is injected: the check is identical at any value and the
+    // production one would mean serialising a 256 MiB message here.
+    assert_eq!(MAX_EXPORT_BYTES, 256 * 1024 * 1024);
+    let max_bytes = 2 * 1024 * 1024;
+    let huge = Message::user("x".repeat(max_bytes as usize + 1));
+    let error = write_bounded(
         directory.path(),
         &[ExportRecord::Message(Box::new(huge))],
         &manifest(),
+        max_bytes,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("exceeds 256 MiB"));
+    assert!(error.to_string().contains("exceeds 2 MiB"), "{error}");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

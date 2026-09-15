@@ -12,6 +12,10 @@ pub struct SwarmConfig {
     pub max_processes: Option<u32>,
     pub max_concurrent_jobs: usize,
     pub inherit_environment: bool,
+    /// Finished-job and artifact-directory retention ceilings. Not part of
+    /// the user-facing [`SwarmToolConfig`]: production always runs the
+    /// defaults; tests lower them to exercise eviction without 40 runs.
+    pub retention: super::swarm::Retention,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +71,7 @@ impl From<SwarmToolConfig> for SwarmConfig {
             max_processes: v.max_processes,
             max_concurrent_jobs: v.max_concurrent_jobs,
             inherit_environment: v.inherit_environment,
+            retention: super::swarm::Retention::default(),
         }
     }
 }

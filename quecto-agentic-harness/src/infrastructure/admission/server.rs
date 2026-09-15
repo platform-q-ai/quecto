@@ -147,7 +147,17 @@ impl AuthorityServer {
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, false).await
+        Self::start_with(dir, proposal, false, FRAME_DEADLINE).await
+    }
+
+    /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
+    /// stalled-frame tests' entry point, so they need not wait out 15 s.
+    pub async fn start_with_frame_deadline(
+        dir: AuthorityDirectory,
+        proposal: AdmissionRuntimeProposal,
+        frame_deadline: Duration,
+    ) -> Result<Self, ServerError> {
+        Self::start_with(dir, proposal, false, frame_deadline).await
     }
 
     /// Operator acknowledgement that a ledger missing after prior operation
@@ -157,13 +167,14 @@ impl AuthorityServer {
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, true).await
+        Self::start_with(dir, proposal, true, FRAME_DEADLINE).await
     }
 
     async fn start_with(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
         accept_missing_ledger: bool,
+        frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
         proposal
             .policy
@@ -246,6 +257,7 @@ impl AuthorityServer {
                 tx.clone(),
                 shutdown_rx.clone(),
                 1,
+                frame_deadline,
             )),
             tokio::spawn(accept_loop(
                 admin_listener,
@@ -253,6 +265,7 @@ impl AuthorityServer {
                 tx,
                 shutdown_rx,
                 1 << 62,
+                frame_deadline,
             )),
         ];
         Ok(Self {
@@ -302,6 +315,7 @@ async fn accept_loop(
     commands: mpsc::UnboundedSender<Command>,
     mut shutdown: watch::Receiver<bool>,
     first_session: u64,
+    frame_deadline: Duration,
 ) {
     let mut next = first_session;
     loop {
@@ -311,7 +325,13 @@ async fn accept_loop(
                 Ok((stream, _)) => {
                     let session = next;
                     next += 1;
-                    tokio::spawn(session::serve(stream, session, role, commands.clone()));
+                    tokio::spawn(session::serve(
+                        stream,
+                        session,
+                        role,
+                        commands.clone(),
+                        frame_deadline,
+                    ));
                 }
                 Err(error) => {
                     tracing::warn!(%error, "admission authority accept failed");

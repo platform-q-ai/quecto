@@ -107,10 +107,22 @@ CLIPPY_PID=$!
 
 (
     step 6 "Architecture and repository invariants"
-    cargo test "${TEST_SHAPE[@]}" \
-        --test architecture \
-        --test contracts \
-        --test docs
+    # cargo-nextest (one process per test, scheduled across the three
+    # binaries; `ci` profile in .config/nextest.toml) when it is installed,
+    # otherwise plain `cargo test` — same artifacts, same tests.
+    if cargo nextest --version >/dev/null 2>&1; then
+        cargo nextest run --workspace "${WORKSPACE_FEATURES[@]}" --bins \
+            --test architecture \
+            --test contracts \
+            --test docs \
+            --profile ci
+    else
+        echo "  cargo-nextest not installed (cargo install cargo-nextest --locked); using cargo test."
+        cargo test "${TEST_SHAPE[@]}" \
+            --test architecture \
+            --test contracts \
+            --test docs
+    fi
 ) &
 ARCH_PID=$!
 
