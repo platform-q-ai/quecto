@@ -1478,6 +1478,7 @@ mod uds_history_recovery_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_report_export_steps;
+mod uds_resume_session_steps;
 mod uds_steps;
 mod uds_subagent_liveness_steps;
 mod uds_transcript_sync_steps;
