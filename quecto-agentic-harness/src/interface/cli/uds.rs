@@ -138,7 +138,6 @@ pub(crate) struct DispatchCtx<'a> {
     /// multi-client server, which streams via `broadcast_tx` instead — so the
     /// server allocates no throwaway writer (#994).
     pub stdout: Option<&'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
-    pub session_key: &'a mut String,
     pub session_store: &'a dyn SessionStore,
     pub ephemeral: bool,
     pub system_prompt: &'a str,
@@ -169,6 +168,8 @@ pub(crate) struct DispatchCtx<'a> {
     /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
     /// history-replacing transactions this loop requests once admitted.
     pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
+    /// Start a fresh conversation (#1862, #1976) and the departing-children settlement.
+    pub switch: super::uds_session_handles::SessionSwitchHandles,
 }
 type FleetTeardown =
     std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
@@ -610,6 +611,7 @@ async fn run_drained_message_guarded(
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return PromptOutcome::Cancelled;
     };
+    let session_key = ctx.session.session_key().to_string();
     let outcome = {
         let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
         let run = run_agent_message(PromptRun {
@@ -635,7 +637,7 @@ async fn run_drained_message_guarded(
         let admitted = if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant) {
             let identity =
                 crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
-                    ctx.session_key.as_str(),
+                    session_key.as_str(),
                 );
             if let (Some(identity), Some(registry)) = (identity, &ctx.subagent_registry) {
                 let entries = registry.lock().unwrap_or_else(|e| e.into_inner());

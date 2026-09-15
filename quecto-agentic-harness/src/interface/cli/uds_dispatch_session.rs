@@ -1,10 +1,18 @@
+//! The session-transition and history-rewrite handlers of the idle
+//! dispatch loop: `new_session` (#1862, D7 #1976 — admitted here,
+//! transacted by the application), `resume_session` (#1863, D8 #1977 —
+//! still interface-orchestrated, over the application's departing-
+//! children collaborator), `clear_history` (#1864) and `rewind_to`
+//! (#1865). The handlers admit, request and present; no session-key
+//! generation, settlement ordering or field-by-field switch lives here.
+use super::super::uds_session_switch_runtime::{LoopSessionSwitchRuntime, apply_workflow_run};
 use super::super::uds_turn_accounting::LoopTurnAccounting;
 use super::AgentEvent;
 use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
 };
-use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::conversation_edit::clear_conversation;
+use crate::application::sessions::dto::{SaveTrigger, SessionTransition};
+use crate::application::sessions::ports::FleetSettlement;
 use crate::domain::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::session_identity::SessionIdentity;
 use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
@@ -26,20 +34,7 @@ pub(super) fn set_workflow_run(
     ctx: &mut DispatchCtx<'_>,
     workflow_run: Option<crate::domain::workflow::WorkflowRunPersisted>,
 ) {
-    if let Some(workflow) = &ctx.workflow_state
-        && let Ok(mut engine) = workflow.lock()
-    {
-        let before = serde_json::to_value(engine.snapshot(true)).ok();
-        if let Some(run) = workflow_run {
-            engine.restore_run(run);
-        } else {
-            engine.reset();
-        }
-        let after = serde_json::to_value(engine.snapshot(true)).ok();
-        if before != after {
-            ctx.session.bump_visible_generation();
-        }
-    }
+    apply_workflow_run(ctx.workflow_state.as_ref(), ctx.session, workflow_run);
 }
 
 /// Log what a restored session's persisted rows are: history only (#1937).
@@ -62,140 +57,14 @@ pub(crate) fn note_persisted_roster_is_history(
     }
 }
 
-/// Why a session transition was refused before the roster was touched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TransitionRefused {
-    /// The fleet teardown left children unsettled: their rows keep their
-    /// claims lifted and the current session stays as it is.
-    Unsettled(Vec<(crate::domain::ids::AgentUuid, String)>),
-    /// The teardown run was interrupted; nothing was replaced.
-    Interrupted,
-    /// Live delegated rows exist but this harness has no fleet teardown to
-    /// settle them with (a loop built without a teardown graph).
-    NoFleetTeardown(usize),
-    /// Live delegated rows remain after the fleet settled (a registration
-    /// the run did not see): the roster is not replaced under them.
-    LiveRowsRemain(usize),
-}
-
-impl std::fmt::Display for TransitionRefused {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unsettled(children) => {
-                let names: Vec<String> = children
-                    .iter()
-                    .map(|(uuid, detail)| format!("{uuid}: {detail}"))
-                    .collect();
-                write!(
-                    f,
-                    "{} subagent(s) could not be settled; the current session was kept: {}",
-                    children.len(),
-                    names.join("; ")
-                )
-            }
-            Self::Interrupted => {
-                f.write_str("subagent teardown was interrupted; the current session was kept")
-            }
-            Self::NoFleetTeardown(live) => write!(
-                f,
-                "{live} live subagent(s) but no fleet teardown is available; the current session was kept"
-            ),
-            Self::LiveRowsRemain(live) => write!(
-                f,
-                "{live} live subagent(s) remain after the teardown; the current session was kept"
-            ),
-        }
-    }
-}
-
-/// Settle the current session's direct children before its roster is
-/// replaced (#1938): the fleet teardown claims each one, asks it to shut
-/// down over its edge, concludes it through the owned handle and
-/// compensates it, under a bound. A child that does not settle aborts the
-/// transition explicitly — the roster is left as it was and the caller
-/// reports why — so ownership of a live child is never silently dropped.
-/// Returns how many rows left the roster.
-pub(crate) async fn settle_departing_children(
-    ctx: &DispatchCtx<'_>,
-    transition: &str,
-) -> Result<usize, TransitionRefused> {
-    let Some(fleet) = ctx.fleet_teardown.clone() else {
-        let live = live_delegated_rows(&ctx.subagent_registry);
-        return if live == 0 {
-            Ok(0)
-        } else {
-            Err(TransitionRefused::NoFleetTeardown(live))
-        };
-    };
-    let outcome = fleet
-        .execute(
-            crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
-                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
-            },
-        )
-        .await
-        .map_err(|_| TransitionRefused::Interrupted)?;
-    if !outcome.is_settled() {
-        tracing::warn!(
-            transition,
-            unsettled = outcome.unsettled.len(),
-            "session switch refused: departing children did not settle"
-        );
-        return Err(TransitionRefused::Unsettled(outcome.unsettled));
-    }
-    tracing::info!(
-        transition,
-        settled = outcome.settled.len(),
-        pruned = outcome.pruned.len(),
-        joined = outcome.joined,
-        "session switch: departing children settled before the roster is replaced"
-    );
-    Ok(outcome.removed_count())
-}
-
-/// Live rows this harness addresses as delegated agents.
-fn live_delegated_rows(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-) -> usize {
-    let Some(registry) = registry else { return 0 };
-    registry
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .filter(|entry| {
-            entry.delegated_identity().is_some()
-                && entry.persisted_liveness == crate::domain::session::SubagentLiveness::Live
-                && entry.status
-                    != crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
-        })
-        .count()
-}
-
-/// Replace the operational roster once the fleet has settled: every row
-/// left is a record only. A live delegated row here would be a child the
-/// teardown did not own, so it is refused rather than dropped.
-pub(crate) fn reset_subagent_roster(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    transition: &str,
-) -> Result<usize, TransitionRefused> {
-    let Some(registry) = registry else {
-        return Ok(0);
-    };
-    let live = live_delegated_rows(&Some(registry.clone()));
-    if live > 0 {
-        return Err(TransitionRefused::LiveRowsRemain(live));
-    }
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let dropped = entries.len();
-    entries.clear();
-    if dropped > 0 {
-        tracing::info!(
-            transition,
-            dropped,
-            "session switch: roster records replaced"
-        );
-    }
-    Ok(dropped)
+/// The loop's fleet teardown as the settlement port the transitions
+/// order (#1938), if the loop has one.
+fn fleet_settlement_of(
+    fleet: &Option<
+        std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
+    >,
+) -> Option<&dyn FleetSettlement> {
+    fleet.as_deref().map(|fleet| fleet as &dyn FleetSettlement)
 }
 
 /// Tell every connected client the survivor set is empty after a roster
@@ -208,6 +77,13 @@ fn broadcast_roster_reset(ctx: &DispatchCtx<'_>) {
     }
 }
 
+/// `new_session` (#1862): admitted only while the agent is idle; the
+/// transaction itself is the application's. On success the roster reset
+/// is broadcast, then the ledger position, then the response — the same
+/// on-socket order as before the migration (master broadcast the roster
+/// reset before the key was generated and the ledger position before the
+/// effort/workflow reset and the retention clear; no event is emitted in
+/// between, so the requester and the other clients see the same sequence).
 pub(super) async fn handle_new_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -222,82 +98,36 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    // The departing session's children are settled BEFORE its final save
-    // and before anything is replaced (#1938); a child that does not settle
-    // keeps the current session.
-    if let Err(refused) = settle_departing_children(ctx, "new_session").await {
-        let ev = AgentEvent::err(id, type_name, refused.to_string());
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
-    if let Err(err) = ctx
-        .save_session
-        .save(ctx.messages, SaveTrigger::Routine)
-        .await
-    {
-        let ev = AgentEvent::err(
-            id,
-            type_name,
-            format!("failed to save current session: {err}"),
+    let fresh = ctx.switch.fresh.clone();
+    let result = {
+        let mut runtime = LoopSessionSwitchRuntime::new(
+            ctx.agent,
+            ctx.session,
+            &ctx.execution_state,
+            ctx.workflow_state.as_ref(),
         );
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
-    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "new_session") {
-        let ev = AgentEvent::err(id, type_name, refused.to_string());
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
-    let old_identity = ctx.sessions.active_session.read().await.identity().clone();
-    clear_conversation(ctx.messages);
-    sync_message_count(ctx);
-    ctx.sessions
-        .active_session
-        .write()
-        .await
-        .set_persisted_watermark(0);
-    ctx.session.clear_usage();
-    ctx.session.discard_pending();
-    broadcast_roster_reset(ctx);
-    let identity = crate::interface::shared::generate_chat_identity();
-    let key = identity.runtime_key().to_string();
-    ctx.session_key.clear();
-    ctx.session_key.push_str(&key);
-    if old_identity != identity {
-        ctx.session_store.release(&old_identity);
-    }
-    ctx.session.set_session_key(key.clone());
-    ctx.agent.set_session_key(key.clone());
-    // Replace history, identity and spill namespace in one write so busy
-    // readers can observe neither old refs under the new key nor new history
-    // under the old key.
-    let advance = {
-        let mut state = ctx.sessions.active_session.write().await;
-        super::super::uds_snapshots::reset_to_with_spill_store(
-            &mut state,
-            ctx.messages,
-            ctx.agent.spill_store().cloned(),
-            identity,
-        )
+        fresh
+            .execute(
+                ctx.messages,
+                fleet_settlement_of(&ctx.fleet_teardown),
+                &mut runtime,
+            )
+            .await
     };
-    emit_ledger_advanced(ctx, advance).await;
-    // Session-scoped effort must not leak into the fresh session (#1067).
-    let before_effort = ctx.agent.effort();
-    ctx.agent.reset_effort_to_default();
-    if ctx.agent.effort() != before_effort {
-        ctx.session.bump_visible_generation();
-    }
-    set_workflow_run(ctx, None);
-    if let Some(spill) = ctx.agent.spill_store() {
-        let identity = ctx.sessions.active_session.read().await.identity().clone();
-        if let Err(e) = spill.clear(&identity).await {
-            tracing::warn!("new_session: failed to clear spill store: {e}");
+    let started = match result {
+        Ok(started) => started,
+        Err(err) => {
+            let ev = AgentEvent::err(id, type_name, err.to_string());
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
         }
-    }
+    };
+    broadcast_roster_reset(ctx);
+    emit_ledger_advanced(ctx, started.ledger).await;
     let ev = AgentEvent::ok(
         id,
         type_name,
-        Some(serde_json::json!({ "sessionKey": key })),
+        Some(serde_json::json!({ "sessionKey": started.identity.runtime_key() })),
     );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
@@ -350,7 +180,14 @@ pub(super) async fn handle_resume_session(
     // The departing session's children are settled BEFORE its final save
     // and before the target session is opened (#1938); a child that does
     // not settle keeps the current session.
-    if let Err(refused) = settle_departing_children(ctx, "resume_session").await {
+    let departing = ctx.switch.departing_children.clone();
+    if let Err(refused) = departing
+        .settle(
+            fleet_settlement_of(&ctx.fleet_teardown),
+            SessionTransition::Resume,
+        )
+        .await
+    {
         let ev = AgentEvent::err(id, type_name, refused.to_string());
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
@@ -396,19 +233,18 @@ pub(super) async fn handle_resume_session(
     // Replaced BEFORE the session key moves: a refusal here keeps the
     // current session whole and only releases the claim just taken.
     note_persisted_roster_is_history(&ctx.subagent_registry, &loaded.subagent_roster);
-    if let Err(refused) = reset_subagent_roster(&ctx.subagent_registry, "resume_session") {
+    if let Err(refused) = departing.reset_roster(SessionTransition::Resume) {
         ctx.session_store.release(&target);
         let ev = AgentEvent::err(id, type_name, refused.to_string());
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
     let old_identity = ctx.sessions.active_session.read().await.identity().clone();
-    *ctx.session_key = new_key.clone();
     if old_identity != target {
         ctx.session_store.release(&old_identity);
     }
     ctx.session.set_session_key(new_key.clone());
-    ctx.agent.set_session_key(new_key.clone());
+    ctx.agent.set_session_key(target.clone());
     // Session-scoped effort must not follow the client into the resumed
     // session (#1067).
     let before_effort = ctx.agent.effort();
@@ -433,15 +269,11 @@ pub(super) async fn handle_resume_session(
     // Atomically reset history AND spill namespace to the resumed session so
     // refs from the previous session cannot resolve and collapsed refs from the
     // resumed session never query the previous session key.
-    let advance = {
-        let mut state = ctx.sessions.active_session.write().await;
-        super::super::uds_snapshots::reset_to_with_spill_store(
-            &mut state,
-            ctx.messages,
-            ctx.agent.spill_store().cloned(),
-            target,
-        )
-    };
+    let advance = ctx.sessions.active_session.write().await.switch_to(
+        target,
+        ctx.agent.spill_store().cloned(),
+        ctx.messages,
+    );
     emit_ledger_advanced(ctx, advance).await;
     let ev = AgentEvent::ok(
         id,

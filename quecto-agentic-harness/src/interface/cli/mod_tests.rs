@@ -28,6 +28,7 @@ fn test_composition() -> CliComposition {
         teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
         sessions: crate::composition::sessions::build_session_handles,
+        fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
     }
 }
 

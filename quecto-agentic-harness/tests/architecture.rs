@@ -3786,19 +3786,29 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     let shutdown = production_source("src/interface/cli/uds_shutdown.rs");
     assert!(shutdown.contains(".termination_signal("));
     assert!(shutdown.contains(".last_client_disconnected("));
-    // Session transitions settle the fleet before anything is replaced.
+    // Session transitions settle the fleet before anything is replaced
+    // (#1976): the fresh-session transaction orders it in the application
+    // through the departing-children collaborator, over the fleet the
+    // composition adapts; the interface's resume (until D8 #1977) requests
+    // the same collaborator in the same order.
+    let fresh = production_source("src/application/sessions/use_cases/start_fresh_conversation.rs");
+    let settle = fresh
+        .find(".settle(fleet, transition)")
+        .expect("new_session settles the departing children");
+    let reset = fresh
+        .find(".reset_roster(transition)")
+        .expect("new_session replaces the roster");
+    assert!(settle < reset, "new_session settles before it replaces");
     let session = production_source("src/interface/cli/uds_dispatch_session.rs");
-    for transition in ["\"new_session\"", "\"resume_session\""] {
-        let settle = session
-            .find(&format!("settle_departing_children(ctx, {transition})"))
-            .unwrap_or_else(|| panic!("{transition} settles the departing children"));
-        let reset = session
-            .find(&format!(
-                "reset_subagent_roster(&ctx.subagent_registry, {transition})"
-            ))
-            .unwrap_or_else(|| panic!("{transition} replaces the roster"));
-        assert!(settle < reset, "{transition} settles before it replaces");
-    }
+    let settle = session
+        .find(".settle(")
+        .expect("resume_session settles the departing children");
+    let reset = session
+        .find(".reset_roster(SessionTransition::Resume)")
+        .expect("resume_session replaces the roster");
+    assert!(settle < reset, "resume_session settles before it replaces");
+    let adapters = production_source("src/composition/fleet_settlement.rs");
+    assert!(adapters.contains("impl FleetSettlement for TerminateAllDelegatedAgents"));
     // The spawn tool admits against the shared lifecycle cell.
     // `spawn.rs` leads with its test-module includes, so read it whole.
     let spawn = fs::read_to_string("src/infrastructure/tools/spawn.rs").unwrap();

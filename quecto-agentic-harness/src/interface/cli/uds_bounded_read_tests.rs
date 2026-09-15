@@ -52,7 +52,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
     let mut session = AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
+    let session_key = "cli:test".to_string();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
@@ -81,7 +81,6 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut tokio::io::sink()),
-        session_key: &mut session_key,
         session_store: &store,
         ephemeral: false,
         system_prompt: "",
@@ -99,6 +98,9 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         provider_reload_inputs: None,
         save_session,
         rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };

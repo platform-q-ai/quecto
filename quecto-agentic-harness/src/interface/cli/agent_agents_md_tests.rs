@@ -10,6 +10,7 @@ fn one_shot_startup_stops_on_invalid_agents_md_utf8() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
 
@@ -57,6 +58,7 @@ fn uds_startup_stops_on_invalid_agents_md_utf8_before_socket_loop() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
 
@@ -88,6 +90,7 @@ fn uds_startup_stops_on_agents_md_read_error_before_socket_loop() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
 
@@ -118,6 +121,7 @@ fn one_shot_startup_stops_on_agents_md_read_error() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
 

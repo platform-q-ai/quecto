@@ -239,6 +239,12 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
+    /// The raw key of the session this tracker reports (`get_state`'s
+    /// `sessionKey`); the active session's typed identity is the owner,
+    /// this copy follows it through the session transactions (#1976).
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
     pub fn set_session_key(&mut self, session_key: String) {
         if self.session_key != session_key {
             self.clear_usage();

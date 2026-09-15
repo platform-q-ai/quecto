@@ -4,6 +4,7 @@ mod agent_cmd_parse;
 mod agent_cmd_report;
 pub mod bash;
 pub mod command_match;
+pub mod delegated_roster;
 pub mod docs;
 pub mod environment_commands;
 pub mod environment_member_shutdown;

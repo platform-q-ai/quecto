@@ -189,7 +189,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
 
             let loaded = ctx
                 .session_store
-                .load(&id(ctx.session_key.as_str()))
+                .load(&id(ctx.session.session_key()))
                 .await
                 .unwrap()
                 .expect("session must be on disk after multi-turn prompts");
@@ -314,7 +314,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
         let loaded = ctx
             .session_store
-            .load(&id(ctx.session_key.as_str()))
+            .load(&id(ctx.session.session_key()))
             .await
             .unwrap()
             .expect("session on disk");
@@ -354,7 +354,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
         let loaded = ctx
             .session_store
-            .load(&id(ctx.session_key.as_str()))
+            .load(&id(ctx.session.session_key()))
             .await
             .unwrap()
             .expect("session on disk");

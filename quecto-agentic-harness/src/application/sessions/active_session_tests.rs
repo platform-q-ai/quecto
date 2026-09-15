@@ -97,20 +97,23 @@ async fn a_deferred_recall_fills_the_stub_and_carries_its_identity() {
 }
 
 #[test]
-fn switching_identity_after_clear_keeps_the_generation_of_the_clear() {
+fn switching_to_another_session_clears_once_and_publishes_the_new_transcript() {
     let mut state = ActiveSessionState::new(SessionIdentity::from_persisted_key("cli:old"));
     state.publish(&[Message::user("old")]);
     let before = state.conversation().generation();
-    let advance = state.clear();
-    assert!(advance.changed);
-    assert_eq!(state.conversation().generation(), before + 1);
-    state.switch_identity(
+    let epoch = state.conversation().epoch();
+    let advance = state.switch_to(
         SessionIdentity::from_persisted_key("cli:new"),
         Some(Arc::new(NoopSpillStore)),
+        &[Message::user("resumed")],
     );
+    assert!(advance.changed);
+    assert_eq!(advance.epoch, epoch + 1, "one new epoch");
+    assert_eq!(state.conversation().rev(), advance.rev);
     assert_eq!(state.identity().runtime_key(), "cli:new");
     assert!(state.conversation().spill_store().is_some());
     assert_eq!(state.conversation().generation(), before + 1);
+    assert_eq!(state.conversation().live_messages().len(), 1);
     let stale = RecallIdentity {
         message_id: "x".into(),
         identity: SessionIdentity::from_persisted_key("cli:old"),

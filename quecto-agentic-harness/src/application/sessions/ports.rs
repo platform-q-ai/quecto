@@ -1,16 +1,23 @@
 //! Capability-local ports of the sessions capability (#1960, #1970, #1972,
-//! #1974, #1975): session persistence and the context spill store here,
-//! the outbound export port in [`export`], the session-runtime ports the
-//! save, clear and rewind transactions reach in [`session_runtime`]. Infrastructure
-//! implements them over files. Signatures name only domain values and the
-//! capability's own DTOs: every operation is keyed by the typed
-//! [`SessionIdentity`], never by a raw string, filename or path.
+//! #1974, #1975, #1976): session persistence and the context spill store
+//! here, the outbound export port in [`export`], the session-runtime ports
+//! the save, clear and rewind transactions reach in [`session_runtime`],
+//! the transition ports the fresh session reaches in
+//! [`session_transition`]. Infrastructure implements them over files.
+//! Signatures name only domain values and the capability's own DTOs: every
+//! operation is keyed by the typed [`SessionIdentity`], never by a raw
+//! string, filename or path.
 pub mod export;
 use std::future::Future;
 use std::pin::Pin;
 
 pub mod session_runtime;
+pub mod session_transition;
 pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
+pub use session_transition::{
+    DelegatedChildrenRoster, FleetSettlement, FreshSessionIdentityGenerator, SessionKeyPropagation,
+    SessionSwitchRuntime,
+};
 
 use super::dto::SessionListQuery;
 use crate::domain::error::DomainError;

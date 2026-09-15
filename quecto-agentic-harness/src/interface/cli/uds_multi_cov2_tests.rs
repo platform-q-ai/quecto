@@ -287,7 +287,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
 
     let mut session = super::super::uds_session::AgentSession::new("stub".into(), "cli:cov".into());
     let mut messages = vec![Message::user("seed")];
-    let mut session_key = "cli:cov".to_string();
+    let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
@@ -315,7 +315,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
         session_store: &store as &dyn SessionStore,
         ephemeral: true,
         system_prompt: "",
@@ -335,6 +334,9 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         provider_reload_inputs: None,
         save_session,
         rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
         list_sessions: list_handle(dir.path()),
     };

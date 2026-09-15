@@ -8,42 +8,17 @@
 //! from it; `sync` is answered through the composed controller
 //! (`uds_sync`, #1973) and `get_report` through the composed export
 //! controller (#1974); the rewind's ledger reset is the rewind
-//! transaction's (#1975). What remains here for later slices: the reset
-//! composition `reset_to_with_spill_store` (D7 #1976 fresh session, D8
-//! #1977 resume).
+//! transaction's (#1975); the session switch (identity, retention
+//! namespace and transcript in one write) is the active session's own
+//! `switch_to` (#1976).
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
 use super::uds_session_handles::SessionReadHandles;
-use crate::application::sessions::active_session::ActiveSessionState;
-use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::application::sessions::dto::HistoryPage;
-use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::conversation_view::user_visible_messages;
-use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
-use std::sync::Arc;
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
-
-/// Replace history, identity and spill namespace in one write so busy
-/// readers can observe neither old refs under the new identity nor new
-/// history under the old one.
-pub(crate) fn reset_to_with_spill_store(
-    state: &mut ActiveSessionState,
-    messages: &[Message],
-    spill_store: Option<Arc<dyn ContextSpillStore>>,
-    identity: SessionIdentity,
-) -> LedgerAdvance {
-    let advance = state.clear();
-    state.switch_identity(identity, spill_store);
-    let publish = state.publish(messages);
-    LedgerAdvance {
-        epoch: state.conversation().epoch(),
-        rev: state.conversation().rev(),
-        changed: advance.changed || publish.changed,
-    }
-}
 
 pub(crate) type SessionStatsSnapshot =
     std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
@@ -106,7 +81,7 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
 pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let stats = compute_session_stats_with_usage(
-        ctx.session_key,
+        ctx.session.session_key(),
         &visible_messages,
         ctx.session.usage_snapshot(),
         ctx.session.context_tokens(),

@@ -11,9 +11,7 @@ use crate::domain::session::{
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
-use crate::interface::cli::uds::uds_dispatch_session::{
-    note_persisted_roster_is_history, reset_subagent_roster,
-};
+use crate::interface::cli::uds::uds_dispatch_session::note_persisted_roster_is_history;
 
 /// The roster rows the save transaction records for `registry` under an
 /// explicit `restore_reason` (#1860): a real save through the composed
@@ -76,13 +74,22 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
 }
 
 /// What a resume does with the departing roster once its children have
-/// settled (#1938): note the persisted rows as history, replace the records.
-fn reset_roster_for_restore(
+/// settled (#1938): note the persisted rows as history, replace the records
+/// through the application's departing-children collaborator (#1976).
+pub(crate) fn reset_roster_for_restore(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
     note_persisted_roster_is_history(registry, persisted);
-    reset_subagent_roster(registry, "resume_session").expect("no live delegated row remains");
+    let roster = registry.clone().map(|registry| {
+        std::sync::Arc::new(
+            crate::infrastructure::tools::delegated_roster::RegistryDelegatedRoster::new(registry),
+        )
+            as std::sync::Arc<dyn crate::application::sessions::ports::DelegatedChildrenRoster>
+    });
+    crate::application::sessions::use_cases::DepartingChildren::new(roster)
+        .reset_roster(crate::application::sessions::dto::SessionTransition::Resume)
+        .expect("no live delegated row remains");
 }
 
 fn roster_entry(id: &str) -> PersistedSubagentRosterEntry {
@@ -619,6 +626,17 @@ pub(crate) fn rewrite_handles_for(
     let base = tmp.path().to_path_buf();
     std::mem::forget(tmp);
     composed_sessions_for(&base, session_key, None).rewrite
+}
+
+/// The session-switch handles of a session opened on `session_key` over a
+/// throwaway base directory, for rigs that never switch (#1976).
+pub(crate) fn switch_handles_for(
+    session_key: &str,
+) -> crate::interface::cli::uds_session_handles::SessionSwitchHandles {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let base = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    composed_sessions_for(&base, session_key, None).switch
 }
 
 /// The read handles of a session opened on `session_key` over `base`, with

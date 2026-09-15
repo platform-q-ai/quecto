@@ -1,6 +1,6 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::session::Session;
+use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
@@ -466,10 +466,35 @@ use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_regist
 mod run_session;
 pub(crate) use run_session::run_agent_session;
 
-/// Resolve the UDS session key (ephemeral → empty, no persistence).
-#[path = "agent_session_identity.rs"]
-mod session_identity;
-use session_identity::resolve_uds_session_key;
+/// The identity a UDS loop opens on (#1976): ephemeral (never persisted),
+/// the named `cli:<name>` session, or a fresh user-chat identity drawn from
+/// composition's generator — the interface generates no key.
+fn resolve_startup_identity(
+    ctx: &CliContext,
+    flags: &AgentFlags,
+    ephemeral: bool,
+    stderr: &mut String,
+) -> Option<SessionIdentity> {
+    if ephemeral {
+        return Some(SessionIdentity::ephemeral());
+    }
+    if let Some(name) = flags.session_name.as_deref() {
+        // Admitted by the same allowlist at flag parse; a refusal here is
+        // defensive.
+        return match SessionIdentity::named_cli(name) {
+            Ok(identity) => Some(identity),
+            Err(e) => {
+                stderr.push_str(&format!("{e}\n"));
+                None
+            }
+        };
+    }
+    let Some(fresh_identity) = ctx.fresh_session_identity else {
+        stderr.push_str("agent: fresh session identity generator not composed\n");
+        return None;
+    };
+    Some(fresh_identity().fresh_identity())
+}
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
@@ -499,7 +524,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
+    let Some(session_identity) = resolve_startup_identity(ctx, &flags, ephemeral, stderr) else {
+        return 1;
+    };
+    let session_key = session_identity.runtime_key().to_string();
     if flags.session_name.is_none() && !ephemeral && flags.parent_identity_override.is_none() {
         flags.parent_identity_override = Some(session_key.clone());
         flags.session_key_override = Some(session_key.clone());
@@ -538,7 +566,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
-    agent.set_session_key(session_key.clone());
+    agent.set_session_key(session_identity);
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
     // makes workflow available, but should not add audit I/O/privacy overhead before
@@ -647,6 +675,9 @@ mod no_session_tests;
 #[cfg(test)]
 #[path = "agent_provider_1066_tests.rs"]
 mod provider_1066_tests;
+#[cfg(test)]
+#[path = "agent_startup_identity_tests.rs"]
+mod startup_identity_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
