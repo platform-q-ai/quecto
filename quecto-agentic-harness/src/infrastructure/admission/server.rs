@@ -150,9 +150,8 @@ impl AuthorityServer {
         Self::start_with(dir, proposal, false, FRAME_DEADLINE).await
     }
 
-    /// Start with a framing deadline other than [`FRAME_DEADLINE`]. Only the
-    /// stalled-frame tests use this: production never shortens the deadline,
-    /// and waiting out the real 15 s would cost the suite 30 s per run.
+    /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
+    /// stalled-frame tests' entry point, so they need not wait out 15 s.
     pub async fn start_with_frame_deadline(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
