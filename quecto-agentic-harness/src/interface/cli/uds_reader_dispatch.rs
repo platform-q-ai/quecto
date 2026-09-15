@@ -6,7 +6,6 @@ pub(super) struct ReaderDispatchCtx<'a> {
     pub cancel_handle: &'a super::uds_cancel::CancelHandle,
     pub turn_control: &'a super::uds_cancel::TurnControl,
     pub session: &'a SessionReadHandles,
-    pub export_root: &'a super::uds_snapshots::ExportRootSlot,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub subagent_registry:
         &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -46,7 +45,6 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     if super::uds_busy_get_message::intercept(super::uds_busy_get_message::BusyCommandCtx {
         line: &ctx.line,
         session: ctx.session,
-        export_root: ctx.export_root,
         registry: ctx.registry,
         client_id: ctx.client_id,
     })

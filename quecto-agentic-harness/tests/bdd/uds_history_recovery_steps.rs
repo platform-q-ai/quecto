@@ -19,7 +19,7 @@ use std::time::Duration;
 
 const UNKNOWN_MESSAGE_ID: &str = "00000000-0000-0000-0000-000000000000";
 
-fn seed_session(world: &mut QuectoWorld, messages: Vec<Message>) {
+pub(super) fn seed_session(world: &mut QuectoWorld, messages: Vec<Message>) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
     let base = base_path(world);
@@ -40,13 +40,13 @@ fn seed_session(world: &mut QuectoWorld, messages: Vec<Message>) {
     world.mc_connected_clients = vec![1];
 }
 
-fn attach(world: &mut QuectoWorld) -> serde_json::Value {
+pub(super) fn attach(world: &mut QuectoWorld) -> serde_json::Value {
     start_paged_agent(world, PAGED_SESSION);
     connect_paged_client(world, 1);
     attach_get_messages(world, 1)
 }
 
-fn request(world: &mut QuectoWorld, command: &str, id: &str, cmd: serde_json::Value) {
+pub(super) fn request(world: &mut QuectoWorld, command: &str, id: &str, cmd: serde_json::Value) {
     write_command(world, 1, &cmd);
     let expected_command = command.to_string();
     let expected_id = id.to_string();
@@ -64,7 +64,7 @@ fn request(world: &mut QuectoWorld, command: &str, id: &str, cmd: serde_json::Va
     world._paged_response = Some(response);
 }
 
-fn response(world: &QuectoWorld) -> &serde_json::Value {
+pub(super) fn response(world: &QuectoWorld) -> &serde_json::Value {
     world._paged_response.as_ref().expect("a recorded response")
 }
 

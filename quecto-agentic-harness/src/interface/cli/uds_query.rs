@@ -16,9 +16,6 @@ pub(super) fn query_response_data_result(
     ctx: &DispatchCtx<'_>,
 ) -> Result<Option<serde_json::Value>, String> {
     let data = match cmd {
-        AgentCommand::GetReport { .. } => {
-            Some(super::uds_latest_report::latest_report(ctx.messages))
-        }
         AgentCommand::GetState { since, .. } => {
             let (workflow, workflow_revision) =
                 ctx.workflow_state.as_ref().map_or((None, 0), |ws| {
@@ -114,8 +111,9 @@ pub(super) fn query_response_data_result(
             )?)
             .map_err(|e| e.to_string())?,
         ),
-        // `get_message` (#1060) is answered by `dispatch_fieldless_command`
-        // through the composed recovery owner before this projection runs.
+        // `get_message` (#1060) and `get_report` (#1859) are answered by
+        // `dispatch_fieldless_command` through their composed owners before
+        // this projection runs.
         _ => None,
     };
     Ok(data)

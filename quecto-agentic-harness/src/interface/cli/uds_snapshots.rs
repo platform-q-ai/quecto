@@ -5,10 +5,9 @@
 //!
 //! The conversation itself lives in the application-owned active session
 //! (`ActiveSessionState`, #1971): this module publishes into it and reads
-//! from it. What remains here for later slices: `sync_json` (D3 #1973),
-//! the export root (D4 #1974), and the reset compositions `reset_to`
-//! (D6 #1975, rewind) and `reset_to_with_spill_store` (D7 #1976 fresh
-//! session, D8 #1977 resume).
+//! from it. What remains here for later slices: `sync_json` (D3 #1973)
+//! and the reset compositions `reset_to` (D6 #1975, rewind) and
+//! `reset_to_with_spill_store` (D7 #1976 fresh session, D8 #1977 resume).
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{
@@ -27,21 +26,6 @@ use crate::interface::uds::sessions::read_history_controller::ReadHistoryControl
 use std::sync::Arc;
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
-
-/// Where a raw session export is written (D4 #1974 retires): set by the
-/// multi-client loop at startup and by the idle `get_report` dispatch,
-/// read by the report path on either transport.
-pub(crate) type ExportRootSlot = Arc<std::sync::Mutex<Option<std::path::PathBuf>>>;
-
-pub(crate) fn export_root(slot: &ExportRootSlot) -> Option<std::path::PathBuf> {
-    slot.lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-}
-
-pub(crate) fn set_export_root(slot: &ExportRootSlot, root: std::path::PathBuf) {
-    *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(root);
-}
 
 /// Reset the session to exactly `messages`: drop the whole prior ledger
 /// (so refs from a replaced/truncated conversation stop resolving) and
@@ -384,7 +368,3 @@ mod state_lines;
 pub(crate) use state_lines::build_get_state_line_live;
 #[cfg(test)]
 pub(crate) use state_lines::{build_get_state_line, build_get_state_line_with_streaming};
-
-#[path = "uds_snapshot_export.rs"]
-mod export;
-pub(crate) use export::{ExportSource, export_source};

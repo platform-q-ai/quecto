@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
+use crate::application::sessions::ports::export::SessionExportPort;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::application::sessions::use_cases::{ReadHistory, RecoverMessage};
 use crate::domain::session_identity::SessionIdentity;
@@ -16,26 +17,29 @@ use crate::interface::uds::sessions::read_history_controller::ReadHistoryControl
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 
 /// The handles of a loop opened on `session_key` with `spill_store` as its
-/// retention backstop: the one active-session state, the history and
-/// recovery use cases over it and `store`, and the list controller the
-/// sessions composition already built.
+/// retention backstop: the one active-session state, the history, recovery
+/// and report use cases over it, `store` and `export`, and the list
+/// controller the sessions composition already built.
 pub fn assemble_session_handles(
     session_key: String,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
     store: Arc<dyn SessionStore>,
     list_sessions: Arc<ListSessionsController>,
+    export: Option<Arc<dyn SessionExportPort>>,
 ) -> SessionHandles {
     let mut state = ActiveSessionState::new(SessionIdentity::from_persisted_key(session_key));
     state.set_spill_store(spill_store);
     let active_session: ActiveSessionHandle = Arc::new(tokio::sync::RwLock::new(state));
     let read_history = Arc::new(ReadHistory::new(active_session.clone(), store.clone()));
     let recover_message = Arc::new(RecoverMessage::new(active_session.clone()));
+    let export_report = super::session_report::build_export_report(active_session.clone(), export);
     SessionHandles {
         store,
         list_sessions,
         active_session,
         read_history: Arc::new(ReadHistoryController::new(read_history)),
         recover_message: Arc::new(RecoverMessageController::new(recover_message)),
+        export_report,
     }
 }
 

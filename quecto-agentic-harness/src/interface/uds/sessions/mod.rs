@@ -3,5 +3,6 @@
 //! stays with the CLI dispatch modules that own the wire field names.
 
 pub mod controller;
+pub mod export_report_controller;
 pub mod read_history_controller;
 pub mod recover_message_controller;

@@ -186,7 +186,6 @@ impl DispatchTestEnv {
                 None,
                 &[],
             ),
-            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

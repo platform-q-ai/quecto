@@ -156,7 +156,6 @@ pub async fn busy_reader_dispatch(
     uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
         line: line.to_string(),
         session,
-        export_root: &std::sync::Arc::default(),
         registry: &clients,
         subagent_registry: &None,
         fleet: None,

@@ -48,7 +48,6 @@ fn make_args(
         session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
             &[Message::user("hello")],
         ),
-        export_root: Arc::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             control_receipts: Vec::new(),
             automatic_turns_suspended: false,

@@ -40,8 +40,6 @@ pub(crate) struct ClientHandlerArgs {
     /// messages are appended during a turn, so read-only history and
     /// recovery lookups bypass the blocked dispatcher.
     pub(crate) session: SessionReadHandles,
-    /// Where a busy `get_report` raw export is written (D4 #1974).
-    pub(crate) export_root: super::super::uds_snapshots::ExportRootSlot,
     /// Sub-agent registry, read mid-turn to serve `get_subagents` and forward
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(crate) subagent_registry:
@@ -64,7 +62,6 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         client_id,
         client_tool_registry,
         session,
-        export_root,
         subagent_registry,
         teardown,
         _guard,
@@ -162,7 +159,6 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
             super::super::uds_reader_dispatch::ReaderDispatchCtx {
                 line,
                 session: &session,
-                export_root: &export_root,
                 registry: &client_tool_registry,
                 subagent_registry: &subagent_registry,
                 fleet: teardown.as_deref().map(|teardown| &teardown.fleet),

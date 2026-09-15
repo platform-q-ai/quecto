@@ -238,7 +238,6 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         client_id: 77,
         client_tool_registry: registry,
         session,
-        export_root: Arc::default(),
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {
@@ -322,7 +321,6 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         client_id: 88,
         client_tool_registry: registry,
         session,
-        export_root: Arc::default(),
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {

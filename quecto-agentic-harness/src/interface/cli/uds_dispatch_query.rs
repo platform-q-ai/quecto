@@ -53,22 +53,15 @@ pub(super) async fn dispatch_fieldless_command(
 ) -> Option<bool> {
     let id = cmd.id();
     let tn = cmd.type_name();
+    // Export a retained session report (#1859, #1974): the composed report
+    // owner selects, previews and (on request) exports; this edge maps
+    // `export_raw` and presents the result. The loop serialises requests,
+    // so no admission is taken here.
     if let AgentCommand::GetReport { export_raw, .. } = cmd {
-        super::super::uds_snapshots::set_export_root(
-            &ctx.export_root,
-            ctx.base_dir.join("artifacts/session-exports"),
+        let event = super::super::uds_latest_report::report_event(
+            id,
+            ctx.sessions.export_report.report(*export_raw).await,
         );
-        let export_root = super::super::uds_snapshots::export_root(&ctx.export_root);
-        let event = match super::super::uds_latest_report::report(
-            &ctx.sessions.active_session,
-            export_root,
-            *export_raw,
-        )
-        .await
-        {
-            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
-            Err(error) => AgentEvent::err(id, tn, error),
-        };
         emit_event_to_broadcast_or_writer(ctx, &event).await;
         return Some(false);
     }

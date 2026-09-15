@@ -210,8 +210,6 @@ pub(super) async fn multi_client_loop(
         .write()
         .await
         .publish(&messages);
-    let export_root: super::uds_snapshots::ExportRootSlot = std::sync::Arc::default();
-    super::uds_snapshots::set_export_root(&export_root, base_dir.join("artifacts/session-exports"));
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let initial_state = agent_session.state_snapshot(
@@ -334,7 +332,6 @@ pub(super) async fn multi_client_loop(
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
         session: session_reads.clone(),
-        export_root: export_root.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
@@ -359,7 +356,6 @@ pub(super) async fn multi_client_loop(
         agent: &mut agent,
         messages: &mut messages,
         sessions: session_reads.clone(),
-        export_root: export_root.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),

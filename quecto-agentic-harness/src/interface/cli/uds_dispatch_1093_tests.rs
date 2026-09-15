@@ -185,7 +185,6 @@ impl Fixture {
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions,
-            export_root: Arc::default(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),

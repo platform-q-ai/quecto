@@ -274,7 +274,6 @@ async fn single_client_loop(
             agent: &mut agent,
             messages: &mut messages,
             sessions: session_reads.clone(),
-            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),

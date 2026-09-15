@@ -130,8 +130,6 @@ pub(crate) struct DispatchCtx<'a> {
     /// The active session and its read use cases (#1971): the one
     /// conversation read model every transport serves from.
     pub sessions: super::uds_session_handles::SessionReadHandles,
-    /// Where `get_report` raw exports are written (D4 #1974).
-    pub export_root: super::uds_snapshots::ExportRootSlot,
     pub state_snapshot: super::uds_multi::StateSnapshot, // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
