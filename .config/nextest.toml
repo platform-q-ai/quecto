@@ -1,0 +1,21 @@
+# cargo-nextest configuration (https://nexte.st/docs/configuration/).
+#
+# nextest runs every test in its own process and reports per-test wall time;
+# the `ci` profile is the slow-test census used by the test-suite speed-up
+# work: anything over 2 s is flagged SLOW in the output. The cucumber `bdd`
+# targets (harness = false) stay on `cargo test` via scripts/run-bdd-shards.sh;
+# nextest is not wired into CI.
+#
+#   cargo nextest run --workspace --features quecto-agentic-harness/test-support \
+#       --bins --lib --profile ci
+#   cargo nextest run --workspace --features quecto-agentic-harness/test-support \
+#       --bins --test <integration target> --profile ci
+
+[profile.default]
+retries = 0
+slow-timeout = { period = "60s" }
+
+[profile.ci]
+retries = 0
+slow-timeout = { period = "2s" }
+failure-output = "immediate-final"
