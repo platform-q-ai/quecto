@@ -407,8 +407,9 @@ const SANITIZER_CALLERS: &[&str] = &[
 const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/durable_prefix.rs", 42),
     // D7 #1976 folds the interface reset composition into `switch_to`
-    // (was 277 before D7).
-    ("src/application/sessions/active_session.rs", 287),
+    // (was 277 before D7); D8 #1977 notes the switch is the transactions' alone
+    // (was 287 before D8).
+    ("src/application/sessions/active_session.rs", 289),
     ("src/application/sessions/conversation_ledger.rs", 295),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
@@ -1025,7 +1026,8 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     }
     // The identity switch is the active session's own step, private to it.
     let state = std::fs::read_to_string("src/application/sessions/active_session.rs").unwrap();
-    assert!(state.contains("pub fn switch_to("));
+    assert!(state.contains("pub(in crate::application::sessions) fn switch_to("));
+    assert!(!state.contains("pub fn switch_to("));
     assert!(!state.contains("pub fn switch_identity("));
 }
 

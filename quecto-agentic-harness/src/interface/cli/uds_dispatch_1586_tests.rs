@@ -391,6 +391,12 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         SubagentEntry::new("/tmp/live.sock".into(), 123),
     );
     fx.set_subagent_registry(registry);
+    fx.store
+        .save(&crate::domain::session::Session::new(
+            crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:another"),
+        ))
+        .await
+        .unwrap();
     {
         let mut ctx = fx.ctx();
         persist_current_session_with_restore_reason(
@@ -406,15 +412,18 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         .await
         .unwrap();
         assert!(!killing_exit(&ctx));
-        {
-            let mut state = ctx.sessions.active_session.write().await;
-            state.set_killing_exit(true);
-            state.switch_to(
-                crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:another"),
-                None,
-                &[],
-            );
-        }
+        // A session switch (a resume to a saved session, D8 #1977) drops the
+        // killing exit armed for the departing session.
+        ctx.sessions
+            .active_session
+            .write()
+            .await
+            .set_killing_exit(true);
+        assert!(killing_exit(&ctx));
+        assert!(
+            !super::handle_resume_session(&mut ctx, None, "resume_session", "another".into()).await
+        );
+        assert_eq!(ctx.session.session_key(), "cli:another");
         assert!(!killing_exit(&ctx));
     }
     assert_eq!(
