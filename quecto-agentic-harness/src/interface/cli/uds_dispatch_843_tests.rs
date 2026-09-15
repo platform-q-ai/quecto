@@ -1,10 +1,8 @@
 //! #843: an agent-targeted `get_messages` with NO `count` must forward to the
 //! named child and return ITS full history — it must never fall through to the
 //! local fast path, which ignores `agent_id` and would silently answer from the
-//! connected/parent agent's own conversation.
-//!
-//! Self-contained (own minimal `DispatchCtx`) so it stays independent of the
-//! larger `cov_tests` fixture and keeps each file within the size budget.
+//! connected/parent agent's own conversation. Self-contained (own minimal
+//! `DispatchCtx`), independent of the larger `cov_tests` fixture.
 use super::{
     ForwardGetMessage, dispatch_command, forward_subagent_get_message,
     forward_subagent_get_messages,
@@ -18,7 +16,7 @@ use crate::infrastructure::tools::subagent_registry::{
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
-    list_handle, read_handles_over, save_handle_for,
+    list_handle, read_handles_over, rewrite_handles_for, save_handle_for,
 };
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -77,10 +75,7 @@ impl Fx {
             &self.messages,
         );
         let save_session = save_handle_for(&self.session_key);
-        let rewrite =
-            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
-                &self.session_key,
-            );
+        let rewrite = rewrite_handles_for(&self.session_key);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
