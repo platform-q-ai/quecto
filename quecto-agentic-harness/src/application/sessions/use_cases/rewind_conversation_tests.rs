@@ -242,6 +242,25 @@ async fn a_save_failure_returns_the_persistence_error_with_the_rewind_left_visib
     assert!(rig.saved().is_empty());
 }
 
+#[tokio::test]
+async fn an_ephemeral_session_rewinds_resets_the_watermark_and_saves_nothing() {
+    let rig = build_rewrite_rig(RewriteOptions {
+        ephemeral: true,
+        ..RewriteOptions::default()
+    });
+    let mut messages = conversation();
+    rig.set_watermark(5);
+    let mut accounting = rig.accounting();
+    rig.rewind
+        .execute(&mut messages, &mut accounting, &by_index(3))
+        .await
+        .unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(rig.journal(), ["accounting.reset(3)", "retention.clear"]);
+    assert!(rig.saved().is_empty());
+    assert_eq!(rig.watermark(), 0);
+}
+
 #[test]
 fn rewinding_strips_retention_residue_from_the_survivors() {
     let mut manifest = Message::system("[Session memory: 1 spilled entry]");

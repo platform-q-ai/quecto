@@ -183,6 +183,7 @@ async fn an_ephemeral_session_clears_everything_and_saves_nothing() {
         ..RewriteOptions::default()
     });
     let mut messages = conversation("");
+    rig.set_watermark(3);
     let mut accounting = rig.accounting();
     rig.clear
         .execute(&mut messages, &mut accounting)
@@ -191,6 +192,11 @@ async fn an_ephemeral_session_clears_everything_and_saves_nothing() {
     assert!(messages.is_empty());
     assert_eq!(rig.journal(), ["accounting.reset(0)", "retention.clear"]);
     assert!(rig.saved().is_empty());
+    assert_eq!(
+        rig.watermark(),
+        0,
+        "the transaction resets the watermark itself, not only through a save"
+    );
 }
 
 #[test]
