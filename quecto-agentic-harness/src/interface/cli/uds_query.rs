@@ -1,15 +1,7 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
-use crate::domain::conversation_view::{is_injected_system_prompt, user_visible_messages};
-use crate::domain::message::Message;
-
-fn user_visible_message_count(messages: &[Message], system_prompt: &str) -> usize {
-    messages
-        .iter()
-        .filter(|m| !is_injected_system_prompt(m, system_prompt))
-        .count()
-}
+use crate::domain::conversation_view::user_visible_messages;
 
 #[cfg(test)]
 pub(super) fn query_response_data(
@@ -46,7 +38,7 @@ pub(super) fn query_response_data_result(
             // plus the provider's valid vocabulary, so the live-query and
             // busy-connect snapshot paths serve the same `get_state` shape.
             let mut state = ctx.session.state_snapshot(
-                user_visible_message_count(ctx.messages, ctx.system_prompt),
+                user_visible_messages(ctx.messages, ctx.system_prompt).len(),
                 workflow,
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),

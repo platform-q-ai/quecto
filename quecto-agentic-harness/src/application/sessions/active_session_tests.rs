@@ -119,3 +119,38 @@ fn switching_identity_after_clear_keeps_the_generation_of_the_clear() {
     };
     assert!(!state.recall_is_current(&stale));
 }
+
+#[test]
+fn a_recall_of_another_identity_at_the_current_generation_is_not_current() {
+    let mut state = ActiveSessionState::new(SessionIdentity::from_persisted_key("cli:mine"));
+    let stub = collapsed_message("spill-1");
+    let id = stub.id().to_string();
+    state.set_spill_store(Some(Arc::new(NoopSpillStore)));
+    state.publish(std::slice::from_ref(&stub));
+    let generation = state.conversation().generation();
+    let current = RecallIdentity {
+        message_id: id.clone(),
+        identity: SessionIdentity::from_persisted_key("cli:mine"),
+        spill_id: "spill-1".into(),
+        generation,
+    };
+    assert!(state.recall_is_current(&current));
+    let other_identity = RecallIdentity {
+        identity: SessionIdentity::from_persisted_key("cli:other"),
+        ..current.clone()
+    };
+    assert!(
+        !state.recall_is_current(&other_identity),
+        "the same generation under another identity is never current"
+    );
+    let other_spill = RecallIdentity {
+        spill_id: "spill-2".into(),
+        ..current.clone()
+    };
+    assert!(!state.recall_is_current(&other_spill));
+    let other_generation = RecallIdentity {
+        generation: generation.wrapping_add(1),
+        ..current
+    };
+    assert!(!state.recall_is_current(&other_generation));
+}

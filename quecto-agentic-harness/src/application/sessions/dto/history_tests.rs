@@ -79,3 +79,16 @@ fn errors_display_their_cause() {
         DomainError::Session("disk".into()).to_string()
     );
 }
+
+#[test]
+fn keeping_none_of_a_non_empty_page_still_keeps_its_newest_message() {
+    let kept = page(3, false).keeping_newest(0);
+    assert_eq!(kept.messages.len(), 1);
+    assert_eq!(kept.messages[0].content, "m2");
+    assert!(kept.has_more_before);
+    assert_eq!(
+        kept.before,
+        Some(MessageId::from(kept.messages[0].id().to_string())),
+        "a reported older history always carries its cursor"
+    );
+}

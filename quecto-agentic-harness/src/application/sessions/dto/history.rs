@@ -43,12 +43,13 @@ impl HistoryPage {
     /// budget cannot carry the whole window, the dropped older messages are
     /// still history, so the cursor moves to the oldest kept message and
     /// older history is reported. A `keep` at or above the length is the
-    /// page unchanged.
+    /// page unchanged; a non-empty page always keeps at least its newest
+    /// message, so `before` and `has_more_before` stay consistent.
     pub fn keeping_newest(mut self, keep: usize) -> Self {
         if keep >= self.messages.len() {
             return self;
         }
-        let drop = self.messages.len() - keep;
+        let drop = self.messages.len() - keep.max(1);
         self.messages.drain(..drop);
         self.has_more_before = true;
         self.before = self

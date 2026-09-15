@@ -142,7 +142,11 @@ fn handle(key: &str, store: Option<Arc<dyn ContextSpillStore>>) -> ActiveSession
 fn whole(id: &str) -> RecoveryRequest {
     RecoveryRequest {
         message_id: MessageId::from(id),
-        selector: ContentSelector::whole_message(),
+        selector: ContentSelector::Message {
+            offset: None,
+            thinking_offset: None,
+            limit: None,
+        },
     }
 }
 
@@ -245,7 +249,6 @@ async fn unknown_refs_consult_the_fallback_then_fail_structurally() {
             RecoveryError::MessageNotFound(MessageId::from(missing))
         );
         assert_eq!(err.to_string(), format!("message not found: {missing}"));
-        assert_eq!(err.message_id().as_str(), missing);
     }
 }
 
@@ -335,7 +338,7 @@ fn select_maps_ranges_thinking_offsets_and_tool_calls() {
     .unwrap_err();
     assert!(matches!(err, RecoveryError::ToolCallNotFound { .. }));
     assert!(err.to_string().contains("missing"));
-    assert_eq!(err.message_id().as_str(), message.id().to_string());
+    assert!(err.to_string().contains(&message.id().to_string()));
 }
 
 /// A retention store whose recall blocks until released, so a lifecycle

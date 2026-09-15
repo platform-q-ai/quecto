@@ -1,17 +1,5 @@
-use super::{ContentSelector, RecoveryError, Utf8Range};
+use super::{RecoveryError, Utf8Range};
 use crate::domain::ids::{MessageId, ToolCallId};
-
-#[test]
-fn whole_message_selector_has_no_range_arguments() {
-    assert_eq!(
-        ContentSelector::whole_message(),
-        ContentSelector::Message {
-            offset: None,
-            thinking_offset: None,
-            limit: None,
-        }
-    );
-}
 
 #[test]
 fn requested_range_defaults_to_the_whole_text() {
@@ -65,11 +53,9 @@ fn halving_moves_the_end_to_a_boundary_and_stops_at_one_character() {
 fn errors_display_the_missing_reference() {
     let err = RecoveryError::MessageNotFound(MessageId::from("m-1"));
     assert_eq!(err.to_string(), "message not found: m-1");
-    assert_eq!(err.message_id().as_str(), "m-1");
     let err = RecoveryError::ToolCallNotFound {
         message_id: MessageId::from("m-2"),
         tool_call_id: ToolCallId::from("call-9"),
     };
     assert_eq!(err.to_string(), "tool call call-9 not found in message m-2");
-    assert_eq!(err.message_id().as_str(), "m-2");
 }

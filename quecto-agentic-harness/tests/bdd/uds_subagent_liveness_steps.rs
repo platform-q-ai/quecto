@@ -23,13 +23,15 @@ fn ledger_hints(lines: &[serde_json::Value]) -> Vec<&serde_json::Value> {
         .collect()
 }
 
-/// The read handles of an ephemeral session composed over a throwaway
-/// base directory (the composition root builds them; the step only holds
-/// them), for the busy-reader helpers.
-fn liveness_read_handles() -> quecto::interface::cli::uds_session_handles::SessionReadHandles {
+/// The read handles of an ephemeral session composed over a base directory
+/// the world keeps alive for the scenario (the composition root builds
+/// them; the step only holds them), for the busy-reader helpers.
+fn liveness_read_handles(
+    world: &mut QuectoWorld,
+) -> quecto::interface::cli::uds_session_handles::SessionReadHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
-    std::mem::forget(tmp);
+    world._extra_temp_dirs.push(tmp);
     quecto::composition::sessions::build_session_handles(
         quecto::interface::cli::uds_session_handles::SessionLoopInputs {
             base_dir: base,
@@ -43,7 +45,7 @@ fn liveness_read_handles() -> quecto::interface::cli::uds_session_handles::Sessi
 
 fn run_turn_events(world: &mut QuectoWorld, events: &[AgentProgressEvent]) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let session = liveness_read_handles().active_session;
+    let session = liveness_read_handles(world).active_session;
     world.subagent_liveness_lines =
         Some(rt.block_on(cli::ledger_hint_lines_for_turn_events(events, &session)));
 }
@@ -269,7 +271,7 @@ fn child_dispatch_busy(world: &mut QuectoWorld) {
 #[when("its feed client sends a plain sync for the committed ledger")]
 fn send_direct_feed_sync(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let session = liveness_read_handles();
+    let session = liveness_read_handles(world);
     let (served_inline, response) = rt.block_on(cli::busy_reader_dispatch(
         r#"{"type":"sync","id":"feed-1","epoch":1,"sinceRev":0}"#,
         &session,

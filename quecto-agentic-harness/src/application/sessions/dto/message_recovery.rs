@@ -34,17 +34,6 @@ pub enum ContentSelector {
     },
 }
 
-impl ContentSelector {
-    /// A whole-message selection with no range arguments.
-    pub fn whole_message() -> Self {
-        Self::Message {
-            offset: None,
-            thinking_offset: None,
-            limit: None,
-        }
-    }
-}
-
 /// A byte range of a text on character boundaries: `start..end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Utf8Range {
@@ -149,15 +138,6 @@ pub enum RecoveryError {
         message_id: MessageId,
         tool_call_id: ToolCallId,
     },
-}
-
-impl RecoveryError {
-    /// The message id the request named.
-    pub fn message_id(&self) -> &MessageId {
-        match self {
-            Self::MessageNotFound(id) | Self::ToolCallNotFound { message_id: id, .. } => id,
-        }
-    }
 }
 
 impl std::fmt::Display for RecoveryError {
