@@ -20,7 +20,7 @@ use super::uds::{
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use super::uds_session::AgentSession;
-pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
+pub(crate) use super::uds_snapshots::StateSnapshot;
 #[cfg(test)]
 pub(crate) use super::uds_snapshots::{
     build_get_messages_line, build_get_state_line, build_get_subagents_line,
@@ -198,18 +198,20 @@ pub(super) async fn multi_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
-    // Shared pre-turn conversation snapshot (#828): initialized with the starting
-    // messages (same shape as a normal get_messages response, i.e. including the
-    // injected system prompt), refreshed by the dispatch loop at each turn
-    // boundary, and read by the accept loop to serve newly-connected clients
-    // immediately — even while the dispatch loop is busy mid-turn.
-    let mut initial_conversation_snapshot =
-        super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
-    initial_conversation_snapshot.export_root = Some(base_dir.join("artifacts/session-exports"));
-    initial_conversation_snapshot
-        .set_spill_store(agent.spill_store().cloned(), session_key.clone());
-    let conversation_snapshot: ConversationSnapshot =
-        std::sync::Arc::new(tokio::sync::RwLock::new(initial_conversation_snapshot));
+    // The active session's read model (#828, #1971): published with the
+    // starting messages (same shape as a normal get_messages response, i.e.
+    // including the injected system prompt), refreshed by the dispatch loop
+    // at each turn boundary, and read by the accept loop to serve
+    // newly-connected clients immediately — even while the dispatch loop is
+    // busy mid-turn.
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
+    let export_root: super::uds_snapshots::ExportRootSlot = std::sync::Arc::default();
+    super::uds_snapshots::set_export_root(&export_root, base_dir.join("artifacts/session-exports"));
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let initial_state = agent_session.state_snapshot(
@@ -331,7 +333,8 @@ pub(super) async fn multi_client_loop(
         turn_control: turn_control.clone(),
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
-        conversation_snapshot: conversation_snapshot.clone(),
+        session: session_reads.clone(),
+        export_root: export_root.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
@@ -355,7 +358,8 @@ pub(super) async fn multi_client_loop(
         base_dir,
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: conversation_snapshot.clone(),
+        sessions: session_reads.clone(),
+        export_root: export_root.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
@@ -407,7 +411,7 @@ pub(super) async fn multi_client_loop(
             uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
         };
         let session = Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(session_key),
+            key: session_reads.active_session.read().await.identity().clone(),
             messages: std::mem::take(&mut messages),
             workflow_run: wf_state
                 .as_ref()

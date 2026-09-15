@@ -328,7 +328,7 @@ async fn run_turn(
     responses: Vec<LlmResponse>,
     tools: Vec<(ToolDefinition, String)>,
     prompt: &str,
-    snapshot: Option<crate::interface::cli::uds_snapshots::ConversationSnapshot>,
+    snapshot: Option<crate::application::sessions::active_session::ActiveSessionHandle>,
 ) -> (Vec<Message>, Vec<u8>) {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     for (def, output) in tools {
@@ -367,7 +367,7 @@ async fn run_turn(
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: snapshot,
+            active_session: snapshot,
             session: &mut session,
             sink: &mut sink,
             message: Message::user(prompt),
@@ -423,7 +423,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: None,
+            active_session: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user(prompt),
@@ -660,9 +660,9 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
 /// emitting refs.
 #[tokio::test]
 async fn emitted_refs_resolve_via_ledger_after_pruning() {
-    use crate::interface::cli::uds_snapshots::{ConversationSnapshot, ConversationSnapshotData};
-    let snapshot: ConversationSnapshot =
-        Arc::new(tokio::sync::RwLock::new(ConversationSnapshotData::default()));
+    let snapshot =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .active_session;
     let (_messages, bytes) = run_turn(
         vec![text_response("a real full assistant answer body")],
         vec![],
@@ -680,12 +680,12 @@ async fn emitted_refs_resolve_via_ledger_after_pruning() {
     assert!(!refs.is_empty(), "agent_end must carry refs");
 
     // The ladder later drops the entire live conversation.
-    snapshot.write().await.messages.clear();
+    snapshot.write().await.publish(&[]);
 
     let snap = snapshot.read().await;
     for r in &refs {
         assert!(
-            snap.resolve(r).is_some(),
+            snap.conversation().lookup(r).is_some(),
             "emitted ref {r} must still resolve via the ledger after pruning"
         );
     }

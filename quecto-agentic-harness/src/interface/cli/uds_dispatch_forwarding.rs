@@ -244,30 +244,23 @@ pub(super) async fn forward_subagent_get_messages(
             };
             match historical_session_key {
                 Ok(Some(session_key)) => {
-                    let identity =
-                        crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                    // A historical child's transcript is history the store
+                    // holds: the composed history owner pages it (#1856).
+                    use crate::application::sessions::dto::HistoryError;
+                    let page = ctx
+                        .sessions
+                        .read_history
+                        .persisted_page(
                             session_key.as_str(),
-                        );
-                    return match ctx.session_store.load(&identity).await {
-                        Ok(Some(session)) => {
-                            if let Some(before) = before.as_ref()
-                                && uds_session::position_by_message_id(&session.messages, before)
-                                    .is_none()
-                            {
-                                return AgentEvent::err(
-                                    id_ref,
-                                    tn,
-                                    format!("history cursor not found: {}", before.as_str()),
-                                );
-                            }
-                            let data = uds_session::messages_page_json_for_id(
-                                &session.messages,
-                                count.unwrap_or(session.messages.len()),
-                                before.as_ref(),
-                            );
-                            AgentEvent::ok(id_ref, tn, Some(data))
+                            count,
+                            before.as_ref().map(MessageId::as_str),
+                        )
+                        .await;
+                    return match page {
+                        Ok(page) => {
+                            AgentEvent::ok(id_ref, tn, Some(uds_session::history_page_json(page)))
                         }
-                        Ok(None) => AgentEvent::err(
+                        Err(HistoryError::TranscriptNotFound) => AgentEvent::err(
                             id_ref,
                             tn,
                             format!(

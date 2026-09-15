@@ -105,9 +105,11 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: session_store_override,
+        session_key: session_key.clone(),
+        spill_store: agent.spill_store().cloned(),
     });
     let session_store: &dyn SessionStore = sessions.store.as_ref();
-    let identity = SessionIdentity::from_persisted_key(session_key.as_str());
+    let identity = sessions.active_session.read().await.identity().clone();
     // Refuse at open, not at first save (#1460): a key owned by another
     // live process must fail before any turn runs against it.
     if !ephemeral
@@ -257,10 +259,12 @@ async fn single_client_loop(
     let max_context_tokens = agent.max_context_tokens();
     let initial_effort = agent.effort().map(|l| l.as_str().to_string());
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
-    let mut initial_conversation_snapshot =
-        super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
-    initial_conversation_snapshot
-        .set_spill_store(agent.spill_store().cloned(), session_key.clone());
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
 
     run_command_loop(
         reader,
@@ -269,9 +273,8 @@ async fn single_client_loop(
             base_dir,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                initial_conversation_snapshot,
-            )),
+            sessions: session_reads.clone(),
+            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),
@@ -308,7 +311,7 @@ async fn single_client_loop(
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
         let session = Session {
-            key: SessionIdentity::from_persisted_key(session_key),
+            key: session_reads.active_session.read().await.identity().clone(),
             messages: std::mem::take(&mut messages),
             workflow_run: workflow_state
                 .as_ref()

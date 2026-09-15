@@ -11,6 +11,12 @@ use std::collections::HashMap;
 /// launches started in the same second (or two chats within one process) never
 /// collide on a key.
 pub fn generate_chat_key() -> String {
+    generate_chat_identity().runtime_key().to_string()
+}
+
+/// The typed identity of a fresh user-chat session (see
+/// [`generate_chat_key`] for the impure inputs it owns).
+pub fn generate_chat_identity() -> crate::domain::session_identity::SessionIdentity {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let secs = std::time::SystemTime::now()
@@ -20,7 +26,7 @@ pub fn generate_chat_key() -> String {
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     // PID disambiguates separate launches; the counter disambiguates within one.
     let uniq = ((std::process::id() as u64) << 24) ^ seq;
-    crate::domain::session::user_chat_key(secs, uniq)
+    crate::domain::session_identity::SessionIdentity::fresh_chat(secs, uniq)
 }
 
 /// Scrub the ephemeral (empty-key) spill file at run end; no-op for named

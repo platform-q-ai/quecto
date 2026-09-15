@@ -15,23 +15,34 @@ async fn clear_history_clears_message_ref_lookup_ledger() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[msg]);
-        assert!(snapshot.read().await.resolve(&msg_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[msg]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&msg_id)
+                .is_some()
+        );
         snapshot
     };
 
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_clear_history(&mut ctx, None, "clear_history").await);
     }
 
     assert!(fx.messages.is_empty());
-    let snap = snapshot.read().await;
-    assert!(snap.messages.is_empty(), "live snapshot should be cleared");
+    let snap = snapshot.active_session.read().await;
     assert!(
-        snap.resolve(&msg_id).is_none(),
+        snap.conversation().live_messages().is_empty(),
+        "live snapshot should be cleared"
+    );
+    assert!(
+        snap.conversation().lookup(&msg_id).is_none(),
         "old message ref must not remain fetchable after clear_history"
     );
 }
@@ -45,18 +56,32 @@ async fn new_session_clears_message_ref_lookup_ledger() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[msg]);
-        assert!(snapshot.read().await.resolve(&msg_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[msg]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&msg_id)
+                .is_some()
+        );
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
     }
     assert!(
-        snapshot.read().await.resolve(&msg_id).is_none(),
+        snapshot
+            .active_session
+            .read()
+            .await
+            .conversation()
+            .lookup(&msg_id)
+            .is_none(),
         "old ref must not remain fetchable after /new"
     );
 }
@@ -82,20 +107,34 @@ async fn resume_session_clears_previous_session_ref() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[old]);
-        assert!(snapshot.read().await.resolve(&old_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[old]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&old_id)
+                .is_some()
+        );
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(
             !handle_resume_session(&mut ctx, Some("rs"), "resume_session", "saved".into()).await
         );
     }
     assert!(
-        snapshot.read().await.resolve(&old_id).is_none(),
+        snapshot
+            .active_session
+            .read()
+            .await
+            .conversation()
+            .lookup(&old_id)
+            .is_none(),
         "a ref from the PREVIOUS session must not resolve after resume"
     );
 }
@@ -115,22 +154,26 @@ async fn rewind_to_drops_rewound_away_message_ref() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[keep, drop]);
+        let snapshot = ctx.sessions.clone();
+        snapshot
+            .active_session
+            .write()
+            .await
+            .record_full(&[keep, drop]);
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(2), None).await);
     }
-    let snap = snapshot.read().await;
+    let snap = snapshot.active_session.read().await;
     assert!(
-        snap.resolve(&drop_id).is_none(),
+        snap.conversation().lookup(&drop_id).is_none(),
         "a rewound-away message ref must not remain fetchable"
     );
     assert!(
-        snap.resolve(&keep_id).is_some(),
+        snap.conversation().lookup(&keep_id).is_some(),
         "a surviving message must still resolve after rewind"
     );
 }

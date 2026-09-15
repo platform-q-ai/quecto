@@ -37,6 +37,8 @@ pub(crate) fn run_agent_session(
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: None,
+        session_key: session_key.runtime_key().to_string(),
+        spill_store: agent.spill_store().cloned(),
     });
     let session_store = sessions.store;
     let rt = match crate::interface::cli::build_tokio_runtime() {

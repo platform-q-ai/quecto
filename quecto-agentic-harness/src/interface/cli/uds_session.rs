@@ -434,11 +434,12 @@ mod usage_projection;
 pub use usage_projection::{SessionUsage, compute_session_stats, compute_session_stats_with_usage};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
+#[cfg(test)]
+pub(crate) use uds_session_history::messages_page_json;
 pub(crate) use uds_session_history::{
-    HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, message_to_json_for_history_page,
-    messages_page_json_for_id, position_by_message_id, position_by_wire_id,
+    HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, history_page_json,
+    message_to_json_for_history_page,
 };
-pub use uds_session_history::{messages_page_json, messages_tail_json};
 
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
@@ -516,10 +517,7 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
 mod uds_session_message_range;
 #[path = "uds_visible_thinking_wire.rs"]
 mod uds_visible_thinking_wire;
-pub use uds_session_message_range::{
-    message_to_json_range, message_to_json_range_for_response,
-    tool_call_arguments_to_json_range_for_response,
-};
+pub(crate) use uds_session_message_range::recovered_content_json;
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
 /// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
 pub fn clear_conversation(messages: &mut Vec<Message>) {
@@ -543,7 +541,11 @@ pub fn resolve_rewind_target(
     message_index: Option<usize>,
 ) -> Result<usize, &'static str> {
     match (message_id, message_index) {
-        (Some(mid), _) => position_by_wire_id(messages, mid).ok_or("rewind target not found"),
+        (Some(mid), _) => crate::domain::conversation_view::position_by_id(
+            messages,
+            &crate::domain::ids::MessageId::from(mid),
+        )
+        .ok_or("rewind target not found"),
         (None, Some(_)) if messages.len() > HISTORY_PAGE_SIZE => {
             Err("messageIndex is ambiguous beyond one history page; rewind requires messageId")
         }

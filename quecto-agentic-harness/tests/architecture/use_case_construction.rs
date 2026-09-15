@@ -47,6 +47,8 @@ const USE_CASES: &[&str] = &[
     "ObserveOwnedChildExit",
     "OwnerConclusionPorts",
     "PrepareHarnessShutdown",
+    "ReadHistory",
+    "RecoverMessage",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
     "TerminateAllDelegatedAgents",

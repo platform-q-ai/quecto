@@ -1,25 +1,24 @@
+//! Raw export source of the active session (#1859; D4 #1974 retires this
+//! into the export use case): what one consistent read of the session
+//! yields for a raw export.
 use super::*;
 
-impl ConversationSnapshotData {
-    pub(in crate::interface::cli) fn export_messages(&self) -> Vec<Message> {
-        let mut messages: Vec<_> = self
-            .ledger_order
-            .iter()
-            .filter_map(|id| self.ledger.get(id).cloned())
-            .collect();
-        for message in &self.messages {
-            if messages
-                .iter()
-                .all(|existing| existing.id() != message.id())
-            {
-                messages.push(message.clone());
-            }
-        }
-        messages
-    }
-    pub(in crate::interface::cli) fn export_spill_source(
-        &self,
-    ) -> (Option<Arc<dyn ContextSpillStore>>, String) {
-        (self.spill_store.clone(), self.spill_session_key.clone())
+/// Everything a raw export records, read under one lock.
+pub(crate) struct ExportSource {
+    pub epoch: u64,
+    pub revision: u64,
+    pub messages: Vec<Message>,
+    pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    pub identity: crate::domain::session_identity::SessionIdentity,
+}
+
+pub(crate) fn export_source(state: &ActiveSessionState) -> ExportSource {
+    let ledger = state.conversation();
+    ExportSource {
+        epoch: ledger.epoch(),
+        revision: ledger.rev(),
+        messages: ledger.retained_messages(),
+        spill_store: ledger.spill_store().cloned(),
+        identity: state.identity().clone(),
     }
 }

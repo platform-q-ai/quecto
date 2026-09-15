@@ -2,6 +2,7 @@ pub mod agent;
 pub mod audit;
 pub mod catalogue;
 pub mod constants;
+pub mod conversation_view;
 pub mod environment_registry;
 pub mod environment_retention;
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
+pub mod unread_report;
 pub mod usage_accounting;
 
 #[cfg(test)]

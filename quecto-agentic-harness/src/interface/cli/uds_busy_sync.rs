@@ -1,5 +1,5 @@
 use super::protocol::AgentEvent;
-use super::uds_multi::ConversationSnapshot;
+use super::uds_session_handles::SessionReadHandles;
 
 pub(super) const SYNC_OVERSIZED_ERROR: &str =
     "sync response exceeds the protocol frame limit; retry with nextRev to continue";
@@ -13,27 +13,32 @@ pub(super) struct ParsedSync {
 
 pub(super) async fn intercept(
     line: &str,
-    snapshot: &ConversationSnapshot,
+    session: &SessionReadHandles,
     registry: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) -> bool {
     let Some(parsed) = parse(line.trim()) else {
         return false;
     };
-    service(parsed, snapshot, registry, client_id).await;
+    service(parsed, session, registry, client_id).await;
     true
 }
 
 pub(super) async fn service(
     parsed: ParsedSync,
-    snapshot: &ConversationSnapshot,
+    session: &SessionReadHandles,
     registry: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) {
-    let data = snapshot
-        .read()
-        .await
-        .sync_json(parsed.epoch, parsed.since_rev);
+    let data = {
+        let state = session.active_session.read().await;
+        super::uds_snapshots::sync_json(
+            &state,
+            &session.read_history,
+            parsed.epoch,
+            parsed.since_rev,
+        )
+    };
     let event = AgentEvent::ok(parsed.request_id.as_deref(), "sync", Some(data));
     if let Some(tx) = super::uds_ext_protocol::client_writer_tx(registry, client_id) {
         let mut response = serde_json::to_string(&event).unwrap_or_default();

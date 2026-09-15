@@ -84,9 +84,12 @@ impl Fixture {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &self.session_key,
+                None,
+                &[],
+            ),
+            export_root: std::sync::Arc::default(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -245,7 +248,14 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
         Message::tool("tc-9", "output"),
     ];
 
-    let line = build_get_messages_line(&messages);
+    let line = build_get_messages_line(
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .read_history
+            .newest_page_of(
+                &messages,
+                crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
+            ),
+    );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
     let assistant = got["data"]["messages"]
         .as_array()
@@ -286,7 +296,14 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
     use crate::interface::cli::uds_snapshots::build_get_messages_line;
 
     let messages = vec![Message::user("snapshot content")];
-    let line = build_get_messages_line(&messages);
+    let line = build_get_messages_line(
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .read_history
+            .newest_page_of(
+                &messages,
+                crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
+            ),
+    );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
     assert!(
@@ -386,7 +403,7 @@ async fn run_stub_turn_event_types_with_sink(
         execution_state: None,
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: None,
+        active_session: None,
         session: &mut session,
         sink,
         message: Message::user("hello"),

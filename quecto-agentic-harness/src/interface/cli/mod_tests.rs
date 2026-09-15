@@ -104,7 +104,12 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
     let done = super::completed_live_execution_state(&[started]);
     assert_eq!(done["execution"]["phase"], "idle");
     assert_eq!(done["messageCount"], 0);
-    let hints = super::ledger_hint_lines_for_turn_events(&[AgentProgressEvent::Done]).await;
+    let hints = super::ledger_hint_lines_for_turn_events(
+        &[AgentProgressEvent::Done],
+        &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .active_session,
+    )
+    .await;
     assert!(
         hints.iter().all(|line| line.is_object()),
         "every emitted line is a JSON event: {hints:?}"

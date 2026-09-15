@@ -394,9 +394,9 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
 
     // AC3: the conversation + session_stats snapshots refresh per turn too, not
     // just get_state — a regression dropping any of those refresh calls is caught.
-    let convo = ctx.conversation_snapshot.read().await;
+    let convo = ctx.sessions.active_session.read().await;
     assert_eq!(
-        convo.messages.len(),
+        convo.conversation().live_messages().len(),
         expected_count,
         "busy conversation snapshot must advance with the conversation, not stay empty"
     );

@@ -1,3 +1,4 @@
+pub mod active_session;
 pub mod environments;
 pub mod find;
 pub mod sessions;

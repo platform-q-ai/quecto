@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 /// Authoritative protocol page size, imported so this suite cannot drift from
 /// the protocol constant. Asserted behaviourally below, never sent on the wire.
 use quecto::interface::cli::protocol::HISTORY_PAGE_SIZE as PAGE;
-const PAGED_SESSION: &str = "paged-history";
+pub(super) const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
 const STUB_FULL: &str = "the full demoted body recalled for paged history";
 const STUB_SPILL_ID: &str = "turn1:msg:assistant";
@@ -537,7 +537,7 @@ fn then_receive_full_content(world: &mut QuectoWorld) {
 /// succeeds. These scenarios only issue history queries and never call the LLM,
 /// so an intentionally unreachable loopback endpoint avoids leaking a mock
 /// server and Tokio runtime per scenario.
-fn ensure_query_only_provider_config(world: &mut QuectoWorld) {
+pub(super) fn ensure_query_only_provider_config(world: &mut QuectoWorld) {
     super::e2e_steps::rewrite_config_to_uri(world, "http://127.0.0.1:9");
 }
 
@@ -829,7 +829,7 @@ fn record_stub_ref(world: &mut QuectoWorld, response: &serde_json::Value) {
 
 // ── UDS server + client plumbing (self-contained, mirrors uds_1093) ─────────
 
-fn attach_get_messages(world: &mut QuectoWorld, client: u32) -> serde_json::Value {
+pub(super) fn attach_get_messages(world: &mut QuectoWorld, client: u32) -> serde_json::Value {
     send_get_messages(world, client, None)
 }
 
@@ -879,7 +879,7 @@ fn page_contents(data: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn start_paged_agent(world: &mut QuectoWorld, session_name: &str) {
+pub(super) fn start_paged_agent(world: &mut QuectoWorld, session_name: &str) {
     if world._mc_live_socket.is_some() {
         return;
     }
@@ -977,7 +977,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     world._mc_live_handle = Some(handle);
 }
 
-fn connect_paged_client(world: &mut QuectoWorld, client_id: u32) {
+pub(super) fn connect_paged_client(world: &mut QuectoWorld, client_id: u32) {
     if world._mc_live_streams.contains_key(&client_id) {
         return;
     }
@@ -1009,7 +1009,7 @@ fn connect_paged_client(world: &mut QuectoWorld, client_id: u32) {
     }
 }
 
-fn write_command(world: &mut QuectoWorld, client_id: u32, cmd: &serde_json::Value) {
+pub(super) fn write_command(world: &mut QuectoWorld, client_id: u32, cmd: &serde_json::Value) {
     let stream = world
         ._mc_live_streams
         .get_mut(&client_id)
@@ -1022,7 +1022,7 @@ fn paged_event_count(world: &QuectoWorld, client_id: u32) -> usize {
     world.mc_client_events.get(&client_id).map_or(0, Vec::len)
 }
 
-fn wait_for_paged_event<F>(
+pub(super) fn wait_for_paged_event<F>(
     world: &mut QuectoWorld,
     client_id: u32,
     timeout: Duration,

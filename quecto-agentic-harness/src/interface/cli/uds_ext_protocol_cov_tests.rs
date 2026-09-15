@@ -438,9 +438,12 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -536,9 +539,12 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        export_root: std::sync::Arc::default(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

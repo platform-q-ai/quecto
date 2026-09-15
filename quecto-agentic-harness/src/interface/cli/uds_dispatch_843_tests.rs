@@ -17,7 +17,7 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
-use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::cli::uds::dispatch_session_roster_tests::{list_handle, read_handles_over};
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -27,7 +27,7 @@ pub(super) struct Fx {
     pub(super) messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    pub(super) store: FileSessionStore,
+    pub(super) store: std::sync::Arc<FileSessionStore>,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }
@@ -63,7 +63,7 @@ impl Fx {
             messages: Vec::new(),
             session: AgentSession::new("stub".into(), "cli:test".into()),
             session_key: "cli:test".into(),
-            store,
+            store: std::sync::Arc::new(store),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -80,9 +80,8 @@ impl Fx {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: read_handles_over(self.store.clone(), &self.session_key, None, &[]),
+            export_root: std::sync::Arc::default(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -92,7 +91,7 @@ impl Fx {
             session: &mut self.session,
             stdout: Some(&mut self.writer),
             session_key: &mut self.session_key,
-            session_store: &self.store,
+            session_store: self.store.as_ref(),
             ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),

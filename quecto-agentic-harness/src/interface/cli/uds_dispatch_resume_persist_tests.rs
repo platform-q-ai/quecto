@@ -155,13 +155,13 @@ async fn refresh_conversation_snapshot_clones_current_messages() {
         crate::domain::message::Message::assistant("hi", vec![]),
     ];
     let ctx = fx.ctx();
-    assert!(
-        ctx.conversation_snapshot.read().await.messages.is_empty(),
-        "starts empty"
-    );
+    let live_len = |ctx: &crate::interface::cli::uds::DispatchCtx<'_>| {
+        let session = ctx.sessions.active_session.clone();
+        async move { session.read().await.conversation().live_messages().len() }
+    };
+    assert_eq!(live_len(&ctx).await, 0, "starts empty");
     crate::interface::cli::uds_snapshots::refresh_conversation_snapshot(&ctx).await;
-    let snap = ctx.conversation_snapshot.read().await;
-    assert_eq!(snap.messages.len(), 2, "snapshot mirrors current messages");
+    assert_eq!(live_len(&ctx).await, 2, "snapshot mirrors current messages");
     crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
     assert_eq!(ctx.state_snapshot.read().await.message_count, 2);
 }

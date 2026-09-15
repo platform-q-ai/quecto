@@ -45,11 +45,10 @@ fn make_args(
         turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),
         client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
-        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
-            crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-                Message::user("hello"),
-            ]),
-        )),
+        session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+            &[Message::user("hello")],
+        ),
+        export_root: Arc::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             control_receipts: Vec::new(),
             automatic_turns_suspended: false,

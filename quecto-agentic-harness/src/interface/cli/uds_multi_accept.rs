@@ -1,8 +1,8 @@
 use super::uds_cancel::CancelHandle;
 use super::uds_multi::{
-    BusyFlag, ClientGuard, ClientHandlerArgs, ClientMessage, ConversationSnapshot, StateSnapshot,
-    handle_client,
+    BusyFlag, ClientGuard, ClientHandlerArgs, ClientMessage, StateSnapshot, handle_client,
 };
+use super::uds_session_handles::SessionReadHandles;
 
 use super::uds_multi::{MAX_CLIENTS, NEXT_CLIENT_ID};
 
@@ -17,7 +17,8 @@ pub(super) struct AcceptLoopArgs {
     pub(super) turn_control: super::uds_cancel::TurnControlHandle,
     pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
     pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
-    pub(super) conversation_snapshot: ConversationSnapshot,
+    pub(super) session: SessionReadHandles,
+    pub(super) export_root: super::uds_snapshots::ExportRootSlot,
     pub(super) state_snapshot: StateSnapshot,
     pub(super) execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub(super) session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot,
@@ -45,7 +46,8 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         turn_control,
         live_clients,
         client_tool_registry,
-        conversation_snapshot,
+        session,
+        export_root,
         state_snapshot,
         execution_state,
         session_stats_snapshot,
@@ -124,7 +126,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                             let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
                                 super::uds_snapshots::BusySnapshotSources {
                                     state: &state_snapshot,
-                                    conversation: &conversation_snapshot,
+                                    session: &session,
                                     session_stats: &session_stats_snapshot,
                                     tool_catalogue: &tool_catalogue_snapshot,
                                     subagents: &subagent_registry,
@@ -152,7 +154,8 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         turn_control: turn_control.clone(),
                         client_id,
                         client_tool_registry: client_tool_registry.clone(),
-                        conversation_snapshot: conversation_snapshot.clone(),
+                        session: session.clone(),
+                        export_root: export_root.clone(),
                         subagent_registry: subagent_registry.clone(),
                         teardown: teardown.clone(),
                         _guard: guard,
