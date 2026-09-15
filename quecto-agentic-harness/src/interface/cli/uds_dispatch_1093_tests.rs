@@ -126,11 +126,10 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    /// The file store of `_tmp`, shared with `handles`, so the store the
-    /// tests seed is the one the transactions (save, resume) run against.
+    /// The file store of `_tmp`, shared with `handles` (the fixture's one
+    /// composed sessions graph), so the store the tests seed is the one the
+    /// transactions run against; `ctx()` publishes the messages into it.
     store: Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
-    /// The one composed sessions graph of the fixture; every `ctx()`
-    /// publishes the fixture's messages into it and borrows its handles.
     handles: crate::interface::cli::uds_session_handles::SessionHandles,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
@@ -187,25 +186,19 @@ impl Fixture {
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     ) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
-        let _ = self
-            .handles
+        let handles = &self.handles;
+        let _ = handles
             .active_session
             .try_write()
             .expect("fixture session is uncontended")
             .publish(&self.messages);
-        let handles = &self.handles;
-        let sessions = handles.read_handles();
-        let save_session = handles.save_session.clone();
-        let rewrite = handles.rewrite.clone();
-        let switch = handles.switch.clone();
-        let list_sessions = handles.list_sessions.clone();
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            sessions,
+            sessions: handles.read_handles(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -227,11 +220,11 @@ impl Fixture {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            save_session,
-            rewrite,
-            switch,
+            save_session: handles.save_session.clone(),
+            rewrite: handles.rewrite.clone(),
+            switch: handles.switch.clone(),
             fleet_teardown: None,
-            list_sessions,
+            list_sessions: handles.list_sessions.clone(),
         }
     }
 }
