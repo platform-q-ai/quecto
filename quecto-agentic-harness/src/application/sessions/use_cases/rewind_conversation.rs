@@ -80,12 +80,20 @@ impl RewindConversation {
 /// everything after it are removed and the survivors lose their retention
 /// residue. `false`, with nothing changed, when the index is out of range
 /// or names a non-user message.
-pub fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize) -> bool {
+pub(crate) fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize) -> bool {
     if !truncate_at_user_message(messages, message_index) {
         return false;
     }
     remove_spill_references(messages);
     true
+}
+
+/// Test-support (#1975): the rewind edit for the context-pruning BDD
+/// steps, which characterise the residue strip on a bare conversation
+/// without composing the transaction.
+#[cfg(any(test, feature = "test-support"))]
+pub fn rewind_to_message_index_for_test(messages: &mut Vec<Message>, message_index: usize) -> bool {
+    rewind_to_message_index(messages, message_index)
 }
 
 /// Strip retention residue from the surviving messages once the namespace

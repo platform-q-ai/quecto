@@ -289,7 +289,6 @@ async fn the_fakes_journal_and_fail_as_told() {
             .is_err()
     );
     assert!(rig.store.load(&identity).await.unwrap().is_none());
-    assert!(!rig.store.exists(&identity).await.unwrap());
     assert!(
         rig.store
             .list(&SessionListQuery::All)

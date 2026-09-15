@@ -459,7 +459,10 @@ pub(super) async fn handle_resume_session(
 /// `clear_history` (#1864): admitted only while the agent is idle; the
 /// transaction itself is the application's. Its ledger position is
 /// announced whether the save succeeded or not — the history was replaced
-/// either way.
+/// either way. The announcement follows the whole transaction (master
+/// broadcast it right after the ledger write, before the retention clear
+/// and the save): the requester sees the same on-socket order; other
+/// clients see `ledger_advanced` once the save has settled.
 pub(super) async fn handle_clear_history(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -485,7 +488,8 @@ pub(super) async fn handle_clear_history(
 /// `rewind_to` (#1865): admitted only while the agent is idle; the target
 /// mapping is the controller's and the transaction the application's. A
 /// refused target announces nothing; a rewound history announces its
-/// ledger position whether the save succeeded or not.
+/// ledger position whether the save succeeded or not, after the whole
+/// transaction (see `handle_clear_history` on the broadcast timing).
 pub(super) async fn handle_rewind_to(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,

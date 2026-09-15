@@ -340,7 +340,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/application/sessions/use_cases/rewind_conversation.rs",
-        140,
+        145,
     ),
     // D3 #1973, D4 #1974, D5 #1972 and D6 #1975 each add use cases to this
     // graph; the ceiling follows their merge (was 77 before D6).
@@ -366,7 +366,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/agent/run_session.rs", 140),
     ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
-    ("src/interface/cli/uds_dispatch_session.rs", 535),
+    ("src/interface/cli/uds_dispatch_session.rs", 540),
     ("src/interface/cli/uds_latest_report.rs", 85),
     ("src/interface/cli/uds_lifecycle.rs", 330),
     ("src/interface/cli/uds_multi.rs", 642),
