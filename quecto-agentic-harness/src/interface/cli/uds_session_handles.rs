@@ -1,4 +1,4 @@
-//! What a dispatch loop needs from the sessions capability (#1970–#1975),
+//! What a dispatch loop needs from the sessions capability (#1970–#1976),
 //! as plain handles.
 //!
 //! The interface declares the runtime inputs one loop hands over and the
@@ -14,7 +14,9 @@ use std::sync::Arc;
 use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
-use crate::application::sessions::use_cases::{ClearConversation, RewindConversation, SaveSession};
+use crate::application::sessions::use_cases::{
+    ClearConversation, DepartingChildren, RewindConversation, SaveSession, StartFreshConversation,
+};
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
@@ -74,6 +76,18 @@ pub struct SessionHandles {
     /// Clear (#1864) and rewind (#1865) the conversation: the two
     /// history-replacing transactions of the loop.
     pub rewrite: ConversationRewriteHandles,
+    /// Start a fresh conversation (#1862) and the departing-children
+    /// settlement every session transition runs first (#1976).
+    pub switch: SessionSwitchHandles,
+}
+
+/// The session transitions (#1976): the fresh-session transaction, and
+/// the departing-children collaborator the interface's resume still
+/// requests directly until D8 (#1977) owns that transaction.
+#[derive(Clone)]
+pub struct SessionSwitchHandles {
+    pub fresh: Arc<StartFreshConversation>,
+    pub departing_children: Arc<DepartingChildren>,
 }
 
 /// The history-replacing transactions (#1975), requested once the

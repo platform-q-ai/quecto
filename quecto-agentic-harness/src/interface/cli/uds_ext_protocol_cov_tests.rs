@@ -421,7 +421,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let mut messages = Vec::new();
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
+    let session_key = "cli:test".to_string();
     let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
         crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
     );
@@ -454,7 +454,6 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
         session_store: &store,
         ephemeral: false,
         system_prompt: "",
@@ -474,6 +473,9 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         provider_reload_inputs: None,
         save_session,
         rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };
@@ -528,7 +530,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     let mut messages = Vec::new();
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
+    let session_key = "cli:test".to_string();
     let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
         crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
     );
@@ -559,7 +561,6 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
         session_store: &store,
         ephemeral: false,
         system_prompt: "",
@@ -579,6 +580,9 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         provider_reload_inputs: None,
         save_session,
         rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };

@@ -120,6 +120,12 @@ impl Fixture {
         self.compose_sessions();
     }
 
+    /// The key the loop currently stands for, as the tracker reports it
+    /// (`session_key` is the key the fixture was opened on).
+    pub(super) fn current_session_key(&self) -> String {
+        self.session.session_key().to_string()
+    }
+
     /// Track a sub-agent roster: the context sees it and the save
     /// transaction records it.
     pub(super) fn set_subagent_registry(
@@ -159,7 +165,6 @@ impl Fixture {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
             session_store: self.store.as_ref(),
             ephemeral: self.ephemeral,
             system_prompt: self.system_prompt.as_str(),
@@ -179,6 +184,7 @@ impl Fixture {
             list_sessions: self.sessions.list_sessions.clone(),
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
+            switch: self.sessions.switch.clone(),
         }
     }
 }

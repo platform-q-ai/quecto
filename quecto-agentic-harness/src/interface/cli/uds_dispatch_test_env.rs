@@ -204,7 +204,6 @@ impl DispatchTestEnv {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
             session_store: self.store.as_ref(),
             ephemeral: false,
             system_prompt: "",
@@ -225,6 +224,7 @@ impl DispatchTestEnv {
             list_sessions: self.sessions.list_sessions.clone(),
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
+            switch: self.sessions.switch.clone(),
         }
     }
 }

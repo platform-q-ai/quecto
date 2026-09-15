@@ -126,23 +126,33 @@ impl ActiveSessionState {
         self.conversation.clear()
     }
 
-    /// Switch the session this state stands for: its identity and the
-    /// retention store paired with it, in one step, right after
-    /// [`Self::clear`] (which already invalidated every deferred recall).
-    /// A different identity drops the killing exit armed for the departing
-    /// session; the persisted watermark is the caller's to set from what it
-    /// loaded or cleared.
-    pub fn switch_identity(
+    /// Switch the session this state stands for (D7 #1976): drop the
+    /// transcript and open a new epoch, replace the identity and the
+    /// retention store paired with it, and publish `messages` as the live
+    /// transcript of the new session — one write, so a concurrent reader
+    /// can observe neither old refs under the new identity nor new history
+    /// under the old one. A different identity drops the killing exit armed
+    /// for the departing session; the persisted watermark is the caller's
+    /// to set from what it loaded or cleared.
+    pub fn switch_to(
         &mut self,
         identity: SessionIdentity,
         spill_store: Option<Arc<dyn ContextSpillStore>>,
-    ) {
+        messages: &[Message],
+    ) -> LedgerAdvance {
+        let cleared = self.conversation.clear();
         if self.identity != identity {
             self.persistence.killing_exit = false;
         }
         self.identity = identity;
         self.conversation
             .replace_spill_store_after_clear(spill_store);
+        let published = self.conversation.publish(messages);
+        LedgerAdvance {
+            epoch: self.conversation.epoch(),
+            rev: self.conversation.rev(),
+            changed: cleared.changed || published.changed,
+        }
     }
 
     /// Prepare a recovery lookup. Collapsed messages that carry a spill id

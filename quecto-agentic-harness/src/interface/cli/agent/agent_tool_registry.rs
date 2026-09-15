@@ -99,7 +99,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             String::new()
         } else {
             let name = flags.session_name.as_deref().unwrap_or("default");
-            Session::build_key("cli", name)
+            crate::domain::session::Session::build_key("cli", name)
         }
     });
     let entrypoint = if flags.uds_mode {

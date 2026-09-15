@@ -43,6 +43,8 @@ mod catalogue_source;
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
+#[path = "contracts/delegated_children_roster.rs"]
+mod delegated_children_roster;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
 #[path = "contracts/environment_member_shutdown.rs"]
@@ -51,6 +53,10 @@ mod environment_member_shutdown;
 mod environment_process_commands;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/fleet_settlement.rs"]
+mod fleet_settlement;
+#[path = "contracts/fresh_session_identity_generator.rs"]
+mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]
 mod historical_roster_source;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
@@ -71,14 +77,20 @@ mod runtime_tool_lifecycle_registry;
 mod session_aware_tools;
 #[path = "contracts/session_export_port.rs"]
 mod session_export_port;
+#[path = "contracts/session_key_propagation.rs"]
+mod session_key_propagation;
 #[path = "contracts/session_layout.rs"]
 mod session_layout;
 #[path = "contracts/session_list_scale.rs"]
 mod session_list_scale;
 #[path = "contracts/session_store.rs"]
 mod session_store;
+#[path = "contracts/session_switch_runtime.rs"]
+mod session_switch_runtime;
 #[path = "contracts/subagent_launch_ports.rs"]
 mod subagent_launch_ports;
+#[path = "common/switch_runtime_fixture.rs"]
+mod switch_runtime_fixture;
 #[path = "contracts/tool.rs"]
 mod tool;
 #[path = "contracts/tool_catalog.rs"]

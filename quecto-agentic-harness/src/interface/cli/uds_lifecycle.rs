@@ -239,7 +239,7 @@ async fn single_client_loop(
         workspace,
         mut messages,
         model,
-        mut session_key,
+        session_key,
         ephemeral,
         system_prompt,
         ext_registry,
@@ -293,7 +293,6 @@ async fn single_client_loop(
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: Some(&mut *writer),
-            session_key: &mut session_key,
             session_store,
             ephemeral,
             system_prompt: &system_prompt,
@@ -313,6 +312,7 @@ async fn single_client_loop(
             list_sessions: sessions.list_sessions.clone(),
             save_session: sessions.save_session.clone(),
             rewrite: sessions.rewrite.clone(),
+            switch: sessions.switch.clone(),
         },
     )
     .await;

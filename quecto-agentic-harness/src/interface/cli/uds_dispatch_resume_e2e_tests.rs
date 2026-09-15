@@ -51,7 +51,7 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
         )
         .await
     );
-    assert_eq!(*ctx.session_key, persisted_key);
+    assert_eq!(ctx.session.session_key(), persisted_key);
     assert_eq!(ctx.messages.len(), 1);
 }
 
@@ -212,7 +212,7 @@ async fn e2e_resume_restores_history_without_readopting_children() {
         );
     }
 
-    assert_eq!(fx.session_key, key);
+    assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 3, "transcript incl. past child message");
     assert_eq!(
         fx.messages[0].content,
@@ -271,7 +271,7 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
         );
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_ne!(fx.session_key, key);
+    assert_ne!(fx.current_session_key(), key);
     assert!(fx.messages.is_empty());
     assert!(registry.lock().unwrap().is_empty());
     assert_never_probed(&listener, "live row");
@@ -436,7 +436,7 @@ async fn e2e_new_session_settles_the_departing_child_before_the_roster_is_replac
         // A second switch finds nothing left to settle.
         assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
     }
-    assert_ne!(fx.session_key, "cli:test");
+    assert_ne!(fx.current_session_key(), "cli:test");
     let requests = child.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(requests[0]["type"], "shutdown");
@@ -494,7 +494,7 @@ async fn e2e_resume_away_settles_the_departing_child_and_probes_no_legacy_socket
         .expect("bounded");
         assert!(!switched);
     }
-    assert_eq!(fx.session_key, "cli:elsewhere");
+    assert_eq!(fx.current_session_key(), "cli:elsewhere");
     assert_eq!(child.requests.lock().unwrap().len(), 1);
     assert!(registry.lock().unwrap().is_empty());
     assert_never_probed(&legacy_listener, "legacy row of the resumed session");
@@ -532,7 +532,11 @@ async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settl
                 .await
         );
     }
-    assert_eq!(fx.session_key, "cli:test", "the current session is kept");
+    assert_eq!(
+        fx.current_session_key(),
+        "cli:test",
+        "the current session is kept"
+    );
     assert_eq!(fx.messages.len(), 1, "nothing was cleared");
     assert_eq!(
         registry.lock().unwrap().len(),
@@ -562,7 +566,7 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
         let mut ctx = fx.ctx();
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_eq!(fx.session_key, "cli:test");
+    assert_eq!(fx.current_session_key(), "cli:test");
     assert_eq!(registry.lock().unwrap().len(), 1);
     // A record-only row (no launch generation) is replaced.
     registry.lock().unwrap().clear();
@@ -575,6 +579,6 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
         let mut ctx = fx.ctx();
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_ne!(fx.session_key, "cli:test");
+    assert_ne!(fx.current_session_key(), "cli:test");
     assert!(registry.lock().unwrap().is_empty());
 }

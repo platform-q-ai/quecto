@@ -40,7 +40,7 @@ impl WorkflowNudge {
 /// enabled and the engine still has something to say.
 pub(super) fn has_active_workflow_descendant(ctx: &DispatchCtx<'_>) -> bool {
     crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
-        ctx.session_key.as_str(),
+        ctx.session.session_key(),
     )
     .is_some_and(|current_identity| {
         crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(

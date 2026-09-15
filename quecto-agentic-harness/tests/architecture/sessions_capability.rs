@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -24,6 +24,12 @@
 //!   interface neither edits the conversation, resolves a rewind target,
 //!   resets the ledger or the watermark, nor clears the retention
 //!   namespace itself; the handlers admit, request and present.
+//! - D7: one owner of the fresh-session transaction and of the
+//!   departing-children settlement: the interface generates no session
+//!   key, holds no fleet/reset ordering or refusal text, keeps no raw
+//!   session-key copy on the dispatch context, and switches no identity
+//!   itself; the loop's raw-key holders adopt the identity through the
+//!   propagation port from exactly one adapter.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -54,8 +60,11 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/save_session.rs",
     "src/application/sessions/use_cases/clear_conversation.rs",
     "src/application/sessions/use_cases/rewind_conversation.rs",
+    "src/application/sessions/use_cases/start_fresh_conversation.rs",
+    "src/application/sessions/use_cases/departing_children.rs",
     "src/application/sessions/ports/export.rs",
     "src/application/sessions/ports/session_runtime.rs",
+    "src/application/sessions/ports/session_transition.rs",
     "src/application/sessions/dto/history.rs",
     "src/application/sessions/dto/message_recovery.rs",
     "src/application/sessions/dto/session_report.rs",
@@ -63,17 +72,22 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/save_session.rs",
     "src/application/sessions/dto/clear_conversation.rs",
     "src/application/sessions/dto/rewind_conversation.rs",
+    "src/application/sessions/dto/start_fresh_conversation.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
     "src/application/durable_prefix.rs",
     "src/infrastructure/persistence/session_snapshot_sources.rs",
+    "src/infrastructure/persistence/fresh_session_identity.rs",
+    "src/infrastructure/tools/delegated_roster.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
     "src/composition/session_report.rs",
+    "src/composition/fleet_settlement.rs",
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/uds_sync.rs",
     "src/interface/cli/uds_turn_accounting.rs",
+    "src/interface/cli/uds_session_switch_runtime.rs",
     "src/interface/uds/sessions/controller.rs",
     "src/interface/uds/sessions/read_history_controller.rs",
     "src/interface/uds/sessions/recover_message_controller.rs",
@@ -113,6 +127,24 @@ const SESSION_PORTS: &[(&str, &str)] = &[
     (
         "TurnAccountingReset",
         "tests/contracts/turn_accounting_reset.rs",
+    ),
+    // D7 #1976: the transition ports.
+    (
+        "FreshSessionIdentityGenerator",
+        "tests/contracts/fresh_session_identity_generator.rs",
+    ),
+    ("FleetSettlement", "tests/contracts/fleet_settlement.rs"),
+    (
+        "DelegatedChildrenRoster",
+        "tests/contracts/delegated_children_roster.rs",
+    ),
+    (
+        "SessionKeyPropagation",
+        "tests/contracts/session_key_propagation.rs",
+    ),
+    (
+        "SessionSwitchRuntime",
+        "tests/contracts/session_switch_runtime.rs",
     ),
 ];
 
@@ -183,6 +215,23 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "RewindConversation::new(",
         "src/composition/active_session.rs",
     ),
+    // D7 #1976.
+    (
+        "StartFreshConversation::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "DepartingChildren::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "RegistryDelegatedRoster::new(",
+        "src/composition/active_session.rs",
+    ),
+    (
+        "ProcessClockIdentityGenerator::new(",
+        "src/composition/sessions.rs",
+    ),
 ];
 
 /// The one production file that may spell the export root (D4): the loop's
@@ -238,6 +287,27 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "rewind requires messageId",
     "failed to save cleared session",
     "failed to save rewound session",
+    // D7 (#1976): the fresh-session transaction — key generation, the
+    // fleet/reset ordering and its refusal texts, the identity switch and
+    // the raw session-key copy of the dispatch context — lives in the
+    // application; the handler admits, requests and presents.
+    "fn generate_chat_key(",
+    "fn generate_chat_identity(",
+    "fn resolve_uds_session_key(",
+    "fresh_chat(",
+    "fn settle_departing_children(",
+    "fn reset_subagent_roster(",
+    "fn live_delegated_rows(",
+    "enum TransitionRefused",
+    "could not be settled; the current session was kept",
+    "subagent teardown was interrupted",
+    "no fleet teardown is available",
+    "remain after the teardown",
+    // (`failed to save current session` stays spelled by the interface's
+    // resume until D8 #1977 owns that transaction.)
+    "fn reset_to_with_spill_store(",
+    ".switch_identity(",
+    "session_key: &'a mut String",
 ];
 
 /// The interface files still holding a raw persisted key the active session
@@ -307,7 +377,9 @@ const SANITIZER_CALLERS: &[&str] = &[
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
 const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/durable_prefix.rs", 42),
-    ("src/application/sessions/active_session.rs", 277),
+    // D7 #1976 folds the interface reset composition into `switch_to`
+    // (was 277 before D7).
+    ("src/application/sessions/active_session.rs", 289),
     ("src/application/sessions/conversation_ledger.rs", 295),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
@@ -316,12 +388,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/save_session.rs", 68),
     ("src/application/sessions/dto/clear_conversation.rs", 50),
     ("src/application/sessions/dto/rewind_conversation.rs", 90),
+    (
+        "src/application/sessions/dto/start_fresh_conversation.rs",
+        140,
+    ),
     ("src/application/sessions/history_paging.rs", 65),
-    ("src/application/sessions/ports.rs", 135),
+    // D7 #1976 declares and re-exports the transition ports module (was
+    // 135 before D7).
+    ("src/application/sessions/ports.rs", 142),
     ("src/application/sessions/ports/export.rs", 30),
     // D6 #1975 adds the accounting-reset port beside the save observations
     // (was 29 before D6).
     ("src/application/sessions/ports/session_runtime.rs", 42),
+    ("src/application/sessions/ports/session_transition.rs", 60),
     (
         "src/application/sessions/use_cases/export_session_report.rs",
         180,
@@ -342,15 +421,31 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/rewind_conversation.rs",
         145,
     ),
-    // D3 #1973, D4 #1974, D5 #1972 and D6 #1975 each add use cases to this
-    // graph; the ceiling follows their merge (was 77 before D6).
-    ("src/composition/active_session.rs", 93),
+    (
+        "src/application/sessions/use_cases/start_fresh_conversation.rs",
+        120,
+    ),
+    (
+        "src/application/sessions/use_cases/departing_children.rs",
+        115,
+    ),
+    // D3 #1973, D4 #1974, D5 #1972, D6 #1975 and D7 #1976 each add use
+    // cases to this graph; the ceiling follows their merge (was 93 before
+    // D7).
+    ("src/composition/active_session.rs", 115),
     ("src/composition/session_report.rs", 40),
-    ("src/composition/sessions.rs", 38),
+    // D7 #1976 adds the fresh-identity generator builder (was 38 before D7).
+    ("src/composition/sessions.rs", 48),
+    ("src/composition/fleet_settlement.rs", 45),
     (
         "src/infrastructure/persistence/session_snapshot_sources.rs",
         61,
     ),
+    (
+        "src/infrastructure/persistence/fresh_session_identity.rs",
+        45,
+    ),
+    ("src/infrastructure/tools/delegated_roster.rs", 45),
     (
         "src/infrastructure/persistence/session_store_ordinals.rs",
         23,
@@ -366,17 +461,18 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/agent/run_session.rs", 140),
     ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
-    ("src/interface/cli/uds_dispatch_session.rs", 540),
+    ("src/interface/cli/uds_dispatch_session.rs", 370),
     ("src/interface/cli/uds_latest_report.rs", 85),
     ("src/interface/cli/uds_lifecycle.rs", 330),
-    ("src/interface/cli/uds_multi.rs", 642),
-    // Same merge of D3/D4/D5/D6 handles (was 105 before D6).
-    ("src/interface/cli/uds_session_handles.rs", 111),
+    ("src/interface/cli/uds_multi.rs", 639),
+    // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
+    ("src/interface/cli/uds_session_handles.rs", 128),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
+    ("src/interface/cli/uds_session_switch_runtime.rs", 100),
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
-    ("src/interface/cli/uds_snapshots.rs", 282),
+    ("src/interface/cli/uds_snapshots.rs", 257),
     ("src/interface/cli/uds_sync.rs", 135),
     ("src/interface/uds/sessions/controller.rs", 36),
     ("src/interface/uds/sessions/export_report_controller.rs", 45),
@@ -741,7 +837,6 @@ fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
         ".rewrite.clear.clone()",
         ".rewrite.rewind.clone()",
         ".into_request(HISTORY_PAGE_SIZE)",
-        "LoopTurnAccounting::new(",
     ] {
         let sites: BTreeSet<String> = production_files_calling(needle)
             .into_iter()
@@ -749,12 +844,113 @@ fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
             .collect();
         assert_eq!(sites, set(&[handlers]), "{needle} is the handlers' alone");
     }
+    // The accounting adapter is built by the handlers and, for the same
+    // reset, by the session-switch adapter (D7 #1976).
+    let sites: BTreeSet<String> = production_files_calling("LoopTurnAccounting::new(")
+        .into_iter()
+        .filter(|path| path.starts_with("src/interface/"))
+        .collect();
+    assert_eq!(
+        sites,
+        set(&[handlers, "src/interface/cli/uds_session_switch_runtime.rs"]),
+        "LoopTurnAccounting::new( is the handlers' and the switch adapter's"
+    );
     let adapters = production_files_calling("impl TurnAccountingReset for");
     assert_eq!(
         adapters,
-        set(&["src/interface/cli/uds_turn_accounting.rs"]),
-        "one production adapter of the accounting-reset port"
+        set(&[
+            "src/interface/cli/uds_turn_accounting.rs",
+            "src/interface/cli/uds_session_switch_runtime.rs",
+        ]),
+        "the production adapters of the accounting-reset port are exact"
     );
+}
+
+/// D7 retirement (#1976): the fresh-session transaction is requested from
+/// exactly one interface site — the idle `new_session` handler — through
+/// the injected handle; the departing-children collaborator is requested
+/// by the same file only (the interface's resume, until D8); the switch
+/// runtime and the transition ports have exactly one production adapter
+/// each; the raw session key is generated in one infrastructure adapter
+/// and the dispatch context carries no raw copy; the retired helpers are
+/// gone without a facade.
+#[test]
+fn fresh_session_is_requested_only_by_the_dispatch_handler() {
+    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    let adapter = "src/interface/cli/uds_session_switch_runtime.rs";
+    for needle in [
+        ".switch.fresh.clone()",
+        ".switch.departing_children.clone()",
+        "LoopSessionSwitchRuntime::new(",
+        "fleet_settlement_of(",
+        ".reset_roster(SessionTransition::Resume)",
+    ] {
+        let sites: BTreeSet<String> = production_files_calling(needle)
+            .into_iter()
+            .filter(|path| path.starts_with("src/interface/"))
+            .collect();
+        assert_eq!(sites, set(&[handlers]), "{needle} is the handler's alone");
+    }
+    for (needle, owner) in [
+        ("impl SessionSwitchRuntime for", adapter),
+        ("impl SessionKeyPropagation for", adapter),
+        (
+            "impl FreshSessionIdentityGenerator for",
+            "src/infrastructure/persistence/fresh_session_identity.rs",
+        ),
+        (
+            "impl DelegatedChildrenRoster for",
+            "src/infrastructure/tools/delegated_roster.rs",
+        ),
+        (
+            "impl FleetSettlement for",
+            "src/composition/fleet_settlement.rs",
+        ),
+        (
+            "SessionIdentity::fresh_chat(",
+            "src/infrastructure/persistence/fresh_session_identity.rs",
+        ),
+    ] {
+        assert_eq!(
+            production_files_calling(needle),
+            set(&[owner]),
+            "{needle} has exactly one production owner"
+        );
+    }
+    // The loop's raw-key holders adopt an identity only through the
+    // propagation adapter (and the startup identity of the loop).
+    let propagators: BTreeSet<String> = production_files_calling(".set_session_key(")
+        .into_iter()
+        .filter(|path| path.starts_with("src/interface/"))
+        .collect();
+    assert_eq!(
+        propagators,
+        set(&[adapter, handlers, "src/interface/cli/agent.rs"]),
+        "the raw session key is propagated by the switch adapter, the startup path and the interface resume (D8 #1977) only"
+    );
+    // The typed identity is the agent loop's only session-key input.
+    let loop_session =
+        std::fs::read_to_string("src/application/agent_loop/agent_loop_session.rs").unwrap();
+    assert!(loop_session.contains("pub fn set_session_key(&mut self, identity: SessionIdentity)"));
+    // Retired without a facade.
+    assert!(!Path::new("src/interface/cli/agent_session_identity.rs").exists());
+    for retired in [
+        "generate_chat_key",
+        "generate_chat_identity",
+        "resolve_uds_session_key",
+        "reset_to_with_spill_store",
+        "settle_departing_children",
+        "reset_subagent_roster",
+    ] {
+        assert!(
+            production_files_calling(retired).is_empty(),
+            "{retired} survives in production code"
+        );
+    }
+    // The identity switch is the active session's own step, private to it.
+    let state = std::fs::read_to_string("src/application/sessions/active_session.rs").unwrap();
+    assert!(state.contains("pub fn switch_to("));
+    assert!(!state.contains("pub fn switch_identity("));
 }
 
 #[test]

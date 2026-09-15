@@ -276,7 +276,7 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
 async fn new_session_uses_fresh_key_and_clears_old_messages() {
     let mut fx = Fixture::new();
     fx.messages.push(Message::user("old turn"));
-    let old_key = fx.session_key.clone();
+    let old_key = fx.current_session_key();
     fx.store.claim(&id(&old_key)).unwrap();
     {
         let mut ctx = fx.ctx();
@@ -284,8 +284,8 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     }
 
     assert!(fx.messages.is_empty());
-    assert_ne!(fx.session_key, old_key);
-    assert!(fx.session_key.starts_with("chat-"));
+    assert_ne!(fx.current_session_key(), old_key);
+    assert!(fx.current_session_key().starts_with("chat-"));
     FileSessionStore::new(FlatSessionLayout::new(fx._tmp.path()))
         .claim(&id(&old_key))
         .expect("/new_session must release the old session ownership lock");
@@ -305,9 +305,9 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
     }
 
     let tool_keys = tool.seen.lock().unwrap();
-    assert_eq!(tool_keys.as_slice(), &[fx.session_key.clone()]);
+    assert_eq!(tool_keys.as_slice(), &[fx.current_session_key()]);
     let cleared = spill.cleared.lock().unwrap();
-    assert_eq!(cleared.as_slice(), &[fx.session_key.clone()]);
+    assert_eq!(cleared.as_slice(), &[fx.current_session_key()]);
 }
 
 #[tokio::test]
@@ -372,7 +372,7 @@ async fn resume_session_success_loads_messages() {
             !handle_resume_session(&mut ctx, Some("rs"), "resume_session", "saved".into()).await
         );
     }
-    assert_eq!(fx.session_key, key);
+    assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 1);
 }
 
@@ -420,7 +420,7 @@ async fn resume_loads_chat_session_by_full_key() {
         let mut ctx = fx.ctx();
         assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone()).await);
     }
-    assert_eq!(fx.session_key, key);
+    assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 1);
 }
 

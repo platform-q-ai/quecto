@@ -89,7 +89,7 @@ pub(super) fn query_response_data_result(
         AgentCommand::GetSessionStats { .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
             let stats = compute_session_stats_with_usage(
-                ctx.session_key,
+                ctx.session.session_key(),
                 &visible_messages,
                 ctx.session.usage_snapshot(),
                 ctx.session.context_tokens(),

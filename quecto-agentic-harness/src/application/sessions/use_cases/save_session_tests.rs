@@ -305,9 +305,9 @@ async fn an_explicit_detach_cancels_a_killing_exit_and_a_switch_drops_it() {
     {
         let mut state = rig.state.write().await;
         state.set_killing_exit(true);
-        state.switch_identity(SessionIdentity::from_persisted_key("cli:save"), None);
+        state.switch_to(SessionIdentity::from_persisted_key("cli:save"), None, &[]);
         assert!(state.killing_exit(), "the same identity keeps the intent");
-        state.switch_identity(SessionIdentity::from_persisted_key("cli:other"), None);
+        state.switch_to(SessionIdentity::from_persisted_key("cli:other"), None, &[]);
         assert!(!state.killing_exit(), "a different identity drops it");
     }
 }

@@ -199,6 +199,7 @@ mod uds_reader_dispatch;
 mod uds_reload;
 pub mod uds_session;
 pub mod uds_session_handles;
+pub mod uds_session_switch_runtime;
 mod uds_shutdown;
 mod uds_snapshots;
 mod uds_socket;
@@ -301,6 +302,13 @@ pub type TeardownHandlesBuilder =
 pub type SessionHandlesBuilder =
     fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
 
+/// Composition's builder of the fresh user-chat identity generator (D7
+/// #1976): the one source of a fresh key, for the startup identity of an
+/// unnamed chat run. The fresh-session transaction holds its own injected
+/// handle on the same generator; the interface never generates a key.
+pub type FreshSessionIdentityBuilder =
+    fn() -> std::sync::Arc<dyn crate::application::sessions::ports::FreshSessionIdentityGenerator>;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -332,6 +340,10 @@ pub struct CliContext {
     /// refuses to start without it, since the interface never constructs
     /// a session store.
     pub sessions: Option<SessionHandlesBuilder>,
+    /// Composition's fresh-identity generator builder (#1976). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
+    /// chat run refuses to start without it.
+    pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
 }
 
 impl CliContext {
@@ -428,6 +440,7 @@ pub struct CliComposition {
     pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
     pub sessions: SessionHandlesBuilder,
+    pub fresh_session_identity: FreshSessionIdentityBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -448,6 +461,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
         sessions: Some(composition.sessions),
+        fresh_session_identity: Some(composition.fresh_session_identity),
         ..Default::default()
     };
 

@@ -408,8 +408,7 @@ async fn spill_recall_retries_after_concurrent_history_replacement() {
     // across store I/O. Replace the complete history + identity.
     tokio::time::timeout(Duration::from_millis(250), async {
         let mut state = handle.write().await;
-        state.clear();
-        state.switch_identity(SessionIdentity::from_persisted_key("cli:new"), None);
+        state.switch_to(SessionIdentity::from_persisted_key("cli:new"), None, &[]);
     })
     .await
     .expect("history replacement must not wait for spill I/O");

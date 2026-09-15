@@ -11,13 +11,8 @@ use crate::interface::cli::protocol::AgentCommand;
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {
     use crate::domain::session::SubagentRestoreReason;
     use crate::interface::cli::protocol::build_compact_subagent_roster;
-    use crate::interface::cli::uds::dispatch_session_roster_tests::snapshot_subagent_roster_with_restore_reason;
-    use crate::interface::cli::uds::uds_dispatch_session::{
-        note_persisted_roster_is_history, reset_subagent_roster,
-    };
-    let reset_roster_for_restore = |registry: &Option<_>, persisted: &[_]| {
-        note_persisted_roster_is_history(registry, persisted);
-        reset_subagent_roster(registry, "resume_session").expect("no live delegated row");
+    use crate::interface::cli::uds::dispatch_session_roster_tests::{
+        reset_roster_for_restore, snapshot_subagent_roster_with_restore_reason,
     };
 
     let registry = new_registry();
@@ -414,9 +409,10 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         {
             let mut state = ctx.sessions.active_session.write().await;
             state.set_killing_exit(true);
-            state.switch_identity(
+            state.switch_to(
                 crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:another"),
                 None,
+                &[],
             );
         }
         assert!(!killing_exit(&ctx));

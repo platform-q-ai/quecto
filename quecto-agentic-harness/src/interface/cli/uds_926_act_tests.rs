@@ -97,7 +97,6 @@ impl ActEnv {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
             session_store: &self.store,
             ephemeral: false,
             system_prompt: "",
@@ -116,6 +115,9 @@ impl ActEnv {
             provider_reload_inputs: None,
             save_session,
             rewrite,
+            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
             fleet_teardown: None,
             list_sessions: list_handle(self.tmp.path()),
         }

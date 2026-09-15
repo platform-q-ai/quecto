@@ -3,32 +3,6 @@
 use crate::infrastructure::auth::credential_store::Credential;
 use std::collections::HashMap;
 
-/// Generate a fresh, collision-resistant user-chat session key.
-///
-/// The domain owns the key *shape* ([`crate::domain::session::user_chat_key`]);
-/// this interface helper owns the impure inputs — the wall clock plus a
-/// uniqueness token combining the process id with a per-process counter — so two
-/// launches started in the same second (or two chats within one process) never
-/// collide on a key.
-pub fn generate_chat_key() -> String {
-    generate_chat_identity().runtime_key().to_string()
-}
-
-/// The typed identity of a fresh user-chat session (see
-/// [`generate_chat_key`] for the impure inputs it owns).
-pub fn generate_chat_identity() -> crate::domain::session_identity::SessionIdentity {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    // PID disambiguates separate launches; the counter disambiguates within one.
-    let uniq = ((std::process::id() as u64) << 24) ^ seq;
-    crate::domain::session_identity::SessionIdentity::fresh_chat(secs, uniq)
-}
-
 /// Scrub the ephemeral (empty-key) spill file at run end; no-op for named
 /// sessions. Shared by every ephemeral interface exit path (one-shot CLI,
 /// UDS server). See `FileContextSpillStore::scrub_session_spill_sync`:

@@ -16,7 +16,7 @@ use crate::infrastructure::tools::subagent_registry::{
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
-    list_handle, read_handles_over, rewrite_handles_for, save_handle_for,
+    list_handle, read_handles_over, rewrite_handles_for, save_handle_for, switch_handles_for,
 };
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -91,7 +91,6 @@ impl Fx {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
             session_store: self.store.as_ref(),
             ephemeral: false,
             system_prompt: "",
@@ -109,6 +108,7 @@ impl Fx {
             provider_reload_inputs: None,
             save_session,
             rewrite,
+            switch: switch_handles_for(&self.session_key),
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }
