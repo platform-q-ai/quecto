@@ -55,7 +55,6 @@ struct EffortFx {
     session: AgentSession,
     execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }
@@ -69,11 +68,6 @@ impl EffortFx {
             session: AgentSession::new("stub".into(), "cli:test".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
-            store: crate::infrastructure::persistence::session_store::FileSessionStore::new(
-                crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
-                    tmp.path(),
-                ),
-            ),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -110,8 +104,6 @@ impl EffortFx {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::interface::cli::uds_cancel::CancelSlot::Idle,

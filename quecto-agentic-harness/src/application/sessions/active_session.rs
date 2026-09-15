@@ -133,8 +133,10 @@ impl ActiveSessionState {
     /// can observe neither old refs under the new identity nor new history
     /// under the old one. A different identity drops the killing exit armed
     /// for the departing session; the persisted watermark is the caller's
-    /// to set from what it loaded or cleared.
-    pub fn switch_to(
+    /// to set from what it loaded or cleared. The switch is the session
+    /// transactions' step alone (D8 #1977): no interface code switches an
+    /// identity.
+    pub(in crate::application::sessions) fn switch_to(
         &mut self,
         identity: SessionIdentity,
         spill_store: Option<Arc<dyn ContextSpillStore>>,

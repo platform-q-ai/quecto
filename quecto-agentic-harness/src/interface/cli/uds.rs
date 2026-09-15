@@ -15,8 +15,8 @@ use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
+use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::application::{agent_loop::AgentLoopImpl, sessions::ports::SessionStore};
 use crate::domain::message::Message;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
@@ -138,8 +138,6 @@ pub(crate) struct DispatchCtx<'a> {
     /// multi-client server, which streams via `broadcast_tx` instead — so the
     /// server allocates no throwaway writer (#994).
     pub stdout: Option<&'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
-    pub session_store: &'a dyn SessionStore,
-    pub ephemeral: bool,
     pub system_prompt: &'a str,
     pub cancel_handle: CancelHandle,
     /// Cross-task control flags for abort/steer vs workflow auto-continue
@@ -168,7 +166,9 @@ pub(crate) struct DispatchCtx<'a> {
     /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
     /// history-replacing transactions this loop requests once admitted.
     pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
-    /// Start a fresh conversation (#1862, #1976) and the departing-children settlement.
+    /// Start a fresh conversation (#1862, #1976) and resume a saved session
+    /// (#1863, #1977): the two session transitions this loop requests once
+    /// admitted.
     pub switch: super::uds_session_handles::SessionSwitchHandles,
 }
 type FleetTeardown =

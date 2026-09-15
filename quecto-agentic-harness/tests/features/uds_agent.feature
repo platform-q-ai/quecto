@@ -277,6 +277,71 @@ Feature: UDS mode for headless agent operation
     And the session file for the key of the response with id "gs-0" should hold 2 messages
     And the session file for the key of the response with id "ns-1" should hold 2 messages
 
+  # ─── resume_session command (#1863, D8 #1977) ──────────────────────────────
+  # The application owns the transaction: the target is admitted by its
+  # accepted spellings, the departing session is settled and saved, the
+  # target claimed and loaded, its history restored, and the loop moves to
+  # its key; every refusal keeps the current session whole.
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session restores a saved conversation, moves the loop to its key and keeps serving
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    And a saved UDS [session] "cli:saved" with 4 messages in the base directory
+    When I start the UDS agent with session "departing"
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send set_effort "low"
+    And I send resume_session "saved" with id "rs-1"
+    And I send get_state with id "gs-1"
+    And I send command "get_messages" with id "gm-1"
+    And I send resume_session "cli:saved" with id "rs-2"
+    And I send prompt "second"
+    And I close the UDS connection
+    Then the resume_session response with id "rs-1" should carry session key "cli:saved" and message count 4
+    And the resume_session response with id "rs-2" should carry session key "cli:saved" and message count 4
+    And the session keys of the responses with ids "rs-1" and "gs-1" should match
+    And the session keys of the responses with ids "gs-0" and "rs-1" should differ
+    And the get_messages response data should include a "messages" array with 4 messages
+    And the get_state response effort should be unset
+    And the session file for the key of the response with id "gs-0" should hold 2 messages
+    And the session file for the key of the response with id "rs-1" should hold 6 messages
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session refuses a missing or malformed target and keeps the current session
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    When I start the UDS agent with session "keep"
+    And I send get_state with id "gs-0"
+    And I send resume_session "missing" with id "rs-missing"
+    And I send resume_session "cli:missing" with id "rs-missing-cli"
+    And I send resume_session "bad name!" with id "rs-bad"
+    And I send resume_session "telegram:1" with id "rs-foreign"
+    And I send get_state with id "gs-1"
+    And I send prompt "still here"
+    And I close the UDS connection
+    Then the response with id "rs-missing" should carry the error "session not found: missing"
+    And the response with id "rs-missing-cli" should carry the error "session not found: cli:missing"
+    And the response with id "rs-bad" should carry the error "session name must contain only alphanumeric, '-', or '_'"
+    And the response with id "rs-foreign" should carry the error "session name must contain only alphanumeric, '-', or '_'"
+    And the session keys of the responses with ids "gs-0" and "gs-1" should match
+    And the agent output should contain a response command "prompt" with success true
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session is refused on an ephemeral loop
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    And a saved UDS [session] "cli:saved" with 2 messages in the base directory
+    When I start the UDS agent with no [session]
+    And I send resume_session "saved" with id "rs-eph"
+    And I send get_state with id "gs-1"
+    And I close the UDS connection
+    Then the response with id "rs-eph" should carry the error "cannot resume sessions in ephemeral mode"
+    And the agent output should contain a response command "get_state" with success true
+
   # ─── get_session_stats command ──────────────────────────────────────────────
 
   @done

@@ -8,6 +8,7 @@ use crate::domain::session_identity::SessionKeyPrefix;
 pub mod clear_conversation;
 pub mod history;
 pub mod message_recovery;
+pub mod resume_saved_session;
 pub mod rewind_conversation;
 pub mod save_session;
 pub mod session_report;
@@ -18,6 +19,9 @@ pub use clear_conversation::{ClearConversationError, ClearedConversation};
 pub use history::{HistoryError, HistoryPage, HistoryQuery};
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
+};
+pub use resume_saved_session::{
+    ResumeSavedSessionError, ResumeTarget, SavedSessionResumed, StartupSessionOpened,
 };
 pub use rewind_conversation::{RewindConversationError, RewindRequest, RewoundConversation};
 pub use save_session::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};

@@ -10,7 +10,8 @@
 //!   sanitized empty key exactly as before;
 //! - a **named CLI** identity is `cli:<name>`, `<name>` being the affirmative
 //!   session-name allowlist (ASCII alphanumeric, `_`, `-`);
-//! - a **fresh chat** identity is `chat-<secs>-<uniq>` ([`user_chat_key`]);
+//! - a **fresh chat** identity is `chat-<secs>-<uniq>` ([`user_chat_key`]); an
+//!   existing one named on the wire is admitted by [`SessionIdentity::user_chat`];
 //! - a **persisted** identity is whatever key a stored session carries —
 //!   every historical category (`telegram:<id>`, legacy `cli:<name>`, chat
 //!   keys, arbitrary keys) round-trips unchanged.
@@ -64,6 +65,20 @@ impl SessionIdentity {
     /// (see [`user_chat_key`]).
     pub fn fresh_chat(secs: u64, uniq: u64) -> Self {
         Self(user_chat_key(secs, uniq))
+    }
+
+    /// The identity of an existing user chat named by its full key on the
+    /// wire (the `/resume` picker, D8 #1977): the `chat-` prefix followed
+    /// by allowlisted session-name characters only — the same allowlist as
+    /// [`Self::named_cli`]; no new characters are admitted.
+    pub fn user_chat(key: &str) -> Result<Self, DomainError> {
+        if key.starts_with(super::session::USER_CHAT_PREFIX) && Self::is_valid_cli_name(key) {
+            Ok(Self(key.to_string()))
+        } else {
+            Err(DomainError::Session(
+                "session name must contain only alphanumeric, '-', or '_'".to_string(),
+            ))
+        }
     }
 
     /// Whether this is the ephemeral (never persisted) identity.

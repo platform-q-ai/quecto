@@ -178,6 +178,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
         // One long-lived ctx so the durable watermark survives across turns
         // (Fixture copies the watermark by value into each `ctx()`).
         {
+            let store = fx.store.clone();
             let mut ctx = fx.ctx();
             inject_system_prompt(ctx.messages, ctx.system_prompt);
             for user in &users {
@@ -187,8 +188,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
                 );
             }
 
-            let loaded = ctx
-                .session_store
+            let loaded = store
                 .load(&id(ctx.session.session_key()))
                 .await
                 .unwrap()
@@ -220,7 +220,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
             } else {
                 "saved-with-sys"
             };
-            ctx.session_store
+            store
                 .save(&Session {
                     key: id(Session::build_key("cli", resume_name)),
                     messages: loaded.messages.clone(),
@@ -270,6 +270,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
     let system = "be helpful";
     let mut fx = Fixture::new().with_system_prompt(system);
     {
+        let store = fx.store.clone();
         let mut ctx = fx.ctx();
         inject_system_prompt(ctx.messages, ctx.system_prompt);
         // Seed one completed turn so live includes system and durable is non-empty.
@@ -312,8 +313,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         // watermark assign under test) and require the durable invariant holds
         // after the full turn — wm == load len == stripped live len.
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
-        let loaded = ctx
-            .session_store
+        let loaded = store
             .load(&id(ctx.session.session_key()))
             .await
             .unwrap()
@@ -349,11 +349,11 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
     // dangerous — still require watermark == load len after two turns.
     let mut fx = Fixture::new();
     {
+        let store = fx.store.clone();
         let mut ctx = fx.ctx();
         assert!(!dispatch_command(prompt("user-0"), &mut ctx).await);
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
-        let loaded = ctx
-            .session_store
+        let loaded = store
             .load(&id(ctx.session.session_key()))
             .await
             .unwrap()

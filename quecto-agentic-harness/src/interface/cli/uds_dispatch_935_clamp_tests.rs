@@ -5,7 +5,6 @@
 
 use super::dispatch_command;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
@@ -51,9 +50,6 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     let mut messages = Vec::new();
     let mut session = AgentSession::new("stub".into(), "cli:test".into());
     let session_key = "cli:test".to_string();
-    let store = FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-    );
     let mut writer = tokio::io::sink();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
@@ -92,8 +88,6 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut session,
             stdout: Some(&mut writer),
-            session_store: &store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),

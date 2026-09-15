@@ -8,7 +8,6 @@
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 
 use super::protocol::AgentEvent;
@@ -77,7 +76,6 @@ pub(super) struct MultiClientArgs<'a> {
     pub messages: Vec<Message>,
     pub model: String,
     pub session_key: String,
-    pub ephemeral: bool,
     pub system_prompt: String,
     /// Shared tool catalogue snapshot for get_tool_catalogue.
     pub ext_registry: Option<
@@ -168,7 +166,6 @@ pub(super) async fn multi_client_loop(
     listener: tokio::net::UnixListener,
     sessions: &super::uds_session_handles::SessionHandles,
 ) -> i32 {
-    let session_store: &dyn SessionStore = sessions.store.as_ref();
     let ext_registry = args.ext_registry;
     let lifetime = args.lifetime;
     let notification_rx = args.notification_rx;
@@ -188,7 +185,6 @@ pub(super) async fn multi_client_loop(
         mut messages,
         model,
         session_key,
-        ephemeral,
         system_prompt,
         ..
     } = args;
@@ -360,8 +356,6 @@ pub(super) async fn multi_client_loop(
         busy: busy.clone(),
         session: &mut agent_session,
         stdout: None,
-        session_store,
-        ephemeral,
         system_prompt: &system_prompt,
         cancel_handle,
         turn_control,

@@ -52,6 +52,7 @@ const USE_CASES: &[&str] = &[
     "PrepareHarnessShutdown",
     "ReadHistory",
     "RecoverMessage",
+    "ResumeSavedSession",
     "RewindConversation",
     "SaveSession",
     "SettleDelegatedChild",

@@ -104,6 +104,23 @@ fn key_prefix_admits_identities_by_raw_key_prefix_only() {
 }
 
 #[test]
+fn user_chat_admits_only_a_chat_prefixed_key_of_allowlisted_characters() {
+    let identity = SessionIdentity::user_chat("chat-1750000000-abc").unwrap();
+    assert_eq!(identity.runtime_key(), "chat-1750000000-abc");
+    assert_eq!(identity.persisted_key(), Some("chat-1750000000-abc"));
+    // The bare prefix is a (degenerate) chat key of allowlisted characters.
+    assert!(SessionIdentity::user_chat("chat-").is_ok());
+    for rejected in ["cli:x", "chat-with space", "chat-a/b", "", "chatx"] {
+        let err = SessionIdentity::user_chat(rejected).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("session name must contain only alphanumeric, '-', or '_'"),
+            "{rejected:?}: {err}"
+        );
+    }
+}
+
+#[test]
 fn spill_id_is_a_plain_typed_wrapper() {
     let id = SpillId::new("turn20:bash:0");
     assert_eq!(id.as_str(), "turn20:bash:0");

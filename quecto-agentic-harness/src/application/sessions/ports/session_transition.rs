@@ -11,6 +11,7 @@ use std::pin::Pin;
 use super::session_runtime::TurnAccountingReset;
 use crate::application::sessions::dto::FleetSettlementOutcome;
 use crate::domain::session_identity::SessionIdentity;
+use crate::domain::workflow::WorkflowRunPersisted;
 
 /// Port: a fresh user-chat identity in the current key format. The
 /// adapter owns the impure inputs — the wall clock and a uniqueness token
@@ -50,11 +51,16 @@ pub trait SessionKeyPropagation: Send {
 /// Port: the loop runtime a session switch moves besides the conversation
 /// — its turn accounting, the key propagation, and the session-scoped
 /// settings that must not follow the client into the new session: the
-/// effort override (#1067) and the workflow run. Whether a reset is made
-/// visible to clients (the tracker's generation bumps only when the effort
-/// or the workflow snapshot actually changed) is the adapter's rule,
-/// master-verbatim and contract-tested; the transaction only orders it.
+/// effort override (#1067) and the workflow run, reset for a fresh session
+/// and restored from the saved one for a resume (D8 #1977). Whether a
+/// reset or restore is made visible to clients (the tracker's generation
+/// bumps only when the effort or the workflow snapshot actually changed) is
+/// the adapter's rule, master-verbatim and contract-tested; the transaction
+/// only orders it.
 pub trait SessionSwitchRuntime: TurnAccountingReset + SessionKeyPropagation {
     fn reset_effort_to_default(&mut self);
     fn reset_workflow(&mut self);
+    /// Replace the bound workflow engine's run with the one the resumed
+    /// session recorded; a no-op without an engine.
+    fn restore_workflow(&mut self, run: WorkflowRunPersisted);
 }

@@ -262,7 +262,6 @@ async fn single_client_socket_override_serves_get_state() {
                     messages: Vec::new(),
                     model: "stub".into(),
                     session_key: "cli:single".into(),
-                    ephemeral: true,
                     system_prompt: "system".into(),
                     ext_registry: None,
                     subagent_registry: None,

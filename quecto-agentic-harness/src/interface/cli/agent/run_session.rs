@@ -47,7 +47,6 @@ pub(crate) fn run_agent_session(
         workflow_state: None,
         subagent_registry: None,
     });
-    let session_store = sessions.store.clone();
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
@@ -57,24 +56,15 @@ pub(crate) fn run_agent_session(
         }
     };
 
-    let mut messages: Vec<Message> = if !ephemeral {
-        // Refuse at open, not at first save (#1460): a key owned by another
-        // live process must fail before any turn runs against it.
-        if let Err(e) = session_store.claim(&session_key) {
-            out.stderr.push_str(&format!("{}\n", e));
+    // Open the session (#1863, D8 #1977): the transaction claims it (a key
+    // owned by another live process is refused at open, #1460) and loads
+    // it; an ephemeral run touches the store not at all.
+    let mut messages: Vec<Message> = match rt.block_on(sessions.switch.resume.open_at_startup()) {
+        Ok(opened) => opened.messages,
+        Err(e) => {
+            out.stderr.push_str(&format!("{e}\n"));
             return 1;
         }
-        match rt.block_on(session_store.load(&session_key)) {
-            Ok(Some(session)) => session.messages,
-            Ok(None) => Vec::new(),
-            Err(e) => {
-                out.stderr
-                    .push_str(&format!("failed to load session: {}\n", e));
-                return 1;
-            }
-        }
-    } else {
-        Vec::new()
     };
 
     if !ephemeral && !messages.is_empty() {

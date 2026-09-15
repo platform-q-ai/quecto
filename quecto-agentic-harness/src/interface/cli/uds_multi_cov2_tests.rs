@@ -1,12 +1,10 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::sessions::ports::SessionStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::borrow::Cow;
@@ -101,7 +99,6 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         messages: vec![Message::user("seed")],
         model: "stub".into(),
         session_key: "cli:cov".into(),
-        ephemeral: true,
         system_prompt: "system from test".into(),
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
@@ -261,9 +258,6 @@ async fn cov2_test_helpers_execute_their_trait_surfaces() {
 #[tokio::test]
 async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(dir.path()),
-    );
     let (broadcast_tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(8);
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
@@ -315,8 +309,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_store: &store as &dyn SessionStore,
-        ephemeral: true,
         system_prompt: "",
         cancel_handle: Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,

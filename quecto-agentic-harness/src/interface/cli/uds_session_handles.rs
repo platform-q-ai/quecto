@@ -15,7 +15,7 @@ use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::application::sessions::use_cases::{
-    ClearConversation, DepartingChildren, RewindConversation, SaveSession, StartFreshConversation,
+    ClearConversation, ResumeSavedSession, RewindConversation, SaveSession, StartFreshConversation,
 };
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
@@ -76,18 +76,18 @@ pub struct SessionHandles {
     /// Clear (#1864) and rewind (#1865) the conversation: the two
     /// history-replacing transactions of the loop.
     pub rewrite: ConversationRewriteHandles,
-    /// Start a fresh conversation (#1862) and the departing-children
-    /// settlement every session transition runs first (#1976).
+    /// Start a fresh conversation (#1862) and resume a saved session
+    /// (#1863): the two session transitions of the loop.
     pub switch: SessionSwitchHandles,
 }
 
-/// The session transitions (#1976): the fresh-session transaction, and
-/// the departing-children collaborator the interface's resume still
-/// requests directly until D8 (#1977) owns that transaction.
+/// The session transitions (#1976, #1977): the fresh-session transaction
+/// and the resume transaction, which also opens the loop's own session at
+/// startup.
 #[derive(Clone)]
 pub struct SessionSwitchHandles {
     pub fresh: Arc<StartFreshConversation>,
-    pub departing_children: Arc<DepartingChildren>,
+    pub resume: Arc<ResumeSavedSession>,
 }
 
 /// The history-replacing transactions (#1975), requested once the
