@@ -119,20 +119,33 @@ async fn adapter_follows_redirects_and_reports_final_status() {
 async fn dropping_fetch_cancels_a_stalled_request() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    // The peer reports the request's arrival before stalling, so the abort
+    // happens only once the connection exists: a fixed sleep raced DNS and
+    // connect under load, and an abort before either left the peer's
+    // accept, and this test, waiting forever.
+    let (arrived, request_arrived) = tokio::sync::oneshot::channel();
     let accepted = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut request = [0; 1024];
         let _ = socket.read(&mut request).await.unwrap();
+        let _ = arrived.send(());
         timeout(Duration::from_secs(1), socket.read(&mut request)).await
     });
     let adapter = ReqwestFetchWebContent::new(reqwest::Client::new());
     let req = request(&format!("http://localtest.me:{port}/stall"));
     let task = tokio::spawn(async move { adapter.fetch(&req).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    timeout(Duration::from_secs(10), request_arrived)
+        .await
+        .expect("the fetch reaches the peer")
+        .unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert!(
-        accepted.await.unwrap().is_ok(),
+        timeout(Duration::from_secs(5), accepted)
+            .await
+            .expect("peer read completes")
+            .unwrap()
+            .is_ok(),
         "peer must observe prompt connection close"
     );
 }
