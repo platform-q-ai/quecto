@@ -77,6 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: workspace
+      - uses: taiki-e/install-action@nextest
       - name: Install fd
         run: |
           sudo apt-get update
@@ -102,18 +103,24 @@ jobs:
         # `quecto` binary built with the test-only exit hold, #1936 review).
         # Non-harness BDD targets are named `<crate>_bdd`, so `--test <name>`
         # selects exactly one target across the workspace.
+        #
+        # libtest-harness targets run under cargo-nextest (one process per
+        # test, scheduled across binaries; `ci` profile in .config/nextest.toml),
+        # which is built from the same cargo artifacts; the cucumber `*_bdd`
+        # targets (harness = false) stay on `cargo test`.
         run: |
-          SHAPE=(--workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins)
+          SHAPE=(--workspace --features quecto-agentic-harness/test-support --bins)
           # Unit tests of every crate (harness, tui, api, mcp, runtime-manager, line-io).
-          cargo test "${SHAPE[@]}" --lib
-          # Explicit names are retained as executable documentation and architecture guards.
-          cargo test "${SHAPE[@]}" --test architecture --test contracts
-          # Harness integration targets (tests/integration, tests/docs, and the two
-          # real-process proofs that must run alone; see quecto-agentic-harness/Cargo.toml).
-          # The architecture suite asserts this list matches the targets on disk.
-          cargo test "${SHAPE[@]}" --test integration --test docs --test parent_loss --test selected_termination
+          cargo nextest run "${SHAPE[@]}" --lib --profile ci
+          # Explicit names are retained as executable documentation and architecture guards,
+          # with the harness integration targets tests/integration and tests/docs.
+          cargo nextest run "${SHAPE[@]}" --test architecture --test contracts --test integration --test docs --profile ci
+          # The two real-process proofs that must run apart from the other modules
+          # (see quecto-agentic-harness/Cargo.toml). The architecture suite asserts
+          # every harness target on disk appears in this job.
+          cargo nextest run "${SHAPE[@]}" --test parent_loss --test selected_termination --profile ci
           # quecto-api and quecto-mcp BDD scenarios (their unit tests ran in the --lib pass above).
-          cargo test "${SHAPE[@]}" --test api_bdd --test mcp_bdd
+          cargo test "${SHAPE[@]}" --no-fail-fast --test api_bdd --test mcp_bdd
 
   non-real-bdd:
     needs: [static-quality, dependency-policy]

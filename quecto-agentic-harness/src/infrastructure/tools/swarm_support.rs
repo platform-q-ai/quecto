@@ -24,17 +24,26 @@ pub(crate) const SNAPSHOT_MAX_ENTRIES: usize = 20_000;
 /// directories arbitrarily deep, and recursion here would overflow the worker
 /// thread's stack, which aborts the whole process rather than unwinding.
 pub(crate) fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
+    snapshot_files_bounded(root, SNAPSHOT_MAX_ENTRIES)
+}
+
+/// [`snapshot_files`] with an explicit entry cap; production always passes
+/// [`SNAPSHOT_MAX_ENTRIES`], tests a small one.
+pub(crate) fn snapshot_files_bounded(
+    root: &Path,
+    max_entries: usize,
+) -> BTreeMap<String, SystemTime> {
     let mut m = BTreeMap::new();
     let mut stack = vec![(root.to_path_buf(), 0_usize)];
     while let Some((dir, depth)) = stack.pop() {
-        if depth >= SNAPSHOT_MAX_DEPTH || m.len() >= SNAPSHOT_MAX_ENTRIES {
+        if depth >= SNAPSHOT_MAX_DEPTH || m.len() >= max_entries {
             continue;
         }
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
         };
         for e in rd.flatten() {
-            if m.len() >= SNAPSHOT_MAX_ENTRIES {
+            if m.len() >= max_entries {
                 return m;
             }
             let p = e.path();
