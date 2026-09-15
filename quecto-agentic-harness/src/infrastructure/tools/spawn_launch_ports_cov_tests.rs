@@ -61,7 +61,10 @@ fn initial_prompt_retry_deadline_defaults_to_none_for_non_proxy_ports() {
     assert!(ports.initial_prompt_retry_deadline().is_none());
 }
 
-#[tokio::test]
+// Paused clock: `ready()` polls a socket nobody binds for the full 10 s
+// readiness deadline; every connect fails immediately, so the runtime
+// auto-advances through the interval ticks instead of sleeping them.
+#[tokio::test(start_paused = true)]
 async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     let tool = tool();
     let mut ports = SpawnLaunchPorts::new(&tool);

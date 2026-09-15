@@ -740,14 +740,18 @@ async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
     assert_eq!(permit.maximum_cooldown_ms(), 10_000);
     let (receipt_ms, wall) = permit.receipt_clock();
     assert!(wall > std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000));
-    permit.feedback(ThrottleFeedback::Until(receipt_ms + 5_000));
+    // The probe acquire below waits this cooldown out for real, so keep it
+    // short: the authority's handling is the same at any length.
+    let cooldown_ms = 300;
+    permit.feedback(ThrottleFeedback::Until(receipt_ms + cooldown_ms));
     permit.feedback(ThrottleFeedback::NoHint { jitter: 0 });
     let admin = AdminConnection::connect(&server.directory().admin_socket())
         .await
         .unwrap();
     timeout(LIMIT, async {
         loop {
-            if admin.inspect().await.unwrap().groups[&group()].cooldown_until >= receipt_ms + 5_000
+            if admin.inspect().await.unwrap().groups[&group()].cooldown_until
+                >= receipt_ms + cooldown_ms
             {
                 break;
             }

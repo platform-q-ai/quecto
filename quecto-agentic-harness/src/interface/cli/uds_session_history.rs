@@ -111,12 +111,21 @@ fn thinking_summary_json(msg: &Message, max_encoded_bytes: usize) -> serde_json:
 }
 
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {
-    let full = message_to_json(msg);
-    let full_size = serde_json::to_vec(&full)
-        .map(|v| v.len())
-        .unwrap_or(usize::MAX);
-    if full_size <= HISTORY_PAGE_JSON_BUDGET {
-        return full;
+    // JSON encoding never shrinks a string, so a body or argument payload
+    // already past the budget is over it without serialising the message.
+    let certainly_oversized = msg.content.len() > HISTORY_PAGE_JSON_BUDGET
+        || msg
+            .tool_calls
+            .iter()
+            .any(|call| call.arguments.len() > HISTORY_PAGE_JSON_BUDGET);
+    if !certainly_oversized {
+        let full = message_to_json(msg);
+        let full_size = serde_json::to_vec(&full)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        if full_size <= HISTORY_PAGE_JSON_BUDGET {
+            return full;
+        }
     }
 
     let preview = byte_preview(&msg.content, HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES);

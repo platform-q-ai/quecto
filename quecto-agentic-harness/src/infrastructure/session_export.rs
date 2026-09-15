@@ -56,6 +56,18 @@ fn write(
     records: &[ExportRecord],
     manifest: &ExportManifest,
 ) -> Result<RawExportReceipt, DomainError> {
+    write_bounded(root, records, manifest, MAX_EXPORT_BYTES)
+}
+
+/// `write` with an explicit size bound. Production always uses
+/// [`MAX_EXPORT_BYTES`]; the refusal test lowers it rather than building a
+/// 256 MiB message.
+fn write_bounded(
+    root: &Path,
+    records: &[ExportRecord],
+    manifest: &ExportManifest,
+    max_bytes: u64,
+) -> Result<RawExportReceipt, DomainError> {
     let io_error = |error: std::io::Error| DomainError::Tool(format!("session export: {error}"));
     std::fs::create_dir_all(root).map_err(io_error)?;
     let root = root.canonicalize().map_err(io_error)?;
@@ -72,13 +84,14 @@ fn write(
             .map_err(|error| DomainError::Tool(error.to_string()))?;
         line.push(b'\n');
         bytes = bytes.saturating_add(line.len() as u64);
-        if bytes <= MAX_EXPORT_BYTES {
+        if bytes <= max_bytes {
             output.write_all(&line).map_err(io_error)?;
             hash.update(&line);
         } else {
-            return Err(DomainError::Tool(
-                "session export exceeds 256 MiB; use paginated recovery".into(),
-            ));
+            return Err(DomainError::Tool(format!(
+                "session export exceeds {} MiB; use paginated recovery",
+                max_bytes / (1024 * 1024)
+            )));
         }
     }
     output.sync_all().map_err(io_error)?;

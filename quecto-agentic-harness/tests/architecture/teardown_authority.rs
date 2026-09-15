@@ -16,25 +16,47 @@ use std::path::Path;
 /// an effect. Nothing else is cut: an early `#[cfg(test)] use …` no longer
 /// hides the rest of the file (review of #1940).
 pub(super) fn production_code(path: &str) -> Vec<(usize, String)> {
-    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    strip_test_items(&source)
-        .into_iter()
+    stripped(path)
+        .iter()
         .filter(|(_, line)| {
             let trimmed = line.trim_start();
             !(trimmed.starts_with("//") || trimmed.is_empty())
         })
+        .cloned()
         .collect()
 }
 
 /// [`production_code`] joined back into one string (comments kept), for the
 /// substring ratchets of `tests/architecture.rs`.
 pub(super) fn production_source(path: &str) -> String {
-    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    strip_test_items(&source)
-        .into_iter()
-        .map(|(_, line)| line)
+    stripped(path)
+        .iter()
+        .map(|(_, line)| line.as_str())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+type StrippedLines = std::sync::Arc<Vec<(usize, String)>>;
+
+/// [`strip_test_items`] of the file at `path`, computed once per process:
+/// the ratchets below call `production_code` once per needle per file, and
+/// the sources do not change while the binary runs.
+fn stripped(path: &str) -> StrippedLines {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, StrippedLines>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Mutex::default);
+    if let Some(hit) = cache.lock().unwrap().get(path) {
+        return hit.clone();
+    }
+    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let lines = Arc::new(strip_test_items(&source));
+    cache
+        .lock()
+        .unwrap()
+        .entry(path.to_string())
+        .or_insert(lines)
+        .clone()
 }
 
 /// Brace delta of one line with string and char literals blanked, so a
