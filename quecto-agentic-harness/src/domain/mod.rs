@@ -2,6 +2,7 @@ pub mod agent;
 pub mod audit;
 pub mod catalogue;
 pub mod constants;
+pub mod conversation_edit;
 pub mod conversation_view;
 pub mod environment_registry;
 pub mod environment_retention;

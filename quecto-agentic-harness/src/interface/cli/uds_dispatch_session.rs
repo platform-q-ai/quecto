@@ -1,13 +1,14 @@
-use super::super::uds_session::{
-    clear_conversation, resolve_rewind_target, rewind_to_message_index,
-};
+use super::super::uds_turn_accounting::LoopTurnAccounting;
 use super::AgentEvent;
 use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
 };
 use crate::application::sessions::dto::SaveTrigger;
+use crate::domain::conversation_edit::clear_conversation;
 use crate::domain::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::session_identity::SessionIdentity;
+use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
+use crate::interface::uds::sessions::rewind_conversation_controller::RewindFields;
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -455,6 +456,10 @@ pub(super) async fn handle_resume_session(
     false
 }
 
+/// `clear_history` (#1864): admitted only while the agent is idle; the
+/// transaction itself is the application's. Its ledger position is
+/// announced whether the save succeeded or not — the history was replaced
+/// either way.
 pub(super) async fn handle_clear_history(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -465,37 +470,22 @@ pub(super) async fn handle_clear_history(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    clear_conversation(ctx.messages);
-    sync_message_count(ctx);
-    let advance = {
-        let mut state = ctx.sessions.active_session.write().await;
-        state.set_persisted_watermark(0);
-        state.clear()
+    let clear = ctx.rewrite.clear.clone();
+    let mut accounting = LoopTurnAccounting::new(ctx.session, &ctx.execution_state);
+    let result = clear.execute(ctx.messages, &mut accounting).await;
+    let (advance, ev) = match result {
+        Ok(cleared) => (cleared.ledger, AgentEvent::ok(id, tn, None)),
+        Err(err) => (err.ledger(), AgentEvent::err(id, tn, err.to_string())),
     };
     emit_ledger_advanced(ctx, advance).await;
-    ctx.session.clear_usage();
-    ctx.session.discard_pending();
-    // Also clear spill store so stale context isn't re-injected (#412).
-    if let Some(spill) = ctx.agent.spill_store() {
-        let identity = ctx.sessions.active_session.read().await.identity().clone();
-        if let Err(e) = spill.clear(&identity).await {
-            tracing::warn!("clear_history: failed to clear spill store: {e}");
-        }
-    }
-    if let Err(err) = ctx
-        .save_session
-        .save(ctx.messages, SaveTrigger::Routine)
-        .await
-    {
-        let ev = AgentEvent::err(id, tn, format!("failed to save cleared session: {err}"));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
-    let ev = AgentEvent::ok(id, tn, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
 
+/// `rewind_to` (#1865): admitted only while the agent is idle; the target
+/// mapping is the controller's and the transaction the application's. A
+/// refused target announces nothing; a rewound history announces its
+/// ledger position whether the save succeeded or not.
 pub(super) async fn handle_rewind_to(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -508,63 +498,38 @@ pub(super) async fn handle_rewind_to(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-
-    // Prefer the stable `messageId`, resolved against the full conversation (#1061).
-    let message_index =
-        match resolve_rewind_target(ctx.messages, message_id.as_deref(), message_index) {
-            Ok(idx) => idx,
-            Err(msg) => {
-                let ev = AgentEvent::err(id, tn, msg);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                return false;
-            }
-        };
-
-    if !rewind_to_message_index(ctx.messages, message_index) {
-        let ev = AgentEvent::err(id, tn, "invalid rewind target");
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
+    let request = RewindFields {
+        message_id,
+        message_index,
     }
-    sync_message_count(ctx);
-
-    ctx.session.clear_usage();
-    ctx.session.discard_pending();
-    // Reset the stable-ref ledger to the truncated conversation so a
-    // rewound-away message is no longer recoverable via get_message (same
-    // intent as the spill clear below — truncated content must not be
-    // recallable) (#1060 review r4).
-    let advance = {
-        let mut state = ctx.sessions.active_session.write().await;
-        state.set_persisted_watermark(0);
-        super::super::uds_snapshots::reset_to(&mut state, ctx.messages)
-    };
-    emit_ledger_advanced(ctx, advance).await;
-    // Clear spill store and remove retained spill references so stale truncated
-    // tool output is not recallable or re-injected.
-    if let Some(spill) = ctx.agent.spill_store() {
-        let identity = ctx.sessions.active_session.read().await.identity().clone();
-        if let Err(e) = spill.clear(&identity).await {
-            tracing::warn!("rewind_to: failed to clear spill store: {e}");
+    .into_request(HISTORY_PAGE_SIZE);
+    let result = match request {
+        Ok(request) => {
+            let rewind = ctx.rewrite.rewind.clone();
+            let mut accounting = LoopTurnAccounting::new(ctx.session, &ctx.execution_state);
+            rewind
+                .execute(ctx.messages, &mut accounting, &request)
+                .await
         }
+        Err(refused) => Err(refused),
+    };
+    let (advance, ev) = match result {
+        Ok(rewound) => (
+            Some(rewound.ledger),
+            AgentEvent::ok(
+                id,
+                tn,
+                Some(serde_json::json!({
+                    "rewound": true,
+                    "messageIndex": rewound.message_index,
+                })),
+            ),
+        ),
+        Err(err) => (err.ledger(), AgentEvent::err(id, tn, err.to_string())),
+    };
+    if let Some(advance) = advance {
+        emit_ledger_advanced(ctx, advance).await;
     }
-    if let Err(err) = ctx
-        .save_session
-        .save(ctx.messages, SaveTrigger::Routine)
-        .await
-    {
-        let ev = AgentEvent::err(id, tn, format!("failed to save rewound session: {err}"));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
-
-    let ev = AgentEvent::ok(
-        id,
-        tn,
-        Some(serde_json::json!({
-            "rewound": true,
-            "messageIndex": message_index,
-        })),
-    );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }

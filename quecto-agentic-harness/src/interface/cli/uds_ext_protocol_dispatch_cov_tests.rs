@@ -48,6 +48,9 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
     let tools = [tool_reg("bash")];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -84,6 +87,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         provider_reload: None,
         provider_reload_inputs: None,
         save_session,
+        rewrite,
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };
@@ -117,6 +121,9 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     let tools = [tool_reg("blocked_ext")];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -153,6 +160,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         provider_reload: None,
         provider_reload_inputs: None,
         save_session,
+        rewrite,
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };
@@ -187,6 +195,9 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let tools = [tool];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -223,6 +234,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         provider_reload: None,
         provider_reload_inputs: None,
         save_session,
+        rewrite,
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };

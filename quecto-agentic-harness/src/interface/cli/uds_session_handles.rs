@@ -1,5 +1,5 @@
-//! What a dispatch loop needs from the sessions capability (#1970, #1971,
-//! #1972, #1973, #1974), as plain handles.
+//! What a dispatch loop needs from the sessions capability (#1970–#1975),
+//! as plain handles.
 //!
 //! The interface declares the runtime inputs one loop hands over and the
 //! store, state, use-case and controller handles it holds back; composition
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
-use crate::application::sessions::use_cases::SaveSession;
+use crate::application::sessions::use_cases::{ClearConversation, RewindConversation, SaveSession};
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
@@ -71,6 +71,18 @@ pub struct SessionHandles {
     pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
     /// Save current session (#1860): every persistence trigger of the loop.
     pub save_session: Arc<SaveSession>,
+    /// Clear (#1864) and rewind (#1865) the conversation: the two
+    /// history-replacing transactions of the loop.
+    pub rewrite: ConversationRewriteHandles,
+}
+
+/// The history-replacing transactions (#1975), requested once the
+/// dispatch loop admitted the command; the `rewind_to` wire target is
+/// mapped onto the typed request by the sessions edge first.
+#[derive(Clone)]
+pub struct ConversationRewriteHandles {
+    pub clear: Arc<ClearConversation>,
+    pub rewind: Arc<RewindConversation>,
 }
 
 impl SessionHandles {
@@ -89,17 +101,11 @@ impl SessionHandles {
 
 /// The active session and its read use cases, cloned into every task that
 /// serves reads while the dispatch loop is busy.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SessionReadHandles {
     pub active_session: ActiveSessionHandle,
     pub read_history: Arc<ReadHistoryController>,
     pub recover_message: Arc<RecoverMessageController>,
     pub export_report: Arc<ExportSessionReportController>,
     pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
-}
-
-impl std::fmt::Debug for SessionReadHandles {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionReadHandles").finish_non_exhaustive()
-    }
 }

@@ -76,6 +76,10 @@ impl ActEnv {
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,
             );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -111,6 +115,7 @@ impl ActEnv {
             provider_reload: None,
             provider_reload_inputs: None,
             save_session,
+            rewrite,
             fleet_teardown: None,
             list_sessions: list_handle(self.tmp.path()),
         }

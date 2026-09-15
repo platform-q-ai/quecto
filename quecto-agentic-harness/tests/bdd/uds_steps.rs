@@ -895,6 +895,18 @@ fn when_send_rewind_to(world: &mut QuectoWorld, message_index: usize, id: String
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send rewind_to messageId {string} with id {string}")]
+fn when_send_rewind_to_message_id(world: &mut QuectoWorld, message_id: String, id: String) {
+    let cmd = serde_json::json!({"type": "rewind_to", "id": id, "messageId": message_id});
+    world.uds_commands.push(cmd.to_string());
+}
+
+#[when(expr = "I send rewind_to with no target and id {string}")]
+fn when_send_rewind_to_without_target(world: &mut QuectoWorld, id: String) {
+    let cmd = serde_json::json!({"type": "rewind_to", "id": id});
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send set_model {string}")]
 fn when_send_set_model(world: &mut QuectoWorld, model: String) {
     let cmd = serde_json::json!({"type": "set_model", "id": "sm-1", "model": model});
@@ -1994,6 +2006,27 @@ fn then_agent_output_response_command_failure(world: &mut QuectoWorld, command: 
         resp.unwrap()["success"],
         serde_json::Value::Bool(false),
         "expected success=false for {command:?}"
+    );
+}
+
+#[then(expr = "the agent output should contain a response command {string} with error {string}")]
+fn then_agent_output_response_command_error(
+    world: &mut QuectoWorld,
+    command: String,
+    error: String,
+) {
+    let resp = find_agent_response(world, &command);
+    assert!(
+        resp.is_some(),
+        "no response for {command:?}\nlines: {:#?}",
+        world.agent_events,
+    );
+    let resp = resp.unwrap();
+    assert_eq!(resp["success"], serde_json::Value::Bool(false));
+    assert_eq!(
+        resp["error"].as_str(),
+        Some(error.as_str()),
+        "unexpected error text for {command:?}: {resp}"
     );
 }
 

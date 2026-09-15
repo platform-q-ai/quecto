@@ -2226,7 +2226,9 @@ fn when_rewound_to_inflight_prompt(world: &mut QuectoWorld) {
         .rposition(|m| m.role == Role::User && m.turn.is_none())
         .expect("precondition: an in-flight user prompt must exist");
     assert!(
-        quecto::interface::cli::uds_session::rewind_to_message_index(messages, idx),
+        quecto::application::sessions::use_cases::rewind_conversation::rewind_to_message_index(
+            messages, idx
+        ),
         "precondition: rewind to a user-message boundary must succeed"
     );
 }

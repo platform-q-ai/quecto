@@ -379,6 +379,7 @@ pub(super) async fn multi_client_loop(
         fleet_teardown,
         list_sessions: sessions.list_sessions.clone(),
         save_session: sessions.save_session.clone(),
+        rewrite: sessions.rewrite.clone(),
     };
 
     run_dispatch_loop(

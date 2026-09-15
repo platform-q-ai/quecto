@@ -7,9 +7,10 @@
 //! (`ActiveSessionState`, #1971): this module publishes into it and reads
 //! from it; `sync` is answered through the composed controller
 //! (`uds_sync`, #1973) and `get_report` through the composed export
-//! controller (#1974). What remains here for later slices: the reset
-//! compositions `reset_to` (D6 #1975, rewind) and
-//! `reset_to_with_spill_store` (D7 #1976 fresh session, D8 #1977 resume).
+//! controller (#1974); the rewind's ledger reset is the rewind
+//! transaction's (#1975). What remains here for later slices: the reset
+//! composition `reset_to_with_spill_store` (D7 #1976 fresh session, D8
+//! #1977 resume).
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
@@ -24,23 +25,6 @@ use crate::domain::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
-
-/// Reset the session to exactly `messages`: drop the whole prior ledger
-/// (so refs from a replaced/truncated conversation stop resolving) and
-/// re-seed live + ledger from the new set. Used by same-session TRUNCATE
-/// ops (rewind_to) so old refs cannot leak full content out-of-band while
-/// the surviving messages stay resolvable (#1060 review round 4). Ops that
-/// also change the session identity and spill namespace (new_session,
-/// resume_session) use [`reset_to_with_spill_store`] instead.
-pub(crate) fn reset_to(state: &mut ActiveSessionState, messages: &[Message]) -> LedgerAdvance {
-    let advance = state.clear();
-    let publish = state.publish(messages);
-    LedgerAdvance {
-        epoch: state.conversation().epoch(),
-        rev: state.conversation().rev(),
-        changed: advance.changed || publish.changed,
-    }
-}
 
 /// Replace history, identity and spill namespace in one write so busy
 /// readers can observe neither old refs under the new identity nor new

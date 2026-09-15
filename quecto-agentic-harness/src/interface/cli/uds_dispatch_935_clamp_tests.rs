@@ -69,6 +69,10 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &session_key,
             );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &session_key,
+            );
         let mut ctx = DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -105,6 +109,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             provider_reload: None,
             provider_reload_inputs: None,
             save_session,
+            rewrite,
             fleet_teardown: None,
             list_sessions: list_handle(tmp.path()),
         };

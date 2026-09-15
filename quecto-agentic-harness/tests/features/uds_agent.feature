@@ -188,6 +188,56 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output should contain a response command "rewind_to" with success false
 
+  # ─── clear_history / rewind_to transactions (#1864, #1865; D6 #1975) ─────
+
+  @done @issue-1975 @issue-1864
+  Scenario: clear_history empties the conversation a client reads back
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send command "clear_history" with id "ch-1"
+    And I send command "get_messages" with id "gm-ch"
+    And I close the UDS connection
+    Then the agent output should contain a response command "clear_history" with success true
+    And the get_messages response data should include a "messages" array with 0 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a stale or unknown messageId without effect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send rewind_to messageId "00000000-0000-4000-8000-000000000000" with id "rw-stale"
+    And I send command "get_messages" with id "gm-stale"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "rewind target not found"
+    And the get_messages response data should include a "messages" array with 2 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a non-user boundary without effect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send rewind_to messageIndex 1 with id "rw-assistant"
+    And I send command "get_messages" with id "gm-assistant"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "invalid rewind target"
+    And the get_messages response data should include a "messages" array with 2 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a request that names neither a messageId nor a messageIndex
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send rewind_to with no target and id "rw-none"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "rewind requires messageId or messageIndex"
+
   # ─── get_session_stats command ──────────────────────────────────────────────
 
   @done

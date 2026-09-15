@@ -224,6 +224,7 @@ impl DispatchTestEnv {
             fleet_teardown: None,
             list_sessions: self.sessions.list_sessions.clone(),
             save_session: self.sessions.save_session.clone(),
+            rewrite: self.sessions.rewrite.clone(),
         }
     }
 }

@@ -610,6 +610,17 @@ pub(crate) fn save_handle_for(
     composed_sessions_for(&base, session_key, None).save_session
 }
 
+/// The clear and rewind handles of a session opened on `session_key` over
+/// a throwaway base directory, for rigs that never clear or rewind.
+pub(crate) fn rewrite_handles_for(
+    session_key: &str,
+) -> crate::interface::cli::uds_session_handles::ConversationRewriteHandles {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let base = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    composed_sessions_for(&base, session_key, None).rewrite
+}
+
 /// The read handles of a session opened on `session_key` over `base`, with
 /// `messages` already published as its live transcript.
 pub(crate) fn seeded_read_handles(

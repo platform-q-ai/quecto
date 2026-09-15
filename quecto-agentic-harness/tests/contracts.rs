@@ -91,6 +91,8 @@ mod tool_guard;
 mod tool_policy_mutator;
 #[path = "contracts/tool_registry.rs"]
 mod tool_registry;
+#[path = "contracts/turn_accounting_reset.rs"]
+mod turn_accounting_reset;
 
 #[path = "contracts/clock.rs"]
 mod clock;
