@@ -1,10 +1,10 @@
 //! The Responses API also emits top-level error fields, not only nested
 //! response.failed payloads. Preserve its established display while forwarding
 //! the structured throttle receipt from the real wire event.
-#[path = "../common/admission_feedback_fixture.rs"]
-pub mod fixture;
-#[path = "../common/admission_leaf_error_oracle.rs"]
-mod oracle;
+// One copy per crate (clippy::duplicate_mod): the fixture is loaded by
+// `inference_admission_feedback_transport` / `inference_admission_openai_sse`.
+use crate::inference_admission_feedback_transport::fixture;
+use crate::inference_admission_openai_sse::oracle;
 use fixture::*;
 use std::sync::Arc;
 

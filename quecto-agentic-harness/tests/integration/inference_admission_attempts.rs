@@ -2,8 +2,11 @@
 //! Each macro expansion is an independently executable test (including both
 //! Responses auth modes and Codex's assembled-stream default delegation).
 //! Wall timeouts are cleanup/failure bounds, never absence-of-send oracles.
+// Also loaded by tests/contracts/attempt_admission.rs and the lib coverage
+// include, so this module owns the fixture; `inference_admission_retry`
+// imports it from here (clippy::duplicate_mod).
 #[path = "../common/admission_attempt_fixture.rs"]
-mod fixture;
+pub(crate) mod fixture;
 
 use std::sync::Arc;
 

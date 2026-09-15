@@ -101,6 +101,17 @@ fn directory_is_private_and_the_lock_is_a_singleton() {
         SingletonLock::acquire(&dir).is_ok(),
         "lock released with owner"
     );
+    // A child forked anywhere in the process while the lock is held inherits
+    // the descriptor until it execs; the release must not depend on every
+    // duplicate closing (fork/flock ownership, #1492).
+    let owner = SingletonLock::acquire(&dir).unwrap();
+    let inherited = owner.inherited_descriptor().unwrap();
+    drop(owner);
+    assert!(
+        SingletonLock::acquire(&dir).is_ok(),
+        "lock released while a forked child's duplicate descriptor lives"
+    );
+    drop(inherited);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
     assert!(
         AuthorityDirectory::open(&path).is_err(),
