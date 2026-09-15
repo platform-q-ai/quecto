@@ -33,7 +33,10 @@ async fn records_nonzero_exit_code() {
 /// child: the long-running leader is SIGTERMed and exits promptly.
 #[tokio::test]
 async fn terminate_ends_a_running_leader_after_sigterm() {
-    let watch = watch_child(spawn("sleep 30"), StderrTail::default());
+    // `exec`: the leader is the one process, as the other single-process
+    // leaders below. Without it `sh` may fork `sleep`, which then outlives
+    // the SIGTERMed shell for a moment and is (correctly) reported a stray.
+    let watch = watch_child(spawn("exec sleep 30"), StderrTail::default());
     let outcome = tokio::time::timeout(Duration::from_secs(5), watch.terminate())
         .await
         .expect("terminate must complete well within the budget")
@@ -102,7 +105,7 @@ async fn terminate_after_leader_exit_reports_a_surviving_group_member_without_si
 /// consuming the timeout; a child that never exits resolves `None` at it.
 #[tokio::test]
 async fn wait_times_out_to_none_while_child_lives() {
-    let watch = watch_child(spawn("sleep 30"), StderrTail::default());
+    let watch = watch_child(spawn("exec sleep 30"), StderrTail::default());
     let detail = watch.wait_exit_detail(Duration::from_millis(50)).await;
     assert_eq!(detail, None);
     watch.terminate().await;
