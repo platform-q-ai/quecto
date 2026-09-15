@@ -783,7 +783,7 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, changed-package strict Clippy, and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
+`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, strict workspace-shape Clippy (one feature unification, plus the standalone per-crate shapes), and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
 
 Pre-push control:
 - `QUECTO_PREPUSH_BASE` overrides the comparison base used to identify changed workspace packages (default `origin/master`, falling back to local `master`).

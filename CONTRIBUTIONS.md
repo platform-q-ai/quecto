@@ -40,8 +40,8 @@ Run package or workspace tests relevant to your change:
 # `-p <crate>` resolves a different dependency feature set and forces rebuilds.
 cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib
 cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture --test contracts
-cargo test --workspace --features quecto-agentic-harness/test-support --bins --test api_bdd
-cargo test --workspace --features quecto-agentic-harness/test-support --bins --test mcp_bdd
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test integration --test docs --test parent_loss --test selected_termination
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test api_bdd --test mcp_bdd
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 12m
 ```
