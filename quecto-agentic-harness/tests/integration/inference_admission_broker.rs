@@ -688,9 +688,17 @@ async fn journal_outage_holds_queued_work_and_reports_the_ledger_not_cancellatio
 async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    // The production deadline is 15 s; the session logic is identical at any
+    // value, so run it at 300 ms and assert the production constant separately.
+    assert_eq!(
+        quecto::infrastructure::admission::protocol::FRAME_DEADLINE,
+        Duration::from_secs(15)
+    );
+    let frame_deadline = Duration::from_millis(300);
+    let server = AuthorityServer::start_with_frame_deadline(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
+        frame_deadline,
     )
     .await
     .unwrap();
@@ -699,12 +707,9 @@ async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
         .unwrap();
     raw.write_all(&[0, 0, 0, 40]).await.unwrap();
     let mut buf = [0u8; 16];
-    let closed = timeout(
-        quecto::infrastructure::admission::protocol::FRAME_DEADLINE + Duration::from_secs(5),
-        raw.read(&mut buf),
-    )
-    .await
-    .expect("server closes the stalled session");
+    let closed = timeout(frame_deadline + Duration::from_secs(5), raw.read(&mut buf))
+        .await
+        .expect("server closes the stalled session");
     assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
     server.shutdown().await;
 }

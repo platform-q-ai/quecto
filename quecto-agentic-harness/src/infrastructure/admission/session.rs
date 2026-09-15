@@ -13,6 +13,7 @@ pub(super) async fn serve(
     session: u64,
     role: Role,
     commands: mpsc::UnboundedSender<Command>,
+    frame_deadline: std::time::Duration,
 ) {
     let (read, mut write) = stream.into_split();
     let (notices, mut outbound) = mpsc::unbounded_channel::<Reply>();
@@ -44,7 +45,7 @@ pub(super) async fn serve(
             Ok(_) => {}
             Err(_) => break,
         }
-        let frame = match tokio::time::timeout(FRAME_DEADLINE, read_frame(&mut reader, FRAME_CAP))
+        let frame = match tokio::time::timeout(frame_deadline, read_frame(&mut reader, FRAME_CAP))
             .await
         {
             Err(_) => {
