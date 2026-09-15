@@ -26,7 +26,14 @@ async fn the_file_retention_graph_shares_one_store_across_writer_reader_and_reca
         .await
         .unwrap();
     assert_eq!(receipt.id, "turn1:bash:0");
-    assert!(handles.context.list.has_entries(&identity).await.unwrap());
+    assert!(
+        handles
+            .context
+            .list
+            .retains_entries(&identity)
+            .await
+            .unwrap()
+    );
     let recalled = handles
         .recall
         .recall(&identity, &RecallQuery::Entry(SpillId::new("turn1:bash:0")))
@@ -50,7 +57,14 @@ async fn the_file_retention_graph_shares_one_store_across_writer_reader_and_reca
     );
 
     handles.recall.clear(&identity).await.unwrap();
-    assert!(!handles.context.list.has_entries(&identity).await.unwrap());
+    assert!(
+        !handles
+            .context
+            .list
+            .retains_entries(&identity)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]

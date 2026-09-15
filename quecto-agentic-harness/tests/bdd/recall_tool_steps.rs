@@ -15,9 +15,17 @@ fn recall_over(
 #[derive(Debug, Default)]
 pub struct BddMemorySpillStore {
     entries_by_session: Mutex<HashMap<String, Vec<SpillEntry>>>,
+    /// Port calls the tool's recall reached the store with (D9 #1978): a
+    /// malformed id makes none, an index recall exactly one.
+    consulted: std::sync::atomic::AtomicUsize,
 }
 
 impl BddMemorySpillStore {
+    fn consult(&self) {
+        self.consulted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn add_entry(
         &self,
         session_key: &str,
@@ -61,6 +69,7 @@ impl ContextSpillStore for BddMemorySpillStore {
         session_key: &SessionIdentity,
         id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
+        self.consult();
         let result = self
             .entries_by_session
             .lock()
@@ -76,6 +85,7 @@ impl ContextSpillStore for BddMemorySpillStore {
     }
 
     fn list_entries(&self, session_key: &SessionIdentity) -> SpillIndexList<'_> {
+        self.consult();
         let entries = self
             .entries_by_session
             .lock()
@@ -115,13 +125,48 @@ fn recall_store(world: &QuectoWorld) -> Arc<BddMemorySpillStore> {
 }
 
 fn execute_recall(world: &mut QuectoWorld, id: &str) {
-    let tool = world.recall_tool.as_ref().expect("recall tool not set");
     let args = serde_json::json!({ "id": id }).to_string();
+    execute_recall_raw(world, &args);
+}
+
+fn execute_recall_raw(world: &mut QuectoWorld, args: &str) {
+    let tool = world.recall_tool.as_ref().expect("recall tool not set");
+    if let Some(store) = world.recall_spill_store.as_ref() {
+        store
+            .consulted
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(tool.execute(&args))
+        .block_on(tool.execute(args))
         .expect("recall tool execution should not raise a domain error");
     world.recall_result = Some(result);
+}
+
+#[when(expr = "I run recall with raw arguments {string}")]
+fn when_i_run_recall_with_raw_arguments(world: &mut QuectoWorld, args: String) {
+    execute_recall_raw(world, &args);
+}
+
+#[then(expr = "the recall tool consulted the retention store {int} times")]
+fn then_recall_consulted_store_times(world: &mut QuectoWorld, times: usize) {
+    let consulted = recall_store(world)
+        .consulted
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(consulted, times, "retention store calls");
+}
+
+#[then(expr = "the recall result should list ids in order {string}")]
+fn then_recall_result_lists_ids_in_order(world: &mut QuectoWorld, expected: String) {
+    let result = world.recall_result.as_ref().expect("recall result not set");
+    let listed: Vec<&str> = result
+        .content
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.trim_start().split(" — ").next())
+        .collect();
+    let expected: Vec<&str> = expected.split(", ").collect();
+    assert_eq!(listed, expected, "index order: {}", result.content);
 }
 
 #[given(expr = "a recall tool for session {string} with no spilled outputs")]

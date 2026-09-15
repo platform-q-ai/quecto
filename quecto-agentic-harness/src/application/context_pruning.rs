@@ -183,7 +183,7 @@ pub async fn update_spill_manifest(
     retained: &ListRetainedContext,
     session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
-    let has_entries = retained.has_entries(session_key).await.unwrap_or(false);
+    let has_entries = retained.retains_entries(session_key).await.unwrap_or(false);
     if !has_entries {
         // Remove manifest if it exists and there are no entries
         let before = messages.len();

@@ -176,8 +176,8 @@ async fn list_retained_context_reads_the_index_in_append_order_and_its_presence(
     let index = list.list(&cli("s")).await.unwrap();
     let ids: Vec<&str> = index.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, vec!["c", "a", "b"], "oldest first, never sorted");
-    assert!(list.has_entries(&cli("s")).await.unwrap());
-    assert!(!list.has_entries(&cli("other")).await.unwrap());
+    assert!(list.retains_entries(&cli("s")).await.unwrap());
+    assert!(!list.retains_entries(&cli("other")).await.unwrap());
     assert_eq!(
         store.journal(),
         vec!["list cli:s", "has_entries cli:s", "has_entries cli:other"]
@@ -190,7 +190,7 @@ async fn list_retained_context_propagates_store_errors() {
     *store.fail_list.lock().unwrap() = true;
     let list = ListRetainedContext::new(store.clone());
     assert!(list.list(&cli("s")).await.is_err());
-    assert!(list.has_entries(&cli("s")).await.is_err());
+    assert!(list.retains_entries(&cli("s")).await.is_err());
 }
 
 #[test]

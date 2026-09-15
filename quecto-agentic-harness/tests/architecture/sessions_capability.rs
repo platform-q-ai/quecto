@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976, D8 #1977): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976, D8 #1977, D9 #1978): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -35,6 +35,15 @@
 //!   no session, holds no store on the dispatch context and spells none of
 //!   the resume refusal texts; the persisted-roster policy (#1937) and the
 //!   settle-before-switch order (#1938) are the application's.
+//! - D9: one owner of durable retained context: the sessions capability
+//!   declares the retention port, owns the recall/list/clear selection and
+//!   the id append/deduplication; the context-pruning policy decides when
+//!   and what to retain and consumes the narrow writer/reader handles,
+//!   never a store method; the recall tool parses, formats and diagnoses
+//!   over the composed use case; composition alone constructs the store,
+//!   the use cases and the pruning handles; no interface file constructs
+//!   the store, forms the layout or scrubs the ephemeral file itself.
+//!   Every inventory is affirmative and non-empty.
 //! - R7: exactly one infrastructure `FlatSessionLayout` joins `sessions`,
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
@@ -68,6 +77,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/application/sessions/use_cases/departing_children.rs",
     "src/application/sessions/use_cases/resume_saved_session.rs",
+    "src/application/sessions/use_cases/recall_context.rs",
+    "src/application/sessions/use_cases/retain_context.rs",
     "src/application/sessions/ports/export.rs",
     "src/application/sessions/ports/session_runtime.rs",
     "src/application/sessions/ports/session_transition.rs",
@@ -80,6 +91,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/rewind_conversation.rs",
     "src/application/sessions/dto/start_fresh_conversation.rs",
     "src/application/sessions/dto/resume_saved_session.rs",
+    "src/application/sessions/dto/retained_context.rs",
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
@@ -91,7 +103,11 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/active_session.rs",
     "src/composition/session_report.rs",
     "src/composition/fleet_settlement.rs",
+    "src/composition/retention.rs",
     "src/interface/cli/uds_session_handles.rs",
+    "src/interface/cli/retention_handles.rs",
+    "src/infrastructure/persistence/context_spill.rs",
+    "src/infrastructure/tools/recall.rs",
     "src/interface/cli/uds_sync.rs",
     "src/interface/cli/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
@@ -244,6 +260,16 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "ProcessClockIdentityGenerator::new(",
         "src/composition/sessions.rs",
     ),
+    // D9 #1978: the retention store beside the session store, the
+    // recall/retain/list graph over it.
+    ("FileContextSpillStore::new(", "src/composition/sessions.rs"),
+    ("RecallContext::new(", "src/composition/retention.rs"),
+    ("RetainContext::new(", "src/composition/retention.rs"),
+    ("ListRetainedContext::new(", "src/composition/retention.rs"),
+    (
+        "RecallTool::new(",
+        "src/infrastructure/extensions/native.rs",
+    ),
 ];
 
 /// The one production file that may spell the export root (D4): the loop's
@@ -341,6 +367,23 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "session_store: &'a dyn SessionStore",
     ".departing_children",
     "SessionTransition::Resume",
+    // D9 (#1978): retained context — the store, its file, the recall
+    // graph and the ephemeral scrub — is composed and owned outside the
+    // interface; no interface line constructs the store, names the
+    // adapter, forms its layout, scrubs its file or reaches a store method.
+    "FileContextSpillStore",
+    "context_spill::",
+    "fn scrub_ephemeral_spill(",
+    "scrub_session_spill_sync",
+    ".scrub_sync(",
+    "RecallTool::new(",
+    "tools::recall::",
+    ".list_entries(",
+    ".has_entries(",
+    "spill_store.append(",
+    "spill_store.recall(",
+    "spill_store.clear(",
+    "fn spill_store(",
 ];
 
 /// The interface files still holding a raw persisted key the active session
@@ -383,14 +426,10 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
 ];
 
 /// The exact sites that create a `FlatSessionLayout` (R7). Decrease-only:
-/// the two interface sites (the ephemeral spill scrub and the tool
-/// runtime's spill store) retire when the retention adapter moves behind
-/// the sessions composition (D9); nothing may join this list.
-const LAYOUT_CREATION_SITES: &[&str] = &[
-    "src/composition/sessions.rs",
-    "src/interface/shared.rs",
-    "src/interface/tool_runtime.rs",
-];
+/// D9 #1978 retired the two interface sites (the ephemeral spill scrub and
+/// the tool runtime's spill store) behind the sessions composition;
+/// nothing may join this list.
+const LAYOUT_CREATION_SITES: &[&str] = &["src/composition/sessions.rs"];
 
 /// The one file of the persistence tree that forms session paths, and the
 /// exact callers of the shared filename sanitizer (R7). `audit_log.rs`
@@ -424,8 +463,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     ("src/application/sessions/history_paging.rs", 65),
     // D7 #1976 declares and re-exports the transition ports module (was
-    // 135 before D7).
-    ("src/application/sessions/ports.rs", 142),
+    // 135 before D7); D9 #1978 adds the ephemeral scrub to the retention
+    // port (was 142 before D9).
+    ("src/application/sessions/ports.rs", 148),
     ("src/application/sessions/ports/export.rs", 30),
     // D6 #1975 adds the accounting-reset port beside the save observations
     // (was 29 before D6).
@@ -468,13 +508,25 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         191,
     ),
     ("src/application/sessions/dto/resume_saved_session.rs", 114),
+    // D9 #1978: retained context.
+    ("src/application/sessions/use_cases/recall_context.rs", 80),
+    ("src/application/sessions/use_cases/retain_context.rs", 120),
+    ("src/application/sessions/dto/retained_context.rs", 92),
+    ("src/composition/retention.rs", 36),
+    ("src/interface/cli/retention_handles.rs", 35),
+    ("src/infrastructure/tools/recall.rs", 185),
+    ("src/application/context.rs", 336),
+    ("src/application/context_pruning.rs", 248),
+    ("src/application/context_pruning_messages.rs", 305),
+    ("src/application/agent_loop_spill.rs", 56),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
     // before D8).
     ("src/composition/active_session.rs", 119),
     ("src/composition/session_report.rs", 40),
-    // D7 #1976 adds the fresh-identity generator builder (was 38 before D7).
-    ("src/composition/sessions.rs", 48),
+    // D7 #1976 adds the fresh-identity generator builder (was 38 before D7);
+    // D9 #1978 adds the retention store and graph builder (was 48 before D9).
+    ("src/composition/sessions.rs", 62),
     ("src/composition/fleet_settlement.rs", 39),
     (
         "src/infrastructure/persistence/session_snapshot_sources.rs",
@@ -492,7 +544,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D8 #1977 adds the wire-admitted user-chat constructor (was 133
     // before D8).
     ("src/domain/session_identity.rs", 148),
-    ("src/infrastructure/persistence/context_spill.rs", 376),
+    // D9 #1978 moves the ephemeral scrub onto the port (was 376 before D9).
+    ("src/infrastructure/persistence/context_spill.rs", 380),
     ("src/infrastructure/persistence/session_layout.rs", 83),
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     ("src/infrastructure/persistence/session_store.rs", 687),
@@ -504,7 +557,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_dispatch_query.rs", 190),
     ("src/interface/cli/uds_dispatch_session.rs", 239),
     ("src/interface/cli/uds_latest_report.rs", 85),
-    ("src/interface/cli/uds_lifecycle.rs", 305),
+    // D9 #1978 hands the loop its retention store as an input (was 305
+    // before D9).
+    ("src/interface/cli/uds_lifecycle.rs", 310),
     ("src/interface/cli/uds_multi.rs", 633),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
     ("src/interface/cli/uds_session_handles.rs", 125),
@@ -514,7 +569,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
-    ("src/interface/cli/uds_snapshots.rs", 257),
+    ("src/interface/cli/uds_snapshots.rs", 256),
     ("src/interface/cli/uds_sync.rs", 135),
     ("src/interface/uds/sessions/controller.rs", 36),
     ("src/interface/uds/sessions/export_report_controller.rs", 45),
@@ -1152,4 +1207,218 @@ fn owner_line_ceilings_are_non_empty_and_respected() {
             "{file}: ceilings never exceed the quality gate"
         );
     }
+}
+
+/// The production files that hold the retention port (D9 #1978): the
+/// sessions capability that declares and consumes it, the composition
+/// that builds the store and the graph, the persistence adapter that
+/// implements it, and the interface handle structs the loop is composed
+/// over. Exact: no pruning-policy file, no tool, no dispatch handler.
+const RETENTION_PORT_HOLDERS: &[&str] = &[
+    "src/application/sessions/active_session.rs",
+    "src/application/sessions/conversation_ledger.rs",
+    "src/application/sessions/ports.rs",
+    "src/application/sessions/use_cases/clear_conversation.rs",
+    "src/application/sessions/use_cases/export_session_report.rs",
+    "src/application/sessions/use_cases/recall_context.rs",
+    "src/application/sessions/use_cases/retain_context.rs",
+    "src/composition/retention.rs",
+    "src/composition/sessions.rs",
+    "src/infrastructure/persistence/context_spill.rs",
+    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/uds_lifecycle.rs",
+    "src/interface/cli/uds_session_handles.rs",
+];
+
+/// The pruning-policy files (D9 #1978): they decide when and what to
+/// retain and consume the narrow writer/reader handles. Exact and
+/// non-empty; they never name the port or call a store method.
+const PRUNING_POLICY_OWNERS: &[&str] = &[
+    "src/application/agent_loop.rs",
+    "src/application/context.rs",
+    "src/application/context_pruning.rs",
+    "src/application/context_pruning_messages.rs",
+];
+
+/// The spill-id allocators (D9 #1978): the tool-result grammar
+/// `turn{n}:{tool}:{idx}` and the conversation grammar `turn{n}:msg:{role}`,
+/// each spelled by exactly one policy file; sessions allocates no id.
+const SPILL_ID_ALLOCATORS: &[(&str, &str)] = &[
+    (
+        "src/application/agent_loop_tool_exec.rs",
+        "format!(\"turn{}:{}:{}\", current_turn, tc.name, idx)",
+    ),
+    (
+        "src/application/context_pruning_messages.rs",
+        "format!(\"turn{}:msg:{role}\", msg.turn.unwrap_or(0))",
+    ),
+];
+
+/// A retention store method reached directly (append, recall, index,
+/// presence, clear-by-identity, scrub), whatever the binding is called.
+fn reaches_a_store_method(line: &str) -> bool {
+    [
+        ".append(",
+        ".list_entries(",
+        ".has_entries(",
+        ".scrub_sync(",
+        "store.recall(",
+        "store.clear(",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+}
+
+/// D9 (#1978): exactly one owner per retained-context role — the sessions
+/// capability for the port, the identity-keyed recall/list/clear selection
+/// and the id append/deduplication; the pruning policy for when and what
+/// to retain, over the narrow handles; persistence for the file and the
+/// ephemeral scrub; the recall tool for schema, formatting and diagnostics
+/// only; composition for construction. Each inventory is asserted exact
+/// and non-empty.
+#[test]
+fn retained_context_has_exactly_one_owner_per_role() {
+    // The port is declared once, in the capability's ports file, and held
+    // by exactly the listed files.
+    assert_eq!(
+        production_files_calling("pub trait ContextSpillStore"),
+        set(&["src/application/sessions/ports.rs"])
+    );
+    assert!(!RETENTION_PORT_HOLDERS.is_empty());
+    assert_eq!(
+        production_files_calling("ContextSpillStore"),
+        set(RETENTION_PORT_HOLDERS),
+        "the retention port's holders are exact"
+    );
+    // The pruning policy consumes the narrow handles and nothing else.
+    assert!(!PRUNING_POLICY_OWNERS.is_empty());
+    let handle_consumers: BTreeSet<String> = production_files()
+        .into_iter()
+        .filter(|p| {
+            p.starts_with("src/application/") && !p.starts_with("src/application/sessions/")
+        })
+        .filter(|p| {
+            production_code(p).iter().any(|(_, line)| {
+                line.contains("RetainContext")
+                    || line.contains("ListRetainedContext")
+                    || line.contains("ContextRetention")
+            })
+        })
+        .collect();
+    assert_eq!(
+        handle_consumers,
+        set(PRUNING_POLICY_OWNERS),
+        "the pruning policy's owners are exact"
+    );
+    for owner in PRUNING_POLICY_OWNERS {
+        let direct: Vec<String> = production_code(owner)
+            .into_iter()
+            .filter(|(_, line)| reaches_a_store_method(line) || line.contains("ContextSpillStore"))
+            .map(|(n, line)| format!("{owner}:{n}: {}", line.trim()))
+            .collect();
+        assert!(
+            direct.is_empty(),
+            "the pruning policy reaches the retention store directly: {direct:#?}"
+        );
+    }
+    // The pruning decisions stay outside sessions: no threshold, ladder,
+    // exemption or manifest policy joins the capability.
+    let sessions_files: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with("src/application/sessions/"))
+        .collect();
+    for needle in [
+        "fn collapse_tool_results_over_limit(",
+        "fn collapse_conversation_messages_over_limit(",
+        "fn enforce_context_ceiling_ladder(",
+        "fn exempt_flags(",
+        "fn update_spill_manifest(",
+        "fn estimate_tokens(",
+        "pin_recent_turns",
+        "context_collapse_after",
+        "turn{",
+    ] {
+        let owners: BTreeSet<String> = sessions_files
+            .iter()
+            .filter(|p| {
+                production_code(p)
+                    .iter()
+                    .any(|(_, line)| line.contains(needle))
+            })
+            .cloned()
+            .collect();
+        assert!(
+            owners.is_empty(),
+            "pruning policy `{needle}` moved into sessions: {owners:?}"
+        );
+    }
+    // The ids are allocated by the policy, each grammar in one file.
+    for (file, grammar) in SPILL_ID_ALLOCATORS {
+        assert_eq!(
+            production_files_calling(grammar),
+            set(&[file]),
+            "spill-id grammar `{grammar}` has exactly one allocator"
+        );
+    }
+    // Sessions appends and deduplicates: the suffix rule is the writer's.
+    assert_eq!(
+        production_files_calling("fn highest_suffix_taken("),
+        set(&["src/application/sessions/use_cases/retain_context.rs"])
+    );
+    // Persistence implements the port once; the recall tool adapts the use
+    // case, holds no store and selects nothing (the reserved index id and
+    // the empty-id refusal are the DTO's).
+    assert_eq!(
+        production_files_calling("impl ContextSpillStore for"),
+        set(&["src/infrastructure/persistence/context_spill.rs"])
+    );
+    let recall_tool = "src/infrastructure/tools/recall.rs";
+    assert_eq!(
+        production_files_calling("impl Tool for RecallTool"),
+        set(&[recall_tool])
+    );
+    let tool_code = production_code(recall_tool);
+    assert!(
+        tool_code
+            .iter()
+            .any(|(_, line)| line.contains("RecallQuery::parse(")),
+        "the recall tool asks the DTO what an id selects"
+    );
+    for needle in [
+        "== \"list\"",
+        "ContextSpillStore",
+        "list_entries",
+        "SpillId::new(",
+    ] {
+        assert!(
+            !tool_code.iter().any(|(_, line)| line.contains(needle)),
+            "the recall tool selects nothing itself: `{needle}` found"
+        );
+    }
+    assert_eq!(
+        production_files_calling("pub const INDEX_QUERY"),
+        set(&["src/application/sessions/dto/retained_context.rs"])
+    );
+    // The ephemeral scrub is requested by exactly the two run exits, over
+    // the composed handle; the interface's own scrub helper is gone.
+    assert_eq!(
+        production_files_calling(".scrub_ephemeral("),
+        set(&[
+            "src/interface/cli/agent.rs",
+            "src/interface/cli/agent/run_session.rs",
+        ])
+    );
+    assert!(
+        !production_code("src/interface/shared.rs")
+            .iter()
+            .any(|(_, line)| line.contains("spill")),
+        "interface/shared.rs no longer scrubs or names the spill file"
+    );
+    // Composition alone builds the graph and hands the builder to `main`.
+    let main = std::fs::read_to_string("src/main.rs").unwrap();
+    assert!(main.contains("retention: quecto::composition::sessions::build_retention_handles"));
+    assert_eq!(
+        production_files_calling("fn build_retention_handles("),
+        set(&["src/composition/sessions.rs"])
+    );
 }

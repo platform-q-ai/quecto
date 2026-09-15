@@ -101,7 +101,7 @@ impl ListRetainedContext {
 
     /// Whether `identity` retains anything, without materialising the
     /// index.
-    pub async fn has_entries(&self, identity: &SessionIdentity) -> Result<bool, DomainError> {
+    pub async fn retains_entries(&self, identity: &SessionIdentity) -> Result<bool, DomainError> {
         self.store.has_entries(identity).await
     }
 }
