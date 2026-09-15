@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::session::Session;
 
 #[cfg(test)]
 #[path = "uds_session_load_tests.rs"]

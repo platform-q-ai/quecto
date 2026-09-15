@@ -1,13 +1,13 @@
 //! Exercises `dispatch_command`/`handle_*` routing with an in-memory ctx and sink writer.
+use super::fixture_tests::{Fixture, persist_current_session};
 use super::{
     dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
-    handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
+    handle_resume_session, handle_rewind_to, handle_steer,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
@@ -18,10 +18,6 @@ use crate::domain::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
-use crate::interface::cli::uds::DispatchCtx;
-use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
-use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_tool_registry};
-use crate::interface::cli::uds_session::AgentSession;
 use std::sync::Arc;
 #[derive(Debug, Default)]
 pub(super) struct RecordingSpillStore {
@@ -128,7 +124,7 @@ impl Tool for SessionAwareTool {
     }
 }
 
-fn make_agent() -> AgentLoopImpl {
+pub(super) fn make_agent() -> AgentLoopImpl {
     make_agent_with(
         Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         None,
@@ -158,102 +154,6 @@ pub(super) fn make_agent_with(
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
-}
-
-/// Owns everything a `DispatchCtx` borrows so individual tests stay short.
-pub(super) struct Fixture {
-    pub(super) agent: AgentLoopImpl,
-    pub(super) messages: Vec<Message>,
-    pub(super) session: AgentSession,
-    pub(super) session_key: String,
-    pub(super) store: FileSessionStore,
-    pub(super) _tmp: tempfile::TempDir,
-    writer: tokio::io::Sink,
-    pub(super) cancel: CancelHandle,
-    registry: ClientToolRegistry,
-    ephemeral: bool,
-    pub(super) last_persisted_message_index: usize,
-    /// Injected system prompt mirrored into `DispatchCtx::system_prompt`.
-    /// Default `""` keeps existing callers free of live/durable skew.
-    pub(super) system_prompt: String,
-    pub(super) provider_reload_inputs:
-        Option<crate::interface::cli::provider_reload::ProviderReloadInputs>,
-    pub(super) provider_reload: Option<crate::interface::cli::provider_reload::ProviderReload>,
-}
-
-impl Fixture {
-    pub(super) fn new() -> Self {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
-        Self {
-            agent: make_agent(),
-            messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
-            session_key: "cli:test".to_string(),
-            store,
-            _tmp: tmp,
-            writer: tokio::io::sink(),
-            cancel: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
-            registry: new_client_tool_registry(),
-            ephemeral: false,
-            last_persisted_message_index: 0,
-            system_prompt: String::new(),
-            provider_reload_inputs: None,
-            provider_reload: None,
-        }
-    }
-
-    pub(super) fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = prompt.into();
-        self
-    }
-
-    pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
-            &self.session_key,
-            &self.messages,
-        );
-        DispatchCtx {
-            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
-            base_dir: self._tmp.path(),
-            agent: &mut self.agent,
-            messages: &mut self.messages,
-            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
-                &self.session_key,
-                None,
-                &[],
-            ),
-            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
-            )),
-            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
-            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
-            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            session: &mut self.session,
-            stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: self.ephemeral,
-            system_prompt: self.system_prompt.as_str(),
-            cancel_handle: self.cancel.clone(),
-            turn_control: std::sync::Arc::default(),
-            broadcast_tx: None,
-            _ext_registry: None,
-            client_tool_registry: self.registry.clone(),
-            current_client_id: 0,
-            subagent_registry: None,
-            notification_rx: None,
-            workflow_state: None,
-            workflow_config: None,
-            provider_reload: self.provider_reload.as_mut(),
-            provider_reload_inputs: self.provider_reload_inputs.as_ref(),
-            last_persisted_message_index: self.last_persisted_message_index,
-            durable_prefix_dirty: false,
-            fleet_teardown: None,
-            list_sessions: list_handle(self._tmp.path()),
-        }
-    }
 }
 
 pub(super) fn tool_reg(name: &str) -> ToolRegistration {
@@ -351,10 +251,10 @@ async fn rewind_valid_truncates_and_persists() {
 async fn rewind_valid_clears_spill_store_for_current_key() {
     let spill = std::sync::Arc::new(RecordingSpillStore::default());
     let mut fx = Fixture::new();
-    fx.agent = make_agent_with(
+    fx.set_agent(make_agent_with(
         Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         Some(spill.clone()),
-    );
+    ));
     fx.messages.push(Message::user("first"));
     fx.messages.push(Message::assistant("answer", vec![]));
     {
@@ -398,7 +298,7 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
     registry.register(tool.clone());
     let spill = std::sync::Arc::new(RecordingSpillStore::default());
     let mut fx = Fixture::new();
-    fx.agent = make_agent_with(Box::new(registry), Some(spill.clone()));
+    fx.set_agent(make_agent_with(Box::new(registry), Some(spill.clone())));
     {
         let mut ctx = fx.ctx();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
@@ -421,7 +321,7 @@ async fn resume_blocked_while_streaming() {
 #[tokio::test]
 async fn resume_blocked_in_ephemeral() {
     let mut fx = Fixture::new();
-    fx.ephemeral = true;
+    fx.set_ephemeral(true);
     let mut ctx = fx.ctx();
     assert!(!handle_resume_session(&mut ctx, None, "resume_session", "other".into()).await);
 }
@@ -482,7 +382,7 @@ async fn resume_updates_session_aware_tools() {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     registry.register(tool.clone());
     let mut fx = Fixture::new();
-    fx.agent = make_agent_with(Box::new(registry), None);
+    fx.set_agent(make_agent_with(Box::new(registry), None));
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
@@ -527,7 +427,7 @@ async fn resume_loads_chat_session_by_full_key() {
 #[tokio::test]
 async fn persist_noop_when_ephemeral() {
     let mut fx = Fixture::new();
-    fx.ephemeral = true;
+    fx.set_ephemeral(true);
     let mut ctx = fx.ctx();
     assert!(persist_current_session(&mut ctx).await.is_ok());
 }
@@ -535,7 +435,7 @@ async fn persist_noop_when_ephemeral() {
 #[tokio::test]
 async fn persist_noop_when_session_key_empty() {
     let mut fx = Fixture::new();
-    fx.session_key = String::new();
+    fx.set_session_key("");
     let mut ctx = fx.ctx();
     assert!(persist_current_session(&mut ctx).await.is_ok());
 }
@@ -673,7 +573,7 @@ async fn dispatch_routes_set_workflow_automation_inactive() {
 #[tokio::test]
 async fn dispatch_routes_resume_session_ephemeral() {
     let mut fx = Fixture::new();
-    fx.ephemeral = true;
+    fx.set_ephemeral(true);
     let cmd = AgentCommand::ResumeSession {
         id: None,
         session: "x".into(),

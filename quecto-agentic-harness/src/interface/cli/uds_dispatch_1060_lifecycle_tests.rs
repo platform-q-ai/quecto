@@ -1,6 +1,6 @@
 //! #1060 lifecycle regressions split out to keep dispatch coverage under file cap.
 
-use super::cov_tests::Fixture;
+use super::fixture_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;

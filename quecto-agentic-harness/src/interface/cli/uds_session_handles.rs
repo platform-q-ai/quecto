@@ -1,9 +1,9 @@
 //! What a dispatch loop needs from the sessions capability (#1970, #1971,
-//! #1973, #1974), as plain handles.
+//! #1972, #1973, #1974), as plain handles.
 //!
 //! The interface declares the runtime inputs one loop hands over and the
-//! store, state and controller handles it holds back; composition owns the
-//! graph between them and hands its builder in through
+//! store, state, use-case and controller handles it holds back; composition
+//! owns the graph between them and hands its builder in through
 //! [`crate::interface::cli::CliContext`] as a
 //! [`crate::interface::cli::SessionHandlesBuilder`], so no interface module
 //! names the composition layer, constructs a store, a use case or the
@@ -11,8 +11,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
+use crate::application::sessions::use_cases::SaveSession;
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
@@ -30,8 +32,23 @@ pub struct SessionLoopInputs {
     /// run): the persisted key a resumed or named session was admitted
     /// under, or the fresh chat key generated at startup.
     pub session_key: String,
+    /// A `--no-session` run (#1860): the save transaction is a no-op even
+    /// when a key was generated.
+    pub ephemeral: bool,
+    /// The system prompt the loop injects at the head of the live
+    /// conversation (empty when none); never persisted.
+    pub system_prompt: String,
     /// The loop agent's retention store, for collapsed-message recovery.
     pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// The agent's durable-prefix dirty latch (#1072) the save transaction
+    /// drains.
+    pub durable_prefix: Arc<DurablePrefixLatch>,
+    /// The bound workflow engine whose run the session records, if any.
+    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    /// The sub-agent registry whose rows the session records as history
+    /// (#1937), if the loop tracks one.
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 /// The handles one loop holds on the sessions capability.
@@ -40,8 +57,9 @@ pub struct SessionHandles {
     pub store: Arc<dyn SessionStore>,
     /// List saved sessions (#1861): the UDS `list_sessions` command.
     pub list_sessions: Arc<ListSessionsController>,
-    /// The one active session of the loop (#1971): typed identity and the
-    /// live-conversation read model every transport reads.
+    /// The one active session of the loop (#1971): typed identity, the
+    /// live-conversation read model every transport reads, and the
+    /// persistence state the save transaction moves.
     pub active_session: ActiveSessionHandle,
     /// Read conversation history (#1856): `get_messages` and its alias.
     pub read_history: Arc<ReadHistoryController>,
@@ -51,6 +69,8 @@ pub struct SessionHandles {
     pub export_report: Arc<ExportSessionReportController>,
     /// Synchronize a client transcript (#1857): `sync` on both transports.
     pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
+    /// Save current session (#1860): every persistence trigger of the loop.
+    pub save_session: Arc<SaveSession>,
 }
 
 impl SessionHandles {

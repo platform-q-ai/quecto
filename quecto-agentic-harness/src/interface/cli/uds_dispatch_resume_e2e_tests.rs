@@ -4,7 +4,7 @@ use crate::domain::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;
 
-use super::cov_tests::Fixture;
+use super::fixture_tests::Fixture;
 
 #[tokio::test]
 async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
@@ -197,9 +197,9 @@ async fn e2e_resume_restores_history_without_readopting_children() {
     );
     let workflow_state: crate::interface::shared::WorkflowStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(feature_workflow_engine()));
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.workflow_state = Some(workflow_state.clone());
         assert!(
             !super::handle_resume_session(
@@ -257,9 +257,9 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     )
     .await;
     let registry = new_registry();
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(
             !super::handle_resume_session(
                 &mut ctx,
@@ -422,9 +422,9 @@ async fn e2e_new_session_settles_the_departing_child_before_the_roster_is_replac
         child.entry.clone(),
     );
     let fleet = production_fleet(&registry);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet.clone());
         let switched = tokio::time::timeout(
             SWITCH_BOUND,
@@ -477,9 +477,9 @@ async fn e2e_resume_away_settles_the_departing_child_and_probes_no_legacy_socket
         child.entry.clone(),
     );
     let fleet = production_fleet(&registry);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet);
         let switched = tokio::time::timeout(
             SWITCH_BOUND,
@@ -522,9 +522,9 @@ async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settl
         SubagentEntry::new(std::path::PathBuf::from("/tmp/a.sock"), 0),
     );
     fx.messages.push(Message::user("kept"));
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet.fleet.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
         assert!(
@@ -557,9 +557,9 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
     live.launch_generation =
         Some(crate::infrastructure::processes::parent_control::next_launch_generation());
     registry.lock().unwrap().insert("live".into(), live);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
     assert_eq!(fx.session_key, "cli:test");
@@ -570,9 +570,9 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
         "record".into(),
         SubagentEntry::new(std::path::PathBuf::from("/tmp/record.sock"), 0),
     );
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
     assert_ne!(fx.session_key, "cli:test");

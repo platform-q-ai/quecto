@@ -1,5 +1,4 @@
-use super::cov_tests::Fixture;
-use super::persist_current_session;
+use super::fixture_tests::{Fixture, latch_durable_prefix_dirty, persist_current_session};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
@@ -18,7 +17,7 @@ async fn same_process_persist_then_prune_keeps_live_ordinals_durable_and_monoton
         persist_current_session(&mut ctx).await.unwrap();
         assert_eq!(ctx.messages[2].ordinal, Some(42));
         ctx.messages.remove(0);
-        ctx.durable_prefix_dirty = true;
+        latch_durable_prefix_dirty(&ctx);
         ctx.messages
             .push(Message::assistant("new-after-prune", vec![]));
         persist_current_session(&mut ctx).await.unwrap();

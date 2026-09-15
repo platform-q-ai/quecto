@@ -17,7 +17,9 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
-use crate::interface::cli::uds::dispatch_session_roster_tests::{list_handle, read_handles_over};
+use crate::interface::cli::uds::dispatch_session_roster_tests::{
+    list_handle, read_handles_over, save_handle_for,
+};
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -74,6 +76,7 @@ impl Fx {
             &self.session_key,
             &self.messages,
         );
+        let save_session = save_handle_for(&self.session_key);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -105,8 +108,7 @@ impl Fx {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }

@@ -390,7 +390,12 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
+    let roster =
+        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
 
     assert!(roster.is_empty());
     assert_eq!(
@@ -441,7 +446,12 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
+    let roster =
+        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
 
     assert!(roster.is_empty());
     assert_eq!(

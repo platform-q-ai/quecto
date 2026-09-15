@@ -16,7 +16,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain an event of type "agent_end"
 
-  @done
+  @done @issue-1972 @issue-1860
   Scenario: --system flag system prompt is not persisted in session history
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -410,7 +410,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the session "uds-workflow-load" should retain workflow "feature" with 2 completed steps
 
-  @done @issue-1586
+  @done @issue-1586 @issue-1972 @issue-1860
   Scenario: persist_session explicitly replaces a stale roster before process exit
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -422,7 +422,7 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "persist_session" with success true
     And the session for "uds-persist-barrier" should have no persisted subagent roster rows
 
-  @done
+  @done @issue-1972 @issue-1860
   Scenario: UDS mode with --no-session does not persist session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

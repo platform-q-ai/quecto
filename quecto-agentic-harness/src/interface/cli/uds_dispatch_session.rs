@@ -4,9 +4,9 @@ use super::super::uds_session::{
 use super::AgentEvent;
 use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
-    remove_injected_system_prompt,
 };
-use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentRestoreReason};
+use crate::application::sessions::dto::SaveTrigger;
+use crate::domain::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::session_identity::SessionIdentity;
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
@@ -39,43 +39,6 @@ pub(super) fn set_workflow_run(
             ctx.session.bump_visible_generation();
         }
     }
-}
-
-pub(crate) fn snapshot_subagent_roster(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-) -> Vec<PersistedSubagentRosterEntry> {
-    snapshot_subagent_roster_with_restore_reason(registry, SubagentRestoreReason::LegacyUnspecified)
-}
-
-pub(crate) fn snapshot_subagent_roster_with_restore_reason(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    restore_reason: SubagentRestoreReason,
-) -> Vec<PersistedSubagentRosterEntry> {
-    // Killing exit preserves conversation history, not an operational child roster.
-    if restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped {
-        return Vec::new();
-    }
-    let Some(registry) = registry else {
-        return Vec::new();
-    };
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let mut roster: Vec<_> = entries
-        .iter()
-        .map(|(key, entry)| PersistedSubagentRosterEntry {
-            agent_uuid: entry.agent_uuid.as_str().to_string(),
-            display_name: entry.effective_display_name(key).to_string(),
-            session_key: entry.agent_uuid.as_str().to_string(),
-            liveness: entry.persisted_liveness,
-            restore_reason,
-            parent_id: entry.parent_id.clone(),
-            read_only: entry.read_only,
-            status: Some(entry.status.to_wire_str().to_string()),
-            delivered_message_ordinal: entry.delivered_message_ordinal,
-            pending_message_reports: entry.pending_message_reports.clone(),
-        })
-        .collect();
-    roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
-    roster
 }
 
 /// Log what a restored session's persisted rows are: history only (#1937).
@@ -244,89 +207,6 @@ fn broadcast_roster_reset(ctx: &DispatchCtx<'_>) {
     }
 }
 
-pub(super) async fn persist_current_session(
-    ctx: &mut DispatchCtx<'_>,
-) -> Result<(), crate::domain::error::DomainError> {
-    persist_current_session_with_options(ctx, SubagentRestoreReason::LegacyUnspecified, false).await
-}
-
-pub(super) async fn persist_current_session_with_restore_reason(
-    ctx: &mut DispatchCtx<'_>,
-    restore_reason: SubagentRestoreReason,
-) -> Result<(), crate::domain::error::DomainError> {
-    // Explicit detach persistence can cancel a prior killing request; routine
-    // saves cannot. Keep this intent in memory, not obsolete historical rows.
-    ctx.session.killing_exit = restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped;
-    persist_current_session_with_options(ctx, restore_reason, true).await
-}
-
-async fn persist_current_session_with_options(
-    ctx: &mut DispatchCtx<'_>,
-    restore_reason: SubagentRestoreReason,
-    force_full_save: bool,
-) -> Result<(), crate::domain::error::DomainError> {
-    if ctx.ephemeral || ctx.session_key.is_empty() {
-        return Ok(());
-    }
-    remove_injected_system_prompt(ctx.messages, ctx.system_prompt);
-    crate::infrastructure::persistence::session_store::session_store_ordinals::assign_missing_ordinals_in_place(
-        ctx.messages,
-    );
-    // #1072/#1073 review: drain the agent's durable-prefix dirty latch HERE,
-    // at the single sink that acts on it, instead of at every agent-running
-    // dispatch site. The latch is sticky and outcome-independent (Success,
-    // Error, Cancelled), so any run that mutated pre-existing history —
-    // including drained steer follow-ups, workflow auto-continue turns and
-    // coalesced sub-agent notes — is reconciled by the next persist, and a
-    // future dispatch path cannot forget to propagate it.
-    ctx.durable_prefix_dirty |= ctx.agent.take_durable_prefix_dirty();
-    if ctx.messages.len() < ctx.last_persisted_message_index {
-        ctx.last_persisted_message_index = 0;
-    }
-    let workflow_run = ctx
-        .workflow_state
-        .as_ref()
-        .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
-    let restore_reason = match restore_reason {
-        SubagentRestoreReason::Unknown => SubagentRestoreReason::LegacyUnspecified,
-        reason => reason,
-    };
-    let restore_reason = if ctx.session.killing_exit {
-        SubagentRestoreReason::OrdinaryTuiExitStopped
-    } else {
-        restore_reason
-    };
-    let roster =
-        snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
-    let identity = ctx.sessions.active_session.read().await.identity().clone();
-    let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
-        ctx.session_store
-            .save(&Session {
-                key: identity,
-                messages: ctx.messages.to_vec(),
-                workflow_run,
-                subagent_roster: roster,
-            })
-            .await
-    } else {
-        ctx.session_store
-            .save_clean_delta(
-                &identity,
-                ctx.messages,
-                ctx.last_persisted_message_index,
-                workflow_run,
-            )
-            .await
-    };
-    let persisted_len = ctx.messages.len();
-    inject_system_prompt(ctx.messages, ctx.system_prompt);
-    if result.is_ok() {
-        ctx.last_persisted_message_index = persisted_len;
-        ctx.durable_prefix_dirty = false;
-    }
-    result
-}
-
 pub(super) async fn handle_new_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -349,7 +229,11 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    if let Err(err) = persist_current_session(ctx).await {
+    if let Err(err) = ctx
+        .save_session
+        .save(ctx.messages, SaveTrigger::Routine)
+        .await
+    {
         let ev = AgentEvent::err(
             id,
             type_name,
@@ -366,7 +250,11 @@ pub(super) async fn handle_new_session(
     let old_identity = ctx.sessions.active_session.read().await.identity().clone();
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
-    ctx.last_persisted_message_index = 0;
+    ctx.sessions
+        .active_session
+        .write()
+        .await
+        .set_persisted_watermark(0);
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     broadcast_roster_reset(ctx);
@@ -466,7 +354,11 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    if let Err(err) = persist_current_session(ctx).await {
+    if let Err(err) = ctx
+        .save_session
+        .save(ctx.messages, SaveTrigger::Routine)
+        .await
+    {
         let ev = AgentEvent::err(
             id,
             type_name,
@@ -528,7 +420,12 @@ pub(super) async fn handle_resume_session(
     let workflow_run = loaded.workflow_run;
     broadcast_roster_reset(ctx);
     *ctx.messages = loaded.messages;
-    ctx.last_persisted_message_index = ctx.messages.len();
+    let loaded_len = ctx.messages.len();
+    ctx.sessions
+        .active_session
+        .write()
+        .await
+        .set_persisted_watermark(loaded_len);
     set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
     sync_message_count(ctx);
@@ -570,9 +467,12 @@ pub(super) async fn handle_clear_history(
     }
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
-    let advance = ctx.sessions.active_session.write().await.clear();
+    let advance = {
+        let mut state = ctx.sessions.active_session.write().await;
+        state.set_persisted_watermark(0);
+        state.clear()
+    };
     emit_ledger_advanced(ctx, advance).await;
-    ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
@@ -582,7 +482,11 @@ pub(super) async fn handle_clear_history(
             tracing::warn!("clear_history: failed to clear spill store: {e}");
         }
     }
-    if let Err(err) = persist_current_session(ctx).await {
+    if let Err(err) = ctx
+        .save_session
+        .save(ctx.messages, SaveTrigger::Routine)
+        .await
+    {
         let ev = AgentEvent::err(id, tn, format!("failed to save cleared session: {err}"));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
@@ -623,7 +527,6 @@ pub(super) async fn handle_rewind_to(
     }
     sync_message_count(ctx);
 
-    ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.discard_pending();
     // Reset the stable-ref ledger to the truncated conversation so a
@@ -632,6 +535,7 @@ pub(super) async fn handle_rewind_to(
     // recallable) (#1060 review r4).
     let advance = {
         let mut state = ctx.sessions.active_session.write().await;
+        state.set_persisted_watermark(0);
         super::super::uds_snapshots::reset_to(&mut state, ctx.messages)
     };
     emit_ledger_advanced(ctx, advance).await;
@@ -643,7 +547,11 @@ pub(super) async fn handle_rewind_to(
             tracing::warn!("rewind_to: failed to clear spill store: {e}");
         }
     }
-    if let Err(err) = persist_current_session(ctx).await {
+    if let Err(err) = ctx
+        .save_session
+        .save(ctx.messages, SaveTrigger::Routine)
+        .await
+    {
         let ev = AgentEvent::err(id, tn, format!("failed to save rewound session: {err}"));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;

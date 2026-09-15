@@ -21,7 +21,7 @@ pub struct FileSessionStore {
 #[path = "session_store_list.rs"]
 mod session_store_list;
 #[path = "session_store_ordinals.rs"]
-pub(crate) mod session_store_ordinals;
+mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};

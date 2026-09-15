@@ -1,3 +1,4 @@
+use super::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
@@ -123,11 +124,8 @@ pub struct AgentLoopImpl {
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
-    /// existing history (in-place stub demotion, tool-result collapse, or a
-    /// physical drop). Outcome-independent: it stays set across an Error or
-    /// Cancelled turn so persistence can still reconcile. Consumed via
-    /// [`Self::take_durable_prefix_dirty`].
-    durable_prefix_dirty: std::sync::atomic::AtomicBool,
+    /// existing history; the session save transaction consumes it.
+    durable_prefix_dirty: Arc<DurablePrefixLatch>,
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
@@ -183,7 +181,7 @@ impl AgentLoopImpl {
             effort: config.effort,
             default_effort: config.effort,
             audit_log: config.audit_log,
-            durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
+            durable_prefix_dirty: DurablePrefixLatch::shared(),
             context_manager,
             pending_tool_policy_requests: std::sync::Mutex::new(Vec::new()),
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
@@ -192,21 +190,23 @@ impl AgentLoopImpl {
             tool_policy_persistence: None,
         }
     }
-    /// Read-and-clear the durable-prefix dirty latch (#1072).
-    ///
-    /// True when any pruning pass since the last take mutated already-existing
-    /// history — including in-place stub demotion, which changes message
-    /// CONTENT while every message id stays the same. Callers on the UDS
-    /// dispatch path read this after EVERY prompt outcome (Success, Error,
-    /// Cancelled) so persistence reconciles regardless of how the run ended.
+    /// Read-and-clear the durable-prefix dirty latch (#1072): true when a
+    /// pruning pass since the last take mutated existing history (stubs too).
     pub fn take_durable_prefix_dirty(&self) -> bool {
-        self.durable_prefix_dirty
-            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        self.durable_prefix_dirty.take()
     }
     /// Latch the durable-prefix dirty flag (called from the pruning pass).
     pub(super) fn latch_durable_prefix_dirty(&self) {
-        self.durable_prefix_dirty
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.durable_prefix_dirty.latch();
+    }
+    /// The latch the session save transaction drains (D5 #1972).
+    pub fn durable_prefix_latch(&self) -> Arc<DurablePrefixLatch> {
+        self.durable_prefix_dirty.clone()
+    }
+    /// Share a latch created elsewhere (a rig that swaps its agent).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn adopt_durable_prefix_latch(&mut self, latch: Arc<DurablePrefixLatch>) {
+        self.durable_prefix_dirty = latch;
     }
     /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {

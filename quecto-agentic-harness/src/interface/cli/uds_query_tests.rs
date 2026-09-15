@@ -157,6 +157,10 @@ impl Fx {
             self.session.context_tokens(),
             self.agent.max_context_tokens(),
         );
+        let save_session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
         crate::interface::cli::uds::DispatchCtx {
             execution_state: self.execution_state.clone(),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -193,8 +197,7 @@ impl Fx {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }

@@ -5,9 +5,11 @@
 //! it directly, the loop publishes into it, and the interface only
 //! invokes and presents.
 //!
-//! D5 extends this same object with persistence state (durable-prefix
-//! latch, persisted watermark, killing-exit state); no second owner of
-//! conversation or identity state may appear beside it.
+//! D5 (#1972) extends this same object with its persistence state — the
+//! injected-system-prompt marker, the persisted watermark, the sticky
+//! durable-prefix latch and the killing-exit state — which only the save
+//! transaction moves; no second owner of conversation, identity or
+//! persistence state may appear beside it.
 use std::sync::Arc;
 
 use super::conversation_ledger::{ConversationLedger, LedgerAdvance};
@@ -21,6 +23,25 @@ pub type ActiveSessionHandle = Arc<tokio::sync::RwLock<ActiveSessionState>>;
 pub struct ActiveSessionState {
     identity: SessionIdentity,
     conversation: ConversationLedger,
+    persistence: PersistenceState,
+}
+
+/// What the save transaction keeps between saves (#1860).
+#[derive(Debug, Default)]
+struct PersistenceState {
+    /// The system prompt the loop injects at the head of the live
+    /// conversation (empty when none): never persisted, re-injected after
+    /// every save.
+    injected_system_prompt: String,
+    /// How many messages of the conversation are durable: the prefix a
+    /// clean delta may trust.
+    persisted_watermark: usize,
+    /// The agent changed history that existed before its latest run; sticky
+    /// until a save succeeds.
+    durable_prefix_dirty: bool,
+    /// An ordinary (killing) exit was requested: saves record no operational
+    /// child roster until the loop leaves or the session switches.
+    killing_exit: bool,
 }
 
 impl ActiveSessionState {
@@ -29,11 +50,54 @@ impl ActiveSessionState {
         Self {
             identity,
             conversation: ConversationLedger::default(),
+            persistence: PersistenceState::default(),
         }
     }
 
     pub fn identity(&self) -> &SessionIdentity {
         &self.identity
+    }
+
+    /// The prompt the loop injects into the live conversation; the save
+    /// transaction strips and re-injects exactly this text.
+    pub fn injected_system_prompt(&self) -> &str {
+        &self.persistence.injected_system_prompt
+    }
+
+    pub fn set_injected_system_prompt(&mut self, prompt: impl Into<String>) {
+        self.persistence.injected_system_prompt = prompt.into();
+    }
+
+    /// How many leading messages the store already holds.
+    pub fn persisted_watermark(&self) -> usize {
+        self.persistence.persisted_watermark
+    }
+
+    pub fn set_persisted_watermark(&mut self, persisted: usize) {
+        self.persistence.persisted_watermark = persisted;
+    }
+
+    pub fn durable_prefix_dirty(&self) -> bool {
+        self.persistence.durable_prefix_dirty
+    }
+
+    /// Record a durable-prefix change the next save must reconcile.
+    pub fn latch_durable_prefix_dirty(&mut self) {
+        self.persistence.durable_prefix_dirty = true;
+    }
+
+    /// The store holds the whole conversation again.
+    pub fn clear_durable_prefix_dirty(&mut self) {
+        self.persistence.durable_prefix_dirty = false;
+    }
+
+    pub fn killing_exit(&self) -> bool {
+        self.persistence.killing_exit
+    }
+
+    /// Arm (or, on an explicit detach, cancel) the killing exit.
+    pub fn set_killing_exit(&mut self, killing: bool) {
+        self.persistence.killing_exit = killing;
     }
 
     pub fn conversation(&self) -> &ConversationLedger {
@@ -65,11 +129,17 @@ impl ActiveSessionState {
     /// Switch the session this state stands for: its identity and the
     /// retention store paired with it, in one step, right after
     /// [`Self::clear`] (which already invalidated every deferred recall).
+    /// A different identity drops the killing exit armed for the departing
+    /// session; the persisted watermark is the caller's to set from what it
+    /// loaded or cleared.
     pub fn switch_identity(
         &mut self,
         identity: SessionIdentity,
         spill_store: Option<Arc<dyn ContextSpillStore>>,
     ) {
+        if self.identity != identity {
+            self.persistence.killing_exit = false;
+        }
         self.identity = identity;
         self.conversation
             .replace_spill_store_after_clear(spill_store);
@@ -122,6 +192,7 @@ impl std::fmt::Debug for ActiveSessionState {
             .field("live_messages", &self.conversation.live_messages().len())
             .field("epoch", &self.conversation.epoch())
             .field("rev", &self.conversation.rev())
+            .field("persistence", &self.persistence)
             .finish_non_exhaustive()
     }
 }

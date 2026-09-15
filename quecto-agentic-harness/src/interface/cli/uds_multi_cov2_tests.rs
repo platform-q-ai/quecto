@@ -113,7 +113,6 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         broadcast_tx: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
         parent_control: None,
         teardown_graph: None,
     }
@@ -142,12 +141,10 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds_session_handles::SessionLoopInputs {
-                    base_dir: dir.path().to_path_buf(),
-                    store: None,
-                    session_key: "cli:cov".into(),
-                    spill_store: None,
-                },
+                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
             );
             multi_client_loop(multi_args(dir.path()), listener, &store).await
         })
@@ -292,6 +289,8 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let mut messages = vec![Message::user("seed")];
     let mut session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
@@ -331,8 +330,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
         fleet_teardown: None,
         list_sessions: list_handle(dir.path()),
     };
