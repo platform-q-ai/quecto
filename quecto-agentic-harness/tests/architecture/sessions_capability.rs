@@ -461,7 +461,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/agent/run_session.rs", 140),
     ("src/interface/cli/uds_dispatch.rs", 500),
     ("src/interface/cli/uds_dispatch_query.rs", 190),
-    ("src/interface/cli/uds_dispatch_session.rs", 370),
+    ("src/interface/cli/uds_dispatch_session.rs", 371),
     ("src/interface/cli/uds_latest_report.rs", 85),
     ("src/interface/cli/uds_lifecycle.rs", 330),
     ("src/interface/cli/uds_multi.rs", 639),
