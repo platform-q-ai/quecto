@@ -290,10 +290,11 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     let _active_guard = ActiveGuard(active.clone(), exec_id.clone());
     {
         let (ws, jobs, active) = (workspace.clone(), jobs.clone(), active.clone());
+        let retained_dirs = cfg.retention.artifact_dirs;
         // read_dir plus an unbounded number of remove_dir_all calls must not
         // run on the async worker thread.
         let _ = tokio::task::spawn_blocking(move || {
-            prune_artifact_dirs(&ws, &jobs, &active, &artifact_owner)
+            prune_artifact_dirs(&ws, &jobs, &active, &artifact_owner, retained_dirs)
         })
         .await;
     }
@@ -343,7 +344,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                     true,
                 );
             }
-            evict_finished_jobs(&mut registry);
+            evict_finished_jobs(&mut registry, cfg.retention.jobs);
             registry.insert(job_id.clone(), state.clone());
         }
         let spec_bg = spec.clone();

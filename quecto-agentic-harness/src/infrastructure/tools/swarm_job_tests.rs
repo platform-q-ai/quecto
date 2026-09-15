@@ -3,9 +3,25 @@ use std::sync::Arc;
 use crate::application::tools::ports::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::swarm::{SwarmConfig, SwarmTool};
+use super::swarm::{Retention, SwarmConfig, SwarmTool};
 
 fn tool(dir: &std::path::Path) -> SwarmTool {
+    tool_retaining(dir, Retention::default())
+}
+
+/// Every swarm op is one `python3` board process (~0.4 s), so the retention
+/// tests run with a low ceiling instead of the production 32: the eviction
+/// and pruning code paths are the same, only the number of runs it takes to
+/// cross the ceiling changes.
+const TEST_RETENTION: Retention = Retention {
+    jobs: 4,
+    artifact_dirs: 4,
+};
+/// Runs needed to pass [`TEST_RETENTION`] with the same margin the
+/// production-ceiling tests used (40 runs against 32).
+const RUNS_PAST_CEILING: usize = 6;
+
+fn tool_retaining(dir: &std::path::Path, retention: Retention) -> SwarmTool {
     super::swarm_test_support::tool(
         Arc::new(dir.to_path_buf()),
         Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
@@ -14,9 +30,22 @@ fn tool(dir: &std::path::Path) -> SwarmTool {
             max_foreground_seconds: 2,
             default_max_output_bytes: 8,
             max_output_bytes: 32,
+            retention,
             ..Default::default()
         },
     )
+}
+
+#[test]
+fn production_retention_ceilings_are_the_defaults() {
+    assert_eq!(
+        Retention::default(),
+        Retention {
+            jobs: 32,
+            artifact_dirs: 32
+        }
+    );
+    assert_eq!(SwarmConfig::default().retention, Retention::default());
 }
 
 #[tokio::test]
@@ -66,9 +95,9 @@ async fn rewritten_artifacts_are_flagged_on_output() {
 #[tokio::test]
 async fn finished_jobs_are_evicted_once_the_retention_ceiling_is_reached() {
     let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
+    let lab = tool_retaining(tmp.path(), TEST_RETENTION);
     let mut first = String::new();
-    for i in 0..40 {
+    for i in 0..RUNS_PAST_CEILING {
         let started = lab
             .execute(r#"{"op":"run","code":"pass","background":true}"#)
             .await
@@ -107,14 +136,15 @@ async fn old_artifact_directories_are_pruned() {
     // Nothing else deletes these, so without pruning a long session grows the
     // workspace by up to max_output_bytes per call, permanently.
     let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    for _ in 0..40 {
+    let lab = tool_retaining(tmp.path(), TEST_RETENTION);
+    for _ in 0..RUNS_PAST_CEILING {
         lab.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
     }
     let root = tmp.path().join(".quecto/swarm");
     let dirs = std::fs::read_dir(&root).unwrap().flatten().count();
+    // The ceiling plus the run in flight, which pruning never touches.
     assert!(
-        dirs <= 33,
+        dirs <= TEST_RETENTION.artifact_dirs + 1,
         "expected pruning to bound artifact directories, found {dirs}"
     );
 }
@@ -406,7 +436,7 @@ async fn concurrent_foreground_run_keeps_its_artifacts_while_others_prune() {
     // Foreground runs have no job-registry entry, so pruning used to delete
     // their artifact directory mid-run and the run then failed hard on ENOENT.
     let tmp = tempfile::tempdir().unwrap();
-    let lab = Arc::new(tool(tmp.path()));
+    let lab = Arc::new(tool_retaining(tmp.path(), TEST_RETENTION));
     let slow = {
         let lab = lab.clone();
         tokio::spawn(async move {
@@ -415,7 +445,7 @@ async fn concurrent_foreground_run_keeps_its_artifacts_while_others_prune() {
         })
     };
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    for _ in 0..40 {
+    for _ in 0..RUNS_PAST_CEILING {
         lab.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
     }
     let result = slow.await.unwrap().expect("slow run should not error");
@@ -478,7 +508,7 @@ async fn cancel_during_result_build_is_not_overwritten() {
 #[tokio::test]
 async fn another_member_cannot_prune_a_live_foreground_result() {
     let tmp = tempfile::tempdir().unwrap();
-    let fast = tool(tmp.path());
+    let fast = tool_retaining(tmp.path(), TEST_RETENTION);
     let worker = super::swarm_bridge::SwarmContext {
         checkout: tmp.path().to_path_buf(),
         member: "worker".into(),
@@ -513,7 +543,7 @@ async fn another_member_cannot_prune_a_live_foreground_result() {
     })
     .await
     .unwrap();
-    for _ in 0..40 {
+    for _ in 0..RUNS_PAST_CEILING {
         fast.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
     }
     std::fs::write(tmp.path().join("release"), "").unwrap();
