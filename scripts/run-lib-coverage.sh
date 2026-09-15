@@ -67,16 +67,29 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
     exit 0
 fi
 
-# One line per lib test binary: <package name>\t<manifest dir>\t<executable>
+# One line per lib test binary: <package name>\t<manifest dir>\t<executable>.
+# Executables this build did not produce are removed from the deps dir first:
+# `cargo llvm-cov report` feeds every executable under the profile dir to
+# llvm-cov, so in this persistent target a superseded `quecto-<old hash>`
+# would report its functions at zero after every source change.
 python3 - "$SCRATCH/build.json" <<'PY' >"$SCRATCH/libs.tsv"
 import json, os, sys
+artifacts = []
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.strip()
     if not line.startswith("{"):
         continue
     msg = json.loads(line)
-    if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
-        continue
+    if msg.get("reason") == "compiler-artifact" and msg.get("executable"):
+        artifacts.append(msg)
+produced = {m["executable"] for m in artifacts}
+for deps_dir in {os.path.dirname(e) for e in produced}:
+    for name in os.listdir(deps_dir):
+        path = os.path.join(deps_dir, name)
+        if "." not in name and os.path.isfile(path) and os.access(path, os.X_OK) and path not in produced:
+            os.remove(path)
+            print(f"removed stale instrumented executable {path}", file=sys.stderr)
+for msg in artifacts:
     kind = msg["target"]["kind"]
     if msg["profile"]["test"] and ("lib" in kind or "rlib" in kind):
         pkg = os.path.basename(os.path.dirname(msg["manifest_path"]))

@@ -27,7 +27,7 @@ SUITE_NAME="bdd"
 PACKAGE="quecto-agentic-harness"
 TEST_TARGET="bdd"
 FEATURES="quecto-agentic-harness/test-support"
-SHARDS="12"
+SHARDS="8"
 TIMEOUT_PER_SHARD="5m"
 TAG=""
 REAL_LLM="0"
@@ -196,37 +196,44 @@ fi
 # root as cwd; the cucumber runners read `tests/features` relative to it) and
 # the package's bin executables (cargo exports `CARGO_BIN_EXE_<name>` for
 # them; the e2e steps spawn `quecto` through that variable).
-mapfile -t RESOLVED < <(python3 - "$BUILD_JSON" "$TEST_TARGET" <<'PY'
+#
+# The resolver also removes executables this build did not produce from the
+# deps dir. `cargo llvm-cov report` feeds every executable under the profile
+# dir to llvm-cov with no age filter, so in the persistent coverage target a
+# superseded `bdd-<old hash>` would report its functions at zero and drag the
+# threshold down after every source change (cargo-llvm-cov normally avoids
+# this by cleaning the workspace packages before each run).
+RESOLVED_FILE="$TMP_DIR/resolved.txt"
+python3 - "$BUILD_JSON" "$TEST_TARGET" "$COVERAGE" >"$RESOLVED_FILE" <<'PY'
 import json, os, sys
-build_json, test_target = sys.argv[1], sys.argv[2]
-test_exe = manifest = None
-bins = []
+build_json, test_target, coverage = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+artifacts = []
 for line in open(build_json, encoding="utf-8"):
     line = line.strip()
     if not line.startswith("{"):
         continue
     msg = json.loads(line)
-    if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
-        continue
-    target = msg["target"]
-    if "test" in target["kind"] and target["name"] == test_target:
-        test_exe, manifest = msg["executable"], msg["manifest_path"]
-if test_exe is None:
+    if msg.get("reason") == "compiler-artifact" and msg.get("executable"):
+        artifacts.append(msg)
+tests = [m for m in artifacts if "test" in m["target"]["kind"] and m["target"]["name"] == test_target]
+if not tests:
     sys.exit(f"no test executable named {test_target!r} in {build_json}")
-for line in open(build_json, encoding="utf-8"):
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    msg = json.loads(line)
-    if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
-        continue
-    if msg["manifest_path"] == manifest and "bin" in msg["target"]["kind"]:
-        bins.append(f"CARGO_BIN_EXE_{msg['target']['name']}={msg['executable']}")
+test_exe, manifest = tests[0]["executable"], tests[0]["manifest_path"]
+bins = [f"CARGO_BIN_EXE_{m['target']['name']}={m['executable']}"
+        for m in artifacts if m["manifest_path"] == manifest and "bin" in m["target"]["kind"]]
+if coverage:
+    produced = {m["executable"] for m in artifacts}
+    deps_dir = os.path.dirname(test_exe)
+    for name in os.listdir(deps_dir):
+        path = os.path.join(deps_dir, name)
+        if "." not in name and os.path.isfile(path) and os.access(path, os.X_OK) and path not in produced:
+            os.remove(path)
+            print(f"removed stale instrumented executable {path}", file=sys.stderr)
 print(test_exe)
 print(os.path.dirname(manifest))
 print("\n".join(bins))
 PY
-)
+mapfile -t RESOLVED <"$RESOLVED_FILE"
 TEST_EXE="${RESOLVED[0]}"
 PACKAGE_DIR="${RESOLVED[1]}"
 BIN_ENV=("${RESOLVED[@]:2}")

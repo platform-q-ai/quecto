@@ -740,9 +740,10 @@ async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
     assert_eq!(permit.maximum_cooldown_ms(), 10_000);
     let (receipt_ms, wall) = permit.receipt_clock();
     assert!(wall > std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000));
-    // The probe acquire below waits this cooldown out for real, so keep it
-    // short: the authority's handling is the same at any length.
-    let cooldown_ms = 300;
+    // The probe acquire below waits this cooldown out for real; 1 s keeps
+    // that wait genuinely exercised (the 200 ms attempt deadline and two
+    // admin round-trips come first) without the 5 s the test used to spend.
+    let cooldown_ms = 1_000;
     permit.feedback(ThrottleFeedback::Until(receipt_ms + cooldown_ms));
     permit.feedback(ThrottleFeedback::NoHint { jitter: 0 });
     let admin = AdminConnection::connect(&server.directory().admin_socket())
