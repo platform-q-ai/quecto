@@ -227,7 +227,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
 | `--disable-tool` | No | Disable a registered tool before the session starts (repeatable). Disabled tools remain in the descriptor catalogue for policy/UI callers, but are hidden from model-visible tool definitions and reject execution. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Every named tool is denied for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/subagents.md)). |
-| `--config` | No | Override config file path |
+| `--config` | No | Override config file path (else `./config.json` in the working directory, else `<base_dir>/config.json`) |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -357,6 +357,35 @@ created on demand:
   config.json     # optional — defaults apply when absent
   workspace/       # agent working directory
 ```
+
+### Configuration discovery and precedence
+
+Every `quecto` command loads exactly one configuration file, chosen in this
+order (#1966):
+
+1. `--config <path>` — an explicit selection always wins; the file must exist.
+2. `./config.json` — a `config.json` directly in the process working directory.
+   Only the working directory itself is probed, never its parents.
+3. `<base_dir>/config.json` — the global file (`~/.quecto/config.json`, or
+   `$QUECTO_BASE_DIR/config.json`). Absent means defaults apply.
+
+Files are selected, not merged: a local `config.json` fully replaces the global
+one for that run. Only the *absence* of `./config.json` falls through to the
+global file — a local file that is present but invalid JSON, unreadable, or not
+a regular file (a directory, a dangling symlink) is reported as an error naming
+the path, never silently skipped. `quecto status` prints which file was
+selected.
+
+Launching quecto inside a directory therefore loads that directory's
+`config.json`, including any providers, tools, or container settings it
+declares. Review a checked-out project's `config.json` before running quecto in
+it, exactly as you would review its scripts. Locally spawned subagents inherit
+the parent's working directory and so discover the same file; container
+subagents are handed the parent's selected file explicitly.
+
+This is distinct from the repo-local `.quecto/config.json`, which contributes
+only container definitions and is trust-gated (see
+[Container runtimes](../docs/container-runtimes.md)).
 
 ### `quecto help` — Show usage
 

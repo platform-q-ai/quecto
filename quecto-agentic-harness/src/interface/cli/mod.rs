@@ -220,6 +220,7 @@ pub mod uds_turn_accounting;
 pub mod uds_wire;
 mod uds_workflow_nudge;
 
+use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use std::path::PathBuf;
 
 // Re-export public types for external consumers.
@@ -317,11 +318,18 @@ pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::Re
 pub type FreshSessionIdentityBuilder =
     fn() -> std::sync::Arc<dyn crate::application::sessions::ports::FreshSessionIdentityGenerator>;
 
+/// Composition's builder of the configuration-selection use case (#1966):
+/// which one file a run loads its configuration from. Injected through the
+/// CLI context; the interface never probes the filesystem for a config.
+pub type ConfigSelectionBuilder =
+    fn() -> std::sync::Arc<crate::application::configuration::use_cases::SelectConfig>;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
     pub base_dir: Option<PathBuf>,
-    /// Override config file path (default: <base_dir>/config.json).
+    /// Explicit `--config` override; otherwise `./config.json` in the working
+    /// directory, then `<base_dir>/config.json` (#1966).
     pub config_path: Option<PathBuf>,
     /// Pre-loaded stdin data for testing interactive commands.
     pub stdin_data: Option<String>,
@@ -357,14 +365,29 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
     /// chat run refuses to start without it.
     pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
+    /// Composition's configuration-selection builder (#1966). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; any command
+    /// that loads configuration refuses to run without it.
+    pub config_selection: Option<ConfigSelectionBuilder>,
 }
 
 impl CliContext {
-    /// Resolve the config file path: explicit override > base_dir/config.json.
-    pub(crate) fn config_path(&self) -> PathBuf {
-        self.config_path
-            .clone()
-            .unwrap_or_else(|| self.base_dir().join("config.json"))
+    /// Select the config file (#1966): explicit override > `./config.json` in
+    /// the working directory > `<base_dir>/config.json`. A local file that is
+    /// present but unusable is an error, never a fallback.
+    pub(crate) fn config_path(&self) -> Result<PathBuf, String> {
+        let Some(select_config) = self.config_selection else {
+            return Err("configuration selection capability not composed".to_string());
+        };
+        let working_directory = self.cwd.clone().or_else(|| std::env::current_dir().ok());
+        select_config()
+            .execute(ConfigSelectionRequest {
+                explicit: self.config_path.clone(),
+                working_directory,
+                global: self.base_dir().join("config.json"),
+            })
+            .map(ConfigSelection::into_path)
+            .map_err(|error| error.to_string())
     }
 
     /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
@@ -455,6 +478,7 @@ pub struct CliComposition {
     pub sessions: SessionHandlesBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
+    pub config_selection: ConfigSelectionBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -477,6 +501,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         sessions: Some(composition.sessions),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
+        config_selection: Some(composition.config_selection),
         ..Default::default()
     };
 
@@ -691,9 +716,8 @@ fn help_text(out: &mut String) {
     out.push_str("\nWhen run with no arguments, quecto enters the setup and configuration REPL.\n");
     out.push_str("  Use `quecto agent` or `quecto-tui` for agent operation.\n");
     out.push_str("\nGlobal options:\n");
-    out.push_str(
-        "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
-    );
+    out.push_str("  --config <path>  Override config file path (default: ./config.json in the\n");
+    out.push_str("                   working directory, else <base_dir>/config.json)\n");
     out.push_str("\nCommands:\n");
     out.push_str("  admission-broker run|status|reset\n");
     out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");

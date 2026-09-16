@@ -30,6 +30,7 @@ fn test_composition() -> CliComposition {
         sessions: crate::composition::sessions::build_session_handles,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
+        config_selection: crate::composition::configuration::build_select_config,
     }
 }
 
@@ -115,5 +116,61 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
     assert!(
         hints.iter().all(|line| line.is_object()),
         "every emitted line is a JSON event: {hints:?}"
+    );
+}
+
+/// The interface never probes for a config itself (#1966): without
+/// composition's selection builder a config-loading command refuses to run
+/// rather than quietly reading the global file.
+#[test]
+fn config_loading_commands_refuse_to_run_without_the_selection_capability() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("status"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr
+            .contains("configuration selection capability not composed"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// The composed context selects `./config.json` from the hermetic cwd and
+/// reports it, ahead of the base directory's file.
+#[test]
+fn composed_context_prefers_the_working_directory_config() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"agents":{"defaults":{"model":"global-model"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("config.json"),
+        r#"{"agents":{"defaults":{"model":"local-model"}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        cwd: Some(cwd.clone()),
+        config_selection: Some(crate::composition::configuration::build_select_config),
+        ..Default::default()
+    };
+    let out = run_with_output(args("status"), &ctx);
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert!(
+        out.stdout
+            .contains(&format!("Config:    {}", cwd.join("config.json").display()))
+    );
+    assert!(
+        out.stdout.contains("Model:     local-model"),
+        "{}",
+        out.stdout
     );
 }

@@ -243,7 +243,13 @@ pub(crate) fn cmd_agent(
     };
 
     let base_dir = ctx.base_dir();
-    let config_path = ctx.config_path();
+    let config_path = match ctx.config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
     let build = match build_agent_from_config(
         &base_dir,
         &config_path,
@@ -550,7 +556,13 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
 
     let base_dir = ctx.base_dir();
-    let config_path = ctx.config_path();
+    let config_path = match ctx.config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
     // Create the broadcast channel early so the WorkflowTool emitter can
     // send workflow_state events from the moment it is constructed (#598).
     let workflow_available = flags.uds_mode && !flags.workflow_disabled;

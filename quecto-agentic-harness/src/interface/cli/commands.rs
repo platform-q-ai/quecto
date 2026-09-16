@@ -2,7 +2,13 @@ use super::{CliContext, explicit_config_missing};
 use crate::infrastructure::config::Config;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
-    let config_path = ctx.config_path();
+    let config_path = match ctx.config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
 
     stdout.push_str("quecto Status\n");
     stdout.push_str(&format!("  Config:    {}\n", config_path.display()));

@@ -19,6 +19,7 @@ fn leading_config_dispatches_to_following_agent_subcommand() {
         base_dir: Some(base.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
 

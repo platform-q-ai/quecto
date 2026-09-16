@@ -247,6 +247,7 @@ fn test_agent_config_flag_loads_custom_path() {
         config_path: Some(cfg.clone()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let args = vec![
@@ -273,6 +274,7 @@ fn test_agent_config_flag_missing_value() {
         base_dir: Some(tmp.path().into()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(
@@ -290,6 +292,7 @@ fn test_agent_config_flag_nonexistent_path() {
         base_dir: Some(tmp.path().into()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let args = vec![

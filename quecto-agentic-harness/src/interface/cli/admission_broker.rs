@@ -19,7 +19,14 @@ pub(crate) fn cmd_admission_broker(
         return 2;
     };
     let base_dir = ctx.base_dir();
-    let config = match Config::load(ctx.config_path().to_str().unwrap_or("")) {
+    let config_path = match ctx.config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
+    let config = match Config::load(config_path.to_str().unwrap_or("")) {
         Ok(config) => config.with_admission_base_dir(&base_dir),
         Err(error) => {
             stderr.push_str(&format!("admission-broker: {error}\n"));

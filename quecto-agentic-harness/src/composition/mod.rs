@@ -1,4 +1,5 @@
 pub mod active_session;
+pub mod configuration;
 pub mod environments;
 pub mod find;
 pub mod fleet_settlement;

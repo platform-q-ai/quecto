@@ -15,6 +15,7 @@ fn default_ctx() -> CliContext {
     CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     }
 }
