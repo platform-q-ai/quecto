@@ -450,6 +450,8 @@ pub struct QuectoWorld {
     pub recall_spill_store: Option<Arc<recall_tool_steps::BddMemorySpillStore>>,
     /// Spawn tool for BDD
     pub spawn_tool: Option<SpawnTool>,
+    /// Keeps a spawn rig's catalogue directory alive for the scenario (#1848).
+    pub _spawn_tool_dir: Option<tempfile::TempDir>,
     /// AgentCmdTool for BDD (#421)
     pub agent_cmd_tool: Option<quecto::infrastructure::tools::agent_cmd::AgentCmdTool>,
     /// AgentCmdTool result for BDD (#421)
@@ -1456,6 +1458,7 @@ mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;
 mod read_tool_steps;
+mod reasoning_effort_capability_steps;
 mod recall_tool_steps;
 mod release_profile_steps;
 mod reload_steps;

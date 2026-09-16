@@ -600,6 +600,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 spawned: false,
                 parent_session_name: Some("parent".into()),
                 parent_config_path: None,
+                effort_control: None,
                 kill_tool: None,
                 disabled_tools: &[],
                 inherited_tool_policy: None,

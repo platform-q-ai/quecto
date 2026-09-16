@@ -625,7 +625,10 @@ fn given_config_default_model(world: &mut QuectoWorld, model: String) {
 }
 
 #[given(expr = "a models registry with Fireworks model {string}")]
-fn given_models_registry_with_fireworks_model(world: &mut QuectoWorld, model_id: String) {
+pub(super) fn given_models_registry_with_fireworks_model(
+    world: &mut QuectoWorld,
+    model_id: String,
+) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let fireworks = wiremock::MockServer::start().await;

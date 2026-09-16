@@ -335,7 +335,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             dir.path(),
         ),
         fleet_teardown: None,

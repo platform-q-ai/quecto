@@ -209,7 +209,7 @@ pub(super) async fn multi_client_loop(
         messages.len(),
         None,
         agent.max_context_tokens(),
-        agent.effort().map(|l| l.as_str().to_string()),
+        catalogue.effort_view(agent.effort(), agent_session.model()),
     );
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
@@ -373,7 +373,7 @@ pub(super) async fn multi_client_loop(
         save_session: sessions.save_session.clone(),
         rewrite: sessions.rewrite.clone(),
         switch: sessions.switch.clone(),
-        list_models: catalogue.list_models.clone(),
+        catalogue: catalogue.clone(),
     };
 
     run_dispatch_loop(

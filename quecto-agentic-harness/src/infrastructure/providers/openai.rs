@@ -191,6 +191,18 @@ impl OpenAiProvider {
             "max_completion_tokens": max_tokens,
         });
 
+        // #1996: a selected effort is transmitted verbatim as the
+        // chat-completions `reasoning_effort` parameter (Fireworks, xAI,
+        // OpenAI and compatible endpoints document the same name). The
+        // application admits a level only from the model's own catalogue
+        // vocabulary, so this adapter never decides support and never sends
+        // a reasoning option to a model that declared none. Fireworks'
+        // alternative `thinking` parameter is mutually exclusive with this
+        // one and is never emitted here.
+        if let Some(effort) = request.effort {
+            body["reasoning_effort"] = serde_json::Value::String(effort.as_str().to_string());
+        }
+
         if !tools.is_empty() {
             let tool_defs: Vec<serde_json::Value> = tools
                 .iter()
@@ -545,5 +557,17 @@ pub(crate) mod openai_sse_parser;
 mod cov_tests;
 
 #[cfg(test)]
+#[path = "openai_effort_1996_tests.rs"]
+mod effort_1996_tests;
+#[cfg(test)]
 #[path = "openai_tests.rs"]
 mod tests;
+
+#[cfg(any(test, feature = "test-support"))]
+impl OpenAiProvider {
+    /// Public accessor for the chat-completions request builder (BDD and
+    /// integration tests, #1996).
+    pub fn build_chat_completions_body_for_test(request: &ChatRequest<'_>) -> serde_json::Value {
+        Self::build_request_body(request)
+    }
+}

@@ -1,0 +1,174 @@
+//! `ChangeReasoningEffort` against a fake vocabulary source and runtime.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use super::*;
+use crate::domain::provider::EffortLevel::{High, Low, Max, Medium, None as NoneLevel, XHigh};
+
+struct FakeVocabulary(HashMap<&'static str, Vec<EffortLevel>>);
+
+impl EffortVocabularySource for FakeVocabulary {
+    fn effort_vocabulary(&self, model: &str) -> Option<Vec<EffortLevel>> {
+        self.0.get(model).cloned()
+    }
+}
+
+fn use_case() -> ChangeReasoningEffort {
+    ChangeReasoningEffort::new(Arc::new(FakeVocabulary(HashMap::from([
+        ("xai/grok-4.5", vec![Low, Medium, High]),
+        ("xai/grok-4.6", vec![Low, Medium, High, XHigh]),
+        (
+            "openai-api/gpt-5.6",
+            vec![NoneLevel, Low, Medium, High, XHigh],
+        ),
+        ("anthropic-api/opus", vec![Low, Medium, High, Max]),
+        ("spark-local/qwen", vec![]),
+    ]))))
+}
+
+#[derive(Default)]
+struct FakeRuntime {
+    effort: Option<EffortLevel>,
+    writes: Mutex<usize>,
+}
+
+impl EffortRuntime for FakeRuntime {
+    fn effort(&self) -> Option<EffortLevel> {
+        self.effort
+    }
+    fn apply_effort(&mut self, level: Option<EffortLevel>) {
+        *self.writes.lock().unwrap() += 1;
+        self.effort = level;
+    }
+}
+
+#[test]
+fn choices_are_the_catalogue_vocabulary_or_empty_for_unknown_models() {
+    let use_case = use_case();
+    assert_eq!(use_case.choices("xai/grok-4.5"), vec![Low, Medium, High]);
+    assert!(use_case.choices("spark-local/qwen").is_empty());
+    assert!(use_case.choices("openrouter/mystery").is_empty());
+}
+
+#[test]
+fn validate_accepts_only_the_models_own_levels() {
+    let use_case = use_case();
+    assert_eq!(use_case.validate("xai/grok-4.6", "xhigh"), Ok(XHigh));
+    assert_eq!(
+        use_case.validate("xai/grok-4.5", "xhigh"),
+        Err(EffortChangeError::Unsupported {
+            requested: "xhigh".into(),
+            model: "xai/grok-4.5".into(),
+            vocabulary: vec![Low, Medium, High],
+        })
+    );
+    assert_eq!(
+        use_case.validate("xai/grok-4.6", "none"),
+        Err(EffortChangeError::Unsupported {
+            requested: "none".into(),
+            model: "xai/grok-4.6".into(),
+            vocabulary: vec![Low, Medium, High, XHigh],
+        })
+    );
+    assert!(matches!(
+        use_case.validate("anthropic-api/opus", "turbo"),
+        Err(EffortChangeError::Unsupported { .. })
+    ));
+}
+
+#[test]
+fn validate_refuses_every_level_for_models_without_effort_control() {
+    let use_case = use_case();
+    for model in ["spark-local/qwen", "openrouter/mystery"] {
+        assert_eq!(
+            use_case.validate(model, "low"),
+            Err(EffortChangeError::NoEffortControl {
+                requested: "low".into(),
+                model: model.into(),
+            })
+        );
+    }
+}
+
+#[test]
+fn admit_keeps_a_level_only_when_the_model_accepts_it() {
+    let use_case = use_case();
+    assert_eq!(use_case.admit("xai/grok-4.6", Some(XHigh)), Some(XHigh));
+    assert_eq!(use_case.admit("xai/grok-4.5", Some(XHigh)), None);
+    assert_eq!(
+        use_case.admit("openai-api/gpt-5.6", Some(NoneLevel)),
+        Some(NoneLevel)
+    );
+    assert_eq!(use_case.admit("spark-local/qwen", Some(Low)), None);
+    assert_eq!(use_case.admit("xai/grok-4.6", None), None);
+}
+
+#[test]
+fn execute_applies_an_accepted_level_and_reports_the_vocabulary() {
+    let use_case = use_case();
+    let mut runtime = FakeRuntime::default();
+    let outcome = use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "high".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        outcome,
+        EffortChangeOutcome {
+            effective: High,
+            vocabulary: vec![Low, Medium, High],
+        }
+    );
+    assert_eq!(runtime.effort, Some(High));
+    assert_eq!(*runtime.writes.lock().unwrap(), 1);
+}
+
+#[test]
+fn execute_is_a_no_op_write_when_the_level_is_already_in_effect() {
+    let use_case = use_case();
+    let mut runtime = FakeRuntime {
+        effort: Some(High),
+        ..Default::default()
+    };
+    use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "high".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(*runtime.writes.lock().unwrap(), 0);
+}
+
+#[test]
+fn execute_leaves_the_runtime_untouched_on_refusal() {
+    let use_case = use_case();
+    let mut runtime = FakeRuntime {
+        effort: Some(Medium),
+        ..Default::default()
+    };
+    let error = use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "xhigh".into(),
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(error, EffortChangeError::Unsupported { .. }));
+    assert_eq!(runtime.effort, Some(Medium));
+    assert_eq!(*runtime.writes.lock().unwrap(), 0);
+}
+
+#[test]
+fn debug_does_not_expose_the_port() {
+    assert_eq!(format!("{:?}", use_case()), "ChangeReasoningEffort { .. }");
+}

@@ -335,12 +335,18 @@ Feature: SpawnTool — child agent process spawning
     And the spawn result should contain "effort must be a string"
     And the spawn result should contain "none, low, medium, high, xhigh, max"
 
-  Scenario: Spawn effort is checked against the selected provider vocabulary
-    Given a SpawnTool with empty allowlist
+  Scenario: Spawn effort is checked against the selected model's catalogue vocabulary
+    Given a SpawnTool with empty allowlist and the composed effort control
     When I execute the SpawnTool with '{"task":"work","model":"anthropic-api/claude-fable-5","effort":"xhigh"}'
     Then the spawn result should be an error
     And the spawn result should contain "invalid effort"
     And the spawn result should contain "low, medium, high, max"
+
+  Scenario: Spawn effort for a model with no effort control is refused
+    Given a SpawnTool with empty allowlist and the composed effort control
+    When I execute the SpawnTool with '{"task":"work","model":"xai/grok-2-image","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "no reasoning-effort control"
 
   Scenario: Tool definition schema includes effort field
     Given a SpawnTool with allowlist "bot"

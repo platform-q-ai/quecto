@@ -470,7 +470,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             tmp.path(),
         ),
         fleet_teardown: None,
@@ -574,7 +574,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             tmp.path(),
         ),
         fleet_teardown: None,

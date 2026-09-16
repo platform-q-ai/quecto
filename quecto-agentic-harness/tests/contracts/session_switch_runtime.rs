@@ -22,7 +22,10 @@ fn generation(rt: &Runtime) -> u64 {
 #[test]
 fn an_effort_override_is_reset_to_the_default_and_the_change_is_visible() {
     let mut rt = runtime("cli:contract");
-    rt.agent.set_effort(EffortLevel::Low);
+    quecto::application::catalogue::ports::EffortRuntime::apply_effort(
+        &mut rt.agent,
+        Some(EffortLevel::Low),
+    );
     let before = generation(&rt);
     LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
         .reset_effort_to_default();

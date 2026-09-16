@@ -1,24 +1,28 @@
-//! #1067: runtime reasoning-effort mutation for the agent loop.
-//!
-//! The configured effort (`AgentLoopConfig::effort`) is the startup default;
-//! `set_effort` overrides it for the running session (every subsequent
-//! `ChatRequest` carries the new level) and `reset_effort_to_default`
-//! restores the startup value on session switches so an override never
-//! leaks into another session.
+//! The agent loop as the catalogue capability's [`EffortRuntime`] (#1067,
+//! #1848): the configured effort (`AgentLoopConfig::effort`) is the startup
+//! default; the change-reasoning-effort use case is the only writer of the
+//! running level, and `reset_effort_to_default` restores the startup value
+//! on session switches so an override never leaks into another session.
 
 use super::AgentLoopImpl;
+use crate::application::catalogue::ports::EffortRuntime;
 use crate::domain::provider::EffortLevel;
+
+impl EffortRuntime for AgentLoopImpl {
+    fn effort(&self) -> Option<EffortLevel> {
+        self.effort
+    }
+
+    fn apply_effort(&mut self, level: Option<EffortLevel>) {
+        self.effort = level;
+    }
+}
 
 impl AgentLoopImpl {
     /// The effort level currently applied to every `ChatRequest`
     /// (`None` = provider default).
     pub fn effort(&self) -> Option<EffortLevel> {
         self.effort
-    }
-
-    /// Override the session's effort level; applies from the next turn.
-    pub fn set_effort(&mut self, effort: EffortLevel) {
-        self.effort = Some(effort);
     }
 
     /// Restore the startup (config/provider) default effort. Called on

@@ -20,6 +20,7 @@ fn leading_config_dispatches_to_following_agent_subcommand() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     };
 

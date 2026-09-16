@@ -405,20 +405,21 @@ impl AgentSession {
         drained.extend(std::mem::take(&mut self.overflow_notifications));
         drained
     }
-    /// `effort` is the agent loop's effective level (`None` = provider
-    /// default); it lives on the agent, not this tracker, so callers pass it
-    /// in (#1067). The valid vocabulary is derived here from the active
-    /// model so every `get_state` shape (live or snapshot) carries it.
-    /// `session_key` is the active session's key (D10 #1979): the tracker
-    /// holds no copy.
+    /// `effort` is the agent loop's effective level plus the active model's
+    /// catalogue vocabulary (#1067, #1848); both live outside this tracker
+    /// (the agent and the change-reasoning-effort use case), so callers pass
+    /// the presented view in and every `get_state` shape (live or snapshot)
+    /// carries it. `session_key` is the active session's key (D10 #1979):
+    /// the tracker holds no copy.
     pub fn state_snapshot(
         &self,
         session_key: &str,
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
-        effort: Option<String>,
+        effort: impl Into<crate::interface::uds::catalogue::effort_presenter::EffortStateView>,
     ) -> SessionState {
+        let effort = effort.into();
         SessionState {
             control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
@@ -428,10 +429,8 @@ impl AgentSession {
             message_count,
             pending_message_count: self.pending.len(),
             max_context_tokens,
-            effort,
-            effort_levels: crate::domain::catalogue::ModelCapabilities::effort_vocabulary_for(
-                &self.model,
-            ),
+            effort: effort.effort,
+            effort_levels: effort.effort_levels,
             workflow,
             execution: None,
             sync: 1,

@@ -14,6 +14,7 @@ pub(crate) struct AgentOutput<'a> {
 }
 mod agent_deadline;
 mod flag_parse;
+mod startup_effort;
 mod startup_prompt;
 mod swarm_runtime;
 pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
@@ -199,6 +200,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: None,
+        catalogue: None,
         admission_context,
         parent_control,
     };
@@ -402,18 +404,12 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-    let effort = flags.effort.or_else(|| {
-        config.agents.defaults.effort.as_deref().and_then(|s| {
-            crate::domain::provider::EffortLevel::parse(s).or_else(|| {
-                // Defensive only: Config::load rejects unknown efforts (#1066).
-                let valid = crate::domain::provider::EffortLevel::VALID_VALUES;
-                stderr.push_str(&format!(
-                    "WARNING: invalid effort level '{s}' in config; expected one of: {valid}; ignoring\n"
-                ));
-                None
-            })
-        })
-    });
+    let Some(build_catalogue) = flags.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return None;
+    };
+    let effort_control = build_catalogue(base_dir).effort;
+    let effort = startup_effort::admit(&effort_control, flags.effort, &config, &model, stderr)?;
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system

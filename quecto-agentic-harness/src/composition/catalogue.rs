@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::application::catalogue::use_cases::ListModels;
+use crate::application::catalogue::use_cases::{ChangeReasoningEffort, ListModels};
 use crate::infrastructure::catalogue_inputs::FileCatalogueInputs;
-use crate::infrastructure::catalogue_registry::snapshot_store_for;
+use crate::infrastructure::catalogue_registry::{PublishedEffortVocabulary, snapshot_store_for};
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
 use crate::interface::cli::catalogue_handles::CatalogueHandles;
@@ -21,6 +21,9 @@ pub fn build_catalogue_handles(base_dir: &std::path::Path) -> CatalogueHandles {
     ));
     CatalogueHandles {
         list_models: Arc::new(ListModelsController::new(list_models)),
+        effort: Arc::new(ChangeReasoningEffort::new(Arc::new(
+            PublishedEffortVocabulary::for_base_dir(base_dir),
+        ))),
     }
 }
 

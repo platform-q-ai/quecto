@@ -170,8 +170,8 @@ pub(crate) struct DispatchCtx<'a> {
     /// Start a fresh conversation (#1862, #1976) or resume a saved one (#1863,
     /// #1977): the two session transitions this loop requests once admitted.
     pub switch: super::uds_session_handles::SessionSwitchHandles,
-    /// List available models (#1845): answers the `list_models` command.
-    pub list_models: super::catalogue_handles::ListModelsHandle,
+    /// The catalogue handles (#1845, #1848): `list_models` and effort changes.
+    pub catalogue: super::catalogue_handles::CatalogueHandles,
 }
 type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
 type ListSessionsHandle = std::sync::Arc<ListSessionsController>;

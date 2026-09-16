@@ -161,6 +161,7 @@ fn composed_context_prefers_the_working_directory_config() {
         base_dir: Some(tmp.path().to_path_buf()),
         cwd: Some(cwd.clone()),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);

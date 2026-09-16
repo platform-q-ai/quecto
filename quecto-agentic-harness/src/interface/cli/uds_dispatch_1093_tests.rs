@@ -7,7 +7,7 @@ use crate::domain::tool::ToolProfileContext;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
-    handles_over, list_models_handle, read_handles_for, resolve_message,
+    catalogue_handles, handles_over, read_handles_for, resolve_message,
 };
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
@@ -218,7 +218,7 @@ impl Fixture {
             save_session: handles.save_session.clone(),
             rewrite: handles.rewrite.clone(),
             switch: handles.switch.clone(),
-            list_models: list_models_handle(self._tmp.path()),
+            catalogue: catalogue_handles(self._tmp.path()),
             fleet_teardown: None,
             list_sessions: handles.list_sessions.clone(),
         }

@@ -8,8 +8,8 @@ One authority owns each concern; nothing outside its layer re-derives it. Contri
 
 | Layer | Owns | Never does |
 |---|---|---|
-| `domain` (`domain/catalogue.rs`) | Stable provider/model identities, capability metadata (limits, cost, the reasoning-effort vocabulary), availability semantics, immutable snapshot generations | I/O, parsing external formats |
-| `application` (`application/catalogue/` — `use_cases/`, `ports/`, `dto/` and the resolve/snapshot store in `mod.rs`; `catalogue_refresh.rs`, `provider_runtime.rs`) | Source-layer precedence and the resolve/merge, the list-models use case, selection, refresh orchestration, publishing catalogue + routing as one generation | Reading files or the network directly |
+| `domain` (`domain/catalogue.rs`) | Stable provider/model identities, capability metadata (limits, cost, the per-model reasoning-effort vocabulary rule `EffortVocabulary`), availability semantics, immutable snapshot generations | I/O, parsing external formats |
+| `application` (`application/catalogue/` — `use_cases/`, `ports/`, `dto/` and the resolve/snapshot store in `mod.rs`; `catalogue_refresh.rs`, `provider_runtime.rs`) | Source-layer precedence and the resolve/merge, the list-models and change-reasoning-effort use cases, selection, refresh orchestration, publishing catalogue + routing as one generation | Reading files or the network directly |
 | `infrastructure` (`infrastructure/catalogue_registry.rs`, `catalogue_inputs.rs`, `catalogue_discovery.rs`, `providers/`) | Parsing `models.json` and discovery caches into domain descriptors, credential resolution, concrete transport adapters | Deciding precedence, defining canonical types, inferring capabilities |
 | `composition` (`composition/catalogue.rs`) | Building the catalogue use cases over the file-backed inputs port and the per-directory snapshot store; `main` hands the builder to the CLI | Policy of any kind |
 | `interface` (`interface/uds/catalogue/`, `interface/catalogue_runtime.rs`, CLI/UDS/REPL, TUI) | Parsing commands, invoking the injected use-case handles and rendering their DTOs on the wire (`catalogue_runtime.rs` still composes the provider runtime and model selection at entry points until #1847/#1849 migrate them) | Parsing catalogue data, merging sources, constructing use cases, caching its own model metadata |
@@ -57,6 +57,29 @@ Choose a supported transport (`openai-completions`, `anthropic-messages`, `googl
 ```
 
 A provider block declaring a transport with no adapter in this build is still listed: its models are *known but not runnable*, with a structured unsupported-transport reason naming the declared transport. Catalogue data does not make an unsupported protocol runnable, and the rest of the file keeps working.
+
+### Reasoning effort is a per-model capability
+
+Which `/effort` levels a model offers — and whether the selection is sent on the wire at all — is the catalogue's per-model capability (`effortLevels`), seeded by one domain rule (`domain::catalogue::EffortVocabulary`) from the provider's documented scale and applied by the change-reasoning-effort use case (`application/catalogue/use_cases/change_reasoning_effort.rs`) on every surface: the `get_state` vocabulary the selector shows, `set_effort`, spawn `effort`, startup `--effort`, and the reset on a model switch. Nothing infers a vocabulary from a model name, and no provider adapter decides support: an adapter transmits only a level the use case admitted for the active model.
+
+| Provider | Levels offered and sent | Wire parameter |
+|---|---|---|
+| Anthropic (`anthropic-messages`) | `low, medium, high, max` | `output_config.effort` |
+| OpenAI's own providers (`openai-api`, `openai-oauth`) | `none, low, medium, high, xhigh` | `reasoning_effort` (chat completions) / `reasoning.effort` (Responses) |
+| xAI `grok-4.6` | `low, medium, high, xhigh` | `reasoning_effort` |
+| xAI `grok-4.5` (and other Grok models declaring `reasoning`) | `low, medium, high` | `reasoning_effort` |
+| Any other `openai-completions` endpoint (Fireworks, local servers, gateways) | `low, medium, high` **only when the record declares `"reasoning": true`**; otherwise none | `reasoning_effort` |
+| Transports without a reasoning-option adapter | none | — |
+
+So for a Fireworks (or any OpenAI-compatible) reasoning model, declare it:
+
+```json
+{"providers": {"fireworks": {"api": "openai-completions",
+  "baseUrl": "https://api.fireworks.ai/inference/v1", "apiKey": "$FIREWORKS_API_KEY",
+  "models": [{"id": "accounts/fireworks/models/glm-5p3", "reasoning": true}]}}}
+```
+
+A model with no effort control (no `reasoning`, or unknown to the catalogue) advertises an empty `effortLevels`: the TUI selector offers nothing, `set_effort`/spawn `effort`/`--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default. `reasoning_effort` and Fireworks' `thinking` are never sent together.
 
 ### User overrides: patch a model's metadata by stable ID
 

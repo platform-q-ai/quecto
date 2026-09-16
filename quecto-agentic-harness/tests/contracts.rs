@@ -49,6 +49,10 @@ mod credential_status_port;
 mod delegated_children_roster;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
+#[path = "contracts/effort_runtime.rs"]
+mod effort_runtime;
+#[path = "contracts/effort_vocabulary_source.rs"]
+mod effort_vocabulary_source;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
 #[path = "contracts/environment_process_commands.rs"]

@@ -22,6 +22,8 @@
 
 use std::collections::HashMap;
 
+use crate::domain::provider::EffortLevel;
+
 /// Stable provider identity. Serialized form is the exact string used by
 /// CLI/config/UDS today (e.g. `openai-api`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -218,40 +220,85 @@ pub struct ModelCapabilities {
     pub cost: ModelCost,
 }
 
-impl ModelCapabilities {
-    /// The canonical reasoning-effort vocabulary for a model reference
-    /// (`provider/model-id`, or a bare model id).
-    ///
-    /// This is the single domain rule that seeds `effort_levels` in
-    /// catalogue metadata. Consumers holding a snapshot read the field;
-    /// surfaces keyed only by an active model string (session state, spawn
-    /// argument validation, open-router ids the catalogue cannot enumerate)
-    /// call this same rule, so every surface speaks one vocabulary.
-    pub fn effort_vocabulary_for(reference: &str) -> Vec<String> {
-        crate::domain::provider::EffortLevel::levels_for_model(reference)
-            .iter()
-            .map(|level| level.as_str().to_string())
-            .collect()
+/// The reasoning-effort vocabulary a model accepts on the wire (#1996): the
+/// one domain rule that seeds [`ModelCapabilities::effort_levels`]. Every
+/// surface — the `get_state` listing, the selector, `set_effort`, spawn and
+/// startup validation, the provider adapters — consumes the seeded field;
+/// none re-derives a vocabulary from a name.
+///
+/// The rule is affirmative per provider and model, from the providers'
+/// documented scales:
+///
+/// - Anthropic Messages: `low, medium, high, max` (`output_config.effort`).
+/// - OpenAI's own providers (`openai-api`, `openai-oauth`): the OpenAI scale
+///   `none, low, medium, high, xhigh`.
+/// - xAI: `grok-4.6` = `low, medium, high, xhigh`; `grok-4.5` =
+///   `low, medium, high`; any other xAI model that declares reasoning gets
+///   the common `low, medium, high`. Reasoning cannot be disabled, so `none`
+///   is never offered.
+/// - Any other OpenAI-compatible endpoint (Fireworks, local servers, custom
+///   providers): the common `low, medium, high` **only when the record
+///   declares `reasoning: true`**; otherwise nothing, so no reasoning option
+///   is ever sent to an endpoint that never claimed to accept one.
+/// - Transports with no reasoning-option adapter: nothing.
+pub struct EffortVocabulary;
+
+impl EffortVocabulary {
+    const ANTHROPIC: &'static [EffortLevel] = &[
+        EffortLevel::Low,
+        EffortLevel::Medium,
+        EffortLevel::High,
+        EffortLevel::Max,
+    ];
+    const OPENAI: &'static [EffortLevel] = &[
+        EffortLevel::None,
+        EffortLevel::Low,
+        EffortLevel::Medium,
+        EffortLevel::High,
+        EffortLevel::XHigh,
+    ];
+    const COMMON: &'static [EffortLevel] =
+        &[EffortLevel::Low, EffortLevel::Medium, EffortLevel::High];
+    const XAI_GROK_4_6: &'static [EffortLevel] = &[
+        EffortLevel::Low,
+        EffortLevel::Medium,
+        EffortLevel::High,
+        EffortLevel::XHigh,
+    ];
+
+    /// The ordered vocabulary for `model_id` served by `provider` over
+    /// `transport`, given whether the record declares reasoning.
+    pub fn for_model(
+        provider: &ProviderId,
+        transport: &TransportKind,
+        model_id: &str,
+        reasoning: bool,
+    ) -> Vec<EffortLevel> {
+        let levels: &[EffortLevel] = match transport {
+            TransportKind::AnthropicMessages => Self::ANTHROPIC,
+            TransportKind::OpenAiCompletions => match provider.as_str() {
+                "openai-api" | "openai-oauth" => Self::OPENAI,
+                "xai" if model_id.starts_with("grok-4.6") => Self::XAI_GROK_4_6,
+                "xai" if model_id.starts_with("grok-4.5") => Self::COMMON,
+                _ if reasoning => Self::COMMON,
+                _ => &[],
+            },
+            TransportKind::GoogleGenerativeAi | TransportKind::Unsupported { .. } => &[],
+        };
+        levels.to_vec()
     }
 
-    /// Parse and validate an effort string against `reference`'s vocabulary.
-    ///
-    /// The one shared membership check (and error message) for every surface
-    /// that accepts an effort string for a known model — UDS `set_effort` and
-    /// spawn-argument validation both call this, so they cannot drift.
-    pub fn parse_effort_for(
-        reference: &str,
-        effort: &str,
-    ) -> Result<crate::domain::provider::EffortLevel, String> {
-        let valid = Self::effort_vocabulary_for(reference);
-        crate::domain::provider::EffortLevel::parse(effort)
-            .filter(|level| valid.iter().any(|v| v == level.as_str()))
-            .ok_or_else(|| {
-                format!(
-                    "invalid effort level \"{effort}\"; valid levels: {}",
-                    valid.join(", ")
-                )
-            })
+    /// The same rule as API strings, the shape `effort_levels` stores.
+    pub fn strings_for_model(
+        provider: &ProviderId,
+        transport: &TransportKind,
+        model_id: &str,
+        reasoning: bool,
+    ) -> Vec<String> {
+        Self::for_model(provider, transport, model_id, reasoning)
+            .into_iter()
+            .map(|level| level.as_str().to_string())
+            .collect()
     }
 }
 
