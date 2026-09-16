@@ -545,7 +545,7 @@ pub(crate) fn loop_inputs(
     crate::interface::cli::uds_session_handles::SessionLoopInputs {
         base_dir: base.to_path_buf(),
         store: None,
-        session_key: session_key.to_string(),
+        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(session_key),
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,

@@ -441,7 +441,7 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         assert!(
             !super::handle_resume_session(&mut ctx, None, "resume_session", "another".into()).await
         );
-        assert_eq!(ctx.session.session_key(), "cli:another");
+        assert_eq!(ctx.sessions.current_session_key().await, "cli:another");
         assert!(!killing_exit(&ctx));
     }
 }

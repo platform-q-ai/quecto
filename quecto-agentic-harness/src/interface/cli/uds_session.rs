@@ -1,4 +1,5 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
+use crate::application::agent_loop::UsageTotals;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
@@ -6,10 +7,12 @@ use crate::domain::message::{Message, Role};
 #[path = "uds_session_notify.rs"]
 mod uds_session_notify;
 pub use uds_session_notify::NotificationEnqueueOutcome;
+/// The tracker holds no session key (D10 #1979): the active session's typed
+/// identity is the one owner of `sessionKey`, and every presenter that
+/// reports it is handed the key by its caller from that identity.
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
-    session_key: String,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
     /// Why automatic turns are off and at which swarm control generation
@@ -204,10 +207,9 @@ fn escape_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 impl AgentSession {
-    pub fn new(model: String, session_key: String) -> Self {
+    pub fn new(model: String) -> Self {
         Self {
             model,
-            session_key,
             streaming: false,
             automatic_turns_allowed: true,
             suspension: None,
@@ -239,18 +241,14 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
-    /// The raw key of the session this tracker reports (`get_state`'s
-    /// `sessionKey`); the active session's typed identity is the owner,
-    /// this copy follows it through the session transactions (#1976).
-    pub fn session_key(&self) -> &str {
-        &self.session_key
-    }
-    pub fn set_session_key(&mut self, session_key: String) {
-        if self.session_key != session_key {
-            self.clear_usage();
-            self.session_key = session_key;
-            self.bump_visible_generation();
-        }
+    /// The loop moved to another session (D7 #1976, D10 #1979): the usage
+    /// accumulated for the departed session is cleared and the visible
+    /// generation bumps once, exactly as the tracker's own key change did
+    /// while it still held a copy. The propagation adapter calls this only
+    /// when the identity actually changed.
+    pub fn session_changed(&mut self) {
+        self.clear_usage();
+        self.bump_visible_generation();
     }
     pub fn set_streaming(&mut self, v: bool) {
         if self.streaming != v {
@@ -261,14 +259,21 @@ impl AgentSession {
     /// Whole-result accumulator kept for tests; production records usage
     /// through `record_usage` on the UDS run path.
     #[cfg(test)]
-    pub fn record_agent_result(&mut self, result: &crate::domain::agent::AgentResult) {
+    pub fn record_agent_result(
+        &mut self,
+        session_key: &str,
+        result: &crate::domain::agent::AgentResult,
+    ) {
         self.context_tokens = result.context_tokens;
         self.record_usage(
-            result.billed_input_tokens,
-            result.billed_output_tokens,
-            result.cache_read_tokens,
-            result.cache_write_tokens,
-            result.cost_micro_usd,
+            session_key,
+            UsageTotals::billed(
+                result.billed_input_tokens,
+                result.billed_output_tokens,
+                result.cache_read_tokens,
+                result.cache_write_tokens,
+                result.cost_micro_usd,
+            ),
         );
     }
     pub fn context_tokens(&self) -> usize {
@@ -277,14 +282,17 @@ impl AgentSession {
     pub fn set_context_tokens(&mut self, context_tokens: usize) {
         self.context_tokens = context_tokens;
     }
-    pub fn record_usage(
-        &mut self,
-        input_tokens: u64,
-        output_tokens: u64,
-        cache_read_tokens: u64,
-        cache_write_tokens: u64,
-        cost_micro_usd: u64,
-    ) {
+    /// Accumulate the billed usage of one turn; `session_key` is the active
+    /// session's key, named by the normalized usage log (#1567).
+    pub fn record_usage(&mut self, session_key: &str, usage: UsageTotals) {
+        let UsageTotals {
+            billed_input_tokens: input_tokens,
+            billed_output_tokens: output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cost_micro_usd,
+            ..
+        } = usage;
         self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens);
         self.usage.tokens.output = self.usage.tokens.output.saturating_add(output_tokens);
         self.usage.tokens.cache_read = self
@@ -314,7 +322,7 @@ impl AgentSession {
             let ratio = self.usage.cache_hit_ratio();
             tracing::info!(
                 target: "session_usage",
-                session_key = %self.session_key,
+                session_key = %session_key,
                 input = self.usage.tokens.input,
                 output = self.usage.tokens.output,
                 cacheRead = self.usage.tokens.cache_read,
@@ -401,8 +409,11 @@ impl AgentSession {
     /// default); it lives on the agent, not this tracker, so callers pass it
     /// in (#1067). The valid vocabulary is derived here from the active
     /// model so every `get_state` shape (live or snapshot) carries it.
+    /// `session_key` is the active session's key (D10 #1979): the tracker
+    /// holds no copy.
     pub fn state_snapshot(
         &self,
+        session_key: &str,
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
@@ -413,7 +424,7 @@ impl AgentSession {
             model: self.model.clone(),
             generation: self.generation,
             is_streaming: self.streaming,
-            session_key: self.session_key.clone(),
+            session_key: session_key.to_owned(),
             message_count,
             pending_message_count: self.pending.len(),
             max_context_tokens,
@@ -524,21 +535,21 @@ mod subagent_notification_dedupe_tests {
     use super::*;
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(!session.record_subagent_notification("worker".into(), 1));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn later_monotonic_subagent_notification_is_recorded() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(session.record_subagent_notification("worker".into(), 2));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn full_queue_does_not_block_recording_notification_seen() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         for i in 0..AgentSession::MAX_PENDING {
             session.enqueue_pending(format!("filler-{i}"));
         }
@@ -587,11 +598,11 @@ mod passive_subagent_notification_tests {
     use super::*;
     #[test]
     fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
-        let mut session = AgentSession::new("m".into(), "k".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert_eq!(
             session
-                .state_snapshot(0, None, 0, None)
+                .state_snapshot("k", 0, None, 0, None)
                 .pending_message_count,
             0
         );

@@ -193,12 +193,26 @@ paths.
 
 **Production files usually involved:**
 
-- `src/domain/session.rs` and `src/domain/message.rs` for persisted concepts;
-  `src/application/sessions/ports.rs` for the `SessionStore` contract.
-- `src/infrastructure/persistence/*` for JSON file serialization.
-- `src/application/reload.rs`, context modules, or agent loop finalization when
-  persistence state is updated.
-- `src/interface/cli/uds_session*.rs` for paged history, snapshots, and resume.
+- `src/domain/session.rs`, `src/domain/session_identity.rs` and
+  `src/domain/message.rs` for persisted concepts; `src/application/sessions/
+  ports.rs` (+ `ports/`) for the `SessionStore` / `ContextSpillStore` and the
+  runtime ports.
+- `src/application/sessions/use_cases/*` — the one owner of each session
+  transaction (save, clear, rewind, fresh, resume, recall/retain) and query
+  (list, history, recovery, sync, report). A new session behaviour is a use
+  case (or a step of one) with a DTO, never a sequence in a handler.
+- `src/infrastructure/persistence/*` for the file store, the one
+  `FlatSessionLayout`, and the retention file.
+- `src/composition/{sessions,active_session,session_report,retention}.rs` —
+  the only place a sessions use case, controller, store or the
+  `ActiveSessionState` is constructed; the interface receives handles through
+  `CliComposition` and must not name the composition layer.
+- `src/interface/uds/sessions/*` and `src/interface/cli/uds_dispatch_session.rs`
+  for the wire edge: parse the command, map it to the DTO, request the
+  injected use case, present the response. Handlers admit and present; they
+  never claim, load, save, release or switch anything themselves.
+- `src/application/context*.rs` when the *pruning* decision changes; the
+  retained-context store and its recall stay sessions-owned.
 
 **Tests to add/update:**
 
@@ -206,6 +220,12 @@ paths.
 - Session/reload tests for recovery behaviour.
 - UDS paged-history or resume tests when clients observe the field.
 - Repo-doc or protocol tests if documented session contracts change.
+- The sessions architecture ratchets (`tests/architecture/sessions_capability.rs`,
+  `sessions_epic_close.rs`, `sessions_epic_close_retirement.rs`): a new use
+  case joins the exact inventory, its composition site, its line ceiling and
+  `docs/sessions.md`; a new port needs a contract suite under
+  `tests/contracts/`. The lists are decrease-only — never raise a ceiling or
+  widen an allowlist to admit a change.
 
 **Docs and compatibility:**
 
@@ -221,6 +241,12 @@ paths.
   already part of the domain contract.
 - Keep tool-call/tool-result pairs coherent across pruning, reload, and resume.
 - Avoid unbounded history reads; use paged history and `get_message` recovery.
+- Do not hold a raw session key anywhere but the agent loop (its provider
+  session id) and the tools port: the `sessionKey` a presenter reports is read
+  from the active session's `SessionIdentity`.
+- Do not add a scope/workspace field to `SessionIdentity` or a second layout:
+  the folder-scoping seam (#1966, on hold) is the identity plus
+  `FlatSessionLayout`, and it is not implemented here.
 
 ## Add subagent behaviour
 

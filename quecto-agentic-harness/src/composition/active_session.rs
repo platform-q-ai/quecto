@@ -21,7 +21,6 @@ use crate::application::sessions::use_cases::{
     ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, ResumeSavedSession,
     RewindConversation, SaveSession, StartFreshConversation, SynchronizeTranscript,
 };
-use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_snapshot_sources::{
     RegistryRosterSource, WorkflowEngineRunSource,
 };
@@ -34,7 +33,7 @@ use crate::interface::uds::sessions::read_history_controller::ReadHistoryControl
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
 
-/// The handles of a loop opened on `inputs.session_key` with the loop's
+/// The handles of a loop opened on `inputs.identity` with the loop's
 /// retention backstop, injected prompt, dirty latch, workflow and roster
 /// runtime: the one active-session state, the history, recovery, sync,
 /// report, save, clear, rewind and fresh-session use cases over it,
@@ -47,8 +46,7 @@ pub fn assemble_session_handles(
     export: Option<Arc<dyn SessionExportPort>>,
     identities: Arc<dyn FreshSessionIdentityGenerator>,
 ) -> SessionHandles {
-    let mut state =
-        ActiveSessionState::new(SessionIdentity::from_persisted_key(inputs.session_key));
+    let mut state = ActiveSessionState::new(inputs.identity);
     state.set_spill_store(inputs.spill_store);
     state.set_injected_system_prompt(inputs.system_prompt);
     let active_session: ActiveSessionHandle = Arc::new(tokio::sync::RwLock::new(state));

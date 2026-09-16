@@ -242,8 +242,8 @@ pub enum PromptOutcome {
     /// Agent completed successfully.
     ///
     /// Deliberately carries NO durable-prefix-dirty payload (#1073 review):
-    /// the agent-level latch (`AgentLoopImpl::take_durable_prefix_dirty`,
-    /// drained centrally by `persist_current_session`) is the single
+    /// the agent-level latch (`DurablePrefixLatch`, drained centrally by the
+    /// sessions capability's `SaveSession` transaction, #1972) is the single
     /// authoritative channel. A result-carried flag existed briefly but was
     /// success-only — dirtiness from an Error/Cancelled turn would be lost by
     /// any consumer that trusted it — and no production code ever read it.
@@ -357,13 +357,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     };
     agent_session.record_request_diagnostics(agent.take_request_diagnostics());
     let recorded_usage = agent.take_unreported_usage();
-    agent_session.record_usage(
-        recorded_usage.billed_input_tokens,
-        recorded_usage.billed_output_tokens,
-        recorded_usage.cache_read_tokens,
-        recorded_usage.cache_write_tokens,
-        recorded_usage.cost_micro_usd,
-    );
+    agent_session.record_usage(agent.session_key(), recorded_usage);
 
     // The CLI UDS boundary owns a mutable agent and is therefore the real
     // production boundary where queued AtNextTurnBoundary policy mutations can

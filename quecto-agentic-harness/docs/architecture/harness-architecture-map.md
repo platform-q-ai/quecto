@@ -95,28 +95,50 @@ Important invariants before Phase 4:
 
 ## Persistence and session recovery
 
-**Primary code:** session vocabulary in `src/domain/session.rs`, the
-`SessionStore`/`ContextSpillStore` ports in `src/application/sessions/ports.rs`,
-persistence adapters in `src/infrastructure`, and UDS/session recovery paths in
-`src/interface/cli`.
+**Primary code:** session vocabulary in `src/domain/session.rs`,
+`src/domain/session_identity.rs`, `src/domain/conversation_view.rs` and
+`src/domain/conversation_edit.rs`; the sessions capability in
+`src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
+`active_session.rs`, `conversation_ledger.rs`); persistence adapters in
+`src/infrastructure/persistence/` and `src/infrastructure/session_export.rs`;
+the graph in `src/composition/{sessions,active_session,session_report,
+retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
+and the session modules of `src/interface/cli/`.
 
-Sessions capability (#1968): every port operation is keyed by the typed
-`SessionIdentity` (`src/domain/session_identity.rs`, the existing raw key
-only); the flat `<base>/sessions/` projection (`.json`, `.owner`,
-`spill.jsonl`) is owned by `FlatSessionLayout` in
-`src/infrastructure/persistence/session_layout.rs` alone; the saved-session
-query `ListSessions` and the live-conversation reads `ReadHistory` /
-`RecoverMessage` (`src/application/sessions/use_cases/`) are constructed only
-by `src/composition/sessions.rs` and `src/composition/active_session.rs`,
-which hand the interface its handles through `CliComposition`. The one
-application-owned `ActiveSessionState` (`src/application/sessions/
-active_session.rs`: typed identity plus the `ConversationLedger` read model —
-published transcript, bounded full-copy ledger, sync frontier, retention
-backstop) is created per loop by composition; the idle dispatch loop, the busy
-reader task and the connect-time snapshot all read history and recover
-messages through the same owners, and the interface only maps wire fields,
-frames the response and applies the transport budget. A folder/workspace-scoped
-store changes the identity and that one projection, not the callers.
+Sessions capability, final shape (epic #1968, closed by #1979): fourteen use
+cases own every session transaction and query — `ListSessions` (#1861),
+`ReadHistory` (#1856), `RecoverMessage` (#1858), `SynchronizeTranscript`
+(#1857), `ExportSessionReport` (#1859), `SaveSession` (#1860),
+`ClearConversation` (#1864), `RewindConversation` (#1865),
+`StartFreshConversation` and its `DepartingChildren` collaborator (#1862),
+`ResumeSavedSession` (#1863, also the startup open), and the retained-context
+owners `RecallContext`, `RetainContext` and `ListRetainedContext` (#1866).
+Twelve ports are declared under the capability's `ports` files and contracted
+under `tests/contracts/`; DTOs are domain values. Every port operation is keyed
+by the typed `SessionIdentity` (the existing raw key only); the flat
+`<base>/sessions/` projection (`.json`, `.owner`, `spill.jsonl`) is owned by
+`FlatSessionLayout` in `src/infrastructure/persistence/session_layout.rs`
+alone. Composition is the only constructor of a use case, a controller, a
+store or the one application-owned `ActiveSessionState` (typed identity plus
+the `ConversationLedger` read model — published transcript, bounded full-copy
+ledger, sync frontier, retention backstop — and the persistence state), and
+hands the interface plain handles through `CliComposition`. The interface
+parses, maps and presents: the idle dispatch loop, the busy reader task and
+the connect-time snapshot read through the same owners, the `sessionKey` every
+presenter reports is the active session's identity, and no interface module
+reaches a store method, names an adapter or converts a raw key. Sessions alone
+owns durable retained context; the context-pruning policy (`src/application/
+context*.rs`, the agent loop) alone decides what to retain and consumes the
+narrow `RetainContext`/`ListRetainedContext` handles. `tests/architecture/
+sessions_capability.rs`, `sessions_epic_close.rs` and
+`sessions_epic_close_retirement.rs` pin these rules as exact, decrease-only
+inventories, and `docs/sessions.md` names every use case and port.
+
+The wire protocol is unchanged by the epic. The seam for folder/workspace
+scoping is the existing-key-only `SessionIdentity` plus the one
+repository-layout adapter (`FlatSessionLayout`): a scoped store changes the
+identity and that one projection, not the callers. The epic adds no scope
+field or variant and no workspace behaviour; #1966 is untouched.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a

@@ -8,12 +8,25 @@ pub(super) fn query_response_data(
     cmd: &AgentCommand,
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
-    query_response_data_result(cmd, ctx).ok().flatten()
+    let session_key = ctx
+        .sessions
+        .active_session
+        .try_read()
+        .expect("the test rig holds no other lock")
+        .identity()
+        .runtime_key()
+        .to_string();
+    query_response_data_result(cmd, ctx, &session_key)
+        .ok()
+        .flatten()
 }
 
+/// The idle query projections; `session_key` is the active session's key
+/// (D10 #1979), read once by the async dispatcher and presented here.
 pub(super) fn query_response_data_result(
     cmd: &AgentCommand,
     ctx: &DispatchCtx<'_>,
+    session_key: &str,
 ) -> Result<Option<serde_json::Value>, String> {
     let data = match cmd {
         AgentCommand::GetState { since, .. } => {
@@ -35,6 +48,7 @@ pub(super) fn query_response_data_result(
             // plus the provider's valid vocabulary, so the live-query and
             // busy-connect snapshot paths serve the same `get_state` shape.
             let mut state = ctx.session.state_snapshot(
+                session_key,
                 user_visible_messages(ctx.messages, ctx.system_prompt).len(),
                 workflow,
                 ctx.agent.max_context_tokens(),
@@ -89,7 +103,7 @@ pub(super) fn query_response_data_result(
         AgentCommand::GetSessionStats { .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
             let stats = compute_session_stats_with_usage(
-                ctx.session.session_key(),
+                session_key,
                 &visible_messages,
                 ctx.session.usage_snapshot(),
                 ctx.session.context_tokens(),

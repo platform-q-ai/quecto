@@ -1,3 +1,9 @@
+//! Cancellation history (#483): what an interrupted turn leaves in the live
+//! conversation — the tail after the cancelled prompt is truncated to the
+//! tool-call steps and tool results already recorded, and every unanswered
+//! tool call gets a synthetic `aborted by user` error result so the
+//! transcript stays replayable. Owner role: cancellation. Reads and edits
+//! the loop's live `Vec<Message>` only; no session persistence, no store.
 use std::collections::HashSet;
 
 use crate::domain::message::{Message, Role};

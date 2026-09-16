@@ -7,7 +7,7 @@ async fn the_handles_share_one_state_between_the_handle_and_the_read_use_cases()
     let handles = build_session_handles(SessionLoopInputs {
         base_dir: tmp.path().to_path_buf(),
         store: None,
-        session_key: "cli:graph".into(),
+        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:graph"),
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,

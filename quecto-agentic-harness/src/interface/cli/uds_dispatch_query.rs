@@ -166,7 +166,8 @@ pub(super) async fn dispatch_fieldless_command(
         emit_response_or_frame_limit_error(ctx, id, tn, event).await;
         return Some(false);
     }
-    match query_response_data_result(cmd, ctx) {
+    let session_key = ctx.sessions.current_session_key().await;
+    match query_response_data_result(cmd, ctx, &session_key) {
         Ok(Some(data)) => {
             emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data)))
                 .await;

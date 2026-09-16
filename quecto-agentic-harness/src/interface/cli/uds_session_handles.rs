@@ -1,13 +1,11 @@
-//! What a dispatch loop needs from the sessions capability (#1970–#1976),
-//! as plain handles.
-//!
-//! The interface declares the runtime inputs one loop hands over and the
-//! store, state, use-case and controller handles it holds back; composition
-//! owns the graph between them and hands its builder in through
-//! [`crate::interface::cli::CliContext`] as a
+//! What a dispatch loop needs from the sessions capability (#1968), as
+//! plain handles: the interface declares the typed runtime inputs one loop
+//! hands over and the store, state, use-case and controller handles it
+//! holds back; composition owns the graph between them and hands its
+//! builder in through [`crate::interface::cli::CliContext`] as a
 //! [`crate::interface::cli::SessionHandlesBuilder`], so no interface module
 //! names the composition layer, constructs a store, a use case or the
-//! active-session state, or forms a path.
+//! active-session state, converts a raw key, or forms a path.
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,6 +15,7 @@ use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::application::sessions::use_cases::{
     ClearConversation, ResumeSavedSession, RewindConversation, SaveSession, StartFreshConversation,
 };
+use crate::domain::session_identity::SessionIdentity;
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
@@ -27,28 +26,22 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 pub struct SessionLoopInputs {
     /// The harness base directory the file store lives under.
     pub base_dir: PathBuf,
-    /// A store the loop already holds (unit rigs, BDD fixtures); `None`
-    /// composes the file store of `base_dir`.
+    /// A store the loop already holds (rigs); `None` composes the file store.
     pub store: Option<Arc<dyn SessionStore>>,
-    /// The raw session key the loop was opened on (empty for an ephemeral
-    /// run): the persisted key a resumed or named session was admitted
-    /// under, or the fresh chat key generated at startup.
-    pub session_key: String,
-    /// A `--no-session` run (#1860): the save transaction is a no-op even
-    /// when a key was generated.
+    /// The typed identity the loop was opened on (D10 #1979): ephemeral,
+    /// the named `cli:<name>`, or the fresh chat identity drawn at startup.
+    pub identity: SessionIdentity,
+    /// A `--no-session` run (#1860): the save transaction is a no-op.
     pub ephemeral: bool,
-    /// The system prompt the loop injects at the head of the live
-    /// conversation (empty when none); never persisted.
+    /// The system prompt injected at the conversation head; never persisted.
     pub system_prompt: String,
     /// The loop agent's retention store, for collapsed-message recovery.
     pub spill_store: Option<Arc<dyn ContextSpillStore>>,
-    /// The agent's durable-prefix dirty latch (#1072) the save transaction
-    /// drains.
+    /// The agent's durable-prefix dirty latch (#1072) the save drains.
     pub durable_prefix: Arc<DurablePrefixLatch>,
     /// The bound workflow engine whose run the session records, if any.
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
-    /// The sub-agent registry whose rows the session records as history
-    /// (#1937), if the loop tracks one.
+    /// The sub-agent registry whose rows the session records as history (#1937).
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
@@ -60,8 +53,7 @@ pub struct SessionHandles {
     /// List saved sessions (#1861): the UDS `list_sessions` command.
     pub list_sessions: Arc<ListSessionsController>,
     /// The one active session of the loop (#1971): typed identity, the
-    /// live-conversation read model every transport reads, and the
-    /// persistence state the save transaction moves.
+    /// read model every transport reads, the persistence state.
     pub active_session: ActiveSessionHandle,
     /// Read conversation history (#1856): `get_messages` and its alias.
     pub read_history: Arc<ReadHistoryController>,
@@ -73,26 +65,22 @@ pub struct SessionHandles {
     pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
     /// Save current session (#1860): every persistence trigger of the loop.
     pub save_session: Arc<SaveSession>,
-    /// Clear (#1864) and rewind (#1865) the conversation: the two
-    /// history-replacing transactions of the loop.
+    /// Clear (#1864) and rewind (#1865): the history-replacing transactions.
     pub rewrite: ConversationRewriteHandles,
-    /// Start a fresh conversation (#1862) and resume a saved session
-    /// (#1863): the two session transitions of the loop.
+    /// Start fresh (#1862) and resume (#1863): the session transitions.
     pub switch: SessionSwitchHandles,
 }
 
 /// The session transitions (#1976, #1977): the fresh-session transaction
-/// and the resume transaction, which also opens the loop's own session at
-/// startup.
+/// and the resume transaction, which also opens the loop's own session.
 #[derive(Clone)]
 pub struct SessionSwitchHandles {
     pub fresh: Arc<StartFreshConversation>,
     pub resume: Arc<ResumeSavedSession>,
 }
 
-/// The history-replacing transactions (#1975), requested once the
-/// dispatch loop admitted the command; the `rewind_to` wire target is
-/// mapped onto the typed request by the sessions edge first.
+/// The history-replacing transactions (#1975), requested once the dispatch
+/// loop admitted the command; the sessions edge maps the `rewind_to` target.
 #[derive(Clone)]
 pub struct ConversationRewriteHandles {
     pub clear: Arc<ClearConversation>,
@@ -122,4 +110,14 @@ pub struct SessionReadHandles {
     pub recover_message: Arc<RecoverMessageController>,
     pub export_report: Arc<ExportSessionReportController>,
     pub synchronize_transcript: Arc<SynchronizeTranscriptController>,
+}
+
+impl SessionReadHandles {
+    /// The key of the session the loop stands for, read from the active
+    /// session's identity (D10 #1979): the one source of every presented
+    /// `sessionKey` and of the parent identity the loop checks.
+    pub async fn current_session_key(&self) -> String {
+        let state = self.active_session.read().await;
+        state.identity().runtime_key().to_string()
+    }
 }

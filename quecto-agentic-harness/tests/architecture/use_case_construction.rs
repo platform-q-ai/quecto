@@ -17,12 +17,13 @@
 //! - the legacy use cases that live outside `use_cases/` folders are an
 //!   exact, non-growing baseline ([`LEGACY_CONSTRUCTIONS`]) tracked by #1666.
 //!
-//! Known evasions the text scan does not see: a construction spread over
-//! two lines with the path on one and `::new(` on the next; a struct
-//! literal at the start of a line (indistinguishable from a pattern); a
-//! constructor reached through a trait method or macro. A parse-based
-//! check would close them; the substring ratchets of this suite accept
-//! the same limits.
+//! The text scan does not see a construction spread over two lines with
+//! the path on one and `::new(` on the next, a struct literal at the start
+//! of a line (indistinguishable from a pattern), spaced `::` or `Self::new`
+//! inside an `impl UseCase`. The parse-based scan at the end of this file
+//! (D10 #1979) closes those on the syntax tree; a constructor reached
+//! through a macro invocation's tokens stays the one documented evasion of
+//! both scans.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -152,14 +153,17 @@ fn use_case_names() -> BTreeSet<String> {
     use_cases
 }
 
-/// Aliases a file declares for inventory names: `use …::X as Y;`, a grouped
-/// `{X as Y}`, and `type Y = …::X;` (with or without generics), mapped
-/// alias → target, applied transitively.
-fn aliases_in(code: &[(usize, String)], names: &BTreeSet<String>) -> BTreeMap<String, String> {
+/// The raw aliases a file declares: `use …::X as Y;` (any visibility —
+/// `pub use`, `pub(crate) use`, `pub(super) use`), a grouped `{X as Y}`,
+/// and `type Y = …::X;` (with or without generics), mapped alias → target.
+fn raw_aliases_in(code: &[(usize, String)]) -> BTreeMap<String, String> {
     let mut aliases = BTreeMap::new();
     for (_, line) in code {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("use ") || trimmed.starts_with("pub use ") {
+        let is_use = trimmed.starts_with("use ")
+            || trimmed.starts_with("pub use ")
+            || (trimmed.starts_with("pub(") && trimmed.contains(" use "));
+        if is_use {
             for (index, _) in line.match_indices(" as ") {
                 let target = line[..index]
                     .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -189,7 +193,41 @@ fn aliases_in(code: &[(usize, String)], names: &BTreeSet<String>) -> BTreeMap<St
             }
         }
     }
-    // Resolve chains (an alias of an alias) to the inventory name.
+    aliases
+}
+
+/// The raw aliases of every production file of the crate, computed once:
+/// an alias declared in one file and used in another (a `pub(crate) use
+/// … as Hidden;` re-export) resolves wherever it is spelled. Fail-closed:
+/// every alias of the crate counts in every file, whatever its scope.
+fn crate_raw_aliases() -> &'static BTreeMap<String, String> {
+    use std::sync::OnceLock;
+    static ALIASES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    ALIASES.get_or_init(|| {
+        let mut aliases = BTreeMap::new();
+        for path in production_files() {
+            aliases.extend(raw_aliases_in(&production_code(&path)));
+            // The syntax tree sees a rename inside a multiline `use {…}`
+            // group, which the line scan cannot.
+            aliases.extend(syn_aliases(&std::fs::read_to_string(&path).unwrap()));
+        }
+        aliases
+    })
+}
+
+/// The aliases of `code` plus the crate-wide ones, resolved transitively to
+/// an inventory name (alias → target).
+fn aliases_in(code: &[(usize, String)], names: &BTreeSet<String>) -> BTreeMap<String, String> {
+    let mut aliases = crate_raw_aliases().clone();
+    aliases.extend(raw_aliases_in(code));
+    resolve_aliases(&aliases, names)
+}
+
+/// Resolve chains (an alias of an alias) to the inventory name.
+fn resolve_aliases(
+    aliases: &BTreeMap<String, String>,
+    names: &BTreeSet<String>,
+) -> BTreeMap<String, String> {
     let mut resolved = BTreeMap::new();
     for alias in aliases.keys() {
         let mut target = alias.clone();
@@ -576,4 +614,363 @@ fn construction_scan_recognises_aliases_literals_and_from_impls() {
     ] {
         assert!(!constructs(handle, "KillEnvironment"), "{handle}");
     }
+}
+
+// ─── D10 (#1979): the parse-based construction scan ──────────────────────
+//
+// The line scan above documents its evasions (a construction spread over
+// lines, a struct literal at the start of a line, spaced `::`). This scan
+// parses each production file and resolves constructions on the syntax
+// tree instead, so whitespace, line breaks, `Self::new(` inside an
+// `impl UseCase`, `<UseCase>::new(`, `<UseCase as Trait>::from(` and a
+// constructor passed as a value (`.unwrap_or_else(UseCase::default)`) are
+// all seen. `use … as` renames and `type` aliases are resolved
+// transitively and fail-closed (every rename in the file counts, whatever
+// its scope). Tokens inside macro invocations are not parsed by either
+// scan; that evasion stays documented.
+
+/// The constructor names a graph node is built through.
+const CONSTRUCTORS: &[&str] = &["new", "default", "from"];
+
+struct AstConstructions<'a> {
+    names: &'a BTreeSet<String>,
+    aliases: BTreeMap<String, String>,
+    impl_types: Vec<String>,
+    found: Vec<String>,
+}
+
+impl AstConstructions<'_> {
+    /// The inventory name `ident` stands for, through any alias chain.
+    fn resolve(&self, ident: &str) -> Option<String> {
+        let mut current = ident.to_string();
+        for _ in 0..=self.aliases.len() {
+            if self.names.contains(&current) {
+                return Some(current);
+            }
+            current = self.aliases.get(&current)?.clone();
+        }
+        None
+    }
+
+    /// `Self` stands for the enclosing impl's type; anything else for itself.
+    fn segment_name(&self, ident: &str) -> Option<String> {
+        if ident == "Self" {
+            self.impl_types.iter().find_map(|ty| self.resolve(ty))
+        } else {
+            self.resolve(ident)
+        }
+    }
+
+    fn type_name(&self, ty: &syn::Type) -> Option<String> {
+        match ty {
+            syn::Type::Paren(ty) => self.type_name(&ty.elem),
+            syn::Type::Group(ty) => self.type_name(&ty.elem),
+            syn::Type::Path(ty) => match &ty.qself {
+                Some(qself) => self.type_name(&qself.ty),
+                None => self.segment_name(&ty.path.segments.last()?.ident.to_string()),
+            },
+            _ => None,
+        }
+    }
+
+    /// The inventory name a path names, when it is a constructor path:
+    /// `Name::new`, `alias::default`, `Self::new`, `<Name>::from`,
+    /// `<Name as Trait>::new`.
+    fn constructor_owner(&self, qself: Option<&syn::QSelf>, path: &syn::Path) -> Option<String> {
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let last = segments.last()?;
+        if !CONSTRUCTORS.contains(&last.as_str()) {
+            return None;
+        }
+        match qself {
+            Some(qself) => self.type_name(&qself.ty),
+            None => segments
+                .len()
+                .checked_sub(2)
+                .and_then(|owner| self.segment_name(&segments[owner])),
+        }
+    }
+
+    fn record(&mut self, what: String) {
+        if !self.found.contains(&what) {
+            self.found.push(what);
+        }
+    }
+}
+
+fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && attr
+                .parse_args::<syn::Path>()
+                .is_ok_and(|path| path.is_ident("test"))
+    })
+}
+
+fn path_string(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// Every rename (`… as Y`, any visibility, grouped or not, multiline or
+/// not) and `type Y = …::X` alias of a parsed file, alias → target.
+fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
+    use syn::visit::Visit;
+    struct Aliases(BTreeMap<String, String>);
+    impl<'ast> Visit<'ast> for Aliases {
+        fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
+            self.0
+                .insert(item.rename.to_string(), item.ident.to_string());
+        }
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if let syn::Type::Path(ty) = &*item.ty
+                && let Some(last) = ty.path.segments.last()
+            {
+                self.0
+                    .insert(item.ident.to_string(), last.ident.to_string());
+            }
+            syn::visit::visit_item_type(self, item);
+        }
+    }
+    let mut aliases = Aliases(BTreeMap::new());
+    aliases.visit_file(file);
+    aliases.0
+}
+
+fn syn_aliases(source: &str) -> BTreeMap<String, String> {
+    syn_aliases_of(&syn::parse_file(source).expect("production source parses"))
+}
+
+impl<'ast> syn::visit::Visit<'ast> for AstConstructions<'_> {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        self.aliases.extend(syn_aliases_of(file));
+        syn::visit::visit_file(self, file);
+    }
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let attrs = match item {
+            syn::Item::Mod(item) => &item.attrs,
+            syn::Item::Fn(item) => &item.attrs,
+            syn::Item::Impl(item) => &item.attrs,
+            syn::Item::Type(item) => &item.attrs,
+            syn::Item::Use(item) => &item.attrs,
+            syn::Item::Const(item) => &item.attrs,
+            syn::Item::Static(item) => &item.attrs,
+            _ => {
+                syn::visit::visit_item(self, item);
+                return;
+            }
+        };
+        if !is_cfg_test(attrs) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+        if !is_cfg_test(&method.attrs) {
+            syn::visit::visit_impl_item_fn(self, method);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        let self_ty = match &*item.self_ty {
+            syn::Type::Path(ty) => ty.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        };
+        if let Some((_, trait_path, _)) = &item.trait_
+            && trait_path
+                .segments
+                .last()
+                .is_some_and(|s| s.ident == "From")
+            && let Some(name) = self_ty.as_deref().and_then(|ty| self.resolve(ty))
+        {
+            self.record(format!("`impl From<…> for {name}`"));
+        }
+        let previous = self.impl_types.clone();
+        self.impl_types = self_ty.into_iter().collect();
+        syn::visit::visit_item_impl(self, item);
+        self.impl_types = previous;
+    }
+
+    fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+        if let Some(name) = self.constructor_owner(expr.qself.as_ref(), &expr.path) {
+            self.record(format!("`{}` constructs {name}", path_string(&expr.path)));
+        }
+        syn::visit::visit_expr_path(self, expr);
+    }
+
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        let owner = match &expr.qself {
+            Some(qself) => self.type_name(&qself.ty),
+            None => expr
+                .path
+                .segments
+                .last()
+                .and_then(|s| self.segment_name(&s.ident.to_string())),
+        };
+        if let Some(name) = owner {
+            self.record(format!(
+                "`{} {{ … }}` constructs {name}",
+                path_string(&expr.path)
+            ));
+        }
+        syn::visit::visit_expr_struct(self, expr);
+    }
+}
+
+/// Every construction of an inventory name the parsed `source` contains,
+/// test items excluded; `seed` are the aliases declared elsewhere (the
+/// crate-wide map in production, a planted re-export in fixtures).
+fn ast_constructions_with(
+    source: &str,
+    names: &BTreeSet<String>,
+    seed: &BTreeMap<String, String>,
+) -> Vec<String> {
+    use syn::visit::Visit;
+    let file = syn::parse_file(source).expect("production source parses");
+    let mut scan = AstConstructions {
+        names,
+        aliases: seed.clone(),
+        impl_types: Vec::new(),
+        found: Vec::new(),
+    };
+    scan.visit_file(&file);
+    scan.found
+}
+
+/// [`ast_constructions_with`] seeded with every alias of the crate.
+fn ast_constructions(source: &str, names: &BTreeSet<String>) -> Vec<String> {
+    ast_constructions_with(source, names, crate_raw_aliases())
+}
+
+/// (c) The parse-based scan: no production file outside `src/composition`
+/// and `src/application` constructs a use case, however the construction
+/// is spelled or laid out.
+#[test]
+fn only_composition_and_the_application_construct_use_cases_on_the_syntax_tree() {
+    let names = use_case_names();
+    let mut outside = Vec::new();
+    let mut in_composition = 0usize;
+    for path in production_files() {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let found = ast_constructions(&source, &names);
+        if path.starts_with("src/composition/") {
+            in_composition += found.len();
+        } else if !path.starts_with("src/application/") {
+            outside.extend(found.into_iter().map(|what| format!("{path}: {what}")));
+        }
+    }
+    assert!(
+        outside.is_empty(),
+        "use cases are constructed in composition only (parse-based scan):\n{}",
+        outside.join("\n")
+    );
+    assert!(
+        in_composition >= 10,
+        "composition builds the graph ({in_composition} constructions seen on the tree)"
+    );
+}
+
+/// The parse-based scan itself: every evasion shape the line scan
+/// documents is caught, and handle positions are spared.
+#[test]
+fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructions() {
+    let names: BTreeSet<String> = ["ListSessions", "KillEnvironment"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let caught = [
+        "fn f() { let x = ListSessions\n    ::new(\n        store,\n    ); }",
+        "fn f() { let x = ListSessions :: new(store); }",
+        "impl ListSessions { fn alt() -> Self { Self::new(store) } }",
+        "impl ListSessions { fn alt() -> Self { Self { store } } }",
+        "fn f() { let x = <ListSessions>::new(store); }",
+        "fn f() { let x = <ListSessions as Build>::from(parts); }",
+        "use crate::application::sessions::use_cases::ListSessions as Q;\nfn f() { let x = Q::new(store); }",
+        "use crate::application::sessions::use_cases::{ListSessions as A, ReadHistory};\ntype B = A;\nfn f() { let x = B::default(); }",
+        "type Alias = crate::application::sessions::use_cases::ListSessions;\nfn f() { let x = Arc::new(Alias { store }); }",
+        "fn f() { let x = handle.unwrap_or_else(ListSessions::default); }",
+        "fn f() -> ListSessions {\n    ListSessions {\n        store,\n    }\n}",
+        "struct Parts;\nimpl From<Parts> for ListSessions { fn from(p: Parts) -> Self { todo() } }",
+        "fn f() { let k = Arc::new(\n    KillEnvironment::new(\n        a,\n    ),\n); }",
+    ];
+    for source in caught {
+        assert!(
+            !ast_constructions(source, &names).is_empty(),
+            "must catch:\n{source}"
+        );
+    }
+    let spared = [
+        "struct H { list: Arc<ListSessions> }",
+        "fn f(uc: &ListSessions) -> usize { uc.list_all().len() }",
+        "fn f(e: Event) { match e { Event::ListSessions { id } => id, ListSessions { .. } => 0 } }",
+        "impl Debug for ListSessions { fn fmt(&self) {} }",
+        "impl From<ListSessions> for Other { fn from(x: ListSessions) -> Self { Other } }",
+        "use crate::application::sessions::use_cases::ListSessions;\nfn f() { let x = ListSessionsController::new(uc); }",
+        "#[cfg(test)]\nfn rig() { let x = ListSessions::new(store); }",
+        "#[cfg(test)]\nmod tests { fn rig() { let x = ListSessions::new(store); } }",
+        "impl Thing { #[cfg(test)] fn rig() { ListSessions::new(store); } }",
+        "fn f() { let x = Other::new(ListSessions::name()); }",
+    ];
+    for source in spared {
+        let found = ast_constructions(source, &names);
+        assert!(found.is_empty(), "must spare:\n{source}\nfound {found:?}");
+    }
+}
+
+/// F1 (#1998 review): an alias declared in one file and used in another —
+/// `pub(crate) use …::ResumeSavedSession as Hidden;` in `uds_models.rs`,
+/// `super::uds_models::Hidden::new(…)` in `uds_reload.rs` — is caught by
+/// both scans once the alias map is crate-wide.
+#[test]
+fn cross_file_alias_re_exports_are_resolved_by_both_scans() {
+    let names: BTreeSet<String> = ["ResumeSavedSession".to_string()].into_iter().collect();
+    let declaring =
+        "pub(crate) use crate::application::sessions::use_cases::ResumeSavedSession as Hidden;";
+    let using = "fn build() { let r = super::uds_models::Hidden::new(a, a, a, a, false); }";
+    let code = |src: &str| -> Vec<(usize, String)> {
+        src.lines()
+            .enumerate()
+            .map(|(i, l)| (i + 1, l.to_string()))
+            .collect()
+    };
+    // The line scan: the raw alias comes from the declaring file only.
+    let raw = raw_aliases_in(&code(declaring));
+    assert_eq!(
+        raw.get("Hidden").map(String::as_str),
+        Some("ResumeSavedSession")
+    );
+    let resolved = resolve_aliases(&raw, &names);
+    // The line scan sees the bare alias; the qualified `super::…::Hidden`
+    // spelling is the tree scan's (a `::`-qualified name is a path there).
+    assert!(
+        resolved
+            .keys()
+            .any(|alias| constructs("let r = Hidden::new(a, a, a, a, false);", alias)),
+        "the line scan resolves the cross-file alias"
+    );
+    // The tree scan: seeded with the other file's alias.
+    assert!(
+        !ast_constructions_with(using, &names, &raw).is_empty(),
+        "the tree scan resolves the cross-file alias"
+    );
+    // Without the other file's alias neither would see it — the reason the
+    // map is crate-wide.
+    assert!(ast_constructions_with(using, &names, &BTreeMap::new()).is_empty());
+    // `pub(super) use` and `pub use` spellings are aliases too, and a rename
+    // inside a multiline group is seen on the syntax tree.
+    for decl in [
+        "pub(super) use crate::application::sessions::use_cases::ResumeSavedSession as H2;",
+        "pub use crate::application::sessions::use_cases::{ResumeSavedSession as H3};",
+    ] {
+        assert!(!raw_aliases_in(&code(decl)).is_empty(), "{decl}");
+    }
+    let grouped = "pub(crate) use crate::application::sessions::use_cases::{\n    ListSessions,\n    ResumeSavedSession as H4,\n};";
+    assert_eq!(
+        syn_aliases(grouped).get("H4").map(String::as_str),
+        Some("ResumeSavedSession")
+    );
 }

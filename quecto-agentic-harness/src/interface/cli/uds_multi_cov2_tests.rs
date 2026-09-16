@@ -279,7 +279,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         .unwrap();
     drop(cmd_tx);
 
-    let mut session = super::super::uds_session::AgentSession::new("stub".into(), "cli:cov".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let mut messages = vec![Message::user("seed")];
     let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
@@ -300,7 +300,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             &[],
         ),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0, None),
+            session.state_snapshot("cli:test", 0, None, 0, None),
         )),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
             super::super::uds_session::compute_session_stats("cli:cov", &[]),

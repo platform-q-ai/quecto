@@ -5,12 +5,11 @@
 //!
 //! The conversation itself lives in the application-owned active session
 //! (`ActiveSessionState`, #1971): this module publishes into it and reads
-//! from it; `sync` is answered through the composed controller
-//! (`uds_sync`, #1973) and `get_report` through the composed export
-//! controller (#1974); the rewind's ledger reset is the rewind
-//! transaction's (#1975); the session switch (identity, retention
-//! namespace and transcript in one write) is the active session's own
-//! `switch_to` (#1976).
+//! from it — the `sessionKey` it presents is the active session's identity
+//! (D10 #1979); `sync` is answered through the composed controller
+//! (`uds_sync`, #1973), `get_report` through the composed export controller
+//! (#1974); the rewind's ledger reset and the session switch are the
+//! transactions' own (#1975, #1976).
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
@@ -67,27 +66,28 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
         })
     });
     let visible_message_count = user_visible_messages(ctx.messages, ctx.system_prompt).len();
+    let session_key = ctx.sessions.current_session_key().await;
     let state = ctx.session.state_snapshot(
+        &session_key,
         visible_message_count,
         workflow,
         ctx.agent.max_context_tokens(),
         ctx.agent.effort().map(|l| l.as_str().to_string()),
     );
-    let mut snap = ctx.state_snapshot.write().await;
-    *snap = state;
+    *ctx.state_snapshot.write().await = state;
 }
 
 pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
+    let session_key = ctx.sessions.current_session_key().await;
     let stats = compute_session_stats_with_usage(
-        ctx.session.session_key(),
+        &session_key,
         &visible_messages,
         ctx.session.usage_snapshot(),
         ctx.session.context_tokens(),
         ctx.agent.max_context_tokens(),
     );
-    let mut snap = ctx.session_stats_snapshot.write().await;
-    *snap = stats;
+    *ctx.session_stats_snapshot.write().await = stats;
 }
 
 pub(super) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {

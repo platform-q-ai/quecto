@@ -1,3 +1,6 @@
+//! Control receipts and pending-queue control of the [`AgentSession`]
+//! tracker (steer, follow-up, abort bookkeeping). Owner role: control.
+//! Child module of `uds_session`; holds no session persistence.
 use super::*;
 
 impl AgentSession {

@@ -356,7 +356,7 @@ async fn run_turn(
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into(), "cli:test-1060".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -412,7 +412,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into(), "cli:test-1060".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

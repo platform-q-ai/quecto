@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::agent_loop::UsageTotals;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::tools::ports::Tool;
 use crate::domain::message::{Message, ToolCall};
@@ -129,7 +130,7 @@ impl Fx {
                 tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: Arc::new(FileSessionStore::new(
@@ -178,7 +179,7 @@ impl Fx {
                 &[],
             ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -344,7 +345,8 @@ fn query_get_state_messages_and_stats_are_shaped() {
 #[test]
 fn query_get_session_stats_returns_shared_usage_accounting_fields() {
     let mut fx = Fx::new();
-    fx.session.record_usage(70, 20, 30, 5, 1_234);
+    fx.session
+        .record_usage("cli:test", UsageTotals::billed(70, 20, 30, 5, 1_234));
     fx.session.set_context_tokens(105);
     let ctx = fx.ctx();
 

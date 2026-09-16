@@ -622,11 +622,13 @@ async fn retained_clarification_has_queryable_correlated_handling_receipt() {
         )
         .await
     );
-    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    let state =
+        serde_json::to_value(ctx.session.state_snapshot("cli:test", 0, None, 0, None)).unwrap();
     assert_eq!(state["controlReceipts"][0]["id"], "approval-42");
     assert_eq!(state["controlReceipts"][0]["status"], "queued");
     super::drain_and_run_pending(&mut ctx).await;
-    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    let state =
+        serde_json::to_value(ctx.session.state_snapshot("cli:test", 0, None, 0, None)).unwrap();
     assert_eq!(state["controlReceipts"][0]["id"], "approval-42");
     assert_eq!(state["controlReceipts"][0]["status"], "completed");
     assert!(
@@ -650,7 +652,8 @@ async fn aborted_queued_clarification_receipt_is_cancelled_without_inference() {
     .await;
     ctx.turn_control.mark_abort();
     super::drain_pending_and_nudge(&mut ctx).await;
-    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    let state =
+        serde_json::to_value(ctx.session.state_snapshot("cli:test", 0, None, 0, None)).unwrap();
     assert_eq!(state["controlReceipts"][0]["status"], "cancelled");
     assert!(ctx.messages.is_empty());
 }
@@ -668,7 +671,8 @@ async fn failed_clarification_receipt_is_failed_and_later_controls_remain_queued
             .await;
     }
     super::drain_and_run_pending(&mut ctx).await;
-    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    let state =
+        serde_json::to_value(ctx.session.state_snapshot("cli:test", 0, None, 0, None)).unwrap();
     assert_eq!(state["controlReceipts"][0]["status"], "failed");
     assert_eq!(state["controlReceipts"][1]["status"], "queued");
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -727,7 +731,8 @@ async fn direct_rejected_and_precancelled_prompts_have_correlated_receipts() {
             },
         )
         .await;
-        let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+        let state =
+            serde_json::to_value(ctx.session.state_snapshot("cli:test", 0, None, 0, None)).unwrap();
         assert_eq!(state["controlReceipts"][0]["id"], "direct-control");
         assert_eq!(state["controlReceipts"][0]["status"], expected);
         assert!(ctx.messages.is_empty());

@@ -47,7 +47,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
@@ -70,7 +70,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
             &[],
         ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0, None),
+            session.state_snapshot("cli:test", 0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

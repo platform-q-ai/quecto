@@ -280,10 +280,7 @@ fn next_sequence(world: &mut QuectoWorld, agent_id: &str) -> u64 {
 
 #[given("a parent session with no pending notes")]
 fn given_parent_session(world: &mut QuectoWorld) {
-    world.notify_parent_session = Some(AgentSession::new(
-        "model".to_string(),
-        "cli:parent".to_string(),
-    ));
+    world.notify_parent_session = Some(AgentSession::new("model".to_string()));
 }
 
 #[given("the parent is busy processing a turn")]
@@ -362,7 +359,7 @@ fn then_pending_note_count(world: &mut QuectoWorld, expected: usize) {
         .as_ref()
         .expect("no parent session");
     let count = session
-        .state_snapshot(0, None, 0, None)
+        .state_snapshot("cli:test", 0, None, 0, None)
         .pending_message_count;
     assert_eq!(count, expected, "unexpected pending note count");
 }
@@ -384,7 +381,7 @@ fn then_busy_not_consumed(world: &mut QuectoWorld) {
         .expect("no parent session");
     assert_eq!(
         session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         1,
         "while busy the note stays buffered and is not injected into the turn"

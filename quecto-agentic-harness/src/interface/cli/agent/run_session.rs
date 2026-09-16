@@ -20,7 +20,7 @@ pub(crate) fn run_agent_session(
     out: &mut AgentOutput<'_>,
 ) -> i32 {
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = if ephemeral {
+    let identity = if ephemeral {
         SessionIdentity::ephemeral()
     } else {
         // The key grammar is the domain's: `--session <name>` was admitted
@@ -37,7 +37,7 @@ pub(crate) fn run_agent_session(
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: None,
-        session_key: session_key.runtime_key().to_string(),
+        identity,
         ephemeral,
         // The one-shot run appends its prompt by id (below) rather than at
         // the head, so the save transaction has no injected head to strip.

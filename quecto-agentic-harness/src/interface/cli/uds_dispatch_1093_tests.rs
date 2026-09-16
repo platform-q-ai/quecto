@@ -172,7 +172,7 @@ impl Fixture {
                 tool_profile_context: ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".into(),
             store,
             handles,
@@ -200,7 +200,7 @@ impl Fixture {
             messages: &mut self.messages,
             sessions: handles.read_handles(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),

@@ -2,6 +2,14 @@
 //!
 //! Contract:
 //! - session-key changes are propagated to every registered tool.
+//!
+//! The port is the tools capability's and carries the raw `String` key
+//! (`Tool::set_session_key`); the sessions epic (#1968, closed by D10
+//! #1979) typed every sessions port on `SessionIdentity` but left this one
+//! as it is, so `RecallTool` converts the key it is handed with
+//! `SessionIdentity::from_persisted_key` — the one admitted infrastructure
+//! conversion site (`tests/architecture/sessions_epic_close_retirement.rs`).
+//! Typing this port is future tools-capability work.
 
 use quecto::application::tools::ports::{SessionAwareTools, Tool};
 use quecto::domain::tool::{ToolDefinition, ToolResult};

@@ -32,6 +32,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running. A launcher-created child ignores client churn and ends on the loss of its launch-bound parent connection instead (#1935/#1937). Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). On startup, dead auto-generated sockets are reaped by liveness check; the 24h age threshold is a fallback for sockets whose liveness cannot be determined
 - **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window, and the [protocol capability matrix](architecture/protocol-capability-matrix.md) for the current compatibility/evolution map
+- **Session commands (#1968):** `list_sessions`, `resume_session`, `new_session`, `persist_session`, `clear_history`, `rewind_to`, `get_messages`, `get_message`, `sync`, `get_report` and `get_session_stats` are each answered by one sessions use case (named in the command's section and in [sessions.md](sessions.md#architecture-epic-1968)); the epic that moved them changed no command, field or refusal text
 
 ## Correlation IDs
 
@@ -195,7 +196,7 @@ Toggle core workflow automation for this UDS session. Requires workflow mode.
 
 ### `clear_history`
 
-Clear the conversation history in-place without restarting the agent. The system prompt is preserved; all user, assistant, and tool messages are removed. Any pending follow-up/steer messages are drained. The context spill store is also cleared so that stale tool output summaries are not re-injected on the next prompt.
+Clear the conversation history in-place without restarting the agent. The system prompt is preserved; all user, assistant, and tool messages are removed. Any pending follow-up/steer messages are drained. The session's retained-context namespace is also cleared so that stale tool output summaries are not re-injected on the next prompt. Owner: `ClearConversation` (#1864, #1968).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -203,8 +204,9 @@ Clear the conversation history in-place without restarting the agent. The system
 | `id` | string | no | Correlation ID |
 
 **Behavior:**
-- **Agent idle:** Clears all messages except the system prompt. Drains the pending queue. Clears the spill store (index + disk file). Returns `success: true`
+- **Agent idle:** Clears all messages except the system prompt. Drains the pending queue. Clears the retention namespace (index + disk file). Saves the cleared session. Emits `ledger_advanced` with a new `epoch`, then returns `success: true`
 - **Agent running:** Returns `success: false` with error `"cannot clear history while agent is running"`
+- **Save failure:** the conversation is cleared and `ledger_advanced` is still emitted; the response is `success: false` with `"failed to save cleared session: <store error>"`
 
 The system prompt (injected via `--system` flag) is preserved at `messages[0]`. Context-pruning manifests (`is_manifest = true`) and spill indices are **not** preserved — `recall("list")` returns empty after clear.
 
@@ -230,7 +232,7 @@ The system prompt (injected via `--system` flag) is preserved at `messages[0]`. 
 
 ### `list_sessions`
 
-Return persisted CLI sessions that can be resumed by this UDS agent.
+Return every persisted session this UDS agent can resume, newest first. Owner: `ListSessions` (#1861, #1968).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -242,12 +244,21 @@ Return persisted CLI sessions that can be resumed by this UDS agent.
 ```json
 {
   "sessions": [
-    {"key":"cli:default","name":"default","messageCount":42,"updatedUnixSecs":1765930000}
+    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000},
+    {"key":"cli:default","title":"(untitled)","messageCount":42,"updatedUnixSecs":1765920000,"updatedAt":1765920000}
   ]
 }
 ```
 
-Only `cli:*` sessions are returned because `resume_session` resumes CLI session names.
+| Field | Type | Description |
+|---|---|---|
+| `key` | string | The session key, passed as is to `resume_session` |
+| `title` | string | The session's first user message, trimmed and truncated for display; `(untitled)` when there is none |
+| `messageCount` | integer | Persisted user/assistant messages |
+| `updatedUnixSecs` | integer \| null | Last modification time in Unix seconds |
+| `updatedAt` | integer \| null | Same value as `updatedUnixSecs` (retained alias) |
+
+Both `chat-…` user-chat sessions and `cli:<name>` named sessions are listed; records that cannot be read or summarised are skipped rather than failing the list.
 
 **Example:**
 
@@ -259,19 +270,21 @@ Only `cli:*` sessions are returned because `resume_session` resumes CLI session 
 
 ### `resume_session`
 
-Switch the active UDS conversation to a persisted CLI session. The current session is saved first.
+Switch the active UDS conversation to a persisted session. The current session is saved first. Owner: `ResumeSavedSession` (#1863, #1968).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"resume_session"` | yes | |
 | `id` | string | no | Correlation ID |
-| `session` | string | yes | CLI session name, e.g. `default` or `work` |
+| `session` | string | yes | The target: a full `chat-…` key (as listed), an already-qualified `cli:<name>` key, or a bare CLI session name such as `default` or `work` (resolved to `cli:<name>`) |
 
 **Behavior:**
-- **Agent idle:** Saves the current session, loads `cli:<session>`, and switches subsequent prompts to that history
+- **Agent idle:** Settles delegated children, saves the current session, claims and loads the target, releases the departing key, resets the effort override, restores the target's workflow run (or resets the engine when it saved none), switches subsequent prompts to that history, emits `ledger_advanced` with a new `epoch`, and answers `{"session":"<name>","sessionKey":"<key>","messageCount":N}`. `get_state.sessionKey` and `get_session_stats.sessionKey` follow the target; usage statistics restart at zero for the resumed session
 - **Agent running:** Returns `success: false` with error `"cannot resume a session while agent is running"`
-- Invalid session names are rejected using the same rules as `quecto agent --session`
-- Missing sessions return `success: false` with `"session not found: <name>"`
+- Invalid targets are rejected with `"session name must contain only alphanumeric, '-', or '_'"` (the same rules as `quecto agent --session`; no other prefix is admitted)
+- Missing sessions return `success: false` with `"session not found: <name>"`; a key another live harness holds open is refused with the ownership error. Every refusal keeps the current conversation in place. Known (#1995, open): when the missing or unloadable target *is* the key the loop already stands for, releasing the claim just taken also releases the loop's own claim on that key
+- Ephemeral loops (`--no-session`) refuse with `"cannot resume sessions in ephemeral mode"`
+- Resuming the key the loop already stands for reloads it from disk in place: the key is unchanged (on success no departing key is released), the history and workflow run are restored from the record, and usage statistics restart; see the #1995 note above for the not-found path
 - **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, no child row re-created or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
 
 **Example:**
@@ -541,9 +554,51 @@ Example page walk:
 
 ---
 
+### `sync`
+
+Reconcile a client's transcript with the agent's committed ledger. Answered on both transports — the idle dispatch loop and, while the agent is busy, the per-connection reader — through the same owner: `SynchronizeTranscript` (#1857, #1968).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"sync"` | yes | |
+| `id` | string | no | Correlation ID |
+| `epoch` | integer | yes | The ledger epoch the client last synchronised against (`0` for none) |
+| `sinceRev` | integer | yes | The last committed revision the client holds |
+| `agent_id` | string | no | Forward the sync to a spawned child agent |
+
+**Response data:** a delta when the client's epoch is current and `sinceRev` is at or above the oldest retained revision, otherwise a resync page.
+
+| Field | Type | Description |
+|---|---|---|
+| `epoch` | integer | The current ledger epoch (advances on `clear_history`, `rewind_to`, `new_session`, `resume_session`) |
+| `rev` | integer | The newest committed revision |
+| `resync` | boolean | `true` when the client must replace its transcript with the carried page |
+| `messages` | array | Delta: the committed messages after `sinceRev`, in commit order, as many as fit one frame. Resync: the newest history page (with `before` / `hasMoreBefore` as `get_messages`) |
+| `nextRev` | integer \| null | Delta: the revision to continue from when the delta was cut at the frame budget; `null` when caught up |
+| `caughtUp` | boolean | Delta: `true` when nothing was left out |
+
+Clients continue a cut delta with `sinceRev = nextRev`. The `ledger_advanced` event (`{"type":"ledger_advanced","epoch":E,"rev":R}`) tells a client when a sync is worth sending.
+
+---
+
+### `get_report`
+
+Return the latest assistant report of the session and, on request, write a retained raw export. Owner: `ExportSessionReport` (#1859, #1968). Available while busy through the reader task.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"get_report"` | yes | |
+| `id` | string | no | Correlation ID |
+| `export_raw` | boolean | no | Also export every retained message and spill entry under `<base>/artifacts/session-exports/session-*/` with a checksum manifest |
+| `agent_id` | string | no | Forward the request to a spawned child agent |
+
+**Response data:** `{"report":{"messageId","content","contentTruncated","fullLengthBytes"},"recovery":{"command":"get_message","messageId","offset"}|null,"snapshot":true}`, or `{"report":null,"snapshot":true}` when no substantive assistant message exists; with `export_raw`, `rawExport: {"path","manifest","sha256","bytes","scope":"retained_snapshot"}`. Refusals: `"session export directory unavailable"`, `"two raw exports are already running; retry after completion"`, `"session changed during export; retry against the new epoch"`.
+
+---
+
 ### `get_session_stats`
 
-Return token usage and cost statistics for the current session.
+Return token usage and cost statistics for the current session. `sessionKey` is the active session's identity; the usage counters restart at zero whenever `new_session` or `resume_session` moves the loop to a different key, and on `clear_history` / `rewind_to`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -663,25 +718,51 @@ Return configured and built-in models from the runtime registry (`models.json` +
 
 ### `new_session`
 
-Switch to a fresh user-chat session. The previous session is saved first. Rejected while the agent is streaming.
+Switch to a fresh user-chat session. The previous session is saved first. Rejected while the agent is streaming. Owner: `StartFreshConversation` (#1862, #1968).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"new_session"` | yes | |
 | `id` | string | no | Correlation ID |
 
+**Behavior:**
+- **Agent idle:** Settles delegated children, saves the departing session, replaces the roster, clears the conversation (system prompt kept), draws a fresh `chat-<unix-secs>-<uniq>` key (never claimed until its first save), releases the departing key, resets the effort override and the workflow engine, clears the fresh key's retention namespace, emits `ledger_advanced` with a new `epoch`, and answers `{"sessionKey":"chat-…"}`. `get_state.sessionKey` follows it and usage statistics restart at zero
+- **Agent running:** Returns `success: false` with error `"cannot start a new session while agent is running"`
+- **Children cannot be settled:** `success: false` with the settlement refusal (`…could not be settled; the current session was kept`, `subagent teardown was interrupted…`, `…no fleet teardown is available…`, `…remain after the teardown…`); the current session is kept
+- **Save failure:** `success: false` with `"failed to save current session: <store error>"`; the current session is kept
+
+---
+
+### `persist_session`
+
+Save the current session now, without waiting for the next turn boundary. Owner: `SaveSession` (#1860, #1968) — the same transaction every other save of the loop requests.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"persist_session"` | yes | |
+| `id` | string | no | Correlation ID |
+| `restoreReason` | string | no | `"ordinary_tui_exit_stopped"` marks a TUI's ordinary exit (#1586): the persisted sub-agent roster is emptied and the reason is stamped on the record. Any other value, or none, records the legacy unspecified reason |
+
+**Response:** the correlated `response` with `success: true`, or `success: false` carrying the store's error text verbatim.
+
 ---
 
 ### `rewind_to`
 
-Rewind conversation history to a selected user-message boundary. Prefer stable `messageId` (from paged history). `messageIndex` is retained only for single-page conversations; beyond one history page it is rejected rather than misapplied.
+Rewind conversation history to a selected user-message boundary. Prefer stable `messageId` (from paged history). `messageIndex` is retained only for single-page conversations; beyond one history page it is rejected rather than misapplied. Owner: `RewindConversation` (#1865, #1968).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"rewind_to"` | yes | |
 | `id` | string | no | Correlation ID |
-| `messageId` | string | preferred | Stable message id to rewind to |
+| `messageId` | string | preferred | Stable message id to rewind to; when both are given, `messageId` wins |
 | `messageIndex` | integer | legacy | Page-local index — only honoured while history fits one page |
+
+**Behavior:**
+- **Agent idle:** Truncates the conversation at the selected user message (that message is removed too), strips retention residue, resets the ledger to the survivors, clears the retention namespace, saves, emits `ledger_advanced` with a new `epoch`, and returns `success: true`
+- **Agent running:** `"cannot rewind while agent is running"`
+- Neither field: `"rewind requires messageId or messageIndex"`; unknown id or out-of-range index: `"rewind target not found"`; an index on a conversation longer than one history page: `"messageIndex is ambiguous beyond one history page; rewind requires messageId"`; a target that is not a user message: `"invalid rewind target"`. Every refusal leaves the conversation untouched
+- **Save failure:** the rewind is applied and `ledger_advanced` emitted; the response is `success: false` with `"failed to save rewound session: <store error>"`
 
 ---
 

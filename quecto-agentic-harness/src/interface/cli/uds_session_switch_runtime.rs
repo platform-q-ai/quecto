@@ -1,12 +1,9 @@
-//! Adapter of the sessions capability's session-switch runtime ports (D7
-//! #1976) over the dispatch loop's own runtime: the turn accounting the
-//! clear/rewind adapter already performs, the raw-key holders the new
-//! identity is propagated to (the [`AgentSession`] tracker, the agent loop
-//! and its session-aware tools), and the session-scoped settings a switch
-//! resets or restores (D8 #1977) — the effort override (#1067) and the
-//! workflow engine's run — each bumping the tracker's visible generation
-//! only when something changed. The transactions order these; this adapter
-//! performs them and decides nothing.
+//! Adapter of the session-switch runtime ports (D7 #1976, D8 #1977) over
+//! the dispatch loop's runtime: turn accounting, key propagation to the
+//! agent loop and its session-aware tools (the [`AgentSession`] tracker
+//! keeps no copy, D10 #1979), and the effort/workflow reset or restore,
+//! each bumping the tracker's visible generation only when something
+//! changed. The transactions order these; this adapter decides nothing.
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;
@@ -47,9 +44,12 @@ impl TurnAccountingReset for LoopSessionSwitchRuntime<'_> {
 }
 
 impl SessionKeyPropagation for LoopSessionSwitchRuntime<'_> {
+    /// A changed key clears the departed session's usage and bumps the
+    /// visible generation once, as the tracker's own key change did.
     fn session_key_changed(&mut self, identity: &SessionIdentity) {
-        self.session
-            .set_session_key(identity.runtime_key().to_string());
+        if self.agent.session_key() != identity.runtime_key() {
+            self.session.session_changed();
+        }
         self.agent.set_session_key(identity.clone());
     }
 }

@@ -2,6 +2,12 @@
 //! once per shutdown with the admitted reason, after the children were
 //! addressed, and a failure is reported in the outcome rather than aborting
 //! the exit.
+//!
+//! Epic close (D10 #1979): the production adapter (`DeferredLoopPersistence`)
+//! only records the admitted reason for the dispatch loop; the save itself is
+//! the sessions capability's `SaveSession` transaction, requested once by the
+//! loop's ordinary exit (`SaveTrigger::OrdinaryExit`), never a second save
+//! path owned by the teardown graph.
 use std::sync::Arc;
 
 use quecto::application::subagents::dto::PersistenceOutcome;

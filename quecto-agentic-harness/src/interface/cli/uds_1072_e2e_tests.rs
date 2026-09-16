@@ -220,7 +220,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     let mut messages: Vec<Message> = (1..=8).map(droppable_history_message).collect();
     let pre_turn_len = messages.len() + 1; // history + the incoming prompt
 
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -357,7 +357,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         Message::assistant("prior", vec![]),
     ];
 
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

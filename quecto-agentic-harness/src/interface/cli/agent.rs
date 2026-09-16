@@ -577,7 +577,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
-    agent.set_session_key(session_identity);
+    agent.set_session_key(session_identity.clone());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
     // makes workflow available, but should not add audit I/O/privacy overhead before
@@ -627,7 +627,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         retention: Some(retention.clone()),
         base_dir: &base_dir,
         workspace: &build.workspace,
-        session_key,
+        identity: session_identity,
         model,
         ephemeral,
         system_prompt,

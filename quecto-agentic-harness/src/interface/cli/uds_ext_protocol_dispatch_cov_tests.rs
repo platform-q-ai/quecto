@@ -35,12 +35,11 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("bash")];
     let save_session =
@@ -105,12 +104,11 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     registry.remove("blocked_ext");
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("blocked_ext")];
     let save_session =
@@ -174,12 +172,11 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let mut tool = tool_reg("weather");
     tool.stable_id = Some("com.example.weather.v1".into());
