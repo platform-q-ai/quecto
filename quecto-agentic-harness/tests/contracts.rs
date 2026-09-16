@@ -83,6 +83,8 @@ mod refreshable_catalogue_source;
 mod retained_context;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
+#[path = "contracts/runtime_snapshot_source.rs"]
+mod runtime_snapshot_source;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]
 mod runtime_tool_lifecycle_registry;
 #[path = "contracts/session_aware_tools.rs"]
@@ -152,6 +154,8 @@ mod delegated_agent_registry;
 mod direct_child_routing;
 #[path = "contracts/fetch_web_content.rs"]
 mod fetch_web_content;
+#[path = "contracts/model_runtime.rs"]
+mod model_runtime;
 #[path = "contracts/owned_child_termination.rs"]
 mod owned_child_termination;
 #[path = "contracts/shutdown_clock.rs"]

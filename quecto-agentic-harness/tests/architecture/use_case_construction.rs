@@ -33,6 +33,7 @@ use super::teardown_authority::{production_code, production_files, walk};
 /// Every use case and ports bundle declared under an application
 /// `use_cases` folder.
 const USE_CASES: &[&str] = &[
+    "ChangeActiveModel",
     "ChangeReasoningEffort",
     "ClearConversation",
     "CompensateFailedLaunch",
@@ -96,10 +97,6 @@ const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[
     (
         "src/interface/catalogue_runtime.rs",
         "ComposeProviderRuntimeUseCase::new(",
-    ),
-    (
-        "src/interface/catalogue_runtime.rs",
-        "ResolveModelSelectionUseCase::new(",
     ),
     (
         "src/infrastructure/tools/spawn.rs",

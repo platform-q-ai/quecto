@@ -327,6 +327,7 @@ pub struct QuectoWorld {
     pub provider_admission: inference_admission_provider_steps::ProviderAdmissionState,
     /// #1572 catalogue application slice state (sources, store, resolution).
     pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
+    pub active_model: active_model_steps::ActiveModelState,
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
     pub catalogue_runtime: catalogue_runtime_steps::CatalogueRuntimeState,
     /// #1574 catalogue refresh slice state (refreshables, store, report).
@@ -1420,6 +1421,7 @@ fn table_to_json(table: &gherkin::Table) -> String {
     obj.to_string()
 }
 
+mod active_model_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;

@@ -77,6 +77,12 @@ impl RuntimeSnapshotStore {
     }
 }
 
+impl crate::application::catalogue::ports::RuntimeSnapshotSource for RuntimeSnapshotStore {
+    fn current_runtime(&self) -> Option<Arc<CatalogueRuntimeSnapshot>> {
+        self.current()
+    }
+}
+
 /// A composition failure. The previously published runtime (if any) stays
 /// current; it is echoed here so callers can report what is still in effect.
 #[derive(Debug, Clone)]

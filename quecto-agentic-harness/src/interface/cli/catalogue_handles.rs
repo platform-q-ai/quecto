@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::application::catalogue::use_cases::ChangeReasoningEffort;
+use crate::application::catalogue::use_cases::{ChangeActiveModel, ChangeReasoningEffort};
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
 /// The composed `list_models` controller a dispatch loop holds.
@@ -19,6 +19,9 @@ pub struct CatalogueHandles {
     /// answers the `get_state` vocabulary, admits the startup default and
     /// the level carried across a model switch.
     pub effort: Arc<ChangeReasoningEffort>,
+    /// Change the active model (#1847): plans and applies `set_model`, and
+    /// supplies the startup model's limits.
+    pub model: Arc<ChangeActiveModel>,
 }
 
 /// The effort fields of a dispatch loop's state snapshot (#1848).

@@ -6,6 +6,18 @@
 //! per-model registry cap and the request builder uses `effective_max_tokens`.
 
 use super::AgentLoopImpl;
+use crate::application::catalogue::dto::ModelLimits;
+use crate::application::catalogue::ports::ModelRuntime;
+
+impl ModelRuntime for AgentLoopImpl {
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn apply_model(&mut self, model: String, limits: ModelLimits) {
+        self.switch_model(model, limits.max_output_tokens, limits.context_window);
+    }
+}
 
 impl AgentLoopImpl {
     /// Switch the active model, its per-model output cap, and its known
@@ -16,8 +28,9 @@ impl AgentLoopImpl {
     /// `None` when unknown); the effective pruning budget becomes
     /// `min(max_context_tokens, window)` (#1044). Taking both as parameters
     /// (rather than separate setters) ensures every switch re-clamps with no
-    /// fragile multi-call protocol.
-    pub fn set_model(
+    /// fragile multi-call protocol. The change-active-model use case is the
+    /// only caller (#1847), through the [`ModelRuntime`] port.
+    fn switch_model(
         &mut self,
         model: String,
         model_max_tokens: Option<u32>,

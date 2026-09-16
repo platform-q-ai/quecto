@@ -286,10 +286,9 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
 #[test]
 fn set_model_limits_and_selection_come_from_the_published_snapshot() {
     // Positive counterpart to the `model_limits_from_base_dir` removal grep
-    // (#1576): the limits a set_model applies (via
-    // `interface::catalogue_runtime::published_model_limits`) must equal the
-    // capability metadata the published snapshot itself carries for that
-    // model — one authority, one read path.
+    // (#1576): the limits a set_model applies (the change-active-model use
+    // case's plan, #1847) must equal the capability metadata the published
+    // snapshot itself carries for that model — one authority, one read path.
     let tmp = tempfile::tempdir().unwrap();
     write_models_json(
         tmp.path(),
@@ -297,12 +296,12 @@ fn set_model_limits_and_selection_come_from_the_published_snapshot() {
             "models":[{"id":"limited-model","name":"Limited",
                        "maxTokens":50,"contextWindow":1234}]}}}"#,
     );
-    let (cap, window) = quecto::interface::catalogue_runtime::published_model_limits(
-        tmp.path(),
-        "contractish/limited-model",
-    );
-    assert_eq!(cap, Some(50));
-    assert_eq!(window, Some(1234));
+    let limits = quecto::composition::catalogue::build_catalogue_handles(tmp.path())
+        .model
+        .plan("contractish/limited-model")
+        .limits;
+    assert_eq!(limits.max_output_tokens, Some(50));
+    assert_eq!(limits.context_window, Some(1234));
     let snapshot = snapshot_store_for(tmp.path()).current();
     let entry = snapshot
         .entries()
@@ -317,7 +316,7 @@ fn set_model_limits_and_selection_come_from_the_published_snapshot() {
 fn active_selection_and_agent_startup_observe_the_published_generation() {
     // AC2 (#1576): agent startup composes and publishes runtime + catalogue
     // as one generation, and active selection (the set_model verdict path,
-    // `interface::catalogue_runtime::select_model`) reports that same
+    // the change-active-model plan's verdict, #1847) reports that same
     // generation — no surface observes a private one.
     let tmp = tempfile::tempdir().unwrap();
     write_models_json(
@@ -332,17 +331,27 @@ fn active_selection_and_agent_startup_observe_the_published_generation() {
     let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
         .current()
         .expect("startup published a runtime generation");
-    let selection =
-        quecto::interface::catalogue_runtime::select_model(tmp.path(), "contractish/gen-model")
-            .expect("published model selects");
-    assert_eq!(
-        selection.generation,
-        published.generation(),
-        "active selection must observe the generation agent startup published"
-    );
     assert_eq!(
         published.generation(),
         snapshot_store_for(tmp.path()).current().generation(),
         "runtime and catalogue stores publish one generation"
     );
+    let verdict = quecto::composition::catalogue::build_catalogue_handles(tmp.path())
+        .model
+        .plan("contractish/gen-model")
+        .verdict;
+    match verdict {
+        quecto::application::catalogue::dto::ModelSelectionVerdict::Runnable {
+            provider,
+            generation,
+        } => {
+            assert_eq!(provider, "contractish");
+            assert_eq!(
+                generation,
+                published.generation(),
+                "active selection must observe the generation agent startup published"
+            );
+        }
+        other => panic!("published model selects, got {other:?}"),
+    }
 }

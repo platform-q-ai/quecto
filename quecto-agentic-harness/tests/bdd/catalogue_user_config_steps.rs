@@ -10,8 +10,8 @@ use std::sync::Arc;
 use super::*;
 use quecto::application::catalogue::ResolvedCatalogue;
 use quecto::composition::catalogue::list_models_wire_for;
+use quecto::composition::catalogue::resolve_catalogue_for;
 use quecto::domain::catalogue::{CatalogueSnapshot, ModelRef, UnavailableReason};
-use quecto::interface::catalogue_runtime::resolve_and_publish_for;
 
 #[derive(Debug, Default)]
 pub struct CatalogueUserConfigState {
@@ -208,7 +208,7 @@ fn ucfg_given_legacy_literal_key(world: &mut QuectoWorld, provider: String, mode
 #[when(expr = "the effective catalogue is resolved from the user's configuration")]
 fn ucfg_when_resolved(world: &mut QuectoWorld) {
     let base = ucfg_base(world);
-    let (_store, resolved) = resolve_and_publish_for(&base);
+    let resolved = resolve_catalogue_for(&base);
     world.catalogue_user_config.resolved = Some(resolved);
 }
 

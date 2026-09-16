@@ -1,8 +1,9 @@
-//! UDS-surface tests for the structured model-selection outcome (#1573):
-//! `selection_status` is the payload `set_model` responses carry, so these
-//! pin the wire-visible shape of every selection verdict.
+//! UDS-surface tests for the structured model-selection outcome (#1573,
+//! #1847): the payload `set_model` responses carry is the presenter's
+//! rendering of the change-active-model plan's verdict over the published
+//! runtime generation, so these pin the wire-visible shape of every verdict.
 
-use super::selection_status;
+use crate::interface::uds::catalogue::model_presenter::render_verdict;
 
 fn write_models_json(dir: &std::path::Path, body: &str) {
     std::fs::write(dir.join("models.json"), body).unwrap();
@@ -15,6 +16,13 @@ fn compose(dir: &std::path::Path) {
         &reqwest::Client::new(),
     )
     .expect("composition succeeds");
+}
+
+fn selection_status(dir: &std::path::Path, model: &str) -> Option<serde_json::Value> {
+    let plan = crate::composition::catalogue::build_catalogue_handles(dir)
+        .model
+        .plan(model);
+    render_verdict(&plan.verdict)
 }
 
 #[test]
@@ -40,15 +48,17 @@ fn set_model_payload_carries_the_structured_selection_verdicts() {
     let ok = selection_status(tmp.path(), "udsish/uds-model").expect("runtime published");
     assert_eq!(ok["status"], "ok");
     assert_eq!(ok["provider"], "udsish");
-    // Exact equality against the published snapshot: a hardcoded wire
-    // constant cannot satisfy this once the runtime is recomposed below.
-    let published = crate::infrastructure::catalogue_registry::snapshot_store_for(tmp.path())
+    // The verdict's generation is the published runtime's: a plan republishes
+    // the catalogue (a later generation of the same store) but the runtime
+    // generation it reports is the one the router was composed with.
+    let published = crate::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
         .current()
+        .expect("runtime published")
         .generation();
     assert_eq!(ok["generation"].as_u64().unwrap(), published);
     compose(tmp.path());
     let recomposed = selection_status(tmp.path(), "udsish/uds-model").expect("runtime published");
-    assert_eq!(recomposed["generation"].as_u64().unwrap(), published + 1);
+    assert!(recomposed["generation"].as_u64().unwrap() > published);
 
     let unknown = selection_status(tmp.path(), "udsish/no-such-model").expect("runtime published");
     assert_eq!(unknown["status"], "unknown_model");

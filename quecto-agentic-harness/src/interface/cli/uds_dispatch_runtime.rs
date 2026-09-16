@@ -39,76 +39,24 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             return false;
         }
     };
-    // #935/#1044: re-derive the per-model output cap AND context window so a
-    // model switch re-clamps subsequent turns and the pruning budget; one
-    // registry load feeds both, and set_model takes them atomically so model,
-    // cap, and window can never diverge.
-    let (cap, window) =
-        crate::interface::catalogue_runtime::published_model_limits(ctx.base_dir, &resolved_model);
-    // #1573: surface the catalogue's structured selection outcome for the
-    // requested model through the UDS response. The switch itself proceeds
-    // regardless (open router prefixes accept ids the catalogue cannot
-    // enumerate), so runtime behaviour is unchanged — the payload only adds
-    // the application-layer selection verdict for this generation.
-    let selection = selection_status(ctx.base_dir, &resolved_model);
-    ctx.agent.set_model(resolved_model.clone(), cap, window);
-    ctx.session.set_model(resolved_model);
-    // Every model switch resets the session effort (#1067, #1848): the
-    // use case decides the level the new model admits.
-    let effort = ctx.catalogue.effort.clone();
-    if effort.reset_for_model_switch(ctx.agent, ctx.session.model()) {
+    // The change-active-model use case (#1847) republishes the catalogue,
+    // applies the model with its declared limits (#935/#1044) and resets the
+    // effort for the new model (#1067); the reply carries the catalogue's
+    // selection verdict (#1573) — the switch itself proceeds regardless.
+    let model = ctx.catalogue.model.clone();
+    let switched = model.execute(ctx.agent, &resolved_model);
+    ctx.session.set_model(switched.plan.model.clone());
+    if switched.effort_changed {
         ctx.session.bump_visible_generation();
     }
-    tracing::debug!(new_model = %ctx.session.model(), effort = ?ctx.agent.effort(), "UDS: model switched; effort reset");
+    tracing::debug!(new_model = %ctx.session.model(), effort = ?ctx.agent.effort(), "UDS: model switched");
     let ev = AgentEvent::ok(
         args.id.as_deref(),
         &args.type_name,
-        selection.map(|selection| serde_json::json!({ "selection": selection })),
+        crate::interface::uds::catalogue::model_presenter::render_switch(&switched),
     );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
-}
-
-/// The structured selection outcome for one qualified model reference against
-/// the published runtime generation for `base_dir` — the application
-/// selection use case's verdict rendered for the UDS wire. `None` before any
-/// runtime has been composed (legacy sessions and tests without a composed
-/// runtime keep the legacy response shape).
-pub(super) fn selection_status(
-    base_dir: &std::path::Path,
-    qualified: &str,
-) -> Option<serde_json::Value> {
-    use crate::application::provider_runtime::SelectionError;
-    use crate::domain::catalogue::UnavailableReason;
-
-    match crate::interface::catalogue_runtime::select_model(base_dir, qualified) {
-        Ok(selection) => Some(serde_json::json!({
-            "status": "ok",
-            "provider": selection.entry.provider.id.as_str(),
-            "generation": selection.generation,
-        })),
-        Err(SelectionError::NoRuntime) => None,
-        Err(SelectionError::UnknownModel { reference }) => Some(serde_json::json!({
-            "status": "unknown_model",
-            "model": reference,
-        })),
-        Err(SelectionError::NotRunnable { reference, reasons }) => Some(serde_json::json!({
-            "status": "not_runnable",
-            "model": reference.qualified_id(),
-            "reasons": reasons
-                .iter()
-                .map(|reason| match reason {
-                    UnavailableReason::MissingCredential => "missing-credential".to_string(),
-                    UnavailableReason::UnsupportedTransport { transport } =>
-                        format!("unsupported-transport: {}", transport.stable_id()),
-                    UnavailableReason::InvalidConfiguration(detail) =>
-                        format!("invalid-configuration: {detail}"),
-                    UnavailableReason::PolicyDenied(detail) =>
-                        format!("policy-denied: {detail}"),
-                })
-                .collect::<Vec<_>>(),
-        })),
-    }
 }
 
 /// Switch the session's reasoning effort at runtime (#1067, #1848).

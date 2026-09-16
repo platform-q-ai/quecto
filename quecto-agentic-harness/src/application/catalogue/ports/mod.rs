@@ -5,7 +5,11 @@
 pub mod catalogue_inputs;
 pub mod effort_runtime;
 pub mod effort_vocabulary;
+pub mod model_runtime;
+pub mod runtime_snapshot;
 
 pub use catalogue_inputs::{CatalogueInputsLoader, LoadedCatalogueInputs};
 pub use effort_runtime::EffortRuntime;
 pub use effort_vocabulary::EffortVocabularySource;
+pub use model_runtime::ModelRuntime;
+pub use runtime_snapshot::RuntimeSnapshotSource;

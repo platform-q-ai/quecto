@@ -344,21 +344,42 @@ async fn set_model_rederives_the_context_window_budget() {
     let mut agent = agent(vec![], store, 300_000, None).with_model_context_window(Some(32_768));
     assert_eq!(agent.effective_max_context_tokens(), 32_768);
 
-    agent.set_model("big/model".into(), None, Some(1_000_000));
+    crate::application::catalogue::ports::ModelRuntime::apply_model(
+        &mut agent,
+        "big/model".into(),
+        crate::application::catalogue::dto::ModelLimits {
+            max_output_tokens: None,
+            context_window: Some(1_000_000),
+        },
+    );
     assert_eq!(
         agent.effective_max_context_tokens(),
         300_000,
         "switching to a large-window model must lift the stale 32k clamp"
     );
 
-    agent.set_model("small/model".into(), None, Some(32_768));
+    crate::application::catalogue::ports::ModelRuntime::apply_model(
+        &mut agent,
+        "small/model".into(),
+        crate::application::catalogue::dto::ModelLimits {
+            max_output_tokens: None,
+            context_window: Some(32_768),
+        },
+    );
     assert_eq!(
         agent.effective_max_context_tokens(),
         32_768,
         "switching to a small-window model must re-clamp the budget"
     );
 
-    agent.set_model("unknown/model".into(), None, None);
+    crate::application::catalogue::ports::ModelRuntime::apply_model(
+        &mut agent,
+        "unknown/model".into(),
+        crate::application::catalogue::dto::ModelLimits {
+            max_output_tokens: None,
+            context_window: None,
+        },
+    );
     assert_eq!(
         agent.effective_max_context_tokens(),
         300_000,
