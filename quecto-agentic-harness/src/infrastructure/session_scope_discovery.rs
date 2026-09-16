@@ -1,8 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::application::sessions::ports::scope_discovery::{ScopeDiscoveryOutcome, SessionScopeDiscovery};
-use crate::domain::session_scope::{AssociationProvenance, CanonicalExecutionLocation, RepositoryGrouping, SessionHomeScope};
+use crate::application::sessions::ports::scope_discovery::{
+    ScopeDiscoveryOutcome, SessionScopeDiscovery,
+};
+use crate::domain::session_scope::{
+    AssociationProvenance, CanonicalExecutionLocation, RepositoryGrouping, SessionHomeScope,
+};
 
 pub struct FilesystemGitScopeDiscovery;
 
@@ -11,10 +15,15 @@ impl SessionScopeDiscovery for FilesystemGitScopeDiscovery {
         let execution = match directory.canonicalize() {
             Ok(path) if path.is_dir() => path,
             Ok(_) => return unavailable("execution location is not a directory"),
-            Err(error) => return unavailable(format!("cannot canonicalize execution location: {error}")),
+            Err(error) => {
+                return unavailable(format!("cannot canonicalize execution location: {error}"));
+            }
         };
-        let Some(execution_text) = execution.to_str() else { return unavailable("execution location is not UTF-8") };
-        let location = CanonicalExecutionLocation::new(execution_text).expect("canonical path is non-empty");
+        let Some(execution_text) = execution.to_str() else {
+            return unavailable("execution location is not UTF-8");
+        };
+        let location =
+            CanonicalExecutionLocation::new(execution_text).expect("canonical path is non-empty");
 
         let grouping = match nearest_git_marker(&execution) {
             Ok(None) => None,
@@ -24,12 +33,18 @@ impl SessionScopeDiscovery for FilesystemGitScopeDiscovery {
             },
             Err(reason) => return unavailable(reason),
         };
-        ScopeDiscoveryOutcome::Discovered(SessionHomeScope::scoped(location, grouping, AssociationProvenance::Discovered))
+        ScopeDiscoveryOutcome::Discovered(SessionHomeScope::scoped(
+            location,
+            grouping,
+            AssociationProvenance::Discovered,
+        ))
     }
 }
 
 fn unavailable(reason: impl Into<String>) -> ScopeDiscoveryOutcome {
-    ScopeDiscoveryOutcome::Unavailable { reason: reason.into() }
+    ScopeDiscoveryOutcome::Unavailable {
+        reason: reason.into(),
+    }
 }
 
 fn nearest_git_marker(start: &Path) -> Result<Option<PathBuf>, String> {
@@ -45,9 +60,12 @@ fn nearest_git_marker(start: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 fn grouping_from_marker(marker: &Path) -> Result<RepositoryGrouping, String> {
-    let metadata = fs::symlink_metadata(marker).map_err(|e| format!("cannot inspect Git marker: {e}"))?;
+    let metadata =
+        fs::symlink_metadata(marker).map_err(|e| format!("cannot inspect Git marker: {e}"))?;
     let git_dir = if metadata.is_dir() {
-        marker.canonicalize().map_err(|e| format!("cannot canonicalize Git directory: {e}"))?
+        marker
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize Git directory: {e}"))?
     } else if metadata.is_file() {
         parse_gitdir_file(marker)?
     } else {
@@ -60,20 +78,36 @@ fn grouping_from_marker(marker: &Path) -> Result<RepositoryGrouping, String> {
         Err(error) => return Err(format!("cannot read common Git directory: {error}")),
     };
     let git_text = git_dir.to_str().ok_or("Git directory is not UTF-8")?;
-    let common_text = common_dir.to_str().ok_or("common Git directory is not UTF-8")?;
+    let common_text = common_dir
+        .to_str()
+        .ok_or("common Git directory is not UTF-8")?;
     RepositoryGrouping::new(git_text, common_text).map_err(str::to_owned)
 }
 
 fn parse_gitdir_file(marker: &Path) -> Result<PathBuf, String> {
     let value = fs::read_to_string(marker).map_err(|e| format!("cannot read gitdir file: {e}"))?;
-    let target = value.strip_prefix("gitdir:").map(str::trim).filter(|v| !v.is_empty()).ok_or("Git marker has an invalid gitdir declaration")?;
-    resolve_relative(marker.parent().expect(".git marker has parent"), target, "Git directory")
+    let target = value
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or("Git marker has an invalid gitdir declaration")?;
+    resolve_relative(
+        marker.parent().expect(".git marker has parent"),
+        target,
+        "Git directory",
+    )
 }
 
 fn resolve_relative(base: &Path, value: &str, label: &str) -> Result<PathBuf, String> {
     let path = Path::new(value);
-    let joined = if path.is_absolute() { path.to_path_buf() } else { base.join(path) };
-    joined.canonicalize().map_err(|e| format!("cannot canonicalize {label}: {e}"))
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    joined
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize {label}: {e}"))
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ pub(super) use super::app_render_helpers::{
     strip_ansi, subagent_activity_line, subagent_idle_line,
 };
 use super::app_selection::apply_selection_highlight;
+use super::app_time::format_unix_minutes;
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::components::select_overlay::{
@@ -12,13 +13,10 @@ use crate::components::theme;
 use crate::protocol::session_payloads;
 use crate::shell::app_session_stats_text;
 
-use super::app_time::format_unix_minutes;
-
 #[cfg(test)]
 pub(super) use super::app_time::{civil_from_days, format_utc_minutes};
 
 impl App {
-
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
         self.ac_mut()
             .master_session
@@ -31,8 +29,6 @@ impl App {
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
 
-    /// Ctrl+Z: leave the alternate screen, stop the process, and restore raw
-    /// mode + kitty protocol with a full repaint once resumed with `fg`.
     pub(super) fn suspend_and_resume(&mut self) {
         self.kitty.cleanup();
         self.terminal.show_cursor();
@@ -140,16 +136,12 @@ impl App {
         });
     }
 
-    /// Request session stats for a quiet footer-only refresh (no chat Status
-    /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
         self.send_command(Command::GetSessionStats {
             id: Some(self.ac().namespaced_id("stats-footer")),
         });
     }
 
-    /// Update the footer's context/cost indicators from a session-stats
-    /// payload without emitting a chat entry.
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
         if stats.context_usage.is_some() {
@@ -172,7 +164,6 @@ impl App {
             });
     }
 
-
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
         self.open_resume_selector_at(
             data,
@@ -180,7 +171,6 @@ impl App {
         );
     }
 
-    /// Testable resume selector open with an explicit manifest path (#1465 AC5).
     pub(super) fn open_resume_selector_at(
         &mut self,
         data: &serde_json::Value,
@@ -197,24 +187,38 @@ impl App {
         } else {
             None
         };
+        let focus = if sessions.iter().any(|session| session.is_local.is_some()) {
+            app_sessions::ResumePickerFocus::Scope
+        } else {
+            app_sessions::ResumePickerFocus::Results
+        };
         self.ac_mut().sessions.resume_items = sessions;
         self.ac_mut().sessions.resume_global = false;
-        self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Scope;
+        self.ac_mut().sessions.resume_focus = focus;
         let session_items = self.resume_picker_items();
         self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
 
     fn resume_picker_items(&self) -> Vec<SelectItem> {
         let global = self.ac().sessions.resume_global;
-        self.ac().sessions.resume_items.iter()
-            .filter(|session| global || (!session.legacy_unscoped && session.is_local != Some(false)))
+        self.ac()
+            .sessions
+            .resume_items
+            .iter()
+            .filter(|session| {
+                global || (!session.legacy_unscoped && session.is_local != Some(false))
+            })
             .map(|session| {
-                let when = session.updated_unix_secs.map(format_unix_minutes)
+                let when = session
+                    .updated_unix_secs
+                    .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
                 let location = if session.legacy_unscoped {
                     "legacy unscoped".to_string()
                 } else {
-                    session.repository_label.as_deref()
+                    session
+                        .repository_label
+                        .as_deref()
                         .zip(session.execution_location.as_deref())
                         .map(|(repo, path)| format!("{repo} · {path}"))
                         .or_else(|| session.execution_location.clone())
@@ -223,9 +227,13 @@ impl App {
                 SelectItem {
                     value: format!("session:{}", session.key),
                     label: session.title.clone(),
-                    description: Some(format!("{location} · {when} · {} msgs", session.message_count)),
+                    description: Some(format!(
+                        "{location} · {when} · {} msgs",
+                        session.message_count
+                    )),
                 }
-            }).collect()
+            })
+            .collect()
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
@@ -247,22 +255,55 @@ impl App {
         {
             self.ac_mut().sessions.resume_global = !self.ac().sessions.resume_global;
             let items = self.resume_picker_items();
-            if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() { selector.sync_items(items); }
+            if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() {
+                selector.sync_items(items);
+            }
             return;
         }
         if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
-            let key = choice.strip_prefix("session:").unwrap_or(&choice).to_string();
-            let selected = self.ac().sessions.resume_items.iter().find(|item| item.key == key).cloned();
-            if selected.as_ref().is_some_and(|item| item.is_local == Some(false) || item.legacy_unscoped) {
-                let missing = selected.as_ref().and_then(|item| item.execution_location.as_deref()).is_none();
+            let key = choice
+                .strip_prefix("session:")
+                .unwrap_or(&choice)
+                .to_string();
+            let selected = self
+                .ac()
+                .sessions
+                .resume_items
+                .iter()
+                .find(|item| item.key == key)
+                .cloned();
+            if selected
+                .as_ref()
+                .is_some_and(|item| item.is_local == Some(false) || item.legacy_unscoped)
+            {
+                let missing = selected
+                    .as_ref()
+                    .and_then(|item| item.execution_location.as_deref())
+                    .is_none();
                 let mut actions = Vec::new();
                 if missing {
-                    actions.push(SelectItem { value: "locate".into(), label: "Locate folder".into(), description: Some("Validate and explicitly reassociate".into()) });
+                    actions.push(SelectItem {
+                        value: "locate".into(),
+                        label: "Locate folder".into(),
+                        description: Some("Validate and explicitly reassociate".into()),
+                    });
                 } else {
-                    actions.push(SelectItem { value: "open_original".into(), label: "Open original folder".into(), description: Some("Start a fresh runtime with folder config/tools".into()) });
+                    actions.push(SelectItem {
+                        value: "open_original".into(),
+                        label: "Open original folder".into(),
+                        description: Some("Start a fresh runtime with folder config/tools".into()),
+                    });
                 }
-                actions.push(SelectItem { value: "fork_current".into(), label: "Fork into current folder".into(), description: Some("Transcript only; new identity".into()) });
-                actions.push(SelectItem { value: "cancel".into(), label: "Cancel".into(), description: None });
+                actions.push(SelectItem {
+                    value: "fork_current".into(),
+                    label: "Fork into current folder".into(),
+                    description: Some("Transcript only; new identity".into()),
+                });
+                actions.push(SelectItem {
+                    value: "cancel".into(),
+                    label: "Cancel".into(),
+                    description: None,
+                });
                 self.ac_mut().sessions.pending_decision_session = Some(key);
                 self.ac_mut().sessions.resume_decision = Some(SelectList::new(actions, 4));
             } else {
@@ -272,24 +313,38 @@ impl App {
     }
 
     pub(super) fn handle_resume_picker_click(&mut self, col: usize, row: usize) {
-        let Some((left, top, width, height)) = self.ac().sessions.resume_bounds else { return };
+        let Some((left, top, width, height)) = self.ac().sessions.resume_bounds else {
+            return;
+        };
         if !(left..left.saturating_add(width)).contains(&col)
-            || !(top..top.saturating_add(height)).contains(&row) { return; }
+            || !(top..top.saturating_add(height)).contains(&row)
+        {
+            return;
+        }
         if row == top {
             self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Scope;
             let global = col >= left.saturating_add(width / 2);
             if self.ac().sessions.resume_global != global {
                 self.ac_mut().sessions.resume_global = global;
                 let items = self.resume_picker_items();
-                if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() { selector.sync_items(items); }
+                if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() {
+                    selector.sync_items(items);
+                }
             }
             return;
         }
         let index = row.saturating_sub(top.saturating_add(2));
-        let count = self.ac().sessions.resume_selector.as_ref().map_or(0, SelectList::len);
+        let count = self
+            .ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .map_or(0, SelectList::len);
         if index < count {
             self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Results;
-            for _ in 0..index { self.handle_resume_selector_key(&Key::Down); }
+            for _ in 0..index {
+                self.handle_resume_selector_key(&Key::Down);
+            }
             self.handle_resume_selector_key(&Key::Enter);
         }
     }
@@ -297,12 +352,27 @@ impl App {
     pub(super) fn handle_resume_decision_key(&mut self, key: &Key) {
         let choice = route_overlay_key(&mut self.ac_mut().sessions.resume_decision, key);
         let Some(action) = choice else { return };
-        let session = self.ac_mut().sessions.pending_decision_session.take().unwrap_or_default();
-        if action == "cancel" || session.is_empty() { return; }
-        let location = self.ac().sessions.resume_items.iter().find(|item| item.key == session)
+        let session = self
+            .ac_mut()
+            .sessions
+            .pending_decision_session
+            .take()
+            .unwrap_or_default();
+        if action == "cancel" || session.is_empty() {
+            return;
+        }
+        let location = self
+            .ac()
+            .sessions
+            .resume_items
+            .iter()
+            .find(|item| item.key == session)
             .and_then(|item| item.execution_location.clone());
         self.send_command(Command::ResumeDecision {
-            id: Some(self.ac().namespaced_id("resume-decision")), session, action, location,
+            id: Some(self.ac().namespaced_id("resume-decision")),
+            session,
+            action,
+            location,
         });
     }
 
@@ -344,13 +414,10 @@ impl App {
         has_displayable_messages
     }
 
-
     pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {
         self.notifications.push(Notification::new(message, level));
     }
 
-
-    /// Diagnostic: append one frame (ANSI-stripped) to the render log.
     fn log_render_frame(&self, path: &str, bottom: &[String]) {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
@@ -369,11 +436,6 @@ impl App {
         }
     }
 
-    /// Build the below-chat section (spinner → autocomplete → editor →
-    /// notifications → footer). The sub-agent and workflow bars moved out of this
-    /// stack under the sub-agent-first layout (#820). This is the region whose
-    /// height changes reflow the chat, so the headless harness captures it
-    /// directly to assert on layout stability.
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
         let mut bottom = Vec::new();
 
@@ -411,10 +473,6 @@ impl App {
         bottom
     }
 
-    /// The current frame's horizontal split: `(panel_width, divider_width,
-    /// body_width)`. The persistent left panel is always on once connected
-    /// (#820); `compose_frame` and the headless harness both derive widths from
-    /// here so the harness reproduces the exact body width the user sees.
     pub(super) fn frame_split(&self) -> (usize, usize, usize) {
         let full_width = self.terminal.width;
         let panel_visible = self.subagent_panel_visible();
@@ -431,22 +489,11 @@ impl App {
         )
     }
 
-    /// The reduced body width the chat/bottom stack render into (#820 review).
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn body_width(&self) -> usize {
         self.frame_split().2
     }
 
-    /// Build the full screen frame (chat + bottom section + overlays), clean
-    /// (pre-selection-highlight) and width-enforced, WITHOUT writing it.
-    /// `render()` writes the result; the headless harness (`tui_harness`)
-    /// captures it for layout/flicker assertions without a terminal.
-    ///
-    /// Contract: composition must be **render-idempotent** — calling it twice in
-    /// a row yields the same frame. Its only side effects are render-state
-    /// (`set_viewport_height`, `last_rendered_lines`), never external I/O or
-    /// model mutation. The harness relies on this (it composes per capture); a
-    /// future non-idempotent step would make captures diverge from real renders.
     pub(super) fn compose_frame(&mut self) -> Vec<String> {
         let height = self.terminal.height;
 
@@ -531,7 +578,11 @@ impl App {
         }
         if let Some(selector) = &mut self.ac_mut().sessions.resume_decision {
             let (selector_lines, overlay_width) = build_select_list_overlay(
-                "Resume from another folder", "Enter choose · Esc cancel", selector, width, height,
+                "Resume from another folder",
+                "Enter choose · Esc cancel",
+                selector,
+                width,
+                height,
             );
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
@@ -596,10 +647,6 @@ impl App {
         lines
     }
 
-    /// Splice a centered overlay into `lines`, in place. Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
-    /// each row through the ANSI-aware splice helper so escape codes from the
-    /// underlying frame can't bleed into or out of the overlay. Shared
-    /// by every centered overlay (resume / rewind / model selectors).
     pub(super) fn composite_centered(
         lines: &mut [String],
         overlay_lines: &[String],
@@ -625,7 +672,6 @@ impl App {
         }
     }
 
-    /// Compose the current frame and write it to the terminal.
     pub(super) fn render(&mut self) {
         #[cfg(any(test, feature = "test-harness"))]
         {
@@ -664,68 +710,23 @@ impl App {
         self.render();
     }
 
-    /// Start a fresh single `/new` session, preserving the old session for `/resume`.
-    pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
-        self.persist_default_durability();
-
-        let mut master = self
-            .tabs
-            .remove(&crate::shell::connection::TabId::MASTER)
-            .expect("workspace reset requires a master tab");
-        let mut watches = Vec::new();
-        for (_, mut state) in self.tabs.drain() {
-            state.transport.abort_feed();
-            watches.extend(state.child_exit_watch.take());
-        }
-        master.name = None;
-        master.session_key = None;
-        master.pending_session_resume = None;
-        master.roster = crate::agents::view::ConnectionRoster::new();
-        self.tabs
-            .insert(crate::shell::connection::TabId::MASTER, master);
-        self.active_tab = crate::shell::connection::TabId::MASTER;
-        self.routing_tab_override = None;
-        self.editor.set_text("");
-        self.subagents = crate::agents::view::SubagentUi::new();
-        self.workspace_id = crate::shell::workspace_manifest::generate_workspace_id();
-        self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
-        self.reset_session("New session started");
-        self.persist_default_durability();
-        watches
-    }
-
-    /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
         self.ac_mut().disconnect_diag_pending = false;
-        // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.ac().agent_connected;
         let agent_reset = self.send_new_session();
-        // Clearing the local conversation intentionally abandons the old
-        // session view even when the transport cannot accept new_session.
         self.ac_mut()
             .reset_coordinator_clock(tokio::time::Instant::now());
         self.ac_mut().master_session.chat.clear();
-        // The clear wiped any persistent refusal Status line; re-arm the
-        // once-per-episode latch so the next refusal (send_state_resync
-        // below, on a dead connection) re-raises the toast and re-writes
-        // the line into the fresh transcript (#1470 r6).
         if !self.ac().agent_connected {
             self.ac_mut().disconnect_refusal_notified = false;
         }
-        // Invalidate in-flight ref recovery so a late get_message from the OLD
-        // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
         self.ac_mut().master_session.footer.set_context(None, 0);
         self.ac_mut().sessions.context_stats_requested = false;
-        // The agent resets session-scoped state (e.g. the effort override, #1067)
-        // on new_session; re-fetch so the footer tracks it (commands dispatch in
-        // order, so this get_state observes the fresh session).
         self.send_state_resync();
         if agent_reset {
             self.notify(message, NotifyLevel::Success);
         } else if was_connected {
-            // Connected but the enqueue failed (backpressure): a disconnect
-            // diagnosis here would misdirect the user (#1470 r4).
             self.notify(
                 "Cleared locally — sending new_session failed, retry /new",
                 NotifyLevel::Warning,
@@ -738,7 +739,6 @@ impl App {
         }
     }
 
-    /// Request a fresh agent session; false when the connection is dead (#1470).
     pub(super) fn send_new_session(&mut self) -> bool {
         self.send_command(Command::NewSession { id: None })
     }

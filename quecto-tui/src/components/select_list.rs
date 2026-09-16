@@ -41,7 +41,9 @@ impl SelectList {
         std::mem::replace(&mut self.result, SelectResult::Pending)
     }
 
-    pub(crate) fn len(&self) -> usize { self.items.len() }
+    pub(crate) fn len(&self) -> usize {
+        self.items.len()
+    }
 
     #[cfg(any(test, feature = "test-harness"))]
     pub fn items_for_tests(&self) -> &[SelectItem] {

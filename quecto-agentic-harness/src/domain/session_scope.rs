@@ -46,8 +46,12 @@ impl RepositoryGrouping {
         })
     }
 
-    pub fn worktree_git_dir(&self) -> &str { &self.worktree_git_dir }
-    pub fn common_git_dir(&self) -> &str { &self.common_git_dir }
+    pub fn worktree_git_dir(&self) -> &str {
+        &self.worktree_git_dir
+    }
+    pub fn common_git_dir(&self) -> &str {
+        &self.common_git_dir
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,17 +80,35 @@ impl SessionHomeScope {
         repository_grouping: Option<RepositoryGrouping>,
         provenance: AssociationProvenance,
     ) -> Self {
-        Self::Scoped { execution_location, repository_grouping, provenance }
+        Self::Scoped {
+            execution_location,
+            repository_grouping,
+            provenance,
+        }
     }
 
     pub fn execution_location(&self) -> Option<&CanonicalExecutionLocation> {
-        match self { Self::Scoped { execution_location, .. } => Some(execution_location), Self::LegacyUnscoped => None }
+        match self {
+            Self::Scoped {
+                execution_location, ..
+            } => Some(execution_location),
+            Self::LegacyUnscoped => None,
+        }
     }
     pub fn repository_grouping(&self) -> Option<&RepositoryGrouping> {
-        match self { Self::Scoped { repository_grouping, .. } => repository_grouping.as_ref(), Self::LegacyUnscoped => None }
+        match self {
+            Self::Scoped {
+                repository_grouping,
+                ..
+            } => repository_grouping.as_ref(),
+            Self::LegacyUnscoped => None,
+        }
     }
     pub fn provenance(&self) -> Option<AssociationProvenance> {
-        match self { Self::Scoped { provenance, .. } => Some(*provenance), Self::LegacyUnscoped => None }
+        match self {
+            Self::Scoped { provenance, .. } => Some(*provenance),
+            Self::LegacyUnscoped => None,
+        }
     }
 }
 
@@ -99,10 +121,17 @@ pub struct SessionScopeMetadata {
 
 impl SessionScopeMetadata {
     pub fn current(home: SessionHomeScope) -> Self {
-        Self { schema_version: CURRENT_SCOPE_SCHEMA_VERSION, home }
+        Self {
+            schema_version: CURRENT_SCOPE_SCHEMA_VERSION,
+            home,
+        }
     }
-    pub fn schema_version(&self) -> u16 { self.schema_version }
-    pub fn home(&self) -> &SessionHomeScope { &self.home }
+    pub fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+    pub fn home(&self) -> &SessionHomeScope {
+        &self.home
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

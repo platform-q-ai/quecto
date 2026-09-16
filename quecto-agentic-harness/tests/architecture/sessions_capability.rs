@@ -130,6 +130,34 @@ const CANONICAL_FILES: &[&str] = &[
 
 /// The ports of the capability, each with its contract suite (R2 subset).
 const SESSION_PORTS: &[(&str, &str)] = &[
+    (
+        "AtomicResumePersistence",
+        "tests/contracts/atomic_resume_persistence.rs",
+    ),
+    (
+        "ExactSessionAccess",
+        "tests/contracts/exact_session_access.rs",
+    ),
+    (
+        "FreshRuntimeLaunch",
+        "tests/contracts/fresh_runtime_launch.rs",
+    ),
+    (
+        "ResumeDecisionEffects",
+        "tests/contracts/resume_decision_effects.rs",
+    ),
+    (
+        "ResumeProjectionPublisher",
+        "tests/contracts/resume_projection_publisher.rs",
+    ),
+    (
+        "SameScopeRestoreContext",
+        "tests/contracts/same_scope_restore_context.rs",
+    ),
+    (
+        "SessionScopeDiscovery",
+        "tests/contracts/session_scope_discovery.rs",
+    ),
     ("SessionStore", "tests/contracts/session_store.rs"),
     (
         "ContextSpillStore",
@@ -482,7 +510,10 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
 /// D9 #1978 retired the two interface sites (the ephemeral spill scrub and
 /// the tool runtime's spill store) behind the sessions composition;
 /// nothing may join this list.
-const LAYOUT_CREATION_SITES: &[&str] = &["src/composition/sessions.rs"];
+const LAYOUT_CREATION_SITES: &[&str] = &[
+    "src/composition/sessions.rs",
+    "src/composition/sessions/resume_factory.rs",
+];
 
 /// The one file of the persistence tree that forms session paths, and the
 /// exact callers of the shared filename sanitizer (R7). `audit_log.rs`

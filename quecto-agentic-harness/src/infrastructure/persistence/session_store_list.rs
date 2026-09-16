@@ -3,15 +3,14 @@
 //! skip applied before any read, one lightweight header parse per admitted
 //! record, tolerant skipping of what cannot be read or summarised, newest
 //! first. Summary-only: nothing here loads a session in full.
+use super::super::session_layout::FlatSessionLayout;
+use super::session_store_records::SessionHeader;
+use super::{first_user_message, parse_session_header, str_to_role};
 use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::error::DomainError;
 use crate::domain::message::Role;
 use crate::domain::session::SessionSummary;
 use crate::domain::session_identity::SessionIdentity;
-
-use super::super::session_layout::FlatSessionLayout;
-use super::session_store_records::SessionHeader;
-use super::{first_user_message, parse_session_header, str_to_role};
 
 pub(super) async fn list_summaries(
     layout: &FlatSessionLayout,

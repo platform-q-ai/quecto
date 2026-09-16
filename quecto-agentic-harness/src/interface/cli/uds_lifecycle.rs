@@ -12,7 +12,6 @@ pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -269,7 +268,7 @@ async fn single_client_loop(
             agent: &mut agent,
             messages: &mut messages,
             sessions: session_reads.clone(),
-            resume_decision: crate::infrastructure::resume_decision_adapter::production_resume_handle(base_dir, sessions.store.clone()).expect("production resume composition"),
+            resume_decision: sessions.resume_decision.clone(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),

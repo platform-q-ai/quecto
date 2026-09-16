@@ -11,7 +11,7 @@ use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced};
 use crate::application::sessions::dto::SavedSessionResumed;
 use crate::application::sessions::ports::FleetSettlement;
-use crate::interface::cli::protocol::{HISTORY_PAGE_SIZE, ResumeDecisionActionCommand};
+use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
 use crate::interface::uds::sessions::rewind_conversation_controller::RewindFields;
 
 /// The loop's fleet teardown as the settlement port the transitions
@@ -154,84 +154,6 @@ fn resumed_session_json(resumed: &SavedSessionResumed) -> serde_json::Value {
         "sessionKey": resumed.identity.runtime_key(),
         "messageCount": resumed.message_count,
     })
-}
-
-/// Typed folder-aware decision edge. Cancel is side-effect free; same-runtime
-/// resume is deliberately unavailable here because cross-folder actions must
-/// never fall through to ordinary `resume_session`.
-pub(super) async fn handle_resume_decision(
-    ctx: &mut DispatchCtx<'_>,
-    id: Option<&str>,
-    type_name: &str,
-    session: String,
-    action: ResumeDecisionActionCommand,
-    location: Option<String>,
-) -> bool {
-    if ctx.session.is_streaming() {
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, "cannot decide resume while agent is running")).await;
-        return false;
-    }
-    let valid_session = !session.trim().is_empty();
-    let valid_location = location.as_deref().is_some_and(|path| !path.trim().is_empty());
-    let admitted = match action {
-        ResumeDecisionActionCommand::Cancel => true,
-        ResumeDecisionActionCommand::OpenOriginal | ResumeDecisionActionCommand::Locate => valid_session && valid_location,
-        ResumeDecisionActionCommand::ForkCurrent => valid_session,
-    };
-    if !admitted {
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, "resume decision is not eligible: required session/location unavailable")).await;
-        return false;
-    }
-    use crate::application::sessions::resume_decision::{execute_resume_decision, ResumePlan};
-    use crate::domain::session_identity::SessionIdentity;
-    use crate::domain::session_scope::{AssociationProvenance, CanonicalExecutionLocation, SessionHomeScope, SessionScopeMetadata};
-
-    let key = SessionIdentity::from_persisted_key(session);
-    let source = match ctx.resume_decision.load(&key).await {
-        Ok(source) => source,
-        Err(error) => {
-            emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, error)).await;
-            return false;
-        }
-    };
-    let plan = match action {
-        ResumeDecisionActionCommand::OpenOriginal => ResumePlan::LaunchOriginal,
-        ResumeDecisionActionCommand::ForkCurrent => ResumePlan::ForkTranscriptOnly,
-        ResumeDecisionActionCommand::Locate => ResumePlan::LocateAndReassociate,
-        ResumeDecisionActionCommand::Cancel => ResumePlan::Cancel,
-    };
-    let home = match location {
-        Some(path) => match CanonicalExecutionLocation::new(path) {
-            Ok(path) => SessionHomeScope::scoped(path, None, AssociationProvenance::ExplicitlyLocated),
-            Err(error) => {
-                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, error)).await;
-                return false;
-            }
-        },
-        None => SessionHomeScope::LegacyUnscoped,
-    };
-    let scope = SessionScopeMetadata::current(home);
-    let fresh = matches!(plan, ResumePlan::ForkTranscriptOnly)
-        .then(|| {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default().as_secs();
-            SessionIdentity::fresh_chat(secs, ctx.current_client_id)
-        });
-    struct CrossFolderOnlyRestore;
-    impl crate::application::sessions::resume_decision::SameScopeRestoreContext for CrossFolderOnlyRestore {
-        fn restore<'a>(&'a mut self, _key: &'a SessionIdentity) -> crate::application::sessions::resume_decision::ResumeEffect<'a, ()> {
-            Box::pin(async { Err("same-scope restore is not admitted by the cross-folder endpoint".into()) })
-        }
-    }
-    let mut restore = CrossFolderOnlyRestore;
-    let event = match execute_resume_decision(
-        ctx.resume_decision.as_ref(), plan, &source, &scope, fresh, &mut restore,
-    ).await {
-        Ok(outcome) => AgentEvent::ok(id, type_name, Some(serde_json::json!({"outcome": format!("{outcome:?}")}))),
-        Err(error) => AgentEvent::err(id, type_name, error),
-    };
-    emit_event_to_broadcast_or_writer(ctx, &event).await;
-    false
 }
 
 /// `clear_history` (#1864): admitted only while the agent is idle; the

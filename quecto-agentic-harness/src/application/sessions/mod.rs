@@ -17,4 +17,5 @@ pub mod history_paging;
 pub mod ports;
 pub mod production_resume;
 pub mod resume_decision;
+pub mod resume_endpoint;
 pub mod use_cases;

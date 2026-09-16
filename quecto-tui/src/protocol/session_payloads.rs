@@ -4,6 +4,49 @@
 //! presentation code should not hand-parse those protocol shapes in render/app
 //! paths. These mappers keep that translation in the protocol layer.
 
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
+
+#[derive(Debug, Deserialize)]
+struct ResumedMessagesWire {
+    messages: Vec<ResumedMessageWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResumedMessageWire {
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    content: String,
+    id: Option<String>,
+    #[serde(default)]
+    collapsed: bool,
+    #[serde(rename = "contentLength")]
+    content_len: Option<usize>,
+    #[serde(default, alias = "tool_calls", rename = "toolCalls")]
+    tool_calls: Vec<ToolCallWire>,
+    #[serde(alias = "tool_call_id", rename = "toolCallId")]
+    tool_call_id: Option<String>,
+    #[serde(alias = "tool_name", rename = "toolName")]
+    tool_name: Option<String>,
+    #[serde(default, alias = "is_error", rename = "isError")]
+    is_error: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ToolCallWire {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: Option<JsonValue>,
+    function: Option<ToolFunctionWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ToolFunctionWire {
+    name: Option<String>,
+    arguments: Option<JsonValue>,
+}
+
 /// Parsed session statistics used by chat status lines and footer indicators.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionStats {
@@ -83,13 +126,13 @@ impl ResumeMessagesError {
 
 /// Parse a `get_session_stats` response payload into a typed value with the
 /// same forgiving defaults the TUI historically used.
-fn optional_usize_field(data: &serde_json::Value, key: &str) -> Option<usize> {
+fn optional_usize_field(data: &JsonValue, key: &str) -> Option<usize> {
     data.get(key)
         .and_then(|v| v.as_u64())
         .and_then(|n| usize::try_from(n).ok())
 }
 
-fn token_field(data: &serde_json::Value, key: &str) -> u64 {
+fn token_field(data: &JsonValue, key: &str) -> u64 {
     data.get("tokens")
         .and_then(|t| t.get(key))
         .and_then(|v| v.as_u64())
@@ -104,7 +147,7 @@ fn legacy_cost_to_micro_usd(dollars: f64) -> u64 {
     }
 }
 
-fn cost_micro_usd(data: &serde_json::Value) -> u64 {
+fn cost_micro_usd(data: &JsonValue) -> u64 {
     if let Some(value) = data.get("costMicroUsd") {
         value.as_u64().unwrap_or(0)
     } else {
@@ -115,7 +158,7 @@ fn cost_micro_usd(data: &serde_json::Value) -> u64 {
     }
 }
 
-pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
+pub fn parse_session_stats(data: &JsonValue) -> SessionStats {
     let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
     let max_context_tokens = optional_usize_field(data, "maxContextTokens");
     let cost_micro_usd = cost_micro_usd(data);
@@ -145,7 +188,7 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
 /// Parse a `list_sessions` response payload into selector summaries. Entries
 /// without a human-readable title/name are skipped because they cannot be shown
 /// or selected meaningfully.
-pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
+pub fn parse_resume_sessions(data: &JsonValue) -> Vec<ResumeSessionSummary> {
     session_values(data)
         .iter()
         .filter_map(|session| {
@@ -177,9 +220,7 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                 is_local: scope
                     .and_then(|v| v.get("isLocal"))
                     .and_then(|v| v.as_bool()),
-                legacy_unscoped: scope
-                    .and_then(|v| v.get("kind"))
-                    .and_then(|v| v.as_str())
+                legacy_unscoped: scope.and_then(|v| v.get("kind")).and_then(|v| v.as_str())
                     == Some("legacy_unscoped"),
             })
         })
@@ -190,30 +231,22 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
 /// messages. Unknown roles and empty assistant messages are intentionally
 /// omitted to preserve previous TUI behavior.
 pub fn parse_resumed_messages(
-    data: &serde_json::Value,
+    data: &JsonValue,
 ) -> Result<Vec<ResumedChatMessage>, ResumeMessagesError> {
-    let messages = message_values(data)?;
-    Ok(messages
-        .iter()
+    if data.get("messages").is_none() {
+        return Err(ResumeMessagesError::MissingMessages);
+    }
+    let wire: ResumedMessagesWire =
+        serde_json::from_value(data.clone()).map_err(|_| ResumeMessagesError::MalformedMessages)?;
+    Ok(wire
+        .messages
+        .into_iter()
         .flat_map(|message| {
-            let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
-            let content = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let id = message
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            // `collapsed` marks a ladder-demoted stub whose full body is recallable
-            // by id (#1061). Absent on older payloads → treated as a full message.
-            let stub = message
-                .get("collapsed")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let content_len = optional_usize_field(message, "contentLength");
-            match role {
+            let content = message.content.clone();
+            let id = message.id.clone();
+            let stub = message.collapsed;
+            let content_len = message.content_len;
+            match message.role.as_str() {
                 // Sub-agent notes are user-role turns on the wire but operator
                 // status in the UI; not part of the resumed transcript (#1338).
                 "user" if super::presentation_payloads::is_subagent_note(&content) => Vec::new(),
@@ -223,9 +256,13 @@ pub fn parse_resumed_messages(
                     stub,
                     content_len,
                 }],
-                "assistant" => {
-                    parse_assistant_resume_messages(message, content, id, stub, content_len)
-                }
+                "assistant" => parse_assistant_resume_messages(
+                    message.tool_calls.clone(),
+                    content,
+                    id,
+                    stub,
+                    content_len,
+                ),
                 "tool" => parse_tool_result_resume_message(message, content)
                     .into_iter()
                     .collect(),
@@ -236,7 +273,7 @@ pub fn parse_resumed_messages(
 }
 
 fn parse_assistant_resume_messages(
-    message: &serde_json::Value,
+    tool_calls: Vec<ToolCallWire>,
     content: String,
     id: Option<String>,
     stub: bool,
@@ -252,31 +289,23 @@ fn parse_assistant_resume_messages(
         });
     }
     resumed.extend(
-        message
-            .get("toolCalls")
-            .or_else(|| message.get("tool_calls"))
-            .and_then(|v| v.as_array())
+        tool_calls
             .into_iter()
-            .flatten()
             .filter_map(parse_tool_call_resume_message),
     );
     resumed
 }
 
-fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedChatMessage> {
-    let tool_call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    if tool_call_id.is_empty() {
-        return None;
-    }
+fn parse_tool_call_resume_message(call: ToolCallWire) -> Option<ResumedChatMessage> {
+    let tool_call_id = call.id.filter(|id| !id.is_empty())?;
     let tool_name = call
-        .get("name")
-        .or_else(|| call.pointer("/function/name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("tool")
-        .to_string();
+        .name
+        .or_else(|| call.function.as_ref().and_then(|f| f.name.clone()))
+        .unwrap_or_else(|| "tool".to_string());
     let args = call
-        .get("arguments")
-        .or_else(|| call.pointer("/function/arguments"))
+        .arguments
+        .or_else(|| call.function.and_then(|f| f.arguments))
+        .as_ref()
         .map(json_string_or_raw)
         .unwrap_or_else(|| "{}".to_string());
     Some(ResumedChatMessage::ToolCall {
@@ -287,27 +316,12 @@ fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedCha
 }
 
 fn parse_tool_result_resume_message(
-    message: &serde_json::Value,
+    message: ResumedMessageWire,
     content: String,
 ) -> Option<ResumedChatMessage> {
-    let tool_call_id = message
-        .get("toolCallId")
-        .or_else(|| message.get("tool_call_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if tool_call_id.is_empty() {
-        return None;
-    }
-    let tool_name = message
-        .get("toolName")
-        .or_else(|| message.get("tool_name"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let is_error = message
-        .get("isError")
-        .or_else(|| message.get("is_error"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let tool_call_id = message.tool_call_id.filter(|id| !id.is_empty())?;
+    let tool_name = message.tool_name;
+    let is_error = message.is_error;
     Some(ResumedChatMessage::ToolResult {
         tool_call_id: tool_call_id.to_string(),
         tool_name,
@@ -316,7 +330,7 @@ fn parse_tool_result_resume_message(
     })
 }
 
-fn json_string_or_raw(value: &serde_json::Value) -> String {
+fn json_string_or_raw(value: &JsonValue) -> String {
     value
         .as_str()
         .map(str::to_string)
@@ -326,25 +340,15 @@ fn json_string_or_raw(value: &serde_json::Value) -> String {
 /// Whether the payload explicitly contained session entries, even if none are
 /// resumable after parsing. Allows the presentation layer to keep its more specific
 /// empty-vs-malformed user messages without parsing raw fields itself.
-pub fn has_session_entries(data: &serde_json::Value) -> bool {
+pub fn has_session_entries(data: &JsonValue) -> bool {
     !session_values(data).is_empty()
 }
 
-fn session_values(data: &serde_json::Value) -> &[serde_json::Value] {
+fn session_values(data: &JsonValue) -> &[JsonValue] {
     data.get("sessions")
         .and_then(|v| v.as_array())
         .map(Vec::as_slice)
         .unwrap_or(&[])
-}
-
-fn message_values(data: &serde_json::Value) -> Result<&[serde_json::Value], ResumeMessagesError> {
-    let Some(messages) = data.get("messages") else {
-        return Err(ResumeMessagesError::MissingMessages);
-    };
-    messages
-        .as_array()
-        .map(Vec::as_slice)
-        .ok_or(ResumeMessagesError::MalformedMessages)
 }
 
 #[cfg(test)]

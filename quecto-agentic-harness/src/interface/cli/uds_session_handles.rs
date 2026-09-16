@@ -6,9 +6,6 @@
 //! [`crate::interface::cli::SessionHandlesBuilder`], so no interface module
 //! names the composition layer, constructs a store, a use case or the
 //! active-session state, converts a raw key, or forms a path.
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
@@ -21,7 +18,8 @@ use crate::interface::uds::sessions::export_report_controller::ExportSessionRepo
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
-
+use std::path::PathBuf;
+use std::sync::Arc;
 /// The runtime inputs of one loop the session handles are composed over.
 pub struct SessionLoopInputs {
     /// The harness base directory the file store lives under.
@@ -48,6 +46,8 @@ pub struct SessionLoopInputs {
 
 /// The handles one loop holds on the sessions capability.
 pub struct SessionHandles {
+    pub resume_decision:
+        Arc<dyn crate::application::sessions::ports::resume_transaction::ResumeDecisionEffects>,
     /// The session store every session transaction of the loop runs against.
     pub store: Arc<dyn SessionStore>,
     /// List saved sessions (#1861): the UDS `list_sessions` command.

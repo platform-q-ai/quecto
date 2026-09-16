@@ -1,3 +1,4 @@
+use super::session_layout::FlatSessionLayout;
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
@@ -7,9 +8,6 @@ use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-
-use super::session_layout::FlatSessionLayout;
-
 /// The file-backed session store: JSON/JSONL records under the flat layout
 /// (`FlatSessionLayout` owns every path; this adapter owns the I/O).
 #[derive(Debug)]
@@ -17,7 +15,6 @@ pub struct FileSessionStore {
     layout: FlatSessionLayout,
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
-
 #[path = "session_store_list.rs"]
 mod session_store_list;
 #[path = "session_store_ordinals.rs"]
@@ -26,7 +23,6 @@ mod session_store_ordinals;
 mod session_store_records;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
-
 impl FileSessionStore {
     /// A store over `layout`'s flat directory.
     pub fn new(layout: FlatSessionLayout) -> Self {
@@ -35,15 +31,12 @@ impl FileSessionStore {
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
     }
-
     fn claim_key(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
         self.ownership.claim(&self.layout, identity)
     }
-
     fn session_path(&self, identity: &SessionIdentity) -> PathBuf {
         self.layout.session_file(identity)
     }
-
     pub async fn save_clean_delta(
         &self,
         identity: &SessionIdentity,
@@ -71,7 +64,6 @@ impl FileSessionStore {
         )
         .await
     }
-
     async fn delete_session_file_if_present(
         &self,
         identity: &SessionIdentity,
@@ -84,23 +76,19 @@ impl FileSessionStore {
             ))),
         }
     }
-
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(self.layout.sessions_dir())
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
 }
-
 impl SessionStore for FileSessionStore {
     fn claim(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
         self.claim_key(identity)
     }
-
     fn release(&self, identity: &SessionIdentity) {
         self.ownership.release(identity);
     }
-
     fn load(
         &self,
         identity: &SessionIdentity,
@@ -118,7 +106,6 @@ impl SessionStore for FileSessionStore {
             Ok(Some(session))
         })
     }
-
     fn save(
         &self,
         session: &Session,
@@ -137,7 +124,6 @@ impl SessionStore for FileSessionStore {
             append_or_compact(&path, &session).await
         })
     }
-
     fn save_delta<'a>(
         &'a self,
         identity: &'a SessionIdentity,
@@ -162,7 +148,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn save_clean_delta<'a>(
         &'a self,
         identity: &'a SessionIdentity,
@@ -185,7 +170,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn exists(
         &self,
         identity: &SessionIdentity,
@@ -245,7 +229,11 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
             }
         }
     }
-    Ok(SessionHeader { key, messages, scope })
+    Ok(SessionHeader {
+        key,
+        messages,
+        scope,
+    })
 }
 
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {

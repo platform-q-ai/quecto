@@ -19,8 +19,8 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 #[path = "protocol_commands.rs"]
 mod protocol_commands;
 pub use protocol_commands::{
-    AgentCommand, ResumeDecisionActionCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
-    ToolPolicyOperationCommand, ToolRegistration,
+    AgentCommand, ResumeDecisionActionCommand, StreamingBehavior, ToolPolicyApplyModeCommand,
+    ToolPolicyMutationCommand, ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────

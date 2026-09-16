@@ -39,7 +39,6 @@ pub(super) fn is_cancel_command(trimmed: &str) -> bool {
 pub(super) fn is_abort_command(trimmed: &str) -> bool {
     command_type_is(trimmed, "abort")
 }
-
 pub(super) fn is_steer_command(trimmed: &str) -> bool {
     matches!(
         serde_json::from_str::<AgentCommand>(trimmed),
@@ -50,7 +49,6 @@ pub(super) fn is_steer_command(trimmed: &str) -> bool {
             })
     )
 }
-
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(trimmed)
         .ok()
@@ -58,12 +56,10 @@ fn command_type_is(trimmed: &str, expected: &str) -> bool {
         .as_deref()
         == Some(expected)
 }
-
 pub(super) enum LineResult {
     Command(AgentCommand),
     ParseError(String),
 }
-
 pub(super) fn parse_line(line: &str) -> LineResult {
     let line = line.trim();
     if line.is_empty() {
@@ -74,23 +70,19 @@ pub(super) fn parse_line(line: &str) -> LineResult {
         Err(e) => LineResult::ParseError(e),
     }
 }
-
 pub(super) async fn run_command_loop(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
 ) {
     use super::uds_reader::{ReaderMessage, spawn_reader_task};
-
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
     let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
-
     let (reader_task, mut rx) = spawn_reader_task(
         reader,
         cancel_for_reader,
         control_for_reader,
         ctx.wire_mode.clone(),
     );
-
     loop {
         let raw = match rx.recv().await {
             Some(Some(ReaderMessage::Message(l))) => l,
@@ -102,7 +94,6 @@ pub(super) async fn run_command_loop(
             }
             _ => break,
         };
-
         match parse_line(&raw) {
             LineResult::ParseError(e) if e.is_empty() => {}
             LineResult::ParseError(e) => {
@@ -116,17 +107,16 @@ pub(super) async fn run_command_loop(
             }
         }
     }
-
     reader_task.abort();
 }
-
 #[cfg(test)]
-pub(crate) fn test_resume_decision()->std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects>{
-    let base=std::env::temp_dir().join("quecto-resume-fixture");
-    let store=std::sync::Arc::new(crate::infrastructure::persistence::session_store::FileSessionStore::new(crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(&base)));
-    crate::infrastructure::resume_decision_adapter::production_resume_handle(&base,store).expect("test resume composition")
+#[path = "uds_test_resume.rs"]
+mod uds_test_resume;
+#[cfg(test)]
+pub(crate) fn test_resume_decision()
+-> std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects> {
+    uds_test_resume::handle()
 }
-
 pub(crate) struct DispatchCtx<'a> {
     pub wire_mode: super::uds_wire::ConnectionWireMode,
     pub base_dir: &'a std::path::Path,
@@ -135,7 +125,8 @@ pub(crate) struct DispatchCtx<'a> {
     /// The active session and its read use cases (#1971): the one
     /// conversation read model every transport serves from.
     pub sessions: super::uds_session_handles::SessionReadHandles,
-    pub resume_decision: std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects>,
+    pub resume_decision:
+        std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects>,
     pub state_snapshot: super::uds_multi::StateSnapshot, // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
@@ -184,7 +175,6 @@ type FleetTeardown =
 type ListSessionsHandle =
     std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController>;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
-
 impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
     /// multi-client server, otherwise the direct writer (#994).
@@ -282,6 +272,8 @@ pub(crate) mod uds_dispatch_session;
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
 pub(super) mod uds_forward_response;
+#[path = "uds_resume_decision.rs"]
+pub(crate) mod uds_resume_decision;
 pub(crate) use uds_dispatch::dispatch_command;
 #[cfg(test)]
 use uds_dispatch_query::session_summary_to_json;

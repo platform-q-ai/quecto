@@ -199,6 +199,7 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/composition/active_session.rs",
     "src/composition/sessions.rs",
+    "src/composition/sessions/resume_factory.rs",
     "src/infrastructure/persistence/session_store.rs",
     // The dispatch test rig (a `cfg(test)`-declared module without the
     // `_tests.rs` suffix) declares the store field of its env.

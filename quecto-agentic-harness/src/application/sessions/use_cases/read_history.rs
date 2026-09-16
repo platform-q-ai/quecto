@@ -17,6 +17,11 @@ use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 
+/// Application boundary conversion for exact opaque persisted keys.
+pub(crate) fn exact_persisted_identity(key: impl Into<String>) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
+
 pub struct ReadHistory {
     state: ActiveSessionHandle,
     store: Arc<dyn SessionStore>,

@@ -118,7 +118,10 @@ fn parse_resume_sessions_keeps_folder_picker_metadata_defensively() {
         }]
     }));
 
-    assert_eq!(sessions[0].execution_location.as_deref(), Some("/work/other"));
+    assert_eq!(
+        sessions[0].execution_location.as_deref(),
+        Some("/work/other")
+    );
     assert_eq!(sessions[0].repository_label.as_deref(), Some("quecto"));
     assert_eq!(sessions[0].is_local, Some(false));
     assert!(sessions[1].legacy_unscoped);

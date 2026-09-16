@@ -17,6 +17,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Issue #2001 D6: lock folder-aware session ownership, documentation, and
+/// retirement of unsafe cross-folder behavior.
+#[path = "architecture/folder_aware_sessions.rs"]
+mod folder_aware_sessions;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
@@ -29,10 +33,6 @@ mod sessions_capability;
 mod sessions_epic_close;
 #[path = "architecture/sessions_epic_close_retirement.rs"]
 mod sessions_epic_close_retirement;
-/// Issue #2001 D6: lock folder-aware session ownership, documentation, and
-/// retirement of unsafe cross-folder behavior.
-#[path = "architecture/folder_aware_sessions.rs"]
-mod folder_aware_sessions;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]
@@ -1524,13 +1524,13 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 133;
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 117;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 133;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 117;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 142;
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 122;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
@@ -1948,6 +1948,7 @@ fn dependency_allowlists_use_paths_not_substrings() {
     }
     for source in [
         "use crate::application::ports::EnvironmentRuntime;",
+        "use crate::application::sessions::ports::resume_transaction::AtomicResumePersistence;",
         "use crate::application::{ports::EnvironmentRuntime, environments::use_cases::ListEnvironmentsQuery};",
     ] {
         assert!(application_dependencies_allowed(source), "{source}");

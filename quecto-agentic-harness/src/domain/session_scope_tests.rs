@@ -6,8 +6,8 @@ use super::session_scope::{
 #[test]
 fn scoped_home_keeps_execution_location_and_repository_facts_separate_from_identity() {
     let execution = CanonicalExecutionLocation::new("/work/repo").expect("absolute canonical path");
-    let grouping = RepositoryGrouping::new("/work/repo/.git", "/work/repo/.git")
-        .expect("non-empty git facts");
+    let grouping =
+        RepositoryGrouping::new("/work/repo/.git", "/work/repo/.git").expect("non-empty git facts");
     let scope = SessionHomeScope::scoped(
         execution.clone(),
         Some(grouping.clone()),

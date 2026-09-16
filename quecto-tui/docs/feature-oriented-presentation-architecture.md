@@ -364,6 +364,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
+| `shell/app/app_methods_workspace.rs` | `shell` workspace reset methods split for line budget (#2001) |
 | `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
 | `shell/app_ordinary_exit.rs` | `shell` ordinary-exit finalization (#1586 Phase 4) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |

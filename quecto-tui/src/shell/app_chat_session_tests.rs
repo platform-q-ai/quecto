@@ -61,8 +61,16 @@ fn resume_picker_focus_cycles_without_toggling_and_activation_exposes_global_pre
     ]});
     let manifest = std::env::temp_dir().join("quecto-d5-empty-manifest.json");
     app.open_resume_selector_at(&data, &manifest);
-    let labels = app.ac().sessions.resume_selector.as_ref().unwrap().items_for_tests()
-        .iter().map(|item| item.label.as_str()).collect::<Vec<_>>();
+    let labels = app
+        .ac()
+        .sessions
+        .resume_selector
+        .as_ref()
+        .unwrap()
+        .items_for_tests()
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(labels, vec!["Local work"]);
 
     use super::app_sessions::ResumePickerFocus;
@@ -74,20 +82,41 @@ fn resume_picker_focus_cycles_without_toggling_and_activation_exposes_global_pre
     assert_eq!(app.ac().sessions.resume_focus, ResumePickerFocus::Query);
     app.handle_key(Key::BackTab);
     assert_eq!(app.ac().sessions.resume_focus, ResumePickerFocus::Scope);
-    assert_eq!(app.ac().sessions.resume_selector.as_ref().unwrap().items_for_tests().len(), 1);
+    assert_eq!(
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .items_for_tests()
+            .len(),
+        1
+    );
     app.handle_key(Key::Enter);
-    let labels = app.ac().sessions.resume_selector.as_ref().unwrap().items_for_tests()
-        .iter().map(|item| item.label.as_str()).collect::<Vec<_>>();
+    let labels = app
+        .ac()
+        .sessions
+        .resume_selector
+        .as_ref()
+        .unwrap()
+        .items_for_tests()
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(labels, vec!["Local work", "Other work", "Legacy"]);
     assert!(app.ac().sessions.resume_selector.is_some());
     app.handle_key(Key::Ctrl('g'));
-    assert!(app.ac().sessions.resume_selector.is_some(), "Ctrl+G remains global jump and must not mutate picker scope");
+    assert!(
+        app.ac().sessions.resume_selector.is_some(),
+        "Ctrl+G remains global jump and must not mutate picker scope"
+    );
 }
 
 #[test]
 fn resume_picker_mouse_scope_and_out_of_bounds_obey_hit_regions() {
     let client = Client::disconnected_for_tests();
-    let mut term = Terminal::new(); term.set_size_for_tests(100, 30);
+    let mut term = Terminal::new();
+    term.set_size_for_tests(100, 30);
     let mut app = App::new(term, client);
     let data = serde_json::json!({"sessions":[
         {"key":"local","title":"Local","scope":{"kind":"scoped","isLocal":true}},
@@ -98,8 +127,14 @@ fn resume_picker_mouse_scope_and_out_of_bounds_obey_hit_regions() {
     let (left, top, width, _) = app.ac().sessions.resume_bounds.unwrap();
     app.handle_key(Key::MouseClick { col: 0, row: 0 });
     assert!(!app.ac().sessions.resume_global, "outside click is a no-op");
-    app.handle_key(Key::MouseClick { col: left + width - 1, row: top });
-    assert!(app.ac().sessions.resume_global, "Global segment click activates scope");
+    app.handle_key(Key::MouseClick {
+        col: left + width - 1,
+        row: top,
+    });
+    assert!(
+        app.ac().sessions.resume_global,
+        "Global segment click activates scope"
+    );
 }
 
 #[tokio::test]
@@ -120,8 +155,13 @@ async fn cross_folder_selection_uses_typed_decision_and_cancel_sends_nothing() {
     assert!(a.ac().sessions.resume_decision.is_some());
     a.handle_resume_decision_key(&Key::Enter);
     let sent = h.drain_commands().await;
-    assert!(sent.iter().any(|line| line.contains("\"type\":\"resume_decision\"") && line.contains("open_original")));
-    assert!(sent.iter().all(|line| !line.contains("\"type\":\"resume_session\"")));
+    assert!(sent.iter().any(
+        |line| line.contains("\"type\":\"resume_decision\"") && line.contains("open_original")
+    ));
+    assert!(
+        sent.iter()
+            .all(|line| !line.contains("\"type\":\"resume_session\""))
+    );
 }
 
 #[tokio::test]
@@ -141,7 +181,12 @@ async fn cross_folder_dialog_escape_cancels_without_dispatch() {
     assert!(a.ac().sessions.resume_decision.is_some());
     a.handle_resume_decision_key(&Key::Escape);
     assert!(a.ac().sessions.resume_decision.is_none());
-    assert!(h.drain_commands().await.iter().all(|line| !line.contains("resume_decision")));
+    assert!(
+        h.drain_commands()
+            .await
+            .iter()
+            .all(|line| !line.contains("resume_decision"))
+    );
 }
 
 #[tokio::test]

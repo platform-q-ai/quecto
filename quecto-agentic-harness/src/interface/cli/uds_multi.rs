@@ -5,7 +5,6 @@
 //! `tokio::sync::broadcast`.  Commands from all clients merge into a
 //! shared `mpsc` channel → single dispatch loop (no concurrent session
 //! mutation).  Agent shuts down when all clients disconnect.
-
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
@@ -349,7 +348,7 @@ pub(super) async fn multi_client_loop(
         agent: &mut agent,
         messages: &mut messages,
         sessions: session_reads.clone(),
-        resume_decision: crate::infrastructure::resume_decision_adapter::production_resume_handle(base_dir, sessions.store.clone()).expect("production resume composition"),
+        resume_decision: sessions.resume_decision.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),

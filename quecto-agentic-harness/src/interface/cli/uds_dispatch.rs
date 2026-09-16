@@ -17,16 +17,12 @@ use super::uds_dispatch_session::{handle_new_session, handle_resume_session, han
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::session::SubagentRestoreReason;
-use crate::domain::tool::{
-    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyReconciliation,
-    ToolPolicyRequest,
-};
+#[rustfmt::skip]
+use crate::domain::{session::SubagentRestoreReason,tool::{ToolPolicyApplyMode,ToolPolicyMutation,ToolPolicyOperation,ToolPolicyReconciliation,ToolPolicyRequest}};
 use crate::interface::cli::protocol::{
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
 };
 use crate::interface::cli::uds_ext_protocol;
-
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
@@ -35,10 +31,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     if let Some(result) = super::uds_dispatch_query::dispatch_fieldless_command(&cmd, ctx).await {
         return result;
     }
-
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
-
     match cmd {
         AgentCommand::Prompt {
             message,
@@ -132,10 +126,21 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
         }
-        AgentCommand::ResumeDecision { session, action, location, .. } => {
-            super::uds_dispatch_session::handle_resume_decision(
-                ctx, id.as_deref(), &type_name, session, action, location,
-            ).await
+        AgentCommand::ResumeDecision {
+            session,
+            action,
+            location,
+            ..
+        } => {
+            super::uds_resume_decision::handle_resume_decision(
+                ctx,
+                id.as_deref(),
+                &type_name,
+                session,
+                action,
+                location,
+            )
+            .await
         }
         AgentCommand::PersistSession { restore_reason, .. } => {
             let reason = match restore_reason.as_deref() {
@@ -187,7 +192,6 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         }
     }
 }
-
 pub(super) struct SetToolPolicyCommandParts {
     pub(super) mutations: Vec<ToolPolicyMutationCommand>,
     pub(super) mode: ToolPolicyApplyModeCommand,
@@ -195,7 +199,6 @@ pub(super) struct SetToolPolicyCommandParts {
     pub(super) unlisted_scope: Option<crate::domain::tool_descriptor::ProfileAvailabilityScope>,
     pub(super) persist: bool,
 }
-
 pub(super) async fn handle_set_tool_policy(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -225,7 +228,6 @@ pub(super) async fn handle_set_tool_policy(
             .unwrap_or_else(|| "set_tool_policy".to_string());
         domain_mutations.push(ToolPolicyMutation::set_scope(name, mutation.scope, reason));
     }
-
     let apply_mode = match mode {
         ToolPolicyApplyModeCommand::ImmediateIfIdle => ToolPolicyApplyMode::ImmediateIfIdle,
         ToolPolicyApplyModeCommand::AtNextTurnBoundary => ToolPolicyApplyMode::AtNextTurnBoundary,
@@ -297,7 +299,6 @@ pub(super) async fn handle_set_tool_policy(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 fn persist_tool_policy_results(
     config_path: &std::path::Path,
     reconciliation: &ToolPolicyReconciliation,
@@ -334,7 +335,6 @@ fn persist_tool_policy_results(
     std::fs::write(config_path, format!("{json}\n"))
         .map_err(|e| format!("failed to write config: {e}"))
 }
-
 pub(super) async fn handle_steer(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -362,7 +362,6 @@ pub(super) async fn handle_steer(
     )
     .await
 }
-
 pub(super) async fn handle_follow_up(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -377,7 +376,6 @@ pub(super) async fn handle_follow_up(
     }
     false
 }
-
 pub(super) async fn handle_set_workflow_automation(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -416,7 +414,6 @@ pub(super) async fn handle_set_workflow_automation(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 pub(super) async fn handle_abort(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -434,7 +431,6 @@ pub(super) async fn handle_abort(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 pub(super) async fn dispatch_ext_command(
     cmd: AgentCommand,
     ctx: &mut DispatchCtx<'_>,
@@ -457,7 +453,6 @@ pub(super) async fn dispatch_ext_command(
     };
     false
 }
-
 #[cfg(test)]
 #[path = "uds_dispatch_935_clamp_tests.rs"]
 mod clamp_935_tests;

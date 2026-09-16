@@ -14,7 +14,10 @@ pub enum Key {
     Tab,
     BackTab, // Shift+Tab
     /// Normalized terminal primary-button press in screen cell coordinates.
-    MouseClick { col: usize, row: usize },
+    MouseClick {
+        col: usize,
+        row: usize,
+    },
     Up,
     Down,
     Left,

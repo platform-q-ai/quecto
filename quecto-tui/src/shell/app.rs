@@ -1,8 +1,3 @@
-use std::collections::{HashMap, HashSet};
-use std::io::Write;
-use std::path::PathBuf;
-use std::time::Duration;
-
 use crate::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
 use crate::agents::view::{FeedState, SessionView, SubagentUi};
 use crate::components::autocomplete::{Autocomplete, AutocompleteResult};
@@ -26,6 +21,10 @@ use crate::shell::render::DiffRenderer;
 use crate::shell::terminal::Terminal;
 use crate::workspace::workspace_files::list_workspace_files;
 use app_selection::TextSelection;
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
 use tokio::sync::mpsc;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
@@ -39,19 +38,13 @@ mod tool_policy;
 mod tui_harness_tool_policy;
 use app_commands::builtin_commands;
 use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
-/// Application state.
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
-    /// the active tab is selected by `active_tab`. Call sites reach the
-    /// active slot via `ac()` / `ac()`, and a specific
-    /// tab via `conn_for` / `conn_mut`.
     tabs: std::collections::HashMap<
         crate::shell::connection::TabId,
         connection_state::ConnectionState,
     >,
-    /// Which tab is focused for input, render, and active command send.
     active_tab: crate::shell::connection::TabId,
     /// This TUI's workspace identity (#1466 decision 1): a UUID minted at
     /// startup (never cwd-derived) plus its auto-generated human label.
@@ -215,7 +208,13 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.ac_mut().master_session.footer.set_git_branch(branch);
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_git_branch(branch.clone());
+        // The footer is rendered from the active session. Keep it synchronized
+        // when a sub-agent view is selected during a repository branch change.
+        self.active_session_mut().footer.set_git_branch(branch);
         true
     }
 
@@ -324,6 +323,7 @@ pub(crate) mod app_message_recovery;
 mod app_methods;
 #[path = "app_methods_send.rs"]
 mod app_methods_send;
+mod app_methods_workspace;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
 #[path = "app_ordinary_exit.rs"]

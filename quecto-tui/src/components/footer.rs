@@ -215,7 +215,14 @@ impl Component for Footer {
         let mut pwd = self.pwd.clone();
 
         if let Some(branch) = &self.git_branch {
-            pwd = format!("{} ({})", pwd, branch);
+            // Keep the volatile branch visible even when a long cwd is truncated.
+            let suffix = format!(" ({branch})");
+            let path_width = width.saturating_sub(visible_width(&suffix));
+            pwd = format!(
+                "{}{}",
+                truncate_to_width(&pwd, path_width, Some("...")),
+                suffix
+            );
         }
 
         let pwd_line = truncate_to_width(&theme::dim(&pwd), width, Some("..."));

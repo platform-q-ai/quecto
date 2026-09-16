@@ -1,16 +1,4 @@
-//! The active-session graph of one harness loop (#1971–#1977): the one
-//! application-owned `ActiveSessionState` (R7a), the live-conversation
-//! read, sync and report use cases, the save transaction, the clear and
-//! rewind transactions, the fresh-session and resume transactions over it,
-//! and the loop's session handles around them. The loop's raw session key
-//! becomes the typed identity here: the exact persisted-key round-trip,
-//! the only conversion outside persistence. The runtime sources the save
-//! transaction snapshots — the workflow engine and the sub-agent registry
-//! — and the roster the transitions count and replace are adapted here;
-//! the agent's dirty latch is a port on its own, and the fleet teardown
-//! is the loop's late-bound handle, passed to the transaction per call.
-use std::sync::Arc;
-
+//! Composition root for one loop's active-session application graph.
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::ports::export::SessionExportPort;
 use crate::application::sessions::ports::{
@@ -32,7 +20,7 @@ use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
-
+use std::sync::Arc;
 /// The handles of a loop opened on `inputs.identity` with the loop's
 /// retention backstop, injected prompt, dirty latch, workflow and roster
 /// runtime: the one active-session state, the history, recovery, sync,
@@ -98,7 +86,11 @@ pub fn assemble_session_handles(
             inputs.ephemeral,
         )),
     };
+    let resume_decision =
+        super::sessions::production_resume_handle(&inputs.base_dir, store.clone())
+            .expect("production resume composition");
     SessionHandles {
+        resume_decision,
         store,
         list_sessions,
         active_session,
@@ -111,7 +103,6 @@ pub fn assemble_session_handles(
         synchronize_transcript: Arc::new(SynchronizeTranscriptController::new(synchronize)),
     }
 }
-
 #[cfg(test)]
 #[path = "active_session_tests.rs"]
 mod tests;

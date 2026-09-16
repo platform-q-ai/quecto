@@ -1,6 +1,9 @@
 //! Contract test binary: aggregates every `tests/contracts/{port}.rs` so
 //! `cargo test --test contracts` runs the full port-contract suite.
 
+#[path = "contracts/resume_transaction.rs"]
+mod resume_transaction;
+
 #[path = "contracts/admission_client.rs"]
 mod admission_client;
 #[path = "contracts/admission_dispatcher.rs"]
@@ -136,16 +139,30 @@ mod tool_execution_admission;
 mod find_paths;
 
 // Subagent teardown ports (#1934).
+#[path = "contracts/atomic_resume_persistence.rs"]
+mod atomic_resume_persistence;
 #[path = "contracts/composition_exit_readiness.rs"]
 mod composition_exit_readiness;
 #[path = "contracts/delegated_agent_registry.rs"]
 mod delegated_agent_registry;
 #[path = "contracts/direct_child_routing.rs"]
 mod direct_child_routing;
+#[path = "contracts/exact_session_access.rs"]
+mod exact_session_access;
 #[path = "contracts/fetch_web_content.rs"]
 mod fetch_web_content;
+#[path = "contracts/fresh_runtime_launch.rs"]
+mod fresh_runtime_launch;
 #[path = "contracts/owned_child_termination.rs"]
 mod owned_child_termination;
+#[path = "contracts/resume_decision_effects.rs"]
+mod resume_decision_effects;
+#[path = "contracts/resume_projection_publisher.rs"]
+mod resume_projection_publisher;
+#[path = "contracts/same_scope_restore_context.rs"]
+mod same_scope_restore_context;
+#[path = "contracts/session_scope_discovery.rs"]
+mod session_scope_discovery;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
 #[path = "contracts/shutdown_run_spawner.rs"]

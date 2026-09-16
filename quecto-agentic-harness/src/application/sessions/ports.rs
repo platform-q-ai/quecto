@@ -1,15 +1,8 @@
-//! Capability-local ports of the sessions capability (#1960, #1970, #1972,
-//! #1974, #1975, #1976, #1978): session persistence and the context spill store
-//! here, the outbound export port in [`export`], the session-runtime ports
-//! the save, clear and rewind transactions reach in [`session_runtime`],
-//! the transition ports the fresh session reaches in
-//! [`session_transition`]. Infrastructure implements them over files.
-//! Signatures name only domain values and the capability's own DTOs: every
-//! operation is keyed by the typed [`SessionIdentity`], never by a raw
-//! string, filename or path.
+//! Capability-local session persistence, runtime, transition, export, discovery,
+//! and resume ports. Signatures use domain values and typed session identities.
 pub mod export;
-pub mod scope_discovery;
 pub mod resume_transaction;
+pub mod scope_discovery;
 use std::future::Future;
 use std::pin::Pin;
 
