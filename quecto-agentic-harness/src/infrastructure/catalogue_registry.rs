@@ -504,10 +504,12 @@ mod tests;
 /// vocabulary.
 ///
 /// A bare model id (no `provider/` prefix — the router serves it from the
-/// first configured provider) is looked up across every provider serving
-/// that id: when they all seed the same vocabulary (OpenAI's own two
-/// providers, Anthropic's two) that vocabulary is the answer; when they
-/// disagree the id is ambiguous and no vocabulary is affirmed.
+/// first configured provider) is looked up across the *runnable* providers
+/// serving that id, since only a runnable provider can be the one the
+/// router picks: when they all seed the same vocabulary that vocabulary is
+/// the answer (an OAuth-only user's bare `gpt-5.5` is openai-oauth's); when
+/// they disagree the id is ambiguous and no vocabulary is affirmed; when
+/// none is runnable nothing is known.
 #[derive(Debug)]
 pub struct PublishedEffortVocabulary {
     store: CatalogueSnapshotStore,
@@ -539,7 +541,10 @@ impl crate::application::catalogue::ports::EffortVocabularySource for PublishedE
         let mut serving = snapshot
             .entries()
             .iter()
-            .filter(|entry| entry.reference().model().as_str() == model)
+            .filter(|entry| {
+                entry.reference().model().as_str() == model
+                    && entry.model.availability.is_runnable()
+            })
             .map(levels);
         let first = serving.next()?;
         serving.all(|other| other == first).then_some(first)

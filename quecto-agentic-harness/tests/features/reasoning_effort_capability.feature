@@ -8,22 +8,28 @@ Feature: Reasoning effort is a per-model capability that reaches the wire
 
   Scenario Outline: A selected effort is serialised as reasoning_effort on the chat-completions request
     Given a chat-completions request for model "<model>" with effort "<effort>"
-    When the OpenAI-compatible provider builds the chat-completions request
+    When the "<provider>" OpenAI-compatible provider builds the chat-completions request
     Then the chat-completions body should set "reasoning_effort" to "<effort>"
     And the chat-completions body should not contain "thinking"
 
     Examples:
-      | model                              | effort |
-      | grok-4.6                           | xhigh  |
-      | grok-4.5                           | high   |
-      | accounts/fireworks/models/glm-5p3  | low    |
-      | gpt-5.6-sol                        | none   |
+      | provider  | model                              | effort |
+      | xai       | grok-4.6                           | xhigh  |
+      | xai       | grok-4.5                           | high   |
+      | fireworks | accounts/fireworks/models/glm-5p3  | low    |
 
   Scenario: No selected effort sends no reasoning option at all
     Given a chat-completions request for model "qwen3.6-35b-a3b-int4" with no effort
-    When the OpenAI-compatible provider builds the chat-completions request
+    When the "spark-local" OpenAI-compatible provider builds the chat-completions request
     Then the chat-completions body should not contain "reasoning_effort"
     And the chat-completions body should not contain "thinking"
+
+  Scenario: OpenAI's own chat-completions endpoint never carries reasoning_effort
+    # OpenAI rejects reasoning_effort with function tools on Chat Completions;
+    # its reasoning ids are routed to the Responses API instead.
+    Given a chat-completions request for model "gpt-5.5" with effort "high"
+    When the "openai" OpenAI-compatible provider builds the chat-completions request
+    Then the chat-completions body should not contain "reasoning_effort"
 
   # ─── the catalogue's per-model vocabulary drives every surface ──────────
 

@@ -18,8 +18,8 @@ fn given_chat_request_without_effort(world: &mut QuectoWorld, model: String) {
     world.env_overrides.remove("_cc_effort");
 }
 
-#[when("the OpenAI-compatible provider builds the chat-completions request")]
-fn when_provider_builds_chat_request(world: &mut QuectoWorld) {
+#[when(expr = "the {string} OpenAI-compatible provider builds the chat-completions request")]
+fn when_provider_builds_chat_request(world: &mut QuectoWorld, provider: String) {
     let model = world
         .env_overrides
         .get("_cc_model")
@@ -47,7 +47,7 @@ fn when_provider_builds_chat_request(world: &mut QuectoWorld) {
     };
     let body =
         quecto::infrastructure::providers::openai::OpenAiProvider::build_chat_completions_body_for_test(
-            &request,
+            &provider, &request,
         );
     world
         .env_overrides

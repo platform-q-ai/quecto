@@ -60,50 +60,53 @@ fn a_user_record_declares_its_control_with_the_reasoning_flag() {
 }
 
 #[test]
-fn a_bare_model_id_resolves_when_every_provider_serving_it_agrees() {
+fn a_bare_model_id_resolves_across_the_runnable_providers_serving_it() {
     let tmp = tempfile::tempdir().unwrap();
+    // `a` and `b` are runnable (a key is declared) and agree; `c` is not
+    // runnable (no credential) and would disagree, so it does not count —
+    // the router can only serve a bare id from a configured provider.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{
+            "a":{"api":"openai-completions","baseUrl":"https://a.test/v1","apiKey":"sk-a","models":[{"id":"shared","reasoning":true}]},
+            "b":{"api":"openai-completions","baseUrl":"https://b.test/v1","apiKey":"sk-b","models":[{"id":"shared","reasoning":true}]},
+            "c":{"api":"openai-completions","models":[{"id":"shared"}]}
+        }}"#,
+    )
+    .unwrap();
     let _ = quecto::composition::catalogue::list_models_wire_for(tmp.path());
     let source = under_test(tmp.path());
-    // gpt-5.6-sol is built in under openai-api and openai-oauth with one scale.
     assert_eq!(
-        source.effort_vocabulary("gpt-5.6-sol"),
-        Some(vec![
-            quecto::domain::provider::EffortLevel::None,
-            Low,
-            Medium,
-            High,
-            XHigh
-        ])
+        source.effort_vocabulary("shared"),
+        Some(vec![Low, Medium, High])
     );
-    // gpt-5.5: openai-api (Chat Completions, no reasoning) offers nothing,
-    // openai-oauth (Responses) offers the scale — ambiguous as a bare id.
-    assert_eq!(source.effort_vocabulary("gpt-5.5"), None);
+    // No runnable provider serves the built-in bare id in this directory
+    // (no OpenAI credential): nothing is known.
+    assert_eq!(source.effort_vocabulary("gpt-5.6-sol"), None);
     assert_eq!(source.effort_vocabulary("no-such-model"), None);
 }
 
 #[test]
 fn a_bare_model_id_served_with_different_vocabularies_is_ambiguous() {
     let tmp = tempfile::tempdir().unwrap();
-    // A user provider also serves the built-in id `gpt-5.6-sol`, declaring
-    // no reasoning: openai-api/openai-oauth offer the OpenAI scale, this
-    // one offers nothing. Nothing can be affirmed for the bare id.
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"gateway":{"api":"openai-completions","baseUrl":"https://gw.test/v1","apiKey":"$GW","models":[{"id":"gpt-5.6-sol"}]}}}"#,
+        r#"{"providers":{
+            "a":{"api":"openai-completions","baseUrl":"https://a.test/v1","apiKey":"sk-a","models":[{"id":"shared","reasoning":true}]},
+            "b":{"api":"openai-completions","baseUrl":"https://b.test/v1","apiKey":"sk-b","models":[{"id":"shared"}]}
+        }}"#,
     )
     .unwrap();
     let _ = quecto::composition::catalogue::list_models_wire_for(tmp.path());
     let source = under_test(tmp.path());
-    assert_eq!(source.effort_vocabulary("gpt-5.6-sol"), None);
     assert_eq!(
-        source.effort_vocabulary("openai-api/gpt-5.6-sol"),
-        Some(vec![
-            quecto::domain::provider::EffortLevel::None,
-            Low,
-            Medium,
-            High,
-            XHigh
-        ]),
+        source.effort_vocabulary("shared"),
+        None,
+        "runnable providers disagree"
+    );
+    assert_eq!(
+        source.effort_vocabulary("a/shared"),
+        Some(vec![Low, Medium, High]),
         "the qualified id is unambiguous"
     );
 }

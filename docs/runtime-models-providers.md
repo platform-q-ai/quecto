@@ -65,12 +65,12 @@ Which `/effort` levels a model offers — and whether the selection is sent on t
 | Provider | Levels offered and sent | Wire parameter |
 |---|---|---|
 | Anthropic (`anthropic-messages`) | `low, medium, high, max` | `output_config.effort` |
-| `openai-oauth` (Codex, always the Responses API) | `none, low, medium, high, xhigh` | `reasoning.effort` |
+| `openai-oauth` (Codex Responses API; an OAuth token without an account id falls back to Chat Completions, which never transmits an effort) | `none, low, medium, high, xhigh` | `reasoning.effort` |
 | `openai-api` models declaring `reasoning` (routed to the Responses API) | `none, low, medium, high, xhigh` | `reasoning.effort` |
 | `openai-api` models without `reasoning` (Chat Completions, which rejects `reasoning_effort` with tools) — including the default `gpt-5.5` | none | — |
 | xAI `grok-4.6` declaring `reasoning` | `low, medium, high, xhigh` | `reasoning_effort` |
 | other xAI Grok models declaring `reasoning` | `low, medium, high` | `reasoning_effort` |
-| Any other `openai-completions` endpoint (Fireworks, local servers, gateways) | `low, medium, high` **only when the record declares `"reasoning": true`**; otherwise none | `reasoning_effort` |
+| Any other `openai-completions` endpoint (Fireworks, local servers, gateways) | `low, medium, high` **only when the record declares `"reasoning": true`**; otherwise none. Do not declare it on a provider block that points at OpenAI's own Chat Completions endpoint — that endpoint rejects `reasoning_effort` with function tools | `reasoning_effort` |
 | Transports without a reasoning-option adapter | none | — |
 
 So for a Fireworks (or any OpenAI-compatible) reasoning model, declare it:
@@ -81,7 +81,7 @@ So for a Fireworks (or any OpenAI-compatible) reasoning model, declare it:
   "models": [{"id": "accounts/fireworks/models/glm-5p3", "reasoning": true}]}}}
 ```
 
-A model with no effort control advertises an empty `effortLevels`, which the TUI treats as authoritative (the selector reports that the model has no control; it never keeps a previous model's vocabulary); a model the catalogue does not know — including a bare id such as `gpt-5.5` served by providers whose vocabularies differ — reports none and asks for a qualified `provider/model`. In both cases `set_effort`, spawn `effort` and `--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default; a fresh or resumed session restores the startup effort only where the *active* model accepts it. `reasoning_effort` and Fireworks' `thinking` are never sent together.
+A model with no effort control advertises an empty `effortLevels`, which the TUI treats as authoritative (the selector reports that the model has no control; it never keeps a previous model's vocabulary); a model the catalogue does not know reports none. A bare id (no `provider/` prefix, as the default `gpt-5.5` is) resolves across the *runnable* providers serving it — an OAuth-only setup gets `openai-oauth`'s scale, an API-key-only setup gets nothing — and is refused as ambiguous when those providers disagree; select it as a qualified `provider/model` in that case. In both cases `set_effort`, spawn `effort` and `--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default; a fresh or resumed session restores the startup effort only where the *active* model accepts it. `reasoning_effort` and Fireworks' `thinking` are never sent together.
 
 ### User overrides: patch a model's metadata by stable ID
 

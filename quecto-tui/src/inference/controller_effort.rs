@@ -18,8 +18,9 @@ use crate::components::effort_selector::EffortSelector;
 
 /// The active model's catalogue record offers no reasoning-effort levels
 /// (#1996): the agent reported an empty `effortLevels`.
-const NO_EFFORT_CONTROL: &str = "The active model has no reasoning-effort control — declare \
-     `reasoning: true` on its models.json record if it does";
+const NO_EFFORT_CONTROL: &str = "The active model offers no reasoning-effort levels: its \
+     catalogue record declares no reasoning (declare `reasoning: true` if it does), or the \
+     model is not a catalogued provider/model — select it as provider/model";
 
 impl App {
     /// Handle `/effort` (bare → selector) and `/effort <level>` (direct set).

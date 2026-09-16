@@ -79,10 +79,14 @@ fn offenders(sources: &[(String, String)], needle: &str) -> Vec<String> {
 /// consumers project the seeded `effort_levels` (through the
 /// change-reasoning-effort use case) instead of re-deriving one (#1996).
 pub fn effort_name_inference_sites(layer_sources: &[(String, String)]) -> Vec<String> {
-    offenders(layer_sources, "EffortVocabulary::")
+    let mut sites: Vec<String> = ["catalogue::EffortVocabulary", "strings_for_model("]
         .into_iter()
+        .flat_map(|needle| offenders(layer_sources, needle))
         .filter(|path| !path.ends_with("infrastructure/catalogue_registry.rs"))
-        .collect()
+        .collect();
+    sites.sort();
+    sites.dedup();
+    sites
 }
 
 /// "No canonical types in infrastructure": infrastructure adapters map wire

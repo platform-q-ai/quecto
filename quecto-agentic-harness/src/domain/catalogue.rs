@@ -230,8 +230,9 @@ pub struct ModelCapabilities {
 /// documented scales:
 ///
 /// - Anthropic Messages: `low, medium, high, max` (`output_config.effort`).
-/// - `openai-oauth` (the Codex Responses API, which always transmits a
-///   configured `reasoning.effort`): the OpenAI scale
+/// - `openai-oauth` (the Codex Responses API, which transmits a configured
+///   `reasoning.effort`; its Chat-Completions fallback for a token without
+///   an account id never transmits one): the OpenAI scale
 ///   `none, low, medium, high, xhigh`.
 /// - `openai-api`: the OpenAI scale **only for records declaring
 ///   `reasoning`** — those are the ids the endpoint router sends to the

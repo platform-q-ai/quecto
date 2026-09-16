@@ -15,7 +15,7 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 - User registry: `~/.quecto/models.json` (do **not** edit harness source to add a model).
 - API keys / OAuth tokens: credential store via `quecto auth` or env (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Catalogue files carry credential *references* like `"apiKey": "$MY_KEY"` — never literal secrets (a literal in `overrides` is rejected).
 - Valid edits hot-reload into a new catalogue generation — no restart of Quecto or the TUI needed.
-- Reasoning effort is per model: a `models.json` model on an OpenAI-compatible provider (Fireworks, a local server) offers `low/medium/high` **only if its record declares `"reasoning": true`**; xAI and OpenAI built-ins carry their documented scales; a model with no effort control advertises an empty `effortLevels` and refuses `set_effort`. Use `get_state`'s `effortLevels` — never guess a level from the provider name.
+- Reasoning effort is per model: a `models.json` model on an OpenAI-compatible provider (Fireworks, a local server) offers `low/medium/high` **only if its record declares `"reasoning": true`**; xAI Grok built-ins and OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, and every `openai-oauth` model) carry their documented scales, while `openai-api` ids served over Chat Completions (`gpt-5.5`, mini/nano, the codex ids) have none; a model with no effort control advertises an empty `effortLevels` and refuses `set_effort`. Use `get_state`'s `effortLevels` — never guess a level from the provider name.
 
 ## Agent procedure
 

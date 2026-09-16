@@ -160,7 +160,7 @@ Feature: TUI app event routing and command behaviours
     When a get_state response arrives with model "fireworks/plain" and no effort control
     And I open the effort selector via the /effort prompt
     Then the effort selector is not visible
-    And the app notification includes "no reasoning-effort control"
+    And the app notification includes "offers no reasoning-effort levels"
 
   @effort @issue-1996
   Scenario: /effort on a model with no effort control is refused locally
@@ -168,7 +168,7 @@ Feature: TUI app event routing and command behaviours
     And the agent reports model "openai-api/gpt-5.5" with effort "medium"
     And a get_state response arrives with model "fireworks/plain" and no effort control
     When I submit the master prompt "/effort high" expecting no agent command
-    Then the app notification includes "no reasoning-effort control"
+    Then the app notification includes "offers no reasoning-effort levels"
     And no set effort command is sent
 
   @effort @effort-selector

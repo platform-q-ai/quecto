@@ -155,13 +155,14 @@ Feature: Agent CLI — Headless One-Shot Mode
   Scenario: --effort flag is accepted and passes through
     Given a temp base directory
     And a config file with an Anthropic provider pointing at a mock server
-    And the Anthropic mock returns a text response "effort accepted"
+    And a capturing Anthropic mock LLM returning text "effort accepted"
     # The default bare `gpt-5.5` has no effort control (#1996); pin a
     # model whose vocabulary accepts the flag.
     And the config default model is "anthropic-api/claude-sonnet-4-6"
     When I run quecto agent --effort medium -m "hello"
     Then the exit code should be 0
     And stdout should contain "effort accepted"
+    And Anthropic request 1 should carry reasoning effort "medium"
 
   Scenario: --effort flag with invalid value shows error
     Given a temp base directory

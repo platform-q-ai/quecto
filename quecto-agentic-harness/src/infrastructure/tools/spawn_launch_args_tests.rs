@@ -241,3 +241,17 @@ fn child_session_flag_uses_uuid_key_not_display_label() {
         .expect("--socket must be present");
     assert_eq!(strs[sock_pos + 1], socket);
 }
+
+/// #1848: an explicit-model effort on a tool composed without the effort
+/// capability is refused rather than checked for syntax only.
+#[test]
+fn explicit_model_effort_without_composed_capability_is_refused() {
+    let error = super::validate_effort("low", Some("openai-api/gpt-5.6-sol"), None).unwrap_err();
+    assert!(
+        error.contains("composed without the reasoning-effort capability"),
+        "{error}"
+    );
+    // Without a model the syntax check still applies (the child validates).
+    assert_eq!(super::validate_effort("low", None, None).unwrap(), "low");
+    assert!(super::validate_effort("turbo", None, None).is_err());
+}
