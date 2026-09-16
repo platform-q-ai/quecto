@@ -66,7 +66,35 @@ Feature: Configuration discovery
     When I run quecto with arguments "status"
     Then the exit code should be 1
     And the stderr should contain "failed to load config"
+    And the stderr should name the current directory's "config.json"
     And the output should not contain "global-model"
+
+  Scenario: An invalid local config.json stops an agent run with an error naming the file
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"providers":{"openai":{"api_key":"sk-global"}}}
+      """
+    And a config file named "config.json" in the current directory with content:
+      """
+      {"providers":{"openai":{"api_key":
+      """
+    When I run quecto with arguments "agent -m hello"
+    Then the exit code should be 1
+    And the stderr should contain "failed to load config"
+    And the stderr should name the current directory's "config.json"
+
+  Scenario: An agent run uses the local config.json ahead of the global configuration
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"providers":{"openai":{"api_key":"sk-global"}}}
+      """
+    And a config file named "config.json" in the current directory with content:
+      """
+      {"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}
+      """
+    When I run quecto with arguments "agent -m hello"
+    Then the exit code should be 1
+    And the stderr should contain "no LLM providers"
 
   Scenario: A local config.json that is not a regular file is an error
     Given a config file at "~/.quecto/config.json" with content:

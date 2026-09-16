@@ -13,6 +13,15 @@ fn into_path_unwraps_every_variant() {
 }
 
 #[test]
+fn only_the_global_selection_may_be_absent() {
+    let path = PathBuf::from("/x/config.json");
+    assert!(ConfigSelection::Explicit(path.clone()).must_exist());
+    assert!(ConfigSelection::WorkingDirectory(path.clone()).must_exist());
+    assert!(!ConfigSelection::Global(path.clone()).must_exist());
+    assert_eq!(ConfigSelection::Global(path.clone()).path(), path.as_path());
+}
+
+#[test]
 fn error_display_names_the_path_and_the_remedy() {
     let path = PathBuf::from("/work/config.json");
     let not_regular = ConfigSelectionError {

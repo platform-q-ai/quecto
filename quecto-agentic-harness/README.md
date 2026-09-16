@@ -349,8 +349,9 @@ quecto status
 
 quecto needs no setup step. With no config file it runs on defaults; supply a
 key via `quecto auth login` or `QUECTO_*` env vars. A config file is optional —
-when present it's read from `~/.quecto/config.json`, and the workspace is
-created on demand:
+when present it's read from `./config.json` in the working directory, else
+`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)),
+and the workspace is created on demand:
 
 ```
 ~/.quecto/
@@ -360,8 +361,8 @@ created on demand:
 
 ### Configuration discovery and precedence
 
-Every `quecto` command loads exactly one configuration file, chosen in this
-order (#1966):
+Every command that loads configuration (`status`, `agent`, `admission-broker`,
+and the REPL's `status`) loads exactly one file, chosen in this order (#1966):
 
 1. `--config <path>` — an explicit selection always wins; the file must exist.
 2. `./config.json` — a `config.json` directly in the process working directory.
@@ -376,16 +377,34 @@ a regular file (a directory, a dangling symlink) is reported as an error naming
 the path, never silently skipped. `quecto status` prints which file was
 selected.
 
-Launching quecto inside a directory therefore loads that directory's
-`config.json`, including any providers, tools, or container settings it
-declares. Review a checked-out project's `config.json` before running quecto in
-it, exactly as you would review its scripts. Locally spawned subagents inherit
-the parent's working directory and so discover the same file; container
-subagents are handed the parent's selected file explicitly.
+**Trust the file before you run in its directory.** Launching quecto inside a
+directory loads that directory's `config.json` with no prompt and full
+authority — the same authority as your global file. Concretely, a checked-out
+project's `config.json` can:
 
-This is distinct from the repo-local `.quecto/config.json`, which contributes
-only container definitions and is trust-gated (see
-[Container runtimes](../docs/container-runtimes.md)).
+- point `providers.*.api_base` at any host, and quecto will send the API key or
+  OAuth token from *your* credential store to it on the first `quecto agent`
+  run;
+- define `container_configs` whose `create`/`exec`/`kill` scripts run on your
+  machine — without the SHA-256 trust prompt that guards the same content in a
+  repo-local `.quecto/config.json` (see
+  [Container runtimes](../docs/container-runtimes.md));
+- change tools, models, workflow templates and every other agent default.
+
+Review it as you would a repository's build scripts. Note also that the
+workspace an agent's own tools write to is its working directory: a file
+written to `./config.json` by an agent is loaded by every subagent spawned
+locally afterwards, exactly as a file the user placed there would be.
+
+Subagents: a locally spawned subagent inherits the parent's working directory
+and performs its own discovery there — it loads `./config.json` when present,
+else the global file. A parent's explicit `--config` is *not* forwarded to
+local children (pre-existing behaviour; pass `config` in the spawn call, or set
+`QUECTO_RUNTIME_CONFIG_PATH`, to pin a child's file). Container subagents are
+always handed the parent's selected file explicitly. `QUECTO_RUNTIME_CONFIG_PATH`
+is a child-launch mechanism only: it is the `--config` given to spawned
+children when neither the spawn call nor (for containers) the parent supplies
+one; it does not affect the launching process's own selection above.
 
 ### `quecto help` — Show usage
 
@@ -409,7 +428,8 @@ Also available as `quecto --version` or `quecto -v`.
 
 ## Configuration
 
-Config file: `~/.quecto/config.json`
+Config file: `./config.json` in the working directory, else
+`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)).
 
 ```json
 {

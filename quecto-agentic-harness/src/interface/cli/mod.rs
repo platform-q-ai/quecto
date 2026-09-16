@@ -376,19 +376,19 @@ pub struct CliContext {
 impl CliContext {
     /// Select the config file (#1966): explicit override > `./config.json` in
     /// the working directory > `<base_dir>/config.json`. A local file that is
-    /// present but unusable is an error, never a fallback.
-    pub(crate) fn config_path(&self) -> Result<PathBuf, String> {
+    /// present but unusable is an error, never a fallback. The working
+    /// directory is the one handed in (`run` supplies the process's; rigs
+    /// supply a hermetic one); without one nothing local is discovered.
+    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
         let Some(select_config) = self.config_selection else {
             return Err("configuration selection capability not composed".to_string());
         };
-        let working_directory = self.cwd.clone().or_else(|| std::env::current_dir().ok());
         select_config()
             .execute(ConfigSelectionRequest {
                 explicit: self.config_path.clone(),
-                working_directory,
+                working_directory: self.cwd.clone(),
                 global: self.base_dir().join("config.json"),
             })
-            .map(ConfigSelection::into_path)
             .map_err(|error| error.to_string())
     }
 
@@ -429,6 +429,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
     let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
     let ctx = CliContext {
         config_path,
+        cwd: std::env::current_dir().ok(),
         stdin_is_tty: Some(stdin_is_tty),
         web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
         teardown_graph: Some(composition.teardown_graph),
@@ -447,7 +448,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         if let Some(error) = ctx
             .config_path
             .as_deref()
-            .and_then(|path| explicit_config_missing(path, true))
+            .and_then(|path| selected_config_missing(path, true))
         {
             eprintln!("{error}");
             return 1;
@@ -594,11 +595,14 @@ fn run_repl_command(
     (stdout, stderr, code)
 }
 
-pub(crate) fn explicit_config_missing(
+/// A selected config that must exist (an explicit `--config`, or the
+/// working-directory file that was present at selection) but is missing
+/// now: an error naming the path, never a fall-through to defaults.
+pub(crate) fn selected_config_missing(
     config_path: &std::path::Path,
-    explicit: bool,
+    must_exist: bool,
 ) -> Option<String> {
-    (explicit && !config_path.exists())
+    (must_exist && !config_path.exists())
         .then(|| format!("config not found: {}", config_path.display()))
 }
 

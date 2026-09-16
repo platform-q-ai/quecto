@@ -28,6 +28,21 @@ pub enum ConfigSelection {
 }
 
 impl ConfigSelection {
+    /// Whether the selected file must exist when it is loaded. An explicit
+    /// override was asked for by name and a working-directory file was
+    /// selected because it was present; a file that has vanished since is
+    /// an error, never a quiet fall-through to defaults. Only the global
+    /// file may be absent.
+    pub fn must_exist(&self) -> bool {
+        !matches!(self, Self::Global(_))
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            Self::Explicit(path) | Self::WorkingDirectory(path) | Self::Global(path) => path,
+        }
+    }
+
     pub fn into_path(self) -> PathBuf {
         match self {
             Self::Explicit(path) | Self::WorkingDirectory(path) | Self::Global(path) => path,

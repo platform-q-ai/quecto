@@ -10,7 +10,7 @@ Quecto's runtime model registry lives at `~/.quecto/models.json`. It is the user
 
 **How hot reload works (mechanics):**
 
-1. The reload gate (`src/infrastructure/reload.rs`) watches both `~/.quecto/config.json` and `~/.quecto/models.json` by mtime + length + content hash.
+1. The reload gate (`src/infrastructure/reload.rs`) watches both the config file the run selected (`--config`, else `./config.json` in the working directory, else `~/.quecto/config.json`) and `~/.quecto/models.json` by mtime + length + content hash.
 2. On a poll, if metadata is unchanged it does **not** read the file (cheap). If metadata changed, it reads and hashes; if the hash changed, it rebuilds the provider router.
 3. Polls happen automatically before each prompt, before `set_model`, when `/model` is opened (TUI re-requests the list), and on an explicit UDS `reload`.
 4. Reload is **fail-safe**: if the new file is malformed, the last-good provider router stays active and a warning is logged — the session does not crash.

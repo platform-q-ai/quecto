@@ -182,9 +182,12 @@ quecto agent --mode uds --no-workflow -s my-session
 
 ## Per-repo configuration
 
-The workflow section lives inside `config.json`. By default quecto reads
-`~/.quecto/config.json`, which applies globally. To scope workflow templates
-to a specific repository, use `--config`:
+The workflow section lives inside `config.json`. Quecto selects one config
+file per run: `--config` if given, else `./config.json` in the working
+directory, else the global `~/.quecto/config.json` (see the README's
+[discovery and precedence](../README.md#configuration-discovery-and-precedence)).
+To scope workflow templates to a specific repository, place a `config.json` in
+that repository's root and launch quecto from there, or pass `--config`:
 
 ```bash
 # Use a repo-local config with project-specific workflow templates
@@ -194,8 +197,10 @@ quecto agent --mode uds --workflow --workflow-guards \
 ```
 
 This lets different repos define different template libraries, guard rules,
-and nudge behavior. The `--config` flag overrides the entire config — provider
-credentials and all agent defaults must also be present in the specified file.
+and nudge behavior. Whether selected by `--config` or discovered in the
+working directory, the file replaces the entire config — it is never merged
+with the global one, so provider settings and agent defaults must also be
+present in it.
 
 > **Note:** `bash` commands run natively in the workspace and can reach
 > `$HOME`, so tools like `gh` and `git push` work out of the box. To confine

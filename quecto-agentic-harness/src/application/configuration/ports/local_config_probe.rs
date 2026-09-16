@@ -12,8 +12,11 @@ pub enum LocalConfigPresence {
     RegularFile,
     /// An entry that is not a regular file (directory, socket, …).
     NotRegularFile,
-    /// An entry that exists but whose target cannot be inspected or read
-    /// (permission denied, a dangling symlink, …), with the reason.
+    /// An entry that exists but whose target cannot be inspected (a dangling
+    /// symlink, a symlink loop, a parent directory that cannot be searched),
+    /// with the reason. A regular file whose *contents* cannot be read is
+    /// reported as [`RegularFile`](Self::RegularFile); the loader reports
+    /// that failure with the path.
     Unreadable(String),
 }
 

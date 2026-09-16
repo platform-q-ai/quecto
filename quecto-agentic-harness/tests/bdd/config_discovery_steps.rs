@@ -73,6 +73,16 @@ fn reported_config_path(world: &QuectoWorld) -> String {
         .to_string()
 }
 
+#[then(expr = "the stderr should name the current directory's {string}")]
+fn then_stderr_names_local(world: &mut QuectoWorld, name: String) {
+    let expected = cwd(world).join(name).to_string_lossy().into_owned();
+    assert!(
+        world.stderr.contains(&expected),
+        "expected stderr to name {expected}, got: {}",
+        world.stderr
+    );
+}
+
 #[then(expr = "the reported config path should be the current directory's {string}")]
 fn then_reported_local(world: &mut QuectoWorld, name: String) {
     assert_eq!(

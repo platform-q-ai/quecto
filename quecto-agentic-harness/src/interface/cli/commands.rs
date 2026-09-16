@@ -1,28 +1,33 @@
-use super::{CliContext, explicit_config_missing};
+use super::{CliContext, selected_config_missing};
 use crate::infrastructure::config::Config;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
-    let config_path = match ctx.config_path() {
-        Ok(path) => path,
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
         Err(error) => {
             stderr.push_str(&format!("{error}\n"));
             return 1;
         }
     };
+    let config_path = selection.path();
 
     stdout.push_str("quecto Status\n");
     stdout.push_str(&format!("  Config:    {}\n", config_path.display()));
 
-    if let Some(msg) = explicit_config_missing(&config_path, ctx.config_path.is_some()) {
+    if let Some(msg) = selected_config_missing(config_path, selection.must_exist()) {
         stderr.push_str(&format!("{msg}\n"));
         return 1;
     }
 
-    // Missing default config is not an error: quecto is zero-config (defaults apply).
+    // Missing global config is not an error: quecto is zero-config (defaults apply).
     let config = match Config::load(config_path.to_str().unwrap_or("")) {
         Ok(c) => c,
         Err(e) => {
-            stderr.push_str(&format!("failed to load config: {}\n", e));
+            stderr.push_str(&format!(
+                "failed to load config {}: {}\n",
+                config_path.display(),
+                e
+            ));
             return 1;
         }
     };
