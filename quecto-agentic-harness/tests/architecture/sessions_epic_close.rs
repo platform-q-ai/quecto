@@ -570,15 +570,112 @@ fn domain_and_application_signatures_carry_no_wire_infrastructure_or_callback_ty
     );
 }
 
-/// Interface: the session modules parse, map and present only. No
-/// interface production line reaches a persistence method, whatever the
-/// binding; none names an adapter, implements a persistence port or
-/// converts a raw key.
+/// The last segment of every trait a `source` implements outside
+/// `cfg(test)` items — however the trait path is qualified or laid out (a
+/// text needle would miss `impl crate::…::Port for X` and a multiline
+/// `impl`).
+fn implemented_traits(source: &str) -> BTreeSet<String> {
+    use syn::visit::Visit;
+    fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        })
+    }
+    #[derive(Default)]
+    struct Impls(BTreeSet<String>);
+    impl<'ast> Visit<'ast> for Impls {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let attrs = match item {
+                syn::Item::Mod(item) => &item.attrs,
+                syn::Item::Impl(item) => &item.attrs,
+                syn::Item::Fn(item) => &item.attrs,
+                _ => {
+                    syn::visit::visit_item(self, item);
+                    return;
+                }
+            };
+            if !is_cfg_test(attrs) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            if let Some((_, path, _)) = &item.trait_
+                && let Some(last) = path.segments.last()
+            {
+                self.0.insert(last.ident.to_string());
+            }
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut impls = Impls::default();
+    impls.visit_file(&file);
+    impls.0
+}
+
+fn implements_in_source(source: &str, port: &str) -> bool {
+    implemented_traits(source).contains(port)
+}
+
+/// The production files that implement `port` (syntax-tree scan, every
+/// file parsed once per process).
+pub(super) fn port_implementors(port: &str) -> BTreeSet<String> {
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    static IMPLS: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
+    IMPLS
+        .get_or_init(|| {
+            let mut by_trait: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for path in production_files() {
+                for name in implemented_traits(&std::fs::read_to_string(&path).unwrap()) {
+                    by_trait.entry(name).or_default().insert(path.clone());
+                }
+            }
+            by_trait
+        })
+        .get(port)
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn port_implementor_scan_sees_qualified_and_multiline_impls_and_skips_test_items() {
+    for source in [
+        "struct X; impl crate::application::sessions::ports::SessionStore for X {}",
+        "struct X; impl SessionStore\n    for X\n{}",
+        "struct X<'a>(&'a ()); impl<'a> ports::SessionStore for X<'a> {}",
+    ] {
+        assert!(
+            implements_in_source(source, "SessionStore"),
+            "must catch:\n{source}"
+        );
+    }
+    for source in [
+        "struct X; impl Debug for X {}",
+        "struct X; #[cfg(test)] impl SessionStore for X {}",
+        "#[cfg(test)] mod t { struct X; impl SessionStore for X {} }",
+        "struct X; fn f() { let _ = \"impl SessionStore for X\"; }",
+        "struct SessionStore; impl SessionStore { fn f() {} }",
+    ] {
+        assert!(
+            !implements_in_source(source, "SessionStore"),
+            "must spare:\n{source}"
+        );
+    }
+}
+
+/// Infrastructure implements the ports at exact sites (on the syntax tree,
+/// whatever the trait path's qualification), never constructs a use case
+/// (the parse-based scan of `use_case_construction.rs`), and the durable
+/// store's holders are an exact set.
 #[test]
 fn infrastructure_implements_ports_at_exact_sites_and_the_store_holders_are_exact() {
     for (port, sites) in PORT_IMPLEMENTORS {
         assert!(!sites.is_empty(), "{port} has a production implementor");
-        let observed = production_files_calling(&format!("impl {port} for"));
+        let observed = port_implementors(port);
         assert_eq!(observed, set(sites), "the implementors of {port} are exact");
     }
     assert_eq!(

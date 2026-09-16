@@ -44,9 +44,6 @@ const INTERFACE_FORBIDDEN_ADAPTERS: &[&str] = &[
     "RegistryDelegatedRoster",
     "WorkflowEngineRunSource",
     "RegistryRosterSource",
-    "impl SessionStore for",
-    "impl ContextSpillStore for",
-    "impl SessionExportPort for",
     "SessionIdentity::from_persisted_key(",
     "SessionIdentity::fresh_chat(",
 ];
@@ -182,6 +179,10 @@ fn persistence_reach_predicate_catches_rogue_calls_and_spares_requests() {
 
 /// Inventory: every sessions use case is declared exactly once, under the
 /// capability's use_cases folder, and the exact list is the tree's.
+/// Interface: the session modules parse, map and present only. No
+/// interface production line reaches a persistence method, whatever the
+/// binding; none names an adapter, implements a persistence port or
+/// converts a raw key.
 #[test]
 fn interface_session_modules_parse_map_and_present_only() {
     for file in INTERFACE_SESSION_MODULES {
