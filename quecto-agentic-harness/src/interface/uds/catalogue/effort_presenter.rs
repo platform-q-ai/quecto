@@ -15,6 +15,7 @@ pub struct EffortStateView {
 
 /// An effort string alone (no vocabulary known): the shape unit rigs hand a
 /// state snapshot; production always supplies the full view.
+#[cfg(any(test, feature = "test-support"))]
 impl From<Option<String>> for EffortStateView {
     fn from(effort: Option<String>) -> Self {
         Self {

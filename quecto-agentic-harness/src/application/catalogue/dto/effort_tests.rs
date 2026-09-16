@@ -15,6 +15,17 @@ fn unsupported_names_the_model_and_its_vocabulary() {
 }
 
 #[test]
+fn unknown_model_does_not_suggest_declaring_reasoning() {
+    let error = EffortChangeError::UnknownModel {
+        requested: "high".into(),
+        model: "openrouter/typo".into(),
+    }
+    .to_string();
+    assert!(error.contains("not in the model catalogue"), "{error}");
+    assert!(!error.contains("reasoning: true"), "{error}");
+}
+
+#[test]
 fn no_control_tells_the_user_how_to_declare_it() {
     let error = EffortChangeError::NoEffortControl {
         requested: "high".into(),

@@ -291,6 +291,9 @@ pub(crate) fn cmd_agent(
 }
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
+    /// The run's catalogue handles (#1845, #1848), the same instances the
+    /// spawn tool and the startup effort admission used.
+    pub catalogue: crate::interface::cli::catalogue_handles::CatalogueHandles,
     /// The run's retained-context handles (D9 #1978): the store the loop's
     /// session recovers through and the scrub the ephemeral exit reaches.
     pub retention: crate::interface::cli::retention_handles::RetentionHandles,
@@ -372,6 +375,14 @@ pub(crate) fn build_agent_from_config(
             config.tools.web.fetch.max_response_kb,
         )
     });
+    // The catalogue handles (#1845, #1848): built once per run, before the
+    // tools and the loop that consume them; the interface never constructs
+    // a catalogue use case.
+    let Some(build_catalogue) = flags.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return None;
+    };
+    let catalogue = build_catalogue(base_dir);
     let ToolRegistryBuild {
         registry,
         retention,
@@ -390,6 +401,7 @@ pub(crate) fn build_agent_from_config(
         config: &config,
         http_client: &http_client,
         web_fetch_tool,
+        effort_control: catalogue.effort.clone(),
         flags,
         stderr,
         broadcast_tx,
@@ -404,12 +416,7 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-    let Some(build_catalogue) = flags.catalogue else {
-        stderr.push_str("agent: catalogue capability not composed\n");
-        return None;
-    };
-    let effort_control = build_catalogue(base_dir).effort;
-    let effort = startup_effort::admit(&effort_control, flags.effort, &config, &model, stderr)?;
+    let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system
@@ -463,6 +470,7 @@ pub(crate) fn build_agent_from_config(
     );
     Some(AgentBuildResult {
         agent,
+        catalogue,
         retention,
         workflow_config: wf_config,
         extension_prompt_snippets,
@@ -537,12 +545,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // composed over the builder `main` handed in.
     let Some(sessions) = ctx.sessions else {
         stderr.push_str("agent: sessions capability not composed\n");
-        return 1;
-    };
-    // Likewise the catalogue (#1845): the loop answers `list_models` through
-    // the controller composition builds, never one it assembles itself.
-    let Some(catalogue) = ctx.catalogue else {
-        stderr.push_str("agent: catalogue capability not composed\n");
         return 1;
     };
 
@@ -653,7 +655,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         socket_override: None,
         session_store_override: None,
         sessions,
-        catalogue,
+        catalogue: build.catalogue,
         ext_registry: Some(build.ext_registry),
         lifetime,
         notification_rx: build.notification_rx,

@@ -27,6 +27,7 @@ fn a_new_identity_reaches_the_tracker_and_the_session_aware_tools() {
         &mut rt.session,
         &rt.execution,
         Some(&rt.workflow),
+        rt.effort.clone(),
     )
     .session_key_changed(&fresh);
 
@@ -61,6 +62,7 @@ fn the_same_identity_again_is_a_no_op_on_the_tracker() {
         &mut rt.session,
         &rt.execution,
         Some(&rt.workflow),
+        rt.effort.clone(),
     )
     .session_key_changed(&same);
     assert_eq!(

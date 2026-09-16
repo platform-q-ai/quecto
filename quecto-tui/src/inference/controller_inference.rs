@@ -21,9 +21,11 @@ pub(crate) struct ConnInference {
     pub(crate) current_model: Option<String>,
     /// Active effort level (`None` = default), for selector marker + footer (#1067).
     pub(crate) current_effort: Option<String>,
-    /// Effort vocabulary for the active provider, reported by the agent in
+    /// Effort vocabulary of the active model, reported by the agent in
     /// `get_state` (`effortLevels`) — never re-derived locally (#1067).
-    pub(crate) effort_levels: Vec<String>,
+    /// `None` until the first state lands; `Some(vec![])` is authoritative:
+    /// the model offers no effort control (#1996).
+    pub(crate) effort_levels: Option<Vec<String>>,
 }
 
 /// Model registry owned by the selector flow (#997).

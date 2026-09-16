@@ -299,8 +299,8 @@ impl App {
                 self.ac_mut().inference.current_model = Some(model);
             }
             self.ac_mut().inference.current_effort = snap.footer.effort.clone();
-            if !snap.effort_levels.is_empty() {
-                self.ac_mut().inference.effort_levels = snap.effort_levels;
+            if let Some(levels) = snap.effort_levels {
+                self.ac_mut().inference.effort_levels = Some(levels);
             }
         }
     }

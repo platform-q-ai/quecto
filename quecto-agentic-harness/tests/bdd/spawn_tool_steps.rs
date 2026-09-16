@@ -22,6 +22,12 @@ fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld) {
 #[given(expr = "a SpawnTool with empty allowlist and the composed effort control")]
 fn given_spawn_tool_with_effort_control(world: &mut QuectoWorld) {
     let dir = tempfile::TempDir::new().expect("temp dir");
+    // A user record that declares no reasoning: known, no effort control.
+    std::fs::write(
+        dir.path().join("models.json"),
+        r#"{"providers":{"plain":{"api":"openai-completions","baseUrl":"https://plain.test/v1","apiKey":"$PLAIN","models":[{"id":"m"}]}}}"#,
+    )
+    .expect("write models.json");
     let _ = quecto::composition::catalogue::list_models_wire_for(dir.path());
     let handles = quecto::composition::catalogue::build_catalogue_handles(dir.path());
     world.spawn_tool = Some(SpawnTool::new(vec![]).with_effort_control(Some(handles.effort)));

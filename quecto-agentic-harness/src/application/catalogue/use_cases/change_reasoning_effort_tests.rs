@@ -30,12 +30,16 @@ fn use_case() -> ChangeReasoningEffort {
 #[derive(Default)]
 struct FakeRuntime {
     effort: Option<EffortLevel>,
+    startup: Option<EffortLevel>,
     writes: Mutex<usize>,
 }
 
 impl EffortRuntime for FakeRuntime {
     fn effort(&self) -> Option<EffortLevel> {
         self.effort
+    }
+    fn startup_effort(&self) -> Option<EffortLevel> {
+        self.startup
     }
     fn apply_effort(&mut self, level: Option<EffortLevel>) {
         *self.writes.lock().unwrap() += 1;
@@ -78,17 +82,59 @@ fn validate_accepts_only_the_models_own_levels() {
 }
 
 #[test]
-fn validate_refuses_every_level_for_models_without_effort_control() {
+fn validate_distinguishes_no_control_from_an_unknown_model() {
     let use_case = use_case();
-    for model in ["spark-local/qwen", "openrouter/mystery"] {
-        assert_eq!(
-            use_case.validate(model, "low"),
-            Err(EffortChangeError::NoEffortControl {
-                requested: "low".into(),
-                model: model.into(),
-            })
-        );
-    }
+    assert_eq!(
+        use_case.validate("spark-local/qwen", "low"),
+        Err(EffortChangeError::NoEffortControl {
+            requested: "low".into(),
+            model: "spark-local/qwen".into(),
+        })
+    );
+    assert_eq!(
+        use_case.validate("openrouter/mystery", "low"),
+        Err(EffortChangeError::UnknownModel {
+            requested: "low".into(),
+            model: "openrouter/mystery".into(),
+        })
+    );
+}
+
+#[test]
+fn a_model_switch_resets_to_low_only_where_low_is_accepted() {
+    let use_case = use_case();
+    let mut runtime = FakeRuntime {
+        effort: Some(XHigh),
+        ..Default::default()
+    };
+    assert!(use_case.reset_for_model_switch(&mut runtime, "xai/grok-4.5"));
+    assert_eq!(runtime.effort, Some(Low));
+    assert!(
+        !use_case.reset_for_model_switch(&mut runtime, "anthropic-api/opus"),
+        "already low"
+    );
+    assert!(use_case.reset_for_model_switch(&mut runtime, "spark-local/qwen"));
+    assert_eq!(runtime.effort, None, "no control: provider default");
+}
+
+#[test]
+fn a_session_switch_restores_the_startup_default_as_admitted_for_the_active_model() {
+    let use_case = use_case();
+    // Started on gpt-5.6 with --effort xhigh, switched to grok-4.5, overrode
+    // to medium, then opened a fresh session: xhigh is not grok-4.5's.
+    let mut runtime = FakeRuntime {
+        effort: Some(Medium),
+        startup: Some(XHigh),
+        ..Default::default()
+    };
+    assert!(use_case.restore_startup_default(&mut runtime, "xai/grok-4.5"));
+    assert_eq!(
+        runtime.effort, None,
+        "the startup level is not admitted here"
+    );
+    assert!(use_case.restore_startup_default(&mut runtime, "openai-api/gpt-5.6"));
+    assert_eq!(runtime.effort, Some(XHigh));
+    assert!(!use_case.restore_startup_default(&mut runtime, "openai-api/gpt-5.6"));
 }
 
 #[test]

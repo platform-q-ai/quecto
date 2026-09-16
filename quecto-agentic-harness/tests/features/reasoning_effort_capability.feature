@@ -91,3 +91,29 @@ Feature: Reasoning effort is a per-model capability that reaches the wire
     Then the exit code should be 1
     And stderr should contain "--effort"
     And stderr should contain "no reasoning-effort control"
+
+  Scenario: A fresh session restores the startup effort only where the active model accepts it
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the config default model is "openai-api/gpt-5.6-sol"
+    And the config default effort is "xhigh"
+    When I start the UDS agent with no session
+    And I send set_model "xai/grok-4.5"
+    And I send set_effort "medium"
+    And I send command "new_session" with id "ns-1"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the get_state response effort should be unset
+    And the get_state response effort levels should be "low, medium, high"
+
+  Scenario: A fresh session restores the startup effort on the startup model
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the config default model is "openai-api/gpt-5.6-sol"
+    And the config default effort is "xhigh"
+    When I start the UDS agent with no session
+    And I send set_effort "low"
+    And I send command "new_session" with id "ns-1"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the get_state response effort should be "xhigh"

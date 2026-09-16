@@ -65,9 +65,11 @@ Which `/effort` levels a model offers — and whether the selection is sent on t
 | Provider | Levels offered and sent | Wire parameter |
 |---|---|---|
 | Anthropic (`anthropic-messages`) | `low, medium, high, max` | `output_config.effort` |
-| OpenAI's own providers (`openai-api`, `openai-oauth`) | `none, low, medium, high, xhigh` | `reasoning_effort` (chat completions) / `reasoning.effort` (Responses) |
-| xAI `grok-4.6` | `low, medium, high, xhigh` | `reasoning_effort` |
-| xAI `grok-4.5` (and other Grok models declaring `reasoning`) | `low, medium, high` | `reasoning_effort` |
+| `openai-oauth` (Codex, always the Responses API) | `none, low, medium, high, xhigh` | `reasoning.effort` |
+| `openai-api` models declaring `reasoning` (routed to the Responses API) | `none, low, medium, high, xhigh` | `reasoning.effort` |
+| `openai-api` models without `reasoning` (Chat Completions, which rejects `reasoning_effort` with tools) — including the default `gpt-5.5` | none | — |
+| xAI `grok-4.6` declaring `reasoning` | `low, medium, high, xhigh` | `reasoning_effort` |
+| other xAI Grok models declaring `reasoning` | `low, medium, high` | `reasoning_effort` |
 | Any other `openai-completions` endpoint (Fireworks, local servers, gateways) | `low, medium, high` **only when the record declares `"reasoning": true`**; otherwise none | `reasoning_effort` |
 | Transports without a reasoning-option adapter | none | — |
 
@@ -79,7 +81,7 @@ So for a Fireworks (or any OpenAI-compatible) reasoning model, declare it:
   "models": [{"id": "accounts/fireworks/models/glm-5p3", "reasoning": true}]}}}
 ```
 
-A model with no effort control (no `reasoning`, or unknown to the catalogue) advertises an empty `effortLevels`: the TUI selector offers nothing, `set_effort`/spawn `effort`/`--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default. `reasoning_effort` and Fireworks' `thinking` are never sent together.
+A model with no effort control advertises an empty `effortLevels`, which the TUI treats as authoritative (the selector reports that the model has no control; it never keeps a previous model's vocabulary); a model the catalogue does not know — including a bare id such as `gpt-5.5` served by providers whose vocabularies differ — reports none and asks for a qualified `provider/model`. In both cases `set_effort`, spawn `effort` and `--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default; a fresh or resumed session restores the startup effort only where the *active* model accepts it. `reasoning_effort` and Fireworks' `thinking` are never sent together.
 
 ### User overrides: patch a model's metadata by stable ID
 

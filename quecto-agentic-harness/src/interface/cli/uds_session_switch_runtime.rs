@@ -18,6 +18,9 @@ pub struct LoopSessionSwitchRuntime<'a> {
     session: &'a mut AgentSession,
     execution_state: &'a ExecutionStateHandle,
     workflow_state: Option<&'a WorkflowStateHandle>,
+    /// The change-reasoning-effort use case (#1848) that restores the
+    /// startup effort as admitted for the active model on a switch.
+    effort: std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
 }
 
 impl<'a> LoopSessionSwitchRuntime<'a> {
@@ -26,12 +29,14 @@ impl<'a> LoopSessionSwitchRuntime<'a> {
         session: &'a mut AgentSession,
         execution_state: &'a ExecutionStateHandle,
         workflow_state: Option<&'a WorkflowStateHandle>,
+        effort: std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
     ) -> Self {
         Self {
             agent,
             session,
             execution_state,
             workflow_state,
+            effort,
         }
     }
 }
@@ -56,9 +61,10 @@ impl SessionKeyPropagation for LoopSessionSwitchRuntime<'_> {
 
 impl SessionSwitchRuntime for LoopSessionSwitchRuntime<'_> {
     fn reset_effort_to_default(&mut self) {
-        let before = self.agent.effort();
-        self.agent.reset_effort_to_default();
-        if self.agent.effort() != before {
+        if self
+            .effort
+            .restore_startup_default(self.agent, self.session.model())
+        {
             self.session.bump_visible_generation();
         }
     }

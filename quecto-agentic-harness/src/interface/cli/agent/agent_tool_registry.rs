@@ -27,6 +27,10 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) config_path: &'a std::path::Path,
     pub(super) config: &'a Config,
     pub(super) http_client: &'a reqwest::Client,
+    /// The run's change-reasoning-effort use case (#1848), handed to the
+    /// spawn tool.
+    pub(super) effort_control:
+        std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
     pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
@@ -62,6 +66,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         config,
         http_client,
         web_fetch_tool,
+        effort_control,
         flags,
         stderr,
         broadcast_tx,
@@ -134,7 +139,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             spawned: flags.spawned,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
-            effort_control: flags.catalogue.map(|build| build(base_dir).effort),
+            effort_control: Some(effort_control),
             kill_tool: flags.kill_tool,
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),

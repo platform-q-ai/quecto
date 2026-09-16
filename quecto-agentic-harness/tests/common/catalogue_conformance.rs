@@ -73,12 +73,16 @@ fn offenders(sources: &[(String, String)], needle: &str) -> Vec<String> {
         .collect()
 }
 
-/// The provider/model-name reasoning-effort heuristic may survive only as
-/// the domain rule seeding canonical metadata (`ModelCapabilities::
-/// effort_vocabulary_for`); interface and infrastructure consumers project
-/// the canonical vocabulary instead of re-deriving one.
+/// The reasoning-effort vocabulary rule lives in the domain
+/// (`domain::catalogue::EffortVocabulary`) and is applied once, where the
+/// registry adapter seeds canonical metadata; interface and infrastructure
+/// consumers project the seeded `effort_levels` (through the
+/// change-reasoning-effort use case) instead of re-deriving one (#1996).
 pub fn effort_name_inference_sites(layer_sources: &[(String, String)]) -> Vec<String> {
-    offenders(layer_sources, "levels_for_model")
+    offenders(layer_sources, "EffortVocabulary::")
+        .into_iter()
+        .filter(|path| !path.ends_with("infrastructure/catalogue_registry.rs"))
+        .collect()
 }
 
 /// "No canonical types in infrastructure": infrastructure adapters map wire
@@ -120,13 +124,22 @@ pub fn builtin_entries() -> Vec<quecto::domain::catalogue::CatalogueEntry> {
         .entries
 }
 
-/// Built-in entries whose canonical capabilities carry NO effort vocabulary
-/// (empty = every entry declares one). Panics if the builtin catalogue
-/// itself is empty, which would make the check vacuous.
+/// Built-in reasoning entries whose canonical capabilities carry NO effort
+/// vocabulary (empty = every reasoning entry declares one; a non-reasoning
+/// entry declares an empty vocabulary by design, #1996). Panics if the
+/// builtin catalogue has no reasoning entry, which would make the check
+/// vacuous.
 pub fn builtin_entries_missing_effort_vocabulary() -> Vec<String> {
     let entries = builtin_entries();
-    assert!(!entries.is_empty(), "builtin catalogue is empty");
-    entries
+    let reasoning: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.model.capabilities.reasoning)
+        .collect();
+    assert!(
+        !reasoning.is_empty(),
+        "builtin catalogue has no reasoning entry"
+    );
+    reasoning
         .iter()
         .filter(|entry| entry.model.capabilities.effort_levels.is_empty())
         .map(|entry| entry.model.reference.qualified_id())

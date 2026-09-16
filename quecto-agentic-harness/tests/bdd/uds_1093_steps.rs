@@ -344,7 +344,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_path: socket_for_thread,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
             session_store_override: None,
             ext_registry: Some(ext_reg),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::Persistent,

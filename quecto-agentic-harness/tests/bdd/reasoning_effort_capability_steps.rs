@@ -197,3 +197,18 @@ fn then_fireworks_effort_sequence(world: &mut QuectoWorld, expected_csv: String)
         world.agent_events
     );
 }
+
+#[given(expr = "the config default effort is {string}")]
+fn given_config_default_effort(world: &mut QuectoWorld, effort: String) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let config_path = base.join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+            .expect("parse config");
+    config["agents"]["defaults"]["effort"] = serde_json::json!(effort);
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&config).expect("serialize config"),
+    )
+    .expect("write config");
+}

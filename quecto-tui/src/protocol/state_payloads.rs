@@ -22,7 +22,10 @@ pub struct GetStateSnapshot {
     pub authoritative: bool,
     pub footer: GetStateFooterFields,
     /// Provider effort vocabulary (empty when absent or empty after sanitize).
-    pub effort_levels: Vec<String>,
+    /// The active model's effort vocabulary as the agent reported it:
+    /// `None` when the payload carried no `effortLevels` (not known yet),
+    /// `Some(vec![])` when the model offers no effort control (#1996).
+    pub effort_levels: Option<Vec<String>>,
     /// Raw `sessionKey` string when present (unsliced; caller extracts the name).
     pub session_key: Option<String>,
     /// Nested `workflow` object when present (still a Value so workflow mappers
@@ -68,8 +71,7 @@ pub fn parse_get_state(
                 .filter_map(|l| l.as_str())
                 .map(sanitize)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let session_key = data
         .get("sessionKey")
         .and_then(|v| v.as_str())

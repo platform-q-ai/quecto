@@ -29,9 +29,11 @@ pub enum EffortChangeError {
         model: String,
         vocabulary: Vec<EffortLevel>,
     },
-    /// The model offers no effort control: its record declares none, or the
-    /// catalogue does not know the model at all.
+    /// The model is known and offers no effort control (its record declares
+    /// no reasoning, or its endpoint transmits none).
     NoEffortControl { requested: String, model: String },
+    /// The catalogue does not know the model, so nothing can be affirmed.
+    UnknownModel { requested: String, model: String },
 }
 
 impl std::fmt::Display for EffortChangeError {
@@ -54,6 +56,12 @@ impl std::fmt::Display for EffortChangeError {
                 f,
                 "effort level \"{requested}\" cannot be applied: {model} has no reasoning-effort \
                  control (declare `reasoning: true` on its models.json record if it does)"
+            ),
+            Self::UnknownModel { requested, model } => write!(
+                f,
+                "effort level \"{requested}\" cannot be applied: {model} is not in the model \
+                 catalogue (or is a bare id whose providers disagree), so its reasoning-effort \
+                 support is unknown; select it as provider/model"
             ),
         }
     }

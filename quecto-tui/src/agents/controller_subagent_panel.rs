@@ -191,7 +191,7 @@ impl App {
                 .map(str::to_string);
             self.ac_mut().inference.current_effort =
                 self.ac().master_session.footer.effort().map(str::to_string);
-            self.ac_mut().inference.effort_levels.clear();
+            self.ac_mut().inference.effort_levels = None;
             self.send_state_resync();
             return;
         };
@@ -210,7 +210,7 @@ impl App {
             .unwrap_or((None, None));
         self.ac_mut().inference.current_model = model;
         self.ac_mut().inference.current_effort = effort;
-        self.ac_mut().inference.effort_levels.clear();
+        self.ac_mut().inference.effort_levels = None;
         self.seed_session_bar_from_snapshot(&id);
         self.ensure_synced_subagent_feed(&id);
         // Merge committed ledger + retained in-flight live tail so focusing a

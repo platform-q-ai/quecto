@@ -53,20 +53,13 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     let selection = selection_status(ctx.base_dir, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
-    // Every model switch resets the session effort to `low` (#1067) — when
-    // the new model accepts it; a model with no effort control gets the
-    // provider default (#1996). A level chosen for one provider must never
-    // silently carry into another's vocabulary, where it would be clamped on
-    // the wire while the UI still displays the stale level.
-    let reset_effort = ctx.catalogue.effort.admit(
-        ctx.session.model(),
-        Some(crate::domain::provider::EffortLevel::Low),
-    );
-    if ctx.agent.effort() != reset_effort {
-        crate::application::catalogue::ports::EffortRuntime::apply_effort(ctx.agent, reset_effort);
+    // Every model switch resets the session effort (#1067, #1848): the
+    // use case decides the level the new model admits.
+    let effort = ctx.catalogue.effort.clone();
+    if effort.reset_for_model_switch(ctx.agent, ctx.session.model()) {
         ctx.session.bump_visible_generation();
     }
-    tracing::debug!(new_model = %ctx.session.model(), ?reset_effort, "UDS: model switched; effort reset");
+    tracing::debug!(new_model = %ctx.session.model(), effort = ?ctx.agent.effort(), "UDS: model switched; effort reset");
     let ev = AgentEvent::ok(
         args.id.as_deref(),
         &args.type_name,

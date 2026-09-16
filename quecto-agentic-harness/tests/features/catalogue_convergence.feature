@@ -29,7 +29,9 @@ Feature: Legacy authority removal and cross-surface convergence (epic #1193, sli
     When the model listing is requested
     Then every listed model carries an effort vocabulary from the snapshot
     And the listed model "anthropic-api/claude-opus-4-6" has effort vocabulary "low, medium, high, max"
-    And the listed model "openai-api/gpt-5.5" has effort vocabulary "none, low, medium, high, xhigh"
+    And the listed model "openai-api/gpt-5.6-sol" has effort vocabulary "none, low, medium, high, xhigh"
+    And the listed model "xai/grok-4.5" has effort vocabulary "low, medium, high"
+    And the listed model "openai-api/gpt-5.5" has effort vocabulary ""
 
   # AC4 — contributor documentation
   @done

@@ -344,9 +344,21 @@ Feature: SpawnTool — child agent process spawning
 
   Scenario: Spawn effort for a model with no effort control is refused
     Given a SpawnTool with empty allowlist and the composed effort control
-    When I execute the SpawnTool with '{"task":"work","model":"xai/grok-2-image","effort":"low"}'
+    When I execute the SpawnTool with '{"task":"work","model":"plain/m","effort":"low"}'
     Then the spawn result should be an error
     And the spawn result should contain "no reasoning-effort control"
+
+  Scenario: Spawn effort for a model the catalogue does not know is refused as unknown
+    Given a SpawnTool with empty allowlist and the composed effort control
+    When I execute the SpawnTool with '{"task":"work","model":"openrouter/typo","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "not in the model catalogue"
+
+  Scenario: An explicit-model effort is refused when the tool has no effort capability composed
+    Given a SpawnTool with empty allowlist
+    When I execute the SpawnTool with '{"task":"work","model":"openai-api/gpt-5.6-sol","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "composed without the reasoning-effort capability"
 
   Scenario: Tool definition schema includes effort field
     Given a SpawnTool with allowlist "bot"

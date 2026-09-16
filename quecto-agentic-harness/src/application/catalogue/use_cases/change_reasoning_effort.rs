@@ -34,7 +34,12 @@ impl ChangeReasoningEffort {
 
     /// Validate `level` (as typed) against `model`'s vocabulary.
     pub fn validate(&self, model: &str, level: &str) -> Result<EffortLevel, EffortChangeError> {
-        let vocabulary = self.choices(model);
+        let Some(vocabulary) = self.vocabulary.effort_vocabulary(model) else {
+            return Err(EffortChangeError::UnknownModel {
+                requested: level.to_string(),
+                model: model.to_string(),
+            });
+        };
         if vocabulary.is_empty() {
             return Err(EffortChangeError::NoEffortControl {
                 requested: level.to_string(),
@@ -56,6 +61,30 @@ impl ChangeReasoningEffort {
     /// startup, and the reset on a model switch.
     pub fn admit(&self, model: &str, level: Option<EffortLevel>) -> Option<EffortLevel> {
         level.filter(|level| self.choices(model).contains(level))
+    }
+
+    /// A model switch resets the session to `low` when the new model accepts
+    /// it (#1067: a level chosen for one provider must never silently carry
+    /// into another's vocabulary), else to the provider default. Returns
+    /// whether the applied level changed.
+    pub fn reset_for_model_switch(&self, runtime: &mut dyn EffortRuntime, model: &str) -> bool {
+        self.apply_admitted(runtime, self.admit(model, Some(EffortLevel::Low)))
+    }
+
+    /// A session switch restores the startup default — as admitted for the
+    /// model now active, which may differ from the startup model. Returns
+    /// whether the applied level changed.
+    pub fn restore_startup_default(&self, runtime: &mut dyn EffortRuntime, model: &str) -> bool {
+        let admitted = self.admit(model, runtime.startup_effort());
+        self.apply_admitted(runtime, admitted)
+    }
+
+    fn apply_admitted(&self, runtime: &mut dyn EffortRuntime, level: Option<EffortLevel>) -> bool {
+        if runtime.effort() == level {
+            return false;
+        }
+        runtime.apply_effort(level);
+        true
     }
 
     /// Apply a requested level to the session. Refused levels leave the

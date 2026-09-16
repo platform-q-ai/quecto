@@ -153,6 +153,24 @@ Feature: TUI app event routing and command behaviours
     And no set effort command is sent
     And the footer shows effort level "medium"
 
+  @effort @issue-1996
+  Scenario: A model with no effort control replaces the vocabulary and the selector says so
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    When a get_state response arrives with model "fireworks/plain" and no effort control
+    And I open the effort selector via the /effort prompt
+    Then the effort selector is not visible
+    And the app notification includes "no reasoning-effort control"
+
+  @effort @issue-1996
+  Scenario: /effort on a model with no effort control is refused locally
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And a get_state response arrives with model "fireworks/plain" and no effort control
+    When I submit the master prompt "/effort high" expecting no agent command
+    Then the app notification includes "no reasoning-effort control"
+    And no set effort command is sent
+
   @effort @effort-selector
   Scenario: /effort opens a selector with the OpenAI effort vocabulary
     Given a fresh TUI app harness

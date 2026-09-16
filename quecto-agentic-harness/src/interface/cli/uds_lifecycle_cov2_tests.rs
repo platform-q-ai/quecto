@@ -70,7 +70,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         socket_override: None,
         session_store_override: None,
         sessions: crate::composition::sessions::build_session_handles,
-        catalogue: crate::composition::catalogue::build_catalogue_handles,
+        catalogue: crate::composition::catalogue::build_catalogue_handles(base),
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,

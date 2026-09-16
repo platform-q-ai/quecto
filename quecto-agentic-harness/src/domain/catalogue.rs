@@ -230,12 +230,16 @@ pub struct ModelCapabilities {
 /// documented scales:
 ///
 /// - Anthropic Messages: `low, medium, high, max` (`output_config.effort`).
-/// - OpenAI's own providers (`openai-api`, `openai-oauth`): the OpenAI scale
+/// - `openai-oauth` (the Codex Responses API, which always transmits a
+///   configured `reasoning.effort`): the OpenAI scale
 ///   `none, low, medium, high, xhigh`.
-/// - xAI: `grok-4.6` = `low, medium, high, xhigh`; `grok-4.5` =
-///   `low, medium, high`; any other xAI model that declares reasoning gets
-///   the common `low, medium, high`. Reasoning cannot be disabled, so `none`
-///   is never offered.
+/// - `openai-api`: the OpenAI scale **only for records declaring
+///   `reasoning`** — those are the ids the endpoint router sends to the
+///   Responses API; a non-reasoning id stays on Chat Completions, which
+///   rejects `reasoning_effort` with function tools, so it offers nothing.
+/// - xAI Grok models declaring reasoning: `grok-4.6` = `low, medium, high,
+///   xhigh`; every other = `low, medium, high`. Reasoning cannot be
+///   disabled, so `none` is never offered.
 /// - Any other OpenAI-compatible endpoint (Fireworks, local servers, custom
 ///   providers): the common `low, medium, high` **only when the record
 ///   declares `reasoning: true`**; otherwise nothing, so no reasoning option
@@ -277,9 +281,9 @@ impl EffortVocabulary {
         let levels: &[EffortLevel] = match transport {
             TransportKind::AnthropicMessages => Self::ANTHROPIC,
             TransportKind::OpenAiCompletions => match provider.as_str() {
-                "openai-api" | "openai-oauth" => Self::OPENAI,
-                "xai" if model_id.starts_with("grok-4.6") => Self::XAI_GROK_4_6,
-                "xai" if model_id.starts_with("grok-4.5") => Self::COMMON,
+                "openai-oauth" => Self::OPENAI,
+                "openai-api" if reasoning => Self::OPENAI,
+                "xai" if reasoning && model_id.starts_with("grok-4.6") => Self::XAI_GROK_4_6,
                 _ if reasoning => Self::COMMON,
                 _ => &[],
             },

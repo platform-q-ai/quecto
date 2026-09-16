@@ -62,6 +62,7 @@ pub(super) async fn handle_new_session(
             ctx.session,
             &ctx.execution_state,
             ctx.workflow_state.as_ref(),
+            ctx.catalogue.effort.clone(),
         );
         fresh
             .execute(
@@ -120,6 +121,7 @@ pub(super) async fn handle_resume_session(
             ctx.session,
             &ctx.execution_state,
             ctx.workflow_state.as_ref(),
+            ctx.catalogue.effort.clone(),
         );
         resume
             .execute(

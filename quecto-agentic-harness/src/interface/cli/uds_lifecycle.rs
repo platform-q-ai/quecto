@@ -42,9 +42,9 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's sessions handles builder (#1970): the loop hands over
     /// its base directory (and any override) and holds the handles back.
     pub sessions: super::SessionHandlesBuilder,
-    /// Composition's catalogue handles builder (#1845): built once per loop
-    /// over its base directory.
-    pub catalogue: super::CatalogueHandlesBuilder,
+    /// The run's catalogue handles (#1845, #1848), built once by the agent
+    /// startup and shared with the spawn tool.
+    pub catalogue: super::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
@@ -109,7 +109,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         teardown_graph,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
-    let catalogue = catalogue(base_dir);
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: session_store_override,

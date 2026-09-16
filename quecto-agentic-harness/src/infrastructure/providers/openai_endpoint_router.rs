@@ -4,9 +4,12 @@
 // OpenAI's documentation routes reasoning models to the Responses API —
 // Chat Completions rejects reasoning + function tools with HTTP 400
 // ("Function tools with reasoning_effort are not supported ... Please use
-// /v1/responses instead"), and our Chat Completions adapter never transmits
-// a configured effort. Non-reasoning models stay on Chat Completions
-// exactly as today.
+// /v1/responses instead"). Non-reasoning models stay on Chat Completions,
+// and the catalogue offers them no effort vocabulary (#1996:
+// `EffortVocabulary` gates `openai-api` on the same `reasoning` flag this
+// router uses), so the Chat Completions adapter — which now transmits a
+// configured `reasoning_effort` for providers that accept it — never sends
+// one to an OpenAI non-reasoning id.
 
 use std::collections::HashSet;
 use std::future::Future;

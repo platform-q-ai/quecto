@@ -81,6 +81,10 @@ pub struct Runtime {
     pub execution: ExecutionStateHandle,
     pub workflow: WorkflowStateHandle,
     pub tool: Arc<KeyObservingTool>,
+    /// The change-reasoning-effort use case over an empty published
+    /// catalogue (#1848): the fixture's `stub` model has no effort control.
+    pub effort: Arc<quecto::application::catalogue::use_cases::ChangeReasoningEffort>,
+    _catalogue_dir: tempfile::TempDir,
 }
 
 pub fn runtime(session_key: &str) -> Runtime {
@@ -128,11 +132,16 @@ pub fn runtime(session_key: &str) -> Runtime {
         false,
     )
     .unwrap();
+    let catalogue_dir = tempfile::TempDir::new().expect("catalogue dir");
+    let effort =
+        quecto::composition::catalogue::build_catalogue_handles(catalogue_dir.path()).effort;
     Runtime {
         agent,
         session: AgentSession::new("stub".into()),
         execution: Arc::new(Mutex::new(ExecutionState::default())),
         workflow: Arc::new(Mutex::new(workflow)),
         tool,
+        effort,
+        _catalogue_dir: catalogue_dir,
     }
 }

@@ -16,6 +16,11 @@ use super::*;
 
 use crate::components::effort_selector::EffortSelector;
 
+/// The active model's catalogue record offers no reasoning-effort levels
+/// (#1996): the agent reported an empty `effortLevels`.
+const NO_EFFORT_CONTROL: &str = "The active model has no reasoning-effort control — declare \
+     `reasoning: true` on its models.json record if it does";
+
 impl App {
     /// Handle `/effort` (bare → selector) and `/effort <level>` (direct set).
     pub(super) fn handle_effort_command(&mut self, arg: &str) {
@@ -25,37 +30,37 @@ impl App {
         }
         // Local pre-validation against the agent-reported vocabulary; when it
         // hasn't arrived yet, defer to the agent's own validation (it rejects
-        // invalid levels listing the valid ones).
-        if self.ac().inference.effort_levels.is_empty()
-            || self.ac().inference.effort_levels.iter().any(|l| l == arg)
-        {
-            self.send_set_effort(arg);
-        } else {
-            self.notify(
+        // invalid levels listing the valid ones). An empty reported
+        // vocabulary is authoritative: the model has no effort control.
+        match self.ac().inference.effort_levels.as_deref() {
+            None => self.send_set_effort(arg),
+            Some([]) => self.notify(NO_EFFORT_CONTROL, NotifyLevel::Error),
+            Some(levels) if levels.iter().any(|l| l == arg) => self.send_set_effort(arg),
+            Some(levels) => self.notify(
                 &format!(
                     "Invalid effort level \"{arg}\" — valid levels: {}",
-                    self.ac().inference.effort_levels.join(", ")
+                    levels.join(", ")
                 ),
                 NotifyLevel::Error,
-            );
+            ),
         }
     }
 
     pub(super) fn open_effort_selector(&mut self) {
-        if self.ac().inference.effort_levels.is_empty() {
-            self.notify(
-                "Effort levels not known yet — still waiting for agent state",
-                NotifyLevel::Warning,
-            );
-            return;
-        }
-        let levels: Vec<&str> = self
-            .ac()
-            .inference
-            .effort_levels
-            .iter()
-            .map(String::as_str)
-            .collect();
+        let levels: Vec<&str> = match self.ac().inference.effort_levels.as_deref() {
+            None => {
+                self.notify(
+                    "Effort levels not known yet — still waiting for agent state",
+                    NotifyLevel::Warning,
+                );
+                return;
+            }
+            Some([]) => {
+                self.notify(NO_EFFORT_CONTROL, NotifyLevel::Error);
+                return;
+            }
+            Some(levels) => levels.iter().map(String::as_str).collect(),
+        };
         self.inference.effort_selector = Some(EffortSelector::new(
             &levels,
             self.ac().inference.current_effort.as_deref(),

@@ -358,6 +358,26 @@ fn apply_get_state(world: &mut TuiWorld, model: String, effort: serde_json::Valu
     });
 }
 
+/// A model whose catalogue record offers no effort control (#1996): the
+/// agent reports an empty `effortLevels`, which is authoritative.
+#[given(expr = "a get_state response arrives with model {string} and no effort control")]
+#[when(expr = "a get_state response arrives with model {string} and no effort control")]
+fn when_get_state_without_effort_control(world: &mut TuiWorld, model: String) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("gs".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": model,
+                "effort": null,
+                "effortLevels": [],
+            })),
+            error: None,
+        });
+    });
+}
+
 /// Trigger form: the arriving state IS the behaviour under test (footer
 /// display scenarios).
 #[when(expr = "a get_state response arrives with model {string} and effort {string}")]
@@ -517,6 +537,15 @@ fn when_set_effort_response_fails(world: &mut TuiWorld, error: String) {
             error: Some(error),
         });
     });
+}
+
+#[then("the effort selector is not visible")]
+fn then_effort_selector_not_visible(world: &mut TuiWorld) {
+    let entries = drive(world, |h| h.effort_selector_entries());
+    assert!(
+        entries.is_none(),
+        "effort selector must not open: {entries:?}"
+    );
 }
 
 #[then("the effort selector is visible")]

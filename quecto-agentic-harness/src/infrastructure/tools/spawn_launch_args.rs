@@ -67,12 +67,13 @@ pub(super) fn parse_effort_arg(
     }
 }
 
-/// Validate a spawn `effort` level. With an explicit target model and the
-/// composed use case, the level must be in that model's catalogue
-/// vocabulary — the same rule as UDS `set_effort`, so the two surfaces
-/// cannot drift. Without a model (the child inherits the parent's) only the
-/// syntax is checked here; the child validates at startup. Returns the
-/// normalized level string.
+/// Validate a spawn `effort` level. With an explicit target model the level
+/// must be in that model's catalogue vocabulary through the composed use
+/// case — the same rule as UDS `set_effort`, so the two surfaces cannot
+/// drift; a tool composed without the use case refuses rather than letting
+/// an unchecked level through. Without a model (the child inherits the
+/// parent's) only the syntax is checked here; the child validates at
+/// startup. Returns the normalized level string.
 pub(super) fn validate_effort(
     level: &str,
     model: Option<&str>,
@@ -83,7 +84,14 @@ pub(super) fn validate_effort(
         (Some(model), Some(effort_control)) => effort_control
             .validate(model, level)
             .map_err(|error| error.to_string())?,
-        _ => EffortLevel::parse(level).ok_or_else(|| {
+        (Some(_), None) => {
+            return Err(
+                "effort cannot be validated for an explicit model: the spawn tool was composed \
+                 without the reasoning-effort capability"
+                    .to_string(),
+            );
+        }
+        (None, _) => EffortLevel::parse(level).ok_or_else(|| {
             format!(
                 "invalid effort level \"{level}\"; valid levels: {}",
                 EffortLevel::VALID_VALUES

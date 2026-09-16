@@ -499,8 +499,8 @@ impl App {
         }
         if self.ac().roster.active_agent_id.is_none() {
             self.ac_mut().inference.current_effort = snap.footer.effort.clone();
-            if !snap.effort_levels.is_empty() {
-                self.ac_mut().inference.effort_levels = snap.effort_levels;
+            if let Some(levels) = snap.effort_levels {
+                self.ac_mut().inference.effort_levels = Some(levels);
             }
         }
         if snap.footer.max_context_tokens.is_some() {

@@ -395,18 +395,38 @@ mod effort_vocabulary {
     }
 
     #[test]
-    fn openai_own_providers_use_the_openai_scale() {
-        for provider in ["openai-api", "openai-oauth"] {
+    fn openai_oauth_always_uses_the_openai_scale_and_openai_api_only_for_reasoning_ids() {
+        for reasoning in [true, false] {
             assert_eq!(
                 levels(
-                    provider,
+                    "openai-oauth",
                     TransportKind::OpenAiCompletions,
-                    "gpt-5.6-sol",
-                    false
+                    "gpt-5.3-codex",
+                    reasoning
                 ),
                 vec![None, Low, Medium, High, XHigh]
             );
         }
+        assert_eq!(
+            levels(
+                "openai-api",
+                TransportKind::OpenAiCompletions,
+                "gpt-5.6-sol",
+                true
+            ),
+            vec![None, Low, Medium, High, XHigh]
+        );
+        // gpt-5.5 stays on Chat Completions, where reasoning_effort + tools is
+        // rejected: no vocabulary is offered rather than one that 400s.
+        assert!(
+            levels(
+                "openai-api",
+                TransportKind::OpenAiCompletions,
+                "gpt-5.5",
+                false
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -423,6 +443,8 @@ mod effort_vocabulary {
             levels("xai", TransportKind::OpenAiCompletions, "grok-3-mini", true),
             vec![Low, Medium, High]
         );
+        // The flag, not the name, is the affirmation.
+        assert!(levels("xai", TransportKind::OpenAiCompletions, "grok-4.6", false).is_empty());
         assert!(
             levels(
                 "xai",
