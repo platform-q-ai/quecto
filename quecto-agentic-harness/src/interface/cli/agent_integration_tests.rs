@@ -39,6 +39,17 @@ fn session_dir_entries_reads_real_entries() {
 }
 
 /// Helper: write a minimal config with a fake OpenAI key.
+/// A CLI context over `base_dir` carrying composition's sessions and
+/// retained-context builders, as `main` supplies them.
+fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
+    CliContext {
+        base_dir: Some(base_dir.to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        ..Default::default()
+    }
+}
+
 fn write_fake_config(dir: &std::path::Path) {
     std::fs::write(
         dir.join("config.json"),
@@ -135,12 +146,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
 fn test_agent_with_valid_config_provider_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(args("agent -m test"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -159,12 +165,7 @@ fn test_agent_with_valid_config_provider_error() {
 fn test_agent_ephemeral_session_no_file_created() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -200,12 +201,7 @@ fn test_agent_ephemeral_session_no_file_created() {
 fn test_agent_with_system_prompt_and_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -226,12 +222,7 @@ fn test_agent_with_system_prompt_and_config() {
 fn test_agent_with_max_time_reaches_deadline_path() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -257,12 +248,7 @@ fn test_agent_with_max_time_reaches_deadline_path() {
 fn test_agent_named_session_creates_no_file_on_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -283,12 +269,7 @@ fn test_agent_named_session_creates_no_file_on_error() {
 fn test_agent_with_model_override_and_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -308,12 +289,7 @@ fn test_agent_with_model_override_and_config() {
 fn test_agent_with_max_iterations_and_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -333,12 +309,7 @@ fn test_agent_with_max_iterations_and_config() {
 fn test_agent_with_all_flags_and_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(
         vec![
             "quecto".into(),
@@ -733,12 +704,7 @@ fn test_agent_with_anthropic_provider_reaches_session() {
         r#"{"providers":{"anthropic":{"api_key":"sk-ant-fake-key"}}}"#,
     )
     .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(args("agent -m test-anthropic"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(!out.stderr.contains("config not found"));
@@ -753,12 +719,7 @@ fn test_agent_with_both_providers_reaches_session() {
         r#"{"providers":{"openai":{"api_key":"sk-openai-fake"},"anthropic":{"api_key":"sk-ant-fake"}}}"#,
     )
     .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        sessions: Some(crate::composition::sessions::build_session_handles),
-        retention: Some(crate::composition::sessions::build_retention_handles),
-        ..Default::default()
-    };
+    let ctx = composed_ctx(tmp.path());
     let out = run_with_output(args("agent -m test-both"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(!out.stderr.contains("config not found"));
