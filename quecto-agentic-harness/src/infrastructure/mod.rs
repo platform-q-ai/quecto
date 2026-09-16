@@ -37,5 +37,6 @@ mod issue_996_efficiency_tests;
 pub mod git_workspace;
 pub mod http;
 pub mod path_canonicalizer;
+pub mod scope_catalogue;
 pub mod session_export;
 pub mod workspace_discovery;

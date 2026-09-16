@@ -14,7 +14,11 @@ use std::pin::Pin;
 
 pub mod session_runtime;
 pub mod session_transition;
+pub mod scope_catalogue;
 pub mod workspace_discovery;
+pub use scope_catalogue::{
+    CatalogueRebuildReport, CatalogueRows, CatalogueUnit, SessionScopeCatalogue,
+};
 pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
 pub use session_transition::{
     DelegatedChildrenRoster, FleetSettlement, FreshSessionIdentityGenerator, SessionKeyPropagation,

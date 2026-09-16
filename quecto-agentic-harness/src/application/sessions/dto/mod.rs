@@ -12,6 +12,7 @@ pub mod resume_saved_session;
 pub mod retained_context;
 pub mod rewind_conversation;
 pub mod save_session;
+pub mod scope_listing;
 pub mod session_report;
 pub mod start_fresh_conversation;
 pub mod sync;
@@ -27,6 +28,9 @@ pub use resume_saved_session::{
 pub use retained_context::{RecallError, RecallOutcome, RecallQuery, Retained};
 pub use rewind_conversation::{RewindConversationError, RewindRequest, RewoundConversation};
 pub use save_session::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
+pub use scope_listing::{
+    row_matches_local_scope, row_matches_metadata_query, ScopeListQuery, ScopedSessionRow,
+};
 pub use session_report::{
     ExportManifest, ExportRecord, RawExportReceipt, ReportError, ReportPreview, ReportRecovery,
     SessionReport,

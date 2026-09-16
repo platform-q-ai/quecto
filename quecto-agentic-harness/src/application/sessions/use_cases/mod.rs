@@ -4,6 +4,7 @@
 pub mod clear_conversation;
 pub mod departing_children;
 pub mod export_session_report;
+pub mod list_scoped_sessions;
 pub mod list_sessions;
 pub mod read_history;
 pub mod recall_context;
@@ -18,6 +19,7 @@ pub mod synchronize_transcript;
 pub use clear_conversation::ClearConversation;
 pub use departing_children::DepartingChildren;
 pub use export_session_report::ExportSessionReport;
+pub use list_scoped_sessions::ListScopedSessions;
 pub use list_sessions::ListSessions;
 pub use read_history::ReadHistory;
 pub use recall_context::RecallContext;
