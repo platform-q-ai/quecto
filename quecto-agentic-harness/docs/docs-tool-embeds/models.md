@@ -8,7 +8,7 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 
 ## Where config lives
 
-- Global default model: `~/.quecto/config.json` at `agents.defaults.model`, using a qualified `provider/model` id, for example:
+- Global default model: the selected `config.json` (`./config.json` in the working directory if present, else `~/.quecto/config.json` — `quecto status` names it; see `docs {"name": "config"}`) at `agents.defaults.model`, using a qualified `provider/model` id, for example:
   ```json
   {"agents": {"defaults": {"model": "openai-oauth/gpt-5.6-sol"}}}
   ```

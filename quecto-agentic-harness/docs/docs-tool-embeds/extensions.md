@@ -6,7 +6,7 @@ Tool names and schemas for enabled extensions already appear in your tool list. 
 
 | Kind | How | Runtime |
 |---|---|---|
-| **Native** | `config.json` `tools.*` (e.g. web search/fetch) | Process start; children re-read the same config |
+| **Native** | `config.json` `tools.*` (e.g. web search/fetch) | Process start; local children rediscover config from the same working directory (`docs {"name": "config"}`) |
 | **UDS** | External client: `register_tools` on the agent socket | Connect = available; disconnect = auto-unregister |
 
 ## Rules that matter mid-task

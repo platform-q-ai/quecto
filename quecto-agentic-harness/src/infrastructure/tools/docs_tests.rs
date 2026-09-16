@@ -4,6 +4,7 @@ use super::*;
 fn lookup_doc_resolves_plain_md_and_prefixed_names() {
     assert!(lookup_doc("quick-start").is_none());
     assert!(lookup_doc("subagents").is_some());
+    assert!(lookup_doc("config").is_some());
     assert!(lookup_doc("subagents.md").is_some());
     assert!(lookup_doc("docs/subagents.md").is_some());
     assert!(lookup_doc("docs/docs-tool-embeds/workflow.md").is_some());
