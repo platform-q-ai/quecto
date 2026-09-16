@@ -71,10 +71,14 @@ mod hosted_swarm_run_observation;
 mod llm_provider;
 #[path = "contracts/loaded_catalogue_inputs.rs"]
 mod loaded_catalogue_inputs;
+#[path = "contracts/loaded_refresh_inputs.rs"]
+mod loaded_refresh_inputs;
 #[path = "contracts/local_config_probe.rs"]
 mod local_config_probe;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
+#[path = "contracts/refresh_inputs_loader.rs"]
+mod refresh_inputs_loader;
 #[path = "contracts/refresh_redaction_port.rs"]
 mod refresh_redaction_port;
 #[path = "contracts/refreshable_catalogue_source.rs"]

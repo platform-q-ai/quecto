@@ -1,15 +1,15 @@
-//! CLI adapter for the catalogue refresh use case (epic #1193, slice 4).
-//!
-//! `quecto models discover` is an adapter over the one application refresh
-//! operation: it performs no HTTP, parses no registry data, and persists
-//! nothing itself — discovery lives in the infrastructure refresh sources and
-//! results publish through the normal catalogue path.
+//! CLI adapter for discovering a provider's models (epic #1193 slice 4,
+//! #1844): `quecto models discover` is an adapter over the composed
+//! refresh use case selecting one provider. It performs no HTTP, parses no
+//! registry data, and persists nothing itself — discovery lives in the
+//! infrastructure refresh sources and results publish through the normal
+//! catalogue path.
 
 use std::time::Duration;
 
 use super::CliContext;
-use crate::application::catalogue_refresh::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
-use crate::interface::catalogue_runtime::refresh_catalogue;
+use crate::application::catalogue::dto::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
+use crate::application::catalogue::use_cases::{REGISTRY_FILE_SOURCE, RefreshCatalogueSources};
 
 pub fn cmd_models(
     ctx: &CliContext,
@@ -71,8 +71,15 @@ fn cmd_discover(
         }
     }
 
+    // The interface never constructs the refresh use case (#1844): the
+    // command runs over the handles composition builds for this base dir.
+    let Some(build_catalogue) = ctx.catalogue else {
+        stderr.push_str("models discover: catalogue capability not composed\n");
+        return 1;
+    };
+    let refresh = build_catalogue(&ctx.base_dir()).refresh;
     loop {
-        match discover_once(ctx, &provider) {
+        match discover_once(&refresh, &provider) {
             Ok(DiscoverOutcome::Updated { models }) => stdout.push_str(&format!(
                 "Discovered {models} model(s) for provider {provider}\n"
             )),
@@ -101,11 +108,13 @@ enum DiscoverOutcome {
     Unchanged { models: usize },
 }
 
-/// Refresh one provider through the application refresh use case. The user is
+/// Refresh one provider through the composed refresh use case. The user is
 /// waiting on this directly, so the (generous) default bounds apply.
-fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<DiscoverOutcome, String> {
-    let report = refresh_catalogue(
-        &ctx.base_dir(),
+fn discover_once(
+    refresh: &RefreshCatalogueSources,
+    provider_key: &str,
+) -> Result<DiscoverOutcome, String> {
+    let report = refresh.execute(
         &RefreshSelection::Only(vec![provider_key.to_string()]),
         RefreshBounds::default(),
     );
@@ -120,7 +129,7 @@ fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<DiscoverOutcome
             report
                 .outcomes
                 .iter()
-                .find(|o| o.source == crate::interface::catalogue_runtime::REGISTRY_FILE_SOURCE)
+                .find(|o| o.source == REGISTRY_FILE_SOURCE)
         })
         .ok_or_else(|| format!("refresh reported no outcome for '{provider_key}'"))?;
     match &outcome.status {

@@ -4,7 +4,9 @@
 pub mod change_active_model;
 pub mod change_reasoning_effort;
 pub mod list_models;
+pub mod refresh_catalogue_sources;
 
 pub use change_active_model::ChangeActiveModel;
 pub use change_reasoning_effort::ChangeReasoningEffort;
 pub use list_models::ListModels;
+pub use refresh_catalogue_sources::{REGISTRY_FILE_SOURCE, RefreshCatalogueSources};

@@ -582,8 +582,8 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
 
     let users = ["user-0", "user-1-tools", "user-2"];
     let session_path = {
+        let path = fx._tmp.path().join("sessions/cli_test.json");
         let mut ctx = fx.ctx();
-        let path = ctx.base_dir.join("sessions/cli_test.json");
         inject_system_prompt(ctx.messages, ctx.system_prompt);
         // Live: [injected system, manifest, …]; durable-on-disk: [manifest, …].
         assert_eq!(ctx.messages.len(), 2);

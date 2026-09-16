@@ -2,7 +2,7 @@
 //! implementation strips credential material from human-facing refresh text
 //! while preserving the non-secret remainder.
 
-use quecto::application::catalogue_refresh::NoopRedaction;
+use quecto::application::catalogue::ports::NoopRedaction;
 use quecto::application::ports::RefreshRedactionPort;
 use quecto::infrastructure::catalogue_discovery::SecretsRedaction;
 

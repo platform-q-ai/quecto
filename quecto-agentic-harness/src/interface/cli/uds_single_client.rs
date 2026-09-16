@@ -13,7 +13,6 @@ use crate::domain::message::Message;
 
 pub(super) struct SingleClientArgs<'a> {
     pub(super) agent: AgentLoopImpl,
-    pub(super) base_dir: &'a std::path::Path,
     pub(super) workspace: &'a std::path::Path,
     pub(super) messages: Vec<Message>,
     pub(super) model: String,
@@ -35,7 +34,6 @@ pub(super) async fn single_client_loop(
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
-        base_dir,
         workspace,
         mut messages,
         model,
@@ -80,7 +78,6 @@ pub(super) async fn single_client_loop(
         reader,
         &mut DispatchCtx {
             wire_mode,
-            base_dir,
             agent: &mut agent,
             messages: &mut messages,
             sessions: session_reads.clone(),

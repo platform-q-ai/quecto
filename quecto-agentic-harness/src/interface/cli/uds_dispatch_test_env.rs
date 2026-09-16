@@ -209,7 +209,6 @@ impl DispatchTestEnv {
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
-            base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: self.sessions.read_handles(),

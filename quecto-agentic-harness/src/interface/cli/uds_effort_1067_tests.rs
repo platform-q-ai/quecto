@@ -90,7 +90,6 @@ impl EffortFx {
             );
         DispatchCtx {
             execution_state: self.execution_state.clone(),
-            base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

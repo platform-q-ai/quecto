@@ -124,7 +124,6 @@ pub(super) async fn run_command_loop(
 
 pub(crate) struct DispatchCtx<'a> {
     pub wire_mode: super::uds_wire::ConnectionWireMode,
-    pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     /// The active session and its read use cases (#1971): the one
