@@ -4,8 +4,9 @@
 //!
 //! Every call loads the inputs and republishes the effective snapshot into
 //! the store, so the listing is level with on-disk edits; the network-only
-//! refresh is a different use case. A source that fails to load is reported
-//! rather than listed over, and the last valid generation stays published.
+//! refresh is a different use case. Sources that fail to load are reported
+//! rather than listed over; the generation the healthy layers produced is
+//! still published.
 
 use std::sync::Arc;
 
@@ -32,12 +33,12 @@ impl ListModels {
             loaded.credentials(),
             &self.store,
         );
-        if let Some(error) = resolved.source_errors.into_iter().next() {
-            return ModelListingOutcome::SourceUnavailable(error);
+        if !resolved.source_errors.is_empty() {
+            return ModelListingOutcome::SourcesUnavailable(resolved.source_errors);
         }
         // The generation this call just published — never a store read that
         // a concurrent publish could have moved past.
-        let snapshot = resolved.snapshot.clone();
+        let snapshot = resolved.snapshot;
         let rejected = resolved
             .rejected
             .iter()

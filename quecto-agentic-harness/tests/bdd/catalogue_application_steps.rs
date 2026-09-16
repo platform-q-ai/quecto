@@ -391,8 +391,11 @@ fn then_listing_source_unavailable(world: &mut QuectoWorld, source: String, mess
         .as_ref()
         .expect("the models were not listed")
     {
-        ModelListingOutcome::SourceUnavailable(error) => {
-            assert_eq!(error.source, source);
+        ModelListingOutcome::SourcesUnavailable(errors) => {
+            let error = errors
+                .iter()
+                .find(|error| error.source == source)
+                .unwrap_or_else(|| panic!("no error for source '{source}': {errors:?}"));
             assert!(error.error.contains(&message), "{}", error.error);
         }
         other => panic!("expected a source error, got {other:?}"),

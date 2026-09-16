@@ -101,12 +101,16 @@ fn api_key_auth_has_no_oauth_provider() {
 
 #[test]
 fn a_failed_source_renders_no_models_and_the_error() {
-    let json = render(&ModelListingOutcome::SourceUnavailable(
+    let json = render(&ModelListingOutcome::SourcesUnavailable(vec![
         CatalogueSourceError {
             source: "models.json".into(),
             error: "expected value at line 1".into(),
         },
-    ));
+        CatalogueSourceError {
+            source: "discovery:acme".into(),
+            error: "corrupt cache".into(),
+        },
+    ]));
     assert_eq!(
         json,
         serde_json::json!({ "models": [], "error": "expected value at line 1" })

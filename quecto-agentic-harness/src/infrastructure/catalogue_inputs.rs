@@ -211,7 +211,7 @@ fn synthesize_discovered_records(
 /// The catalogue capability's inputs port over the real base directory
 /// (#1845): each load is one fresh `models.json` parse plus the persisted
 /// discovery caches and credential status — no network.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FileCatalogueInputs {
     base_dir: std::path::PathBuf,
 }

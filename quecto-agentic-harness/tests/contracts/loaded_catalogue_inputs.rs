@@ -26,25 +26,29 @@ fn a_malformed_models_json_fails_its_own_layer_only() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("models.json"), "{ not json").unwrap();
     let loaded = under_test(tmp.path()).load();
-    let builtin_ok = loaded
-        .sources()
+    let sources = loaded.sources();
+    let builtin: Vec<_> = sources
         .iter()
         .filter(|s| s.layer() == SourceLayer::BuiltIn)
-        .all(|s| s.load().is_ok());
-    let user_err = loaded
-        .sources()
+        .collect();
+    let user: Vec<_> = sources
         .iter()
         .filter(|s| s.layer() == SourceLayer::UserDefined)
-        .all(|s| s.load().is_err());
-    assert!(builtin_ok && user_err);
+        .collect();
+    assert!(!builtin.is_empty() && !user.is_empty());
+    assert!(builtin.iter().all(|s| s.load().is_ok()));
+    assert!(user.iter().all(|s| s.load().is_err()));
 }
 
 #[test]
-fn credential_status_is_a_verdict_never_a_value() {
+fn credential_status_is_a_per_record_verdict() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"acme":{"api":"openai-completions","baseUrl":"https://acme.test/v1","apiKey":"sk-literal-secret","models":[{"id":"acme-1"}]}}}"#,
+        r#"{"providers":{
+            "keyed":{"api":"openai-completions","baseUrl":"https://keyed.test/v1","apiKey":"$KEYED_KEY","models":[{"id":"m"}]},
+            "bare":{"api":"openai-completions","models":[{"id":"m"}]}
+        }}"#,
     )
     .unwrap();
     let loaded = under_test(tmp.path()).load();
@@ -54,13 +58,12 @@ fn credential_status_is_a_verdict_never_a_value() {
         .filter(|s| s.layer() == SourceLayer::UserDefined)
         .flat_map(|s| s.load().unwrap().entries)
         .collect();
-    let acme = user_entries
-        .iter()
-        .find(|e| e.reference().qualified_id() == "acme/acme-1")
-        .expect("user model loads");
-    // The verdict is observable; the value is not (a literal key is a
-    // rejected override, so it counts as unavailable — either way only a
-    // bool leaves the port).
-    let _verdict: bool = loaded.credentials().credential_available(acme);
-    assert!(!format!("{acme:?}").contains("sk-literal-secret"));
+    let find = |id: &str| {
+        user_entries
+            .iter()
+            .find(|e| e.reference().qualified_id() == id)
+            .unwrap_or_else(|| panic!("{id} loads"))
+    };
+    assert!(loaded.credentials().credential_available(find("keyed/m")));
+    assert!(!loaded.credentials().credential_available(find("bare/m")));
 }

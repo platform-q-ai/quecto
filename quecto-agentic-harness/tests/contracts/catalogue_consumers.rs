@@ -2,10 +2,10 @@
 //! #1572, epic #1193 slice 2).
 //!
 //! Every read surface must render one snapshot generation: the CLI/UDS model
-//! listing (`uds_models::list_models_data`, the response the CLI serves and
-//! the TUI consumes), the TUI model-list projection
+//! listing (the composed `list_models` use case and presenter, the response
+//! the CLI serves and the TUI consumes), the TUI model-list projection
 //! (`quecto_tui::protocol::model_payloads::parse_model_list` over that same
-//! response), and the shared application projection over the snapshot store.
+//! response), and the published snapshot store itself.
 //! None of them may parse or merge catalogue files on the read path — the only
 //! parse happens inside the infrastructure source adapters feeding the resolve
 //! use case.

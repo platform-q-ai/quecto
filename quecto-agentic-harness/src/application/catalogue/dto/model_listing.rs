@@ -28,11 +28,15 @@ pub struct ModelCatalogueListing {
     pub rejected: Vec<ListingDiagnostic>,
 }
 
-/// What a list request yields. A source that failed to load altogether
-/// (a malformed `models.json`) is reported instead of a listing the user's
-/// file no longer matches; the last valid snapshot stays published.
+/// What a list request yields. When any source failed to load altogether
+/// (a malformed `models.json`, a corrupt discovery cache) the listing is
+/// withheld and every failed source is reported, rather than listing a
+/// catalogue the user's inputs no longer match; the resolve still published
+/// the generation the healthy layers produced, and that stays current.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelListingOutcome {
     Listed(ModelCatalogueListing),
-    SourceUnavailable(CatalogueSourceError),
+    /// Non-empty: one entry per source that failed to load, in precedence
+    /// order.
+    SourcesUnavailable(Vec<CatalogueSourceError>),
 }

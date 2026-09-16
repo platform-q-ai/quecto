@@ -191,10 +191,10 @@ fn a_failed_source_is_reported_not_listed_over_and_the_last_generation_stays() {
     let outcome = use_case.execute();
     assert_eq!(
         outcome,
-        ModelListingOutcome::SourceUnavailable(CatalogueSourceError {
+        ModelListingOutcome::SourcesUnavailable(vec![CatalogueSourceError {
             source: "builtin".into(),
             error: "models.json: expected value at line 1".into(),
-        })
+        }])
     );
     assert_eq!(
         store.current().entries().len(),
@@ -227,6 +227,36 @@ fn skipped_records_surface_as_diagnostics_naming_their_source() {
             reason: "builtin: invalid model id".into(),
         }]
     );
+}
+
+#[test]
+fn domain_rejected_entries_surface_as_diagnostics_before_skipped_records() {
+    // A zero context window fails domain validation after the source
+    // mapped it, so it is rejected (not skipped) — and listed first.
+    let mut zero_window = entry("openai-api", "gpt-5", "GPT");
+    zero_window.model.capabilities.context_window = 0;
+    let loader = FakeLoader::answering(vec![(
+        Ok(SourceEntries {
+            entries: vec![zero_window, entry("openai-api", "gpt-6", "Next")],
+            skipped: vec![SkippedRecord {
+                record: "openai-api/bad model".into(),
+                error: "invalid model id".into(),
+            }],
+        }),
+        vec![],
+    )]);
+    let ModelListingOutcome::Listed(listed) =
+        ListModels::new(loader, CatalogueSnapshotStore::empty()).execute()
+    else {
+        panic!("lists");
+    };
+    assert_eq!(listed.rejected.len(), 2, "{:?}", listed.rejected);
+    assert_eq!(listed.rejected[0].model, "openai-api/gpt-5");
+    assert!(
+        !listed.rejected[0].reason.is_empty(),
+        "the domain's rejection reason is carried"
+    );
+    assert_eq!(listed.rejected[1].model, "openai-api/bad model");
 }
 
 #[test]

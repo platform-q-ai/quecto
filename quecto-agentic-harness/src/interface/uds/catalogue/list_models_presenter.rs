@@ -8,11 +8,13 @@ use crate::domain::catalogue::AuthIdentity;
 
 pub fn render(outcome: &ModelListingOutcome) -> serde_json::Value {
     match outcome {
-        // Legacy parity: a malformed models.json returns no models plus an
-        // error, rather than silently listing a catalogue the user's file no
-        // longer matches.
-        ModelListingOutcome::SourceUnavailable(error) => {
-            serde_json::json!({ "models": [], "error": error.error })
+        // Legacy wire parity: no models plus the first failed source's error,
+        // rather than silently listing a catalogue the user's inputs no
+        // longer match. The DTO carries every failed source; the legacy
+        // shape has one `error` field.
+        ModelListingOutcome::SourcesUnavailable(errors) => {
+            let first = errors.first().map(|error| error.error.as_str());
+            serde_json::json!({ "models": [], "error": first })
         }
         ModelListingOutcome::Listed(listing) => render_listing(listing),
     }

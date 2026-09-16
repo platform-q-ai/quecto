@@ -2829,7 +2829,6 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "catalogue", "dto" | "use_cases", ..]
-        | ["crate", "application", "catalogue", "CatalogueSourceError"]
         | ["crate", "interface", "uds", "catalogue", ..] => true,
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
