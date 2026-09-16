@@ -7,7 +7,7 @@ use crate::application::sessions::ports::{
     WorkspaceDiscoveryOutcome,
 };
 use crate::domain::error::DomainError;
-use crate::domain::session_home_scope::CanonicalExecutionLocation;
+
 use crate::infrastructure::git_workspace::{GitCliProbe, GitProbe};
 use crate::infrastructure::path_canonicalizer::FsPathCanonicalizer;
 
@@ -74,11 +74,6 @@ pub fn local_scope_from_outcome(
     outcome: &WorkspaceDiscoveryOutcome,
 ) -> Option<&crate::domain::session_home_scope::SessionHomeScope> {
     outcome.scope()
-}
-
-#[allow(dead_code)] // composition will use; keep type name stable for D2
-fn _assert_execution_is_location(loc: &CanonicalExecutionLocation) -> &str {
-    loc.as_str()
 }
 
 #[cfg(test)]
