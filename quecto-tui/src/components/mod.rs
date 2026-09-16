@@ -15,6 +15,7 @@ pub mod markdown;
 pub mod model_selector;
 pub mod notification;
 pub mod overlay;
+pub mod resume_scope_picker;
 pub mod select_list;
 pub mod select_overlay;
 pub mod selectable_item_modal;
