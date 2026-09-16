@@ -107,6 +107,33 @@ async fn context_spill_store_default_has_entries_reflects_list_entries() {
 }
 
 #[tokio::test]
+async fn context_spill_store_default_scrub_is_a_no_op_for_stores_without_durable_state() {
+    // D9 #1978: the run-end scrub is the file store's; a store with nothing
+    // on disk needs nothing and keeps what it holds.
+    let store = InMemorySpillStore::default();
+    store
+        .append(
+            &SessionIdentity::ephemeral(),
+            &SpillEntry {
+                id: "run-1".to_string(),
+                tool: "bash".to_string(),
+                input_preview: "ls".to_string(),
+                tokens: 1,
+                content: "x".to_string(),
+            },
+        )
+        .await
+        .expect("append");
+    store.scrub_sync(&SessionIdentity::ephemeral());
+    assert!(
+        store
+            .has_entries(&SessionIdentity::ephemeral())
+            .await
+            .expect("presence")
+    );
+}
+
+#[tokio::test]
 async fn in_memory_spill_store_trait_surface_recalls_and_clears() {
     let store = InMemorySpillStore::default();
     let entry = SpillEntry {

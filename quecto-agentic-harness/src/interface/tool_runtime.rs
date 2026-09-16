@@ -133,6 +133,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub session_key: String,
+    /// The recall use case the `recall` tool adapts (D9 #1978), composed
+    /// over the run's retention store.
+    pub recall: std::sync::Arc<crate::application::sessions::use_cases::RecallContext>,
     pub spawned: bool,
     pub parent_session_name: Option<String>,
     /// The parent agent's own config path, forwarded so container spawns can
@@ -151,8 +154,6 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
 /// Result of the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuild {
     pub registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
-    pub spill_store:
-        std::sync::Arc<crate::infrastructure::persistence::context_spill::FileContextSpillStore>,
     pub session_key: String,
     pub ext_registry: crate::infrastructure::extensions::registry::ExtensionRegistry,
     pub extension_prompt_snippets: String,
@@ -185,7 +186,6 @@ pub(crate) fn build_tool_runtime(
         build_session_tool_extensions, register_bundled_native_tools,
         register_bundled_native_tools_with_scope,
     };
-    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 
     let ToolRuntimeBuildArgs {
         swarm_context,
@@ -200,6 +200,7 @@ pub(crate) fn build_tool_runtime(
         sandbox,
         exec_options,
         session_key,
+        recall,
         spawned,
         parent_session_name,
         parent_config_path,
@@ -275,13 +276,10 @@ pub(crate) fn build_tool_runtime(
         },
     );
 
-    let spill_store = std::sync::Arc::new(FileContextSpillStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(base_dir),
-    ));
     register_bundled_native_tools(
         &mut registry,
         build_session_tool_extensions(SessionToolDeps {
-            spill_store: spill_store.clone(),
+            recall,
             session_key: session_key.clone(),
         }),
     );
@@ -407,7 +405,6 @@ pub(crate) fn build_tool_runtime(
 
     Ok(ToolRuntimeBuild {
         registry,
-        spill_store,
         session_key,
         ext_registry,
         extension_prompt_snippets,

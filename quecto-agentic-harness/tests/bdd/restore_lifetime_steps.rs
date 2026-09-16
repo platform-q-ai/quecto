@@ -313,6 +313,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
+            retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
             session_key,

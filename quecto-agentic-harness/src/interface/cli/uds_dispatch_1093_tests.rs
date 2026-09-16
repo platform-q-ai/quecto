@@ -158,7 +158,7 @@ impl Fixture {
                 model: "stub".into(),
                 max_tokens: 100,
                 temperature: 0.0,
-                spill_store,
+                retention: spill_store.map(crate::composition::retention::context_retention_over),
                 session_key: "cli:test".into(),
                 context_collapse_after_tool_calls: u32::MAX,
                 max_context_tokens: 190_000,

@@ -9,14 +9,15 @@
 // content spills to disk at creation time, so `recall()` can retrieve
 // collapsed or dropped content.
 //
-// Depends on: domain::message, application::sessions::ports (ContextSpillStore).
-// Never imports infrastructure.
+// Depends on: domain::message, application::sessions::use_cases (the narrow
+// retention reader, D9 #1978). Never imports infrastructure, never reaches
+// the retention store.
 
 // #1046: conversation-message collapse, demotion ladder, creation-time spill.
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
 
-use crate::application::sessions::ports::ContextSpillStore;
+use crate::application::sessions::use_cases::ListRetainedContext;
 use crate::domain::message::{Message, Role};
 
 /// Sentinel value indicating that tool-result collapse is disabled.
@@ -179,10 +180,10 @@ pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 /// preserving the clean-delta fast path on ordinary tool-calling turns.
 pub async fn update_spill_manifest(
     messages: &mut Vec<Message>,
-    spill_store: &dyn ContextSpillStore,
+    retained: &ListRetainedContext,
     session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
-    let has_entries = spill_store.has_entries(session_key).await.unwrap_or(false);
+    let has_entries = retained.retains_entries(session_key).await.unwrap_or(false);
     if !has_entries {
         // Remove manifest if it exists and there are no entries
         let before = messages.len();

@@ -92,7 +92,7 @@ fn agent_with(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store,
+        retention: spill_store.map(crate::composition::retention::context_retention_over),
         session_key: "test-1072".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,

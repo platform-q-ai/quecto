@@ -1,4 +1,4 @@
-//! Boundary DTOs of the sessions capability (#1970–#1976). Scope-neutral:
+//! Boundary DTOs of the sessions capability (#1970–#1978). Scope-neutral:
 //! they name sessions by [`SessionIdentity`] and never by a filename or
 //! path, and carry domain values (messages, ids, ranges, ledger positions)
 //! — never a wire value or event.
@@ -9,6 +9,7 @@ pub mod clear_conversation;
 pub mod history;
 pub mod message_recovery;
 pub mod resume_saved_session;
+pub mod retained_context;
 pub mod rewind_conversation;
 pub mod save_session;
 pub mod session_report;
@@ -23,6 +24,7 @@ pub use message_recovery::{
 pub use resume_saved_session::{
     ResumeSavedSessionError, ResumeTarget, SavedSessionResumed, StartupSessionOpened,
 };
+pub use retained_context::{RecallError, RecallOutcome, RecallQuery, Retained};
 pub use rewind_conversation::{RewindConversationError, RewindRequest, RewoundConversation};
 pub use save_session::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
 pub use session_report::{

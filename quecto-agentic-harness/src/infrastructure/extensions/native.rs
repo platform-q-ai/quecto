@@ -163,7 +163,8 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
 }
 
 pub struct SessionToolDeps {
-    pub spill_store: Arc<dyn crate::application::sessions::ports::ContextSpillStore>,
+    /// The recall use case the `recall` tool adapts (D9 #1978).
+    pub recall: Arc<crate::application::sessions::use_cases::RecallContext>,
     pub session_key: String,
 }
 
@@ -172,7 +173,7 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
         "quecto:session-tools",
         "Bundled Quecto session memory tools",
         Arc::new(crate::infrastructure::tools::recall::RecallTool::new(
-            deps.spill_store,
+            deps.recall,
             deps.session_key,
         )),
     ))]

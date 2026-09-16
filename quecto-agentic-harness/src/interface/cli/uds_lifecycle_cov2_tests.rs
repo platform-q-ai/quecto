@@ -40,7 +40,7 @@ fn make_agent() -> AgentLoopImpl {
         model: "stub".into(),
         max_tokens: 32,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:life".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -58,6 +58,7 @@ fn make_agent() -> AgentLoopImpl {
 fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> UdsLoopArgs<'a> {
     UdsLoopArgs {
         agent: make_agent(),
+        retention: None,
         base_dir: base,
         workspace: base,
         session_key: "cli:life".into(),

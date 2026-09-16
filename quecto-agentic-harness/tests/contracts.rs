@@ -69,6 +69,8 @@ mod provider_runtime_factory;
 mod refresh_redaction_port;
 #[path = "contracts/refreshable_catalogue_source.rs"]
 mod refreshable_catalogue_source;
+#[path = "contracts/retained_context.rs"]
+mod retained_context;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]

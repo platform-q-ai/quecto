@@ -1,9 +1,18 @@
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::session::{SpillEntry, SpillIndex};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+/// The recall use case over `store`, composed as the runtime composes it
+/// (D9 #1978): the tool adapts the use case, never the store.
+fn recall_over(
+    store: Arc<dyn crate::application::sessions::ports::ContextSpillStore>,
+) -> Arc<crate::application::sessions::use_cases::RecallContext> {
+    crate::composition::retention::retention_handles_over(store).recall
+}
 
 fn id(k: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(k)
@@ -82,7 +91,7 @@ fn entry(id: &str, preview: &str, tokens: usize, content: &str) -> SpillEntry {
 #[tokio::test]
 async fn missing_id_from_empty_arguments_reports_error_for_empty_id() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session".to_string(),
     );
 
@@ -102,7 +111,7 @@ async fn list_index_includes_preview_and_token_counts_but_not_content() {
         fail_recall: false,
         fail_list: false,
     };
-    let tool = RecallTool::new(Arc::new(store), "session".to_string());
+    let tool = RecallTool::new(recall_over(Arc::new(store)), "session".to_string());
 
     let result = tool.execute(r#"{"id":"list"}"#).await.unwrap();
 
@@ -121,10 +130,10 @@ async fn list_index_includes_preview_and_token_counts_but_not_content() {
 #[tokio::test]
 async fn recall_propagates_spill_read_failure() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore {
+        recall_over(Arc::new(FailingSpillStore {
             fail_recall: true,
             ..FailingSpillStore::default()
-        }),
+        })),
         "session".to_string(),
     );
 
@@ -136,10 +145,10 @@ async fn recall_propagates_spill_read_failure() {
 #[tokio::test]
 async fn list_propagates_spill_index_failure() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore {
+        recall_over(Arc::new(FailingSpillStore {
             fail_list: true,
             ..FailingSpillStore::default()
-        }),
+        })),
         "session".to_string(),
     );
 
@@ -151,7 +160,7 @@ async fn list_propagates_spill_index_failure() {
 #[tokio::test]
 async fn recall_count_tracking_caps_new_ids_after_256_entries() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session".to_string(),
     );
 
@@ -168,7 +177,7 @@ async fn recall_count_tracking_caps_new_ids_after_256_entries() {
 #[test]
 fn debug_includes_session_key_when_lock_available() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session-a".to_string(),
     );
 

@@ -80,7 +80,7 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         // No spill store: the pre-run history already carries spill_ids (so
         // ladder rung 1 can stub in place) and a store would insert a spill
         // manifest message, perturbing the prefix these scenarios pin.
-        spill_store: None,
+        retention: None,
         session_key: "bdd-1072".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: budget,

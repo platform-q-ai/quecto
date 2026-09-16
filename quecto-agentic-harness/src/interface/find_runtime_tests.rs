@@ -52,6 +52,7 @@ fn runtime(
         sandbox: Sandbox::new(Some(root.to_path_buf())),
         exec_options: Default::default(),
         session_key: "find-runtime".into(),
+        recall: crate::composition::sessions::build_retention_handles(root).recall,
         spawned: false,
         parent_session_name: None,
         parent_config_path: None,

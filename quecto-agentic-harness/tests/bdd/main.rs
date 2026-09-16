@@ -226,6 +226,14 @@ impl std::ops::Deref for DebugSpillStore {
     }
 }
 
+impl DebugSpillStore {
+    /// The narrow handles the pruning policy consumes, composed over this
+    /// store exactly as the runtime composes them (D9 #1978).
+    fn retention(&self) -> quecto::application::context::ContextRetention {
+        quecto::composition::retention::context_retention_over(self.0.clone())
+    }
+}
+
 // Opaque Debug wrapper for the headless TUI render harness (#805). The harness
 // holds a live `App` (and background tokio tasks) and isn't `Debug`, so wrap it
 // to satisfy the derived `Debug`/`Default` on `QuectoWorld`.
@@ -985,6 +993,9 @@ pub struct QuectoWorld {
     pub _paged_response: Option<serde_json::Value>,
     /// Message contents collected while paging backward to the beginning.
     pub _paged_collected: Vec<String>,
+    /// Retained context over the real loop (D9 #1978): the built agent,
+    /// its composed retention handles and the loop's wire events.
+    pub retained_context_run: Option<uds_retained_context_steps::RetainedContextRun>,
     /// Live multi-client: socket path while agent is kept up across steps.
     pub _mc_live_socket: Option<std::path::PathBuf>,
     /// Live multi-client: agent thread handle.
@@ -1479,6 +1490,7 @@ mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_report_export_steps;
 mod uds_resume_session_steps;
+mod uds_retained_context_steps;
 mod uds_steps;
 mod uds_subagent_liveness_steps;
 mod uds_transcript_sync_steps;
@@ -1661,12 +1673,14 @@ fn ask_owned_child_to_stop(
 
 impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
-    /// capability (#1970): every `quecto agent …` run through
-    /// `run_with_output` needs it or exits with "sessions capability not
-    /// composed", exactly as the binary's `main` supplies it.
+    /// capability (#1970) and its retained-context graph (#1978): every
+    /// `quecto agent …` run through `run_with_output` needs both or exits
+    /// with "… capability not composed", exactly as the binary's `main`
+    /// supplies them.
     fn new() -> Self {
         let mut world = Self::default();
         world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
+        world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
         world
     }
 }

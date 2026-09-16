@@ -39,7 +39,6 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut session = ctx.sessions.active_session.write().await;
-    session.set_spill_store(ctx.agent.spill_store().cloned());
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let advance = session.publish(&visible_messages);
     drop(session);

@@ -26,6 +26,11 @@ type ExtRegistry = std::sync::Arc<
 
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
+    /// The run's retained-context handles (D9 #1978): the one store the
+    /// agent's pruning writer and the active session's recovery backstop
+    /// share, derived here so the two cannot diverge; `None` runs the loop
+    /// without retained context (unit rigs).
+    pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
     pub session_key: String,
@@ -79,6 +84,7 @@ use super::uds_socket::{SocketGuard, bind_secure_socket};
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
+        retention,
         base_dir,
         workspace,
         session_key,
@@ -108,7 +114,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         session_key: session_key.clone(),
         ephemeral,
         system_prompt: system_prompt.clone(),
-        spill_store: agent.spill_store().cloned(),
+        spill_store: retention.as_ref().map(|handles| handles.store.clone()),
         durable_prefix: agent.durable_prefix_latch(),
         workflow_state: workflow_state.clone(),
         subagent_registry: subagent_registry.clone(),

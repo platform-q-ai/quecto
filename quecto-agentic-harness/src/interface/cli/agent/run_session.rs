@@ -10,12 +10,12 @@ use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
-use crate::interface::shared::scrub_ephemeral_spill;
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
     sessions: crate::interface::cli::SessionHandlesBuilder,
     mut agent: AgentLoopImpl,
+    retention: &crate::interface::cli::retention_handles::RetentionHandles,
     flags: &AgentFlags,
     out: &mut AgentOutput<'_>,
 ) -> i32 {
@@ -42,7 +42,7 @@ pub(crate) fn run_agent_session(
         // The one-shot run appends its prompt by id (below) rather than at
         // the head, so the save transaction has no injected head to strip.
         system_prompt: String::new(),
-        spill_store: agent.spill_store().cloned(),
+        spill_store: Some(retention.store.clone()),
         durable_prefix: agent.durable_prefix_latch(),
         workflow_state: None,
         subagent_registry: None,
@@ -89,7 +89,7 @@ pub(crate) fn run_agent_session(
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
-                scrub_ephemeral_spill(base_dir, ephemeral);
+                retention.recall.scrub_ephemeral(ephemeral);
                 return 2;
             }
         }
@@ -97,7 +97,7 @@ pub(crate) fn run_agent_session(
         rt.block_on(agent.process(&mut messages))
     };
     // Nothing an ephemeral run spilled for in-run recall may outlive the run.
-    scrub_ephemeral_spill(base_dir, ephemeral);
+    retention.recall.scrub_ephemeral(ephemeral);
 
     match agent_result {
         Ok(result) => {

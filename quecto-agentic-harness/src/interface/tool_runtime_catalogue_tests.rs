@@ -46,6 +46,7 @@ fn build_runtime_with_entrypoint(
         sandbox,
         exec_options,
         session_key: "catalogue-test".to_string(),
+        recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         spawned,
         parent_session_name: None,
         parent_config_path: None,

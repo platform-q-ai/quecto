@@ -141,7 +141,7 @@ pub(super) fn make_agent_with(
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store,
+        retention: spill_store.map(crate::composition::retention::context_retention_over),
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -255,6 +255,7 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
         Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         Some(spill.clone()),
     ));
+    fx.set_retention(Some(spill.clone()));
     fx.messages.push(Message::user("first"));
     fx.messages.push(Message::assistant("answer", vec![]));
     {
@@ -299,6 +300,7 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
     let spill = std::sync::Arc::new(RecordingSpillStore::default());
     let mut fx = Fixture::new();
     fx.set_agent(make_agent_with(Box::new(registry), Some(spill.clone())));
+    fx.set_retention(Some(spill.clone()));
     {
         let mut ctx = fx.ctx();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);

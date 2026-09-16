@@ -204,10 +204,7 @@ async fn w5_context_spill_cache_recall_and_clear_error_paths() {
         "{err}"
     );
 
-    FileContextSpillStore::scrub_session_spill_sync(
-        &FlatSessionLayout::new(tmp.path()),
-        &id("warm"),
-    );
+    store.scrub_sync(&id("warm"));
     assert!(!store.spill_path(&id("warm")).exists());
 }
 

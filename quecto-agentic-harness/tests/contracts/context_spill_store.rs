@@ -1,8 +1,10 @@
 //! Contract tests for the `ContextSpillStore` port.
 //!
 //! Drives `FileContextSpillStore` through the trait object. The contract is:
-//! append → recall returns the same entry, list_entries reflects all appends,
-//! clear truncates to empty. Every operation is keyed by the typed
+//! append → recall returns the same entry, list_entries reflects all appends
+//! in exact append order, recall parses only the matching record and skips
+//! torn lines, clear truncates to empty, scrub removes the namespace file
+//! (D9 #1978). Every operation is keyed by the typed
 //! `SessionIdentity` (#1970); the ephemeral identity retains in-run entries
 //! exactly like any other key.
 
@@ -11,6 +13,7 @@ use quecto::domain::session::SpillEntry;
 use quecto::domain::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
+use std::io::Write;
 use std::sync::Arc;
 
 fn under_test(base_dir: std::path::PathBuf) -> Arc<dyn ContextSpillStore> {
@@ -130,4 +133,112 @@ async fn ephemeral_identity_retains_in_run_entries_under_the_sanitized_empty_key
         Some("content for run-1".to_string())
     );
     assert!(tmp.path().join("sessions/key_/spill.jsonl").is_file());
+}
+
+#[tokio::test]
+async fn recall_of_another_sessions_id_is_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = under_test(tmp.path().to_path_buf());
+    store
+        .append(&id("cli:a"), &entry("shared-id"))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .recall(&id("cli:b"), &SpillId::new("shared-id"))
+            .await
+            .unwrap()
+            .is_none(),
+        "an id retained under A must not resolve under B"
+    );
+}
+
+#[tokio::test]
+async fn recall_deserializes_only_the_matching_record_and_skips_corrupt_lines() {
+    // The adapter filters lines by the id as a substring before parsing and
+    // matches on the parsed id, so an entry whose CONTENT mentions another
+    // id is never returned for that id, and a torn line elsewhere in the
+    // file neither breaks the recall nor the index.
+    let tmp = tempfile::tempdir().unwrap();
+    let store = under_test(tmp.path().to_path_buf());
+    let mut decoy = entry("decoy");
+    decoy.content = "see turn1:bash:0 for the real output".to_string();
+    store.append(&id("cli:s"), &decoy).await.unwrap();
+    let file = tmp.path().join("sessions/cli_s/spill.jsonl");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&file)
+        .unwrap()
+        .write_all(b"{\"id\":\"torn\",\"tool\":\"bash\"\n")
+        .unwrap();
+    store
+        .append(&id("cli:s"), &entry("turn1:bash:0"))
+        .await
+        .unwrap();
+
+    let got = store
+        .recall(&id("cli:s"), &SpillId::new("turn1:bash:0"))
+        .await
+        .unwrap()
+        .expect("the real entry resolves past the decoy and the torn line");
+    assert_eq!(got.content, "content for turn1:bash:0");
+    assert!(
+        store
+            .recall(&id("cli:s"), &SpillId::new("torn"))
+            .await
+            .unwrap()
+            .is_none(),
+        "a torn record is never served"
+    );
+    let ids: Vec<String> = store
+        .list_entries(&id("cli:s"))
+        .await
+        .unwrap()
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["decoy", "turn1:bash:0"],
+        "the index skips the torn line"
+    );
+}
+
+#[tokio::test]
+async fn append_reports_a_failure_and_retains_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The session directory is a file: the spill file cannot be created.
+    std::fs::create_dir_all(tmp.path().join("sessions")).unwrap();
+    std::fs::write(tmp.path().join("sessions/cli_s"), b"").unwrap();
+    let store = under_test(tmp.path().to_path_buf());
+    let err = store
+        .append(&id("cli:s"), &entry("x"))
+        .await
+        .expect_err("append fails");
+    assert!(err.to_string().contains("spill"), "{err}");
+}
+
+#[tokio::test]
+async fn scrub_sync_removes_the_namespace_file_and_its_emptied_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = under_test(tmp.path().to_path_buf());
+    let ephemeral = SessionIdentity::ephemeral();
+    store.append(&ephemeral, &entry("run-1")).await.unwrap();
+    store.append(&id("cli:a"), &entry("kept")).await.unwrap();
+    let file = tmp.path().join("sessions/key_/spill.jsonl");
+    assert!(file.is_file());
+
+    store.scrub_sync(&ephemeral);
+
+    assert!(!file.exists(), "the scrubbed namespace file is gone");
+    assert!(
+        !file.parent().unwrap().exists(),
+        "its emptied directory goes with it"
+    );
+    assert!(
+        tmp.path().join("sessions/cli_a/spill.jsonl").is_file(),
+        "another namespace stands"
+    );
+    // Scrubbing a namespace that never spilled is a no-op.
+    store.scrub_sync(&id("cli:never"));
 }

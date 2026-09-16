@@ -348,6 +348,26 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "dto",
                     "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
                 ] => true,
+                // Retained context (D9 #1978): the `recall` tool adapts the
+                // sessions capability's recall use case — it holds the
+                // composed handle, parses its schema and formats the
+                // outcomes; the selection is the use case's.
+                [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "use_cases",
+                    "RecallContext",
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "dto",
+                    "retained_context",
+                    "RecallError" | "RecallOutcome" | "RecallQuery",
+                    ..,
+                ] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the

@@ -9,7 +9,6 @@ use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
@@ -66,7 +65,9 @@ pub struct AgentLoopConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
-    pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// The loop's retention handles (D9 #1978), composed over the one
+    /// retention store; `None` retains nothing.
+    pub retention: Option<crate::application::context::ContextRetention>,
     pub session_key: String,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
@@ -109,7 +110,9 @@ pub struct AgentLoopImpl {
     model_max_tokens: Option<u32>,
     temperature: f32,
     max_tool_iterations: u32,
-    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// Whether the loop retains context (D9 #1978): the spill manifest is
+    /// refreshed after a tool turn only when it does.
+    retains_context: bool,
     session_key: String,
     /// #1044: the active model's known context window (None when unknown).
     pub(super) model_context_window: Option<usize>,
@@ -148,7 +151,7 @@ impl std::fmt::Debug for AgentLoopImpl {
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
-            spill_store: config.spill_store.clone(),
+            retention: config.retention.clone(),
             session_key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
                 config.session_key.as_str(),
             ),
@@ -173,7 +176,7 @@ impl AgentLoopImpl {
             model_max_tokens: None,
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
-            spill_store: config.spill_store,
+            retains_context: config.retention.is_some(),
             session_key: config.session_key,
             model_context_window: config.model_context_window,
             progress_callback: config.progress_callback,
@@ -416,11 +419,6 @@ impl AgentLoopImpl {
                 tracing::warn!(target: "audit", error = %e, "audit log write failed");
             }
         }
-    }
-
-    /// Access the context spill store (if configured).
-    pub fn spill_store(&self) -> Option<&Arc<dyn ContextSpillStore>> {
-        self.spill_store.as_ref()
     }
 
     fn build_chat_request<'a>(
@@ -696,7 +694,7 @@ impl AgentLoopImpl {
                 messages: appended_messages[ledger_from..].into(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
-            spills_dirty = self.spill_store.is_some();
+            spills_dirty = self.retains_context;
             iterations += 1;
             current_turn += 1;
 

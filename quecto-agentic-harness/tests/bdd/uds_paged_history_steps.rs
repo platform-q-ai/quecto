@@ -710,7 +710,9 @@ fn seed_stub_session(world: &mut QuectoWorld) {
             model: "paged-stub-seed".into(),
             max_tokens: 100,
             temperature: 0.0,
-            spill_store: Some(spill_store.clone()),
+            retention: Some(quecto::composition::retention::context_retention_over(
+                spill_store.clone(),
+            )),
             session_key: session_key.clone(),
             context_collapse_after_tool_calls: u32::MAX,
             max_context_tokens: 190_000,
@@ -919,7 +921,9 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         &mut registry,
         &ext_registry,
     );
-    let spill_store = Arc::new(FileContextSpillStore::new(FlatSessionLayout::new(base)));
+    let retention = quecto::composition::retention::retention_handles_over(Arc::new(
+        FileContextSpillStore::new(FlatSessionLayout::new(base)),
+    ));
     let session_key = Session::build_key("cli", session_name);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -928,7 +932,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: Some(spill_store),
+        retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -949,6 +953,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            retention: Some(retention),
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,

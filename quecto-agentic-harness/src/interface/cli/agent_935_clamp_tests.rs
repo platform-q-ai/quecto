@@ -48,6 +48,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     };

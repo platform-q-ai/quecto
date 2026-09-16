@@ -84,7 +84,7 @@ async fn check(code: Option<&str>, post: bool, retries: bool) {
         model: "fixture".into(),
         max_tokens: 32,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "fixture".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,

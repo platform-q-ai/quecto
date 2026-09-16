@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{SpillEntry, SpillIndex};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
@@ -20,6 +21,12 @@ fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
     m.turn = Some(turn);
     m
+}
+
+/// The narrow handles the policy consumes, composed over the test store
+/// exactly as the runtime composes them (D9 #1978).
+fn retention(store: &Arc<MemStore>) -> crate::application::context::ContextRetention {
+    crate::composition::retention::context_retention_over(store.clone())
 }
 
 /// Minimal in-memory spill store for exercising the real spill-to-store path.
@@ -224,7 +231,7 @@ fn ceiling_ladder_never_demotes_system_prompt_or_manifest() {
 async fn manifest_text_stays_static_across_tool_and_message_spills() {
     // Exercise real tool/message spill IDs, then verify none of their dynamic
     // bytes enter the front-positioned cache prefix (#1118).
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     store
         .append(
             &id("s"),
@@ -240,7 +247,7 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
         .unwrap();
     let big = "x".repeat(600);
     let mut assistant = assistant_on_turn(&big, 1);
-    messages::spill_conversation_message(&mut assistant, &store, &id("s")).await;
+    messages::spill_conversation_message(&mut assistant, &retention(&store).retain, &id("s")).await;
     let entries = store.list_entries(&id("s")).await.unwrap();
     assert_eq!(
         entries.len(),
@@ -249,7 +256,7 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
     );
 
     let mut messages = vec![Message::system("system prompt"), Message::user("prompt")];
-    assert!(update_spill_manifest(&mut messages, &store, &id("s")).await);
+    assert!(update_spill_manifest(&mut messages, &retention(&store).list, &id("s")).await);
     let manifest = messages
         .iter()
         .find(|message| message.is_manifest)
@@ -267,10 +274,11 @@ async fn message_spill_ids_never_collide_across_prompts() {
     // Turn numbering restarts each prompt, so two different prompts can both
     // file a "turn 1" assistant reply into the same session-persistent store.
     // Every spill must stay individually recallable.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     for content in ["prompt A reply", "prompt B reply"] {
         let mut assistant = assistant_on_turn(&content.repeat(50), 1);
-        messages::spill_conversation_message(&mut assistant, &store, &id("s")).await;
+        messages::spill_conversation_message(&mut assistant, &retention(&store).retain, &id("s"))
+            .await;
     }
     let entries = store.list_entries(&id("s")).await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
@@ -292,11 +300,11 @@ async fn message_spill_ids_never_collide_across_prompts() {
 async fn turnless_user_spills_get_distinct_ids() {
     // Production never turn-stamps user prompts; several spilled past prompts
     // must not all collide on `turn0:msg:user`.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let big = "z".repeat(600);
     for _ in 0..2 {
         let mut user = Message::user(&big);
-        messages::spill_conversation_message(&mut user, &store, &id("s")).await;
+        messages::spill_conversation_message(&mut user, &retention(&store).retain, &id("s")).await;
     }
     let entries = store.list_entries(&id("s")).await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
@@ -375,7 +383,7 @@ fn stamped_trailing_user_feedback_does_not_usurp_prompt_boundary() {
 
 #[tokio::test]
 async fn mem_store_trait_surface_clear_empties_entries() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let entry = SpillEntry {
         id: "id1".into(),
         tool: "bash".into(),

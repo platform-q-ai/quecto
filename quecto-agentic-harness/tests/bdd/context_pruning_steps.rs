@@ -422,7 +422,7 @@ fn when_sliding_window_drops(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.0.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 
@@ -518,7 +518,7 @@ fn when_agent_executes_tools_turns_1_through_5(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 
@@ -538,7 +538,7 @@ fn when_agent_processes_3_turns_no_tools(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 }
@@ -840,7 +840,7 @@ fn then_pinned_manifest_appears(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 
@@ -889,7 +889,7 @@ fn then_manifest_lists_10_recent(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 
@@ -1119,25 +1119,22 @@ fn run_spilling_sliding_window(world: &mut QuectoWorld) {
         .expect("recent-turn pinning must be set");
     let messages = world.context_messages.as_mut().unwrap();
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        context_pruning::update_spill_manifest(messages, store.0.as_ref(), &sid("test-session"))
+        let retention = store.retention();
+        context_pruning::update_spill_manifest(messages, &retention.list, &sid("test-session"))
             .await;
         let mut spilled = false;
         for msg in messages.iter_mut().filter(|m| m.spill_id.is_none()) {
             spilled |= msg_pruning::spill_conversation_message(
                 msg,
-                store.0.as_ref(),
+                &retention.retain,
                 &sid("test-session"),
             )
             .await;
         }
         msg_pruning::enforce_context_ceiling_ladder(messages, max_tokens, pin_recent_turns);
         if spilled {
-            context_pruning::update_spill_manifest(
-                messages,
-                store.0.as_ref(),
-                &sid("test-session"),
-            )
-            .await;
+            context_pruning::update_spill_manifest(messages, &retention.list, &sid("test-session"))
+                .await;
         }
     });
 }
@@ -1276,7 +1273,7 @@ fn when_spill_manifest_updated(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
+            &store.retention().list,
             &sid("test-session"),
         ));
 }
@@ -1510,7 +1507,9 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: Some(store.0.clone()),
+        retention: Some(quecto::composition::retention::context_retention_over(
+            store.0.clone(),
+        )),
         session_key: session_key_under_test(world),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
@@ -1970,7 +1969,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "test-session".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
@@ -2037,7 +2036,7 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: world.context_budget_config.expect("config budget set"),
@@ -2104,7 +2103,9 @@ fn run_prompt_through_loop(
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: Some(store.0.clone()),
+        retention: Some(quecto::composition::retention::context_retention_over(
+            store.0.clone(),
+        )),
         session_key,
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,

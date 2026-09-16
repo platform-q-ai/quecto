@@ -1,6 +1,15 @@
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::session::{SpillEntry, SpillIndex};
 use crate::domain::session_identity::{SessionIdentity, SpillId};
+
+/// The recall use case over `store`, composed as the runtime composes it
+/// (D9 #1978): the tool adapts the use case, never the store.
+fn recall_over(
+    store: Arc<dyn crate::application::sessions::ports::ContextSpillStore>,
+) -> Arc<crate::application::sessions::use_cases::RecallContext> {
+    crate::composition::retention::retention_handles_over(store).recall
+}
 
 fn id(k: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(k)
@@ -175,7 +184,7 @@ async fn test_recall_by_id() {
     // Store lifecycle (has_entries/list_entries/clear) is covered separately
     // by test_spill_store_lifecycle below.
     let store = test_store_with_entry();
-    let tool = RecallTool::new(store, "test-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"turn5:bash:0"}"#).await.unwrap();
     assert!(!result.is_error);
     assert_eq!(result.content, "hello world output");
@@ -202,7 +211,7 @@ async fn test_spill_store_lifecycle() {
 
     // Appending after a clear starts a fresh, recallable generation.
     store.append(&id("test-session"), &appended).await.unwrap();
-    let tool = RecallTool::new(store, "test-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"turn7:grep:0"}"#).await.unwrap();
     assert_eq!(result.content, "match");
 }
@@ -248,7 +257,7 @@ async fn test_recall_uses_updated_session_key() {
     assert!(!store.has_entries(&id("old-session")).await.unwrap());
     assert!(store.has_entries(&id("new-session")).await.unwrap());
 
-    let tool = RecallTool::new(store, "old-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "old-session".to_string());
 
     tool.set_session_key("new-session".to_string());
 
@@ -260,7 +269,7 @@ async fn test_recall_uses_updated_session_key() {
 #[tokio::test]
 async fn test_recall_not_found() {
     let store = test_store_with_entry();
-    let tool = RecallTool::new(store, "test-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"nonexistent:id:0"}"#).await.unwrap();
     assert!(result.is_error);
     assert!(result.content.contains("No spilled output found"));
@@ -276,7 +285,7 @@ async fn test_recall_list() {
         tokens: 200,
         content: "drwxr-xr-x".to_string(),
     });
-    let tool = RecallTool::new(store, "test-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"list"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("2 entries"));
@@ -290,7 +299,7 @@ async fn test_recall_list() {
 #[tokio::test]
 async fn test_recall_list_empty() {
     let store = Arc::new(MemorySpillStore::new());
-    let tool = RecallTool::new(store, "test-session".to_string());
+    let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"list"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("No spilled outputs"));
@@ -307,7 +316,7 @@ fn test_extract_id() {
 #[test]
 fn test_tool_definition() {
     let store = Arc::new(MemorySpillStore::new());
-    let tool = RecallTool::new(store, "test".to_string());
+    let tool = RecallTool::new(recall_over(store), "test".to_string());
     let def = tool.definition();
     assert_eq!(def.name, "recall");
     assert!(def.description.contains("spilled session memory"));

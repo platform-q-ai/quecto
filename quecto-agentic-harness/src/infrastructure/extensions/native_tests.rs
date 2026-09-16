@@ -304,14 +304,9 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
 /// #1276 Phase 3: session-scoped provider supplies recall with the expected name.
 #[test]
 fn build_session_tool_extensions_supplies_recall() {
-    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
-    use std::sync::Arc;
-
     let tmp = tempfile::TempDir::new().unwrap();
     let exts = build_session_tool_extensions(SessionToolDeps {
-        spill_store: Arc::new(FileContextSpillStore::new(
-            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
-        )),
+        recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         session_key: "cli:test".into(),
     });
     assert_eq!(exts.len(), 1);
