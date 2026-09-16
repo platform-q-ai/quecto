@@ -83,7 +83,10 @@ impl ChangeActiveModel {
     pub fn execute(&self, runtime: &mut dyn ModelRuntime, model: &str) -> ModelSwitched {
         let plan = self.plan(model);
         runtime.apply_model(plan.model.clone(), plan.limits);
-        let effort_changed = self.effort.reset_for_model_switch(runtime, &plan.model);
+        // The reset reads the model the runtime now reports, so it can only
+        // ever follow the switch.
+        let active = runtime.model().to_string();
+        let effort_changed = self.effort.reset_for_model_switch(runtime, &active);
         ModelSwitched {
             plan,
             effort_changed,

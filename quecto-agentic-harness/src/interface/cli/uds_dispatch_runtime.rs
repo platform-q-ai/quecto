@@ -97,4 +97,4 @@ pub(super) async fn handle_set_effort(
 
 #[cfg(test)]
 #[path = "uds_dispatch_runtime_tests.rs"]
-mod selection_status_tests;
+mod set_model_wire_tests;
