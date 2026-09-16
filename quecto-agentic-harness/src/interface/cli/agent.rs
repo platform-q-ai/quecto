@@ -429,11 +429,12 @@ pub(crate) fn build_agent_from_config(
         }
     }
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
-    // #935/#1044: one registry load supplies the per-model output cap (clamps
-    // max_tokens so low-limit models never get a larger value; set_model
-    // re-derives on switch) and the known context window (bounds the budget).
-    let (cap, window) =
-        crate::interface::catalogue_runtime::published_model_limits(base_dir, &model);
+    // #935/#1044: the startup model's declared output cap (clamps max_tokens
+    // so low-limit models never get a larger value) and context window
+    // (bounds the budget) come from the change-active-model use case — the
+    // same read a later set_model performs (#1847).
+    let limits = catalogue.model.startup_limits(&model);
+    let (cap, window) = (limits.max_output_tokens, limits.context_window);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

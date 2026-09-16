@@ -1,9 +1,9 @@
 //! Tests for the interface runtime-composition wiring (issue #1573): the real
-//! factory, sources, and stores behind `compose_and_publish_runtime` /
-//! `select_model`, driven with on-disk models.json fixtures (no network).
+//! factory, sources, and stores behind `compose_and_publish_runtime`, and the
+//! selection verdict the change-active-model plan reads over what it
+//! published (#1847), driven with on-disk models.json fixtures (no network).
 
 use super::*;
-use crate::application::provider_runtime::SelectionError;
 use crate::domain::catalogue::UnavailableReason;
 
 fn write_models_json(dir: &Path, body: &str) {
@@ -21,6 +21,18 @@ fn compose(dir: &Path) -> Result<Arc<CatalogueRuntimeSnapshot>, RuntimeCompositi
     compose_and_publish_runtime(&Config::default(), dir, &reqwest::Client::new())
 }
 
+/// The selection verdict the change-active-model plan carries (#1847),
+/// read over the published runtime generation of `dir`.
+fn select_model(
+    dir: &Path,
+    model: &str,
+) -> crate::application::catalogue::dto::ModelSelectionVerdict {
+    crate::composition::catalogue::build_catalogue_handles(dir)
+        .model
+        .plan(model)
+        .verdict
+}
+
 #[test]
 fn failed_composition_publishes_no_runtime_and_selection_reports_no_runtime() {
     let tmp = tempfile::tempdir().unwrap();
@@ -30,8 +42,8 @@ fn failed_composition_publishes_no_runtime_and_selection_reports_no_runtime() {
     assert!(error.retained.is_none());
     assert!(runtime_store_for(tmp.path()).current().is_none());
     assert_eq!(
-        select_model(tmp.path(), "openai-api/gpt-5").expect_err("no runtime yet"),
-        SelectionError::NoRuntime
+        select_model(tmp.path(), "openai-api/gpt-5"),
+        crate::application::catalogue::dto::ModelSelectionVerdict::NoRuntime
     );
 }
 
@@ -45,9 +57,16 @@ fn composed_runtime_and_catalogue_share_one_generation_and_selection_matches() {
         snapshot_store_for(tmp.path()).current().generation(),
         "runtime and catalogue stores publish the same generation"
     );
-    let selection = select_model(tmp.path(), "wired/wired-model").expect("runnable model selects");
-    assert_eq!(selection.entry.provider.id.as_str(), "wired");
-    assert_eq!(selection.generation, snapshot.generation());
+    match select_model(tmp.path(), "wired/wired-model") {
+        crate::application::catalogue::dto::ModelSelectionVerdict::Runnable {
+            provider,
+            generation,
+        } => {
+            assert_eq!(provider, "wired");
+            assert_eq!(generation, snapshot.generation());
+        }
+        other => panic!("runnable model selects, got {other:?}"),
+    }
 
     // A failed re-composition retains this generation.
     std::fs::remove_file(tmp.path().join("models.json")).unwrap();
@@ -68,20 +87,21 @@ fn selection_returns_structured_reasons_for_unknown_and_unrunnable_models() {
     let tmp = tempfile::tempdir().unwrap();
     write_models_json(tmp.path(), RUNNABLE_AND_KEYLESS);
     compose(tmp.path()).expect("composition succeeds");
+    use crate::application::catalogue::dto::ModelSelectionVerdict;
     assert_eq!(
-        select_model(tmp.path(), "wired/no-such-model").expect_err("unknown model"),
-        SelectionError::UnknownModel {
+        select_model(tmp.path(), "wired/no-such-model"),
+        ModelSelectionVerdict::Unknown {
             reference: "wired/no-such-model".to_string()
         }
     );
     assert_eq!(
-        select_model(tmp.path(), "not a qualified ref").expect_err("unparsable reference"),
-        SelectionError::UnknownModel {
+        select_model(tmp.path(), "not a qualified ref"),
+        ModelSelectionVerdict::Unknown {
             reference: "not a qualified ref".to_string()
         }
     );
-    match select_model(tmp.path(), "keyless/keyless-model").expect_err("unrunnable model") {
-        SelectionError::NotRunnable { reasons, .. } => {
+    match select_model(tmp.path(), "keyless/keyless-model") {
+        ModelSelectionVerdict::NotRunnable { reasons, .. } => {
             assert!(reasons.contains(&UnavailableReason::MissingCredential));
         }
         other => panic!("expected NotRunnable, got {other:?}"),

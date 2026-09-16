@@ -1,18 +1,20 @@
 //! Interface wiring for application-owned provider runtime composition and
-//! model selection (epic #1193, slice 3).
+//! catalogue refresh (epic #1193, slice 3). Model selection and the
+//! catalogue reads moved to the catalogue capability's use cases (#1845,
+//! #1847); runtime composition and refresh follow in #1849 and #1846.
 //!
-//! The only layer allowed to see both application use cases and infrastructure
-//! adapters: entry points (CLI startup, provider reload, UDS model switching)
-//! call these functions instead of constructing provider state themselves.
+//! Until then this is the one interface module that sees both application
+//! use cases and infrastructure adapters: entry points (CLI startup,
+//! provider reload) call these functions instead of constructing provider
+//! state themselves.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::provider_runtime::{
-    CatalogueRuntimeSnapshot, ComposeProviderRuntimeUseCase, CompositionPorts, ModelSelection,
-    ResolveModelSelectionUseCase, RuntimeCompositionError, SelectionError,
+    CatalogueRuntimeSnapshot, ComposeProviderRuntimeUseCase, CompositionPorts,
+    RuntimeCompositionError,
 };
-use crate::domain::catalogue::ModelRef;
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
 use crate::infrastructure::config::Config;
@@ -98,54 +100,11 @@ fn openai_api_base(config: &Config) -> Option<String> {
     crate::infrastructure::provider_runtime::non_empty(config.providers.openai.api_base.clone())
 }
 
-/// Resolve a qualified model reference against the published runtime
-/// generation for `base_dir`: the catalogue identity plus runnable provider,
-/// or the structured reason it cannot run. An unparsable reference maps to
-/// the unknown-model reason (the catalogue can never know it).
-pub fn select_model(base_dir: &Path, qualified: &str) -> Result<ModelSelection, SelectionError> {
-    let Ok(reference) = ModelRef::parse_qualified(qualified) else {
-        return Err(SelectionError::UnknownModel {
-            reference: qualified.to_string(),
-        });
-    };
-    ResolveModelSelectionUseCase::new().select(&runtime_store_for(base_dir), &reference)
-}
-
-use crate::application::catalogue::{ResolveCatalogueUseCase, ResolvedCatalogue, model_limits_in};
 use crate::application::catalogue_refresh::{
     CatalogueRefreshReport, RefreshBounds, RefreshCatalogueSourcesUseCase, RefreshContext,
     RefreshPorts, RefreshSelection, SourceRefreshOutcome, SourceRefreshStatus,
 };
-use crate::application::ports::CatalogueSnapshotStore;
 use crate::infrastructure::catalogue_discovery::{SecretsRedaction, configured_discovery};
-
-/// Run the resolve-effective-catalogue use case over the real sources for
-/// `base_dir` and publish into its shared store, through the same inputs
-/// port adapter the list-models use case is composed over (#1845), so there
-/// is one loader. Still called by `published_model_limits` (model switching
-/// and startup limits) until #1847 migrates selection; no network is touched.
-pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, ResolvedCatalogue) {
-    use crate::application::catalogue::ports::CatalogueInputsLoader;
-    let store = snapshot_store_for(base_dir);
-    let inputs = crate::infrastructure::catalogue_inputs::FileCatalogueInputs::new(base_dir).load();
-    let resolved = ResolveCatalogueUseCase.resolve_and_publish(
-        &inputs.sources(),
-        inputs.credentials(),
-        &store,
-    );
-    (store, resolved)
-}
-
-/// The per-model limits for a qualified `provider/model` string, read from
-/// the published catalogue snapshot: `(output cap, context window)`, each
-/// `None` unless explicitly declared. One resolve-and-publish feeds one
-/// `model_limits_in` read, so the limits a consumer applies always describe
-/// the generation it just published — no surface re-derives limits from the
-/// registry on its own (epic #1193, slice 6).
-pub fn published_model_limits(base_dir: &Path, qualified: &str) -> (Option<u32>, Option<usize>) {
-    let (store, _) = resolve_and_publish_for(base_dir);
-    model_limits_in(&store.current(), qualified)
-}
 
 /// Outcome-source id used when the registry file itself (rather than one
 /// provider) fails to parse.

@@ -5,3 +5,4 @@
 pub mod effort_presenter;
 pub mod list_models_controller;
 pub mod list_models_presenter;
+pub mod model_presenter;

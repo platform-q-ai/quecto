@@ -50,8 +50,8 @@ fn infrastructure_defines_no_canonical_catalogue_types() {
 #[test]
 fn set_model_derives_limits_from_the_published_snapshot_only() {
     // The UDS set_model path must resolve limits from one published snapshot
-    // read (`interface::catalogue_runtime::published_model_limits`), not via
-    // a bridge that re-resolves the catalogue on its own. The grep is a
+    // read — the change-active-model use case's plan (#1847) — not via a
+    // bridge that re-resolves the catalogue on its own. The grep is a
     // tripwire; the behavioral counterparts are
     // `contracts::catalogue_consumers::set_model_limits_and_selection_come_from_the_published_snapshot`
     // and the dispatch-level re-clamp test
@@ -60,12 +60,13 @@ fn set_model_derives_limits_from_the_published_snapshot_only() {
         std::fs::read_to_string(harness_root().join("src/interface/cli/uds_dispatch_runtime.rs"))
             .unwrap();
     assert!(
-        !dispatch.contains("model_limits_from_base_dir"),
-        "uds set_model still derives limits through the legacy bridge re-resolve"
+        !dispatch.contains("model_limits_from_base_dir")
+            && !dispatch.contains("published_model_limits"),
+        "uds set_model still derives limits outside the change-active-model use case"
     );
     assert!(
-        dispatch.contains("published_model_limits"),
-        "uds set_model must derive limits from the published snapshot"
+        dispatch.contains("ctx.catalogue.model"),
+        "uds set_model must switch through the composed change-active-model use case"
     );
 }
 

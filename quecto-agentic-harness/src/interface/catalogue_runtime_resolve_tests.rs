@@ -1,16 +1,24 @@
-//! Tests for the effective-catalogue interface bridge (issue #1572).
+//! Tests for the effective-catalogue resolve over the real inputs (issue
+//! #1572) and the per-model limits the change-active-model use case reads
+//! (#935/#1044, #1847), through the composition helpers rigs share.
 
-use super::*;
+use crate::composition::catalogue::{published_model_limits_for, resolve_catalogue_for};
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
+use crate::infrastructure::catalogue_registry::snapshot_store_for;
+
+fn published_model_limits(dir: &std::path::Path, model: &str) -> (Option<u32>, Option<usize>) {
+    let limits = published_model_limits_for(dir, model);
+    (limits.max_output_tokens, limits.context_window)
+}
 
 #[test]
-fn resolve_and_publish_for_publishes_one_generation_per_call() {
+fn resolve_publishes_one_generation_per_call() {
     let tmp = tempfile::tempdir().unwrap();
-    let (store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     assert!(resolved.source_errors.is_empty());
-    let first = store.current().generation();
+    let first = resolved.snapshot.generation();
     assert!(first >= 1);
-    let (_, resolved_again) = resolve_and_publish_for(tmp.path());
+    let resolved_again = resolve_catalogue_for(tmp.path());
     assert_eq!(resolved_again.snapshot.generation(), first + 1);
     // Same base_dir shares one store.
     assert_eq!(
@@ -100,7 +108,7 @@ fn discovered_models_inherit_provider_credentials_and_join_the_effective_registr
     .store_models_response(r#"{"data":[{"id":"alpha","name":"Alpha"}]}"#)
     .unwrap();
 
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let entry = resolved
         .snapshot
         .find(&crate::domain::catalogue::ModelRef::parse_qualified("openrouter/alpha").unwrap())
@@ -175,7 +183,7 @@ fn valid_provider_survives_an_unsupported_transport_neighbour() {
     use crate::domain::catalogue::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let good = ModelRef::parse_qualified("custom/m1").unwrap();
     assert!(
         resolved.snapshot.find(&good).is_some(),
@@ -189,7 +197,7 @@ fn unsupported_transport_entry_is_listed_as_known() {
     use crate::domain::catalogue::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let unsupported = ModelRef::parse_qualified("wsprov/m2").unwrap();
     assert!(
         resolved.snapshot.find(&unsupported).is_some(),
@@ -204,7 +212,7 @@ fn unsupported_transport_entry_is_not_runnable_with_structured_reason() {
     use crate::domain::catalogue::{ModelRef, UnavailableReason};
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let unsupported = ModelRef::parse_qualified("wsprov/m2").unwrap();
     let entry = resolved
         .snapshot
@@ -232,7 +240,7 @@ fn stable_id_override_replaces_builtin_display_name() {
     use crate::domain::catalogue::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
     let entry = resolved.snapshot.find(&reference).expect("builtin entry");
     assert_eq!(
@@ -248,7 +256,7 @@ fn stable_id_override_replaces_builtin_context_window() {
     use crate::domain::catalogue::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
     let entry = resolved.snapshot.find(&reference).expect("builtin entry");
     assert_eq!(
@@ -267,7 +275,7 @@ fn literal_secret_in_override_surface_is_rejected_with_structured_error() {
         &tmp,
         r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"sk-live-secret123"}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let mentions = |text: &str| text.contains("credential reference");
     assert!(
         resolved.source_errors.iter().any(|e| mentions(&e.error))
@@ -288,7 +296,7 @@ fn user_file_model_add_on_existing_provider_is_published() {
         &tmp,
         r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-5.5-preview","name":"GPT 5.5 Preview"}]}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let added = ModelRef::parse_qualified("openai-api/gpt-5.5-preview").unwrap();
     let entry = resolved.snapshot.find(&added).expect("added model listed");
     assert_eq!(entry.model.display_name.as_deref(), Some("GPT 5.5 Preview"));
@@ -306,7 +314,7 @@ fn user_file_provider_add_with_credential_reference_is_runnable() {
         &tmp,
         r#"{"providers":{"my-gateway":{"api":"openai-completions","baseUrl":"https://gw.example/v1","apiKey":"$SLICE5_GATEWAY_KEY","models":[{"id":"custom-model"}]}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let added = ModelRef::parse_qualified("my-gateway/custom-model").unwrap();
     let entry = resolved.snapshot.find(&added).expect("added model listed");
     assert!(
@@ -327,7 +335,7 @@ fn legacy_provider_level_literal_api_key_stays_accepted() {
         &tmp,
         r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"legacy-literal-key","models":[{"id":"qwen3p7-plus"}]}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     assert!(resolved.source_errors.is_empty() && resolved.skipped.is_empty());
     let legacy = ModelRef::parse_qualified("fireworks/qwen3p7-plus").unwrap();
     let entry = resolved
@@ -343,7 +351,7 @@ fn legacy_provider_level_literal_api_key_stays_accepted() {
 fn override_of_unknown_model_is_reported_not_dropped() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, r#"{"overrides":{"nope/missing":{"name":"X"}}}"#);
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     assert!(
         resolved
             .skipped
@@ -364,7 +372,7 @@ fn override_referencing_unset_env_var_is_rejected_and_keeps_base_credential() {
         &tmp,
         r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"$QUECTO_TEST_DEFINITELY_UNSET_VAR"}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     assert!(
         resolved.skipped.iter().any(|(_, s)| {
             s.record == "openai-api/gpt-5.5" && s.error.contains("unset or empty")
@@ -386,7 +394,7 @@ fn override_patches_an_unsupported_transport_entry() {
         r#"{"providers":{"wsprov":{"api":"websocket-frames","models":[{"id":"m2"}]}},
             "overrides":{"wsprov/m2":{"name":"My WS","contextWindow":42000}}}"#,
     );
-    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let resolved = resolve_catalogue_for(tmp.path());
     let entry = resolved
         .snapshot
         .find(&ModelRef::parse_qualified("wsprov/m2").unwrap())
