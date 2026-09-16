@@ -64,6 +64,7 @@ pub mod swarm;
 #[cfg(test)]
 mod swarm_ac_gap_tests;
 mod swarm_admission;
+mod swarm_board_worker;
 pub mod swarm_bridge;
 mod swarm_config;
 pub mod swarm_control;
