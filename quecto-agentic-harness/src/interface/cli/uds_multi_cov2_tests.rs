@@ -143,7 +143,13 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
                     "cli:cov",
                 ),
             );
-            multi_client_loop(multi_args(dir.path()), listener, &store).await
+            multi_client_loop(
+                multi_args(dir.path()),
+                listener,
+                &store,
+                &crate::composition::catalogue::build_catalogue_handles(dir.path()),
+            )
+            .await
         })
     });
 
@@ -328,6 +334,9 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         rewrite,
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
+        ),
+        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+            dir.path(),
         ),
         fleet_teardown: None,
         list_sessions: list_handle(dir.path()),

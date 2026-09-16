@@ -2821,6 +2821,35 @@ fn sessions_interface_dependency_allowed(path: &str) -> bool {
     }
 }
 
+/// The catalogue edge (#1845) may name only the domain, the catalogue
+/// capability's DTOs and use cases, and itself — no store, registry or
+/// inputs adapter.
+fn catalogue_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "catalogue", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "catalogue", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn catalogue_interface_only_parses_maps_and_presents() {
+    assert_dependencies(
+        "src/interface/uds/catalogue",
+        catalogue_interface_dependency_allowed,
+    );
+}
+
 #[test]
 fn sessions_interface_only_parses_maps_and_presents() {
     assert_dependencies(
@@ -2835,7 +2864,15 @@ fn sessions_interface_only_parses_maps_and_presents() {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
     edges.sort();
-    assert_eq!(edges, ["parent_control", "sessions", "subagent_teardown"]);
+    assert_eq!(
+        edges,
+        [
+            "catalogue",
+            "parent_control",
+            "sessions",
+            "subagent_teardown"
+        ]
+    );
 }
 
 /// `pub trait` names declared in a source file, in declaration order.

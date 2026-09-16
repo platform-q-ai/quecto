@@ -7,7 +7,7 @@ use crate::domain::tool::ToolProfileContext;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
-    read_handles_for, resolve_message,
+    handles_over, list_models_handle, read_handles_for, resolve_message,
 };
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
@@ -143,12 +143,7 @@ impl Fixture {
                 FlatSessionLayout::new(tmp.path()),
             ),
         );
-        let handles = crate::interface::cli::uds::dispatch_session_roster_tests::handles_over(
-            store.clone(),
-            "cli:test",
-            spill_store.clone(),
-            &[],
-        );
+        let handles = handles_over(store.clone(), "cli:test", spill_store.clone(), &[]);
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -223,6 +218,7 @@ impl Fixture {
             save_session: handles.save_session.clone(),
             rewrite: handles.rewrite.clone(),
             switch: handles.switch.clone(),
+            list_models: list_models_handle(self._tmp.path()),
             fleet_teardown: None,
             list_sessions: handles.list_sessions.clone(),
         }

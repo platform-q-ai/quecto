@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use super::*;
 use quecto::application::catalogue::ResolvedCatalogue;
+use quecto::composition::catalogue::list_models_wire_for;
 use quecto::domain::catalogue::{CatalogueSnapshot, ModelRef, UnavailableReason};
 use quecto::interface::catalogue_runtime::resolve_and_publish_for;
-use quecto::interface::cli::uds_models::list_models_data;
 
 #[derive(Debug, Default)]
 pub struct CatalogueUserConfigState {
@@ -215,7 +215,7 @@ fn ucfg_when_resolved(world: &mut QuectoWorld) {
 #[when(expr = "the UDS models listing is requested")]
 fn ucfg_when_uds_listing(world: &mut QuectoWorld) {
     let base = ucfg_base(world);
-    world.catalogue_user_config.uds_listing = Some(list_models_data(&base));
+    world.catalogue_user_config.uds_listing = Some(list_models_wire_for(&base));
 }
 
 #[then(expr = "the published snapshot lists model {string} named {string}")]

@@ -4,6 +4,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
+use crate::interface::cli::uds_single_client::{SingleClientArgs, single_client_loop};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -69,6 +70,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         socket_override: None,
         session_store_override: None,
         sessions: crate::composition::sessions::build_session_handles,
+        catalogue: crate::composition::catalogue::build_catalogue_handles,
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
@@ -272,6 +274,7 @@ async fn single_client_socket_override_serves_get_state() {
                 },
                 server_std,
                 &store,
+                &crate::composition::catalogue::build_catalogue_handles(dir.path()),
             )
             .await
         })

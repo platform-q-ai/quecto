@@ -120,15 +120,19 @@ use crate::application::ports::CatalogueSnapshotStore;
 use crate::infrastructure::catalogue_discovery::{SecretsRedaction, configured_discovery};
 
 /// Run the resolve-effective-catalogue use case over the real sources for
-/// `base_dir` and publish into its shared store. Startup calls this once to
-/// publish the initial generation; the read surfaces call it again to stay
-/// level with on-disk edits until explicit refresh arrives (epic #1193 slices
-/// 4-5). No network is touched.
+/// `base_dir` and publish into its shared store, through the same inputs
+/// port adapter the list-models use case is composed over (#1845), so there
+/// is one loader. Still called by `published_model_limits` (model switching
+/// and startup limits) until #1847 migrates selection; no network is touched.
 pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, ResolvedCatalogue) {
+    use crate::application::catalogue::ports::CatalogueInputsLoader;
     let store = snapshot_store_for(base_dir);
-    let inputs = CatalogueInputs::load(base_dir);
-    let resolved =
-        ResolveCatalogueUseCase.resolve_and_publish(&inputs.sources(), &inputs.credentials, &store);
+    let inputs = crate::infrastructure::catalogue_inputs::FileCatalogueInputs::new(base_dir).load();
+    let resolved = ResolveCatalogueUseCase.resolve_and_publish(
+        &inputs.sources(),
+        inputs.credentials(),
+        &store,
+    );
     (store, resolved)
 }
 

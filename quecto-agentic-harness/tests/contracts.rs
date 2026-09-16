@@ -37,6 +37,8 @@ mod audit_sink;
 mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]
 mod catalogue_consumers;
+#[path = "contracts/catalogue_inputs_loader.rs"]
+mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
 #[path = "contracts/context_spill_store.rs"]
@@ -63,6 +65,8 @@ mod historical_roster_source;
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
+#[path = "contracts/loaded_catalogue_inputs.rs"]
+mod loaded_catalogue_inputs;
 #[path = "contracts/local_config_probe.rs"]
 mod local_config_probe;
 #[path = "contracts/provider_runtime_factory.rs"]

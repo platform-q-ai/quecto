@@ -1,7 +1,8 @@
-use super::{list_models_data, refresh_models_data};
+use super::refresh_models_data;
+use crate::composition::catalogue::list_models_wire_for;
 
 #[test]
-fn list_models_data_serializes_registry_models() {
+fn list_models_wire_serializes_registry_models() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
             tmp.path().join("models.json"),
@@ -26,7 +27,7 @@ fn list_models_data_serializes_registry_models() {
         )
         .unwrap();
 
-    let data = list_models_data(tmp.path());
+    let data = list_models_wire_for(tmp.path());
     let models = data["models"].as_array().unwrap();
     let find = |id: &str| {
         models
@@ -53,11 +54,11 @@ fn list_models_data_serializes_registry_models() {
 }
 
 #[test]
-fn list_models_data_reports_registry_errors() {
+fn list_models_wire_reports_registry_errors() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("models.json"), "not json").unwrap();
 
-    let data = list_models_data(tmp.path());
+    let data = list_models_wire_for(tmp.path());
 
     assert_eq!(data["models"].as_array().unwrap().len(), 0);
     assert!(data["error"].as_str().unwrap().contains("failed to parse"));
@@ -66,7 +67,7 @@ fn list_models_data_reports_registry_errors() {
 /// A record the catalogue drops (domain-rejected or unmappable) must surface
 /// as a wire diagnostic instead of silently vanishing from the listing.
 #[test]
-fn list_models_data_surfaces_rejected_and_skipped_records() {
+fn list_models_wire_surfaces_rejected_and_skipped_records() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
@@ -75,7 +76,7 @@ fn list_models_data_surfaces_rejected_and_skipped_records() {
     )
     .unwrap();
 
-    let data = list_models_data(tmp.path());
+    let data = list_models_wire_for(tmp.path());
     let models = data["models"].as_array().unwrap();
     assert!(
         models

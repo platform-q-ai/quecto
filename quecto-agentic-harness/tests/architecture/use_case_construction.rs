@@ -47,6 +47,7 @@ const USE_CASES: &[&str] = &[
     "KillDelegatedAgentPorts",
     "KillEnvironment",
     "ListEnvironmentsQuery",
+    "ListModels",
     "ListRetainedContext",
     "ListSessions",
     "ObserveOwnedChildExit",
@@ -98,10 +99,6 @@ const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[
     (
         "src/interface/catalogue_runtime.rs",
         "ResolveModelSelectionUseCase::new(",
-    ),
-    (
-        "src/interface/cli/uds_models.rs",
-        "QueryCatalogueUseCase::new(",
     ),
     (
         "src/infrastructure/tools/spawn.rs",

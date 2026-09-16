@@ -1,6 +1,7 @@
 mod admission_broker;
 mod agent;
 mod auth;
+pub mod catalogue_handles;
 mod commands;
 mod config_flag;
 mod models;
@@ -203,6 +204,7 @@ pub mod uds_session;
 pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
 mod uds_shutdown;
+mod uds_single_client;
 mod uds_snapshots;
 mod uds_socket;
 mod uds_state_projection;
@@ -320,6 +322,12 @@ pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::Re
 pub type FreshSessionIdentityBuilder =
     fn() -> std::sync::Arc<dyn crate::application::sessions::ports::FreshSessionIdentityGenerator>;
 
+/// Composition's builder of the catalogue handles (#1845): the controllers
+/// a dispatch loop answers the catalogue commands through, over the loop's
+/// base directory. Injected through the CLI context; the interface never
+/// constructs a catalogue use case.
+pub type CatalogueHandlesBuilder = fn(&std::path::Path) -> catalogue_handles::CatalogueHandles;
+
 /// Composition's builder of the configuration-selection use case (#1966):
 /// which one file a run loads its configuration from. Injected through the
 /// CLI context; the interface never probes the filesystem for a config.
@@ -371,6 +379,10 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; any command
     /// that loads configuration refuses to run without it.
     pub config_selection: Option<ConfigSelectionBuilder>,
+    /// Composition's catalogue handles builder (#1845). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
+    /// refuses to start without it.
+    pub catalogue: Option<CatalogueHandlesBuilder>,
 }
 
 impl CliContext {
@@ -414,6 +426,7 @@ pub struct CliComposition {
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub config_selection: ConfigSelectionBuilder,
+    pub catalogue: CatalogueHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -438,6 +451,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         config_selection: Some(composition.config_selection),
+        catalogue: Some(composition.catalogue),
         ..Default::default()
     };
 

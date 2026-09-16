@@ -1740,6 +1740,7 @@ impl QuectoWorld {
         world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
         world.cli_context.config_selection =
             Some(quecto::composition::configuration::build_select_config);
+        world.cli_context.catalogue = Some(quecto::composition::catalogue::build_catalogue_handles);
         world
     }
 }

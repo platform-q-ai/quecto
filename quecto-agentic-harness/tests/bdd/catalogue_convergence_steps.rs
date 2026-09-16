@@ -8,7 +8,7 @@
 
 use super::*;
 use common::catalogue_conformance as conformance;
-use quecto::interface::cli::uds_models::list_models_data;
+use quecto::composition::catalogue::list_models_wire_for;
 
 #[derive(Debug, Default)]
 pub struct CatalogueConvergenceState {
@@ -122,7 +122,7 @@ fn when_model_listing_requested(world: &mut QuectoWorld) {
         .expect("base dir prepared")
         .path()
         .to_path_buf();
-    world.catalogue_convergence.listing = Some(list_models_data(&base));
+    world.catalogue_convergence.listing = Some(list_models_wire_for(&base));
 }
 
 fn listing_models(world: &QuectoWorld) -> Vec<serde_json::Value> {

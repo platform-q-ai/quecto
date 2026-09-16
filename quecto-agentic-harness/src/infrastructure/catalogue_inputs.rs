@@ -207,3 +207,35 @@ fn synthesize_discovered_records(
     }
     records
 }
+
+/// The catalogue capability's inputs port over the real base directory
+/// (#1845): each load is one fresh `models.json` parse plus the persisted
+/// discovery caches and credential status — no network.
+#[derive(Debug)]
+pub struct FileCatalogueInputs {
+    base_dir: std::path::PathBuf,
+}
+
+impl FileCatalogueInputs {
+    pub fn new(base_dir: &Path) -> Self {
+        Self {
+            base_dir: base_dir.to_path_buf(),
+        }
+    }
+}
+
+impl crate::application::catalogue::ports::CatalogueInputsLoader for FileCatalogueInputs {
+    fn load(&self) -> Box<dyn crate::application::catalogue::ports::LoadedCatalogueInputs> {
+        Box::new(CatalogueInputs::load(&self.base_dir))
+    }
+}
+
+impl crate::application::catalogue::ports::LoadedCatalogueInputs for CatalogueInputs {
+    fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
+        CatalogueInputs::sources(self)
+    }
+
+    fn credentials(&self) -> &dyn crate::application::ports::CredentialStatusPort {
+        &self.credentials
+    }
+}

@@ -184,6 +184,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             socket_path,
             socket_override: Some(server),
             sessions: quecto::composition::sessions::build_session_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles,
             session_store_override: None,
             ext_registry: None,
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,

@@ -1,10 +1,15 @@
-//! Application catalogue use cases and ports (epic #1193, slice 2).
+//! Catalogue capability (epic #1193; target layout from #1845 on).
 //!
 //! The application layer is the authority for resolving catalogue sources into
 //! one published, immutable snapshot generation. It defines the ports it
-//! needs; infrastructure implements them, and every read surface (CLI listing,
-//! UDS queries, TUI model list) consumes query results projected from the
-//! current snapshot.
+//! needs; infrastructure implements them; the use cases under `use_cases/`
+//! answer the read and mutation triggers (UDS `list_models` first, #1845),
+//! and every surface presents their DTOs. Only composition
+//! (`composition::catalogue`) constructs a use case; interface holds handles.
+
+pub mod dto;
+pub mod ports;
+pub mod use_cases;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -249,46 +254,6 @@ impl ResolveCatalogueUseCase {
     }
 }
 
-/// Derived views over one snapshot, narrowing in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogueQuery {
-    /// Everything the catalogue knows — the bottom rung of the availability
-    /// ladder. (A separate `Known` synonym was removed: two names for one
-    /// behaviour can only drift apart.)
-    All,
-    Available,
-    Runnable,
-}
-
-/// Query the current snapshot only — never re-reads configuration.
-pub struct QueryCatalogueUseCase {
-    store: CatalogueSnapshotStore,
-}
-
-impl QueryCatalogueUseCase {
-    pub fn new(store: CatalogueSnapshotStore) -> Self {
-        Self { store }
-    }
-
-    /// Project a filtered view of the current snapshot. Reads the snapshot
-    /// store only — this use case holds no source ports, so it cannot re-read
-    /// configuration by construction.
-    pub fn query(&self, filter: CatalogueQuery) -> CatalogueSnapshot {
-        let snapshot = self.store.current();
-        snapshot.filtered(|entry| match filter {
-            // Derived views narrowing in order: everything the catalogue
-            // knows, entries whose status reached at least Available (adapter
-            // present, only a credential possibly missing), and entries that
-            // can run right now.
-            CatalogueQuery::All => true,
-            CatalogueQuery::Available => {
-                entry.model.availability.status() >= AvailabilityStatus::Available
-            }
-            CatalogueQuery::Runnable => entry.model.availability.is_runnable(),
-        })
-    }
-}
-
 /// Whether a transport adapter exists for this transport kind. Every named
 /// kind the domain enumerates has an adapter today; a transport a catalogue
 /// file declared that no adapter implements does not (#1575, AC3), so its
@@ -322,39 +287,6 @@ pub fn derive_availability(
     };
     Availability::unavailable(status, reasons)
         .expect("non-runnable status with at least one reason is always constructible")
-}
-
-/// One row of the shared model-listing projection every read surface (CLI
-/// listing, UDS queries, TUI model list) renders from.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelListingRow {
-    pub qualified_id: String,
-    pub display_name: Option<String>,
-    pub runnable: bool,
-}
-
-/// The listing every consumer surface shows, tagged with the snapshot
-/// generation it was projected from.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelListing {
-    pub generation: u64,
-    pub rows: Vec<ModelListingRow>,
-}
-
-/// Project the shared model listing from one snapshot.
-pub fn project_model_listing(snapshot: &CatalogueSnapshot) -> ModelListing {
-    ModelListing {
-        generation: snapshot.generation(),
-        rows: snapshot
-            .entries()
-            .iter()
-            .map(|entry| ModelListingRow {
-                qualified_id: entry.reference().qualified_id(),
-                display_name: entry.model.display_name.clone(),
-                runnable: entry.model.availability.is_runnable(),
-            })
-            .collect(),
-    }
 }
 
 /// The per-model limits a qualified `provider/model` reference declares in one

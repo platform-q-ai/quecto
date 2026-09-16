@@ -17,7 +17,9 @@ use super::uds_workflow_nudge::{
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
+use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::message::Message;
+use crate::interface::uds::sessions::controller::ListSessionsController;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -156,8 +158,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
-    /// List saved sessions (#1861, #1970): the composed controller the
-    /// `list_sessions` command is answered through.
+    /// List saved sessions (#1861, #1970): answers the `list_sessions` command.
     pub list_sessions: ListSessionsHandle,
     /// Save current session (#1860, #1972): the one transaction every
     /// persistence trigger of this loop requests; it owns the watermark,
@@ -166,15 +167,14 @@ pub(crate) struct DispatchCtx<'a> {
     /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
     /// history-replacing transactions this loop requests once admitted.
     pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
-    /// Start a fresh conversation (#1862, #1976) and resume a saved session
-    /// (#1863, #1977): the two session transitions this loop requests once
-    /// admitted.
+    /// Start a fresh conversation (#1862, #1976) or resume a saved one (#1863,
+    /// #1977): the two session transitions this loop requests once admitted.
     pub switch: super::uds_session_handles::SessionSwitchHandles,
+    /// List available models (#1845): answers the `list_models` command.
+    pub list_models: super::catalogue_handles::ListModelsHandle,
 }
-type FleetTeardown =
-    std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>;
-type ListSessionsHandle =
-    std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController>;
+type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
+type ListSessionsHandle = std::sync::Arc<ListSessionsController>;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
 
 impl<'a> DispatchCtx<'a> {

@@ -95,6 +95,9 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
+        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+            tmp.path(),
+        ),
         fleet_teardown: None,
         list_sessions: list_handle(tmp.path()),
     };

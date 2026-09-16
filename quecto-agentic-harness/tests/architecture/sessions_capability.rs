@@ -451,8 +451,8 @@ const SAVE_REQUESTERS: &[&str] = &[
     "src/interface/cli/agent/run_session.rs",
     "src/interface/cli/uds.rs",
     "src/interface/cli/uds_dispatch.rs",
-    "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/uds_multi.rs",
+    "src/interface/cli/uds_single_client.rs",
 ];
 
 /// The trigger each persistence site requests: explicit, post-turn and
@@ -465,7 +465,7 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
     ("src/interface/cli/uds.rs", "SaveTrigger::Routine"),
     ("src/interface/cli/uds.rs", ".save_with_pending_prompt("),
     (
-        "src/interface/cli/uds_lifecycle.rs",
+        "src/interface/cli/uds_single_client.rs",
         "SaveTrigger::OrdinaryExit",
     ),
     (
@@ -613,7 +613,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).
-    ("src/interface/cli/uds_lifecycle.rs", 311),
+    // #1845 split the single-client loop out of uds_lifecycle (311 → 203);
+    // the moved lines are ratcheted at their new home.
+    ("src/interface/cli/uds_lifecycle.rs", 203),
+    ("src/interface/cli/uds_single_client.rs", 127),
     ("src/interface/cli/uds_multi.rs", 633),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
     // types the loop's identity and reads the key from the active session

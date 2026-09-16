@@ -162,22 +162,11 @@ impl Drop for ClientGuard {
 // ─── Accept loop + dispatch ───────────────────────────────────────────────────
 
 pub(super) async fn multi_client_loop(
-    mut args: MultiClientArgs<'_>,
+    args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
     sessions: &super::uds_session_handles::SessionHandles,
+    catalogue: &super::catalogue_handles::CatalogueHandles,
 ) -> i32 {
-    let ext_registry = args.ext_registry;
-    let lifetime = args.lifetime;
-    let notification_rx = args.notification_rx;
-    let subagent_registry = args.subagent_registry;
-    let harness_lifecycle = args.harness_lifecycle.take();
-    let wf_state = args.workflow_state;
-    let wf_config = args.workflow_config;
-    let pre_broadcast_tx = args.broadcast_tx;
-    let provider_reload = args.provider_reload;
-    let provider_reload_inputs = args.provider_reload_inputs;
-    let parent_control = args.parent_control.take();
-    let teardown_graph = args.teardown_graph.take();
     let MultiClientArgs {
         mut agent,
         base_dir,
@@ -186,7 +175,18 @@ pub(super) async fn multi_client_loop(
         model,
         session_key,
         system_prompt,
-        ..
+        ext_registry,
+        lifetime,
+        notification_rx,
+        subagent_registry,
+        harness_lifecycle,
+        workflow_state: wf_state,
+        workflow_config: wf_config,
+        broadcast_tx: pre_broadcast_tx,
+        provider_reload,
+        provider_reload_inputs,
+        parent_control,
+        teardown_graph,
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -224,10 +224,9 @@ pub(super) async fn multi_client_loop(
             agent.max_context_tokens(),
         ),
     ));
+    let tool_entries = agent.tool_catalogue_entries().into_iter();
     let tool_catalogue_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        agent
-            .tool_catalogue_entries()
-            .into_iter()
+        tool_entries
             .map(|entry| serde_json::to_value(entry).unwrap_or_default())
             .collect(),
     ));
@@ -374,6 +373,7 @@ pub(super) async fn multi_client_loop(
         save_session: sessions.save_session.clone(),
         rewrite: sessions.rewrite.clone(),
         switch: sessions.switch.clone(),
+        list_models: catalogue.list_models.clone(),
     };
 
     run_dispatch_loop(

@@ -2,17 +2,16 @@
 //! #1572, epic #1193 slice 2).
 //!
 //! Every read surface must render one snapshot generation: the CLI/UDS model
-//! listing (`uds_models::list_models_data`, the response the CLI serves and
-//! the TUI consumes), the TUI model-list projection
+//! listing (the composed `list_models` use case and presenter, the response
+//! the CLI serves and the TUI consumes), the TUI model-list projection
 //! (`quecto_tui::protocol::model_payloads::parse_model_list` over that same
-//! response), and the shared application projection over the snapshot store.
+//! response), and the published snapshot store itself.
 //! None of them may parse or merge catalogue files on the read path — the only
 //! parse happens inside the infrastructure source adapters feeding the resolve
 //! use case.
 
-use quecto::application::catalogue::project_model_listing;
+use quecto::composition::catalogue::list_models_wire_for;
 use quecto::infrastructure::catalogue_registry::snapshot_store_for;
-use quecto::interface::cli::uds_models::list_models_data;
 
 fn write_models_json(dir: &std::path::Path, body: &str) {
     std::fs::write(dir.join("models.json"), body).unwrap();
@@ -28,47 +27,59 @@ fn cli_uds_and_tui_surfaces_render_the_same_snapshot_generation() {
     );
 
     // The real UDS/CLI listing response.
-    let response = list_models_data(tmp.path());
+    let response = list_models_wire_for(tmp.path());
     let models = response["models"].as_array().unwrap();
 
-    // The shared projection over the published snapshot store for the same
-    // base directory: same generation, same content, same order.
+    // The published snapshot store for the same base directory: the response
+    // is that generation, entry for entry, in order.
     let snapshot = snapshot_store_for(tmp.path()).current();
-    let listing = project_model_listing(&snapshot);
-    assert_eq!(response["generation"].as_u64().unwrap(), listing.generation);
-    assert_eq!(models.len(), listing.rows.len());
-    for (rendered, row) in models.iter().zip(&listing.rows) {
-        assert_eq!(rendered["model"].as_str().unwrap(), row.qualified_id);
+    assert_eq!(
+        response["generation"].as_u64().unwrap(),
+        snapshot.generation()
+    );
+    assert_eq!(models.len(), snapshot.entries().len());
+    for (rendered, entry) in models.iter().zip(snapshot.entries()) {
+        assert_eq!(
+            rendered["model"].as_str().unwrap(),
+            entry.reference().qualified_id()
+        );
         assert_eq!(
             rendered["name"].as_str().map(str::to_string),
-            row.display_name
+            entry.model.display_name
         );
-        assert_eq!(rendered["configured"].as_bool().unwrap(), row.runnable);
+        assert_eq!(
+            rendered["configured"].as_bool().unwrap(),
+            entry.model.availability.is_runnable()
+        );
     }
-    let contract_row = listing
-        .rows
+    let contract_row = snapshot
+        .entries()
         .iter()
-        .find(|row| row.qualified_id == "contractish/contract-model")
-        .expect("user-defined model missing from the shared projection");
+        .find(|entry| entry.reference().qualified_id() == "contractish/contract-model")
+        .expect("user-defined model missing from the published snapshot");
     assert!(
-        contract_row.runnable,
+        contract_row.model.availability.is_runnable(),
         "apiKey-configured model must be runnable"
     );
 
     // The real TUI model-list projection consumes this same response, so the
     // TUI list is a projection of the identical snapshot generation.
     let tui = quecto_tui::protocol::model_payloads::parse_model_list(&response, &|s| s.to_string());
-    assert_eq!(tui.len(), listing.rows.len());
-    for (entry, row) in tui.iter().zip(&listing.rows) {
-        assert_eq!(entry.id, row.qualified_id);
+    assert_eq!(tui.len(), snapshot.entries().len());
+    for (tui_entry, entry) in tui.iter().zip(snapshot.entries()) {
+        assert_eq!(tui_entry.id, entry.reference().qualified_id());
     }
 }
 
 #[test]
 fn listing_surfaces_share_one_generation_across_repeated_reads() {
     let tmp = tempfile::tempdir().unwrap();
-    let first = list_models_data(tmp.path())["generation"].as_u64().unwrap();
-    let second = list_models_data(tmp.path())["generation"].as_u64().unwrap();
+    let first = list_models_wire_for(tmp.path())["generation"]
+        .as_u64()
+        .unwrap();
+    let second = list_models_wire_for(tmp.path())["generation"]
+        .as_u64()
+        .unwrap();
     assert_eq!(
         second,
         first + 1,
@@ -92,7 +103,7 @@ fn credential_material_from_models_json_never_reaches_the_snapshot() {
         r#"{"providers":{"secretish":{"api":"openai-completions","apiKey":"sk-super-secret-42",
             "models":[{"id":"m","name":"M"}]}}}"#,
     );
-    let response = list_models_data(tmp.path());
+    let response = list_models_wire_for(tmp.path());
     let snapshot = snapshot_store_for(tmp.path()).current();
     assert!(
         snapshot
@@ -106,13 +117,13 @@ fn credential_material_from_models_json_never_reaches_the_snapshot() {
 #[test]
 fn a_malformed_models_json_reports_an_error_and_keeps_a_coherent_snapshot() {
     let tmp = tempfile::tempdir().unwrap();
-    let valid = list_models_data(tmp.path());
+    let valid = list_models_wire_for(tmp.path());
     assert!(valid.get("error").is_none());
     let valid_count = snapshot_store_for(tmp.path()).current().entries().len();
     assert!(valid_count > 0);
 
     write_models_json(tmp.path(), "not json");
-    let broken = list_models_data(tmp.path());
+    let broken = list_models_wire_for(tmp.path());
     // Legacy wire parity: a malformed file yields no models plus an error.
     assert_eq!(broken["models"].as_array().unwrap().len(), 0);
     assert!(
@@ -184,7 +195,7 @@ fn refresh_surfaces_share_one_operation_and_one_published_generation() {
 
         // The refreshed model participates in the ordinary published listing
         // every surface reads (network-free read path).
-        let response = list_models_data(tmp.path());
+        let response = list_models_wire_for(tmp.path());
         assert!(
             response["models"]
                 .as_array()
@@ -205,7 +216,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // list projects) and the get_state session payload (which the TUI effort
     // selector consumes).
     let tmp = tempfile::tempdir().unwrap();
-    let response = list_models_data(tmp.path());
+    let response = list_models_wire_for(tmp.path());
     let models = response["models"].as_array().unwrap();
     assert!(!models.is_empty(), "builtin listing is empty");
     for model in models {
