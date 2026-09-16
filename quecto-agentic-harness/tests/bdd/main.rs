@@ -1669,12 +1669,14 @@ fn ask_owned_child_to_stop(
 
 impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
-    /// capability (#1970): every `quecto agent …` run through
-    /// `run_with_output` needs it or exits with "sessions capability not
-    /// composed", exactly as the binary's `main` supplies it.
+    /// capability (#1970) and its retained-context graph (#1978): every
+    /// `quecto agent …` run through `run_with_output` needs both or exits
+    /// with "… capability not composed", exactly as the binary's `main`
+    /// supplies them.
     fn new() -> Self {
         let mut world = Self::default();
         world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
+        world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
         world
     }
 }
