@@ -31,6 +31,7 @@ fn test_composition() -> CliComposition {
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         config_selection: crate::composition::configuration::build_select_config,
+        catalogue: crate::composition::catalogue::build_catalogue_handles,
     }
 }
 

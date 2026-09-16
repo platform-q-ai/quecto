@@ -202,6 +202,10 @@ impl Fixture {
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
             switch: self.sessions.switch.clone(),
+            list_models:
+                crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+                    self._tmp.path(),
+                ),
         }
     }
 }

@@ -1,15 +1,11 @@
-use super::uds::{DispatchCtx, run_command_loop};
-use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_multi::MultiClientArgs;
-use super::uds_session::AgentSession;
-use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
+use super::uds_session_handles::SessionLoopInputs;
+use super::uds_single_client::{SingleClientArgs, single_client_loop};
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::SessionStore;
 pub(crate) use crate::domain::conversation_view::inject_system_prompt;
 #[cfg(test)]
 pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
-use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
 
@@ -20,7 +16,7 @@ mod cov2_tests;
 #[path = "uds_lifecycle_cov_tests.rs"]
 mod cov_tests;
 
-type ExtRegistry = std::sync::Arc<
+pub(super) type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
 
@@ -46,6 +42,9 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's sessions handles builder (#1970): the loop hands over
     /// its base directory (and any override) and holds the handles back.
     pub sessions: super::SessionHandlesBuilder,
+    /// Composition's catalogue handles builder (#1845): built once per loop
+    /// over its base directory.
+    pub catalogue: super::CatalogueHandlesBuilder,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
@@ -95,6 +94,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         socket_override,
         session_store_override,
         sessions,
+        catalogue,
         ext_registry,
         lifetime,
         notification_rx,
@@ -109,6 +109,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         teardown_graph,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
+    let catalogue = catalogue(base_dir);
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: session_store_override,
@@ -156,6 +157,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             },
             std_stream,
             &sessions,
+            &catalogue,
         )
         .await
     } else {
@@ -193,119 +195,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             },
             listener,
             &sessions,
+            &catalogue,
         )
         .await
     }
-}
-
-struct SingleClientArgs<'a> {
-    agent: AgentLoopImpl,
-    base_dir: &'a std::path::Path,
-    workspace: &'a std::path::Path,
-    messages: Vec<Message>,
-    model: String,
-    session_key: String,
-    system_prompt: String,
-    ext_registry: Option<ExtRegistry>,
-    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
-    provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
-    provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-}
-
-async fn single_client_loop(
-    args: SingleClientArgs<'_>,
-    std_stream: std::os::unix::net::UnixStream,
-    sessions: &SessionHandles,
-) -> i32 {
-    let SingleClientArgs {
-        mut agent,
-        base_dir,
-        workspace,
-        mut messages,
-        model,
-        session_key,
-        system_prompt,
-        ext_registry,
-        subagent_registry,
-        workflow_state,
-        provider_reload,
-        provider_reload_inputs,
-    } = args;
-    std_stream
-        .set_nonblocking(true)
-        .expect("set_nonblocking failed for test socket");
-    let tokio_stream = tokio::net::UnixStream::from_std(std_stream).expect("std→tokio UnixStream");
-    let (r, w) = tokio::io::split(tokio_stream);
-    let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
-    let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
-
-    let wire_mode = super::uds_wire::ConnectionWireMode::legacy();
-    let workspace_event = super::protocol::AgentEvent::Workspace {
-        path: workspace.display().to_string(),
-    };
-    let line = workspace_event.to_json_line() + "\n";
-    let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
-
-    inject_system_prompt(&mut messages, &system_prompt);
-
-    let mut agent_session = AgentSession::new(model);
-    let effort = agent.effort().map(|l| l.as_str().to_string());
-    let initial_state =
-        agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
-    let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
-    let session_reads = sessions.read_handles();
-    let _ = session_reads
-        .active_session
-        .write()
-        .await
-        .publish(&messages);
-
-    run_command_loop(
-        reader,
-        &mut DispatchCtx {
-            wire_mode,
-            base_dir,
-            agent: &mut agent,
-            messages: &mut messages,
-            sessions: session_reads.clone(),
-            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
-            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
-            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
-            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            session: &mut agent_session,
-            stdout: Some(&mut *writer),
-            system_prompt: &system_prompt,
-            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
-            turn_control: std::sync::Arc::<TurnControl>::default(),
-            broadcast_tx: None,
-            _ext_registry: ext_registry,
-            client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
-            current_client_id: 0,
-            subagent_registry: subagent_registry.clone(),
-            notification_rx: None,
-            workflow_state: workflow_state.clone(),
-            workflow_config: None,
-            provider_reload,
-            provider_reload_inputs,
-            fleet_teardown: None,
-            list_sessions: sessions.list_sessions.clone(),
-            save_session: sessions.save_session.clone(),
-            rewrite: sessions.rewrite.clone(),
-            switch: sessions.switch.clone(),
-        },
-    )
-    .await;
-
-    // The final save of an ordinary exit (#1860): the transaction decides
-    // whether there is anything to save.
-    if let Err(err) = sessions
-        .save_session
-        .save(&mut messages, SaveTrigger::OrdinaryExit)
-        .await
-    {
-        tracing::warn!("failed to persist session on exit: {err}");
-    }
-    0
 }

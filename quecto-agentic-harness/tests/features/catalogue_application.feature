@@ -46,32 +46,30 @@ Feature: Effective catalogue resolution and snapshot queries (epic #1193, slice 
     When the effective catalogue is resolved and published
     Then the published snapshot does not contain the secret "sk-secret-123"
 
-  Scenario: Queries read the published snapshot, not the live sources
+  Scenario: Listing models loads the inputs afresh so edits are visible
     Given a catalogue source "builtin" at layer "built-in" defining model "openai-api/gpt-5" named "Builtin GPT"
-    And the effective catalogue has been resolved and published
-    And the source "builtin" additionally defines model "openai-api/gpt-6" named "Next GPT"
-    When the model listing is queried with filter "all"
-    Then the query result lists 1 model
+    When the models are listed through the use case
+    Then the listing shows 1 model at generation 1
+    Given the source "builtin" additionally defines model "openai-api/gpt-6" named "Next GPT"
+    When the models are listed through the use case
+    Then the listing shows 2 models at generation 2
+    And the listing contains model "openai-api/gpt-6" named "Next GPT"
 
-  Scenario: The available filter includes models that only lack a credential
+  Scenario: Listing models marks a model that only lacks a credential as not runnable
     Given a catalogue source "builtin" at layer "built-in" defining model "openai-api/gpt-5" named "Builtin GPT"
     And a catalogue source "extras" at layer "built-in" defining model "anthropic/opus" named "Opus"
     And no credential is available for provider "openai-api"
-    And the effective catalogue has been resolved and published
-    When the model listing is queried with filter "available"
-    Then the query result lists 2 models
+    When the models are listed through the use case
+    Then the listing shows 2 models at generation 1
+    And the listed model "anthropic/opus" is runnable
+    And the listed model "openai-api/gpt-5" is not runnable
 
-  Scenario: The runnable filter excludes models missing a credential
+  Scenario: Listing models reports a source that failed to load instead of listing over it
     Given a catalogue source "builtin" at layer "built-in" defining model "openai-api/gpt-5" named "Builtin GPT"
-    And a catalogue source "extras" at layer "built-in" defining model "anthropic/opus" named "Opus"
-    And no credential is available for provider "openai-api"
-    And the effective catalogue has been resolved and published
-    When the model listing is queried with filter "runnable"
-    Then the query result lists 1 model
-    And the query result contains model "anthropic/opus"
+    When the models are listed through the use case
+    Then the listing shows 1 model at generation 1
+    Given the source "builtin" becomes malformed failing with "expected value at line 1"
+    When the models are listed through the use case
+    Then the listing reports source "builtin" unavailable with "expected value at line 1"
+    And the published snapshot has 1 model
 
-  Scenario: The model listing projection carries the snapshot generation and rows
-    Given a catalogue source "builtin" at layer "built-in" defining model "openai-api/gpt-5" named "Builtin GPT"
-    And the effective catalogue has been resolved and published
-    When the model listing is projected from the current snapshot
-    Then the projected listing shows model "openai-api/gpt-5" at generation 1

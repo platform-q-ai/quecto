@@ -2,19 +2,21 @@
 //!
 //! Exercises the application catalogue use cases against fake ports only:
 //! resolve/publish, snapshot store retention, credential-derived availability,
-//! snapshot-only queries, and the shared listing projection.
+//! and the list-models use case (#1845) over a fake inputs loader.
 
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use quecto::application::catalogue::dto::ModelListingOutcome;
+use quecto::application::catalogue::ports::{CatalogueInputsLoader, LoadedCatalogueInputs};
+use quecto::application::catalogue::use_cases::ListModels;
 use quecto::application::catalogue::{
-    CatalogueQuery, CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ModelListing,
-    QueryCatalogueUseCase, ResolveCatalogueUseCase, ResolvedCatalogue, SourceEntries,
-    project_model_listing,
+    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
+    ResolvedCatalogue, SourceEntries,
 };
 use quecto::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, CatalogueSnapshot, ModelCapabilities, ModelCost,
-    ModelDescriptor, ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
+    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
+    ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
 };
 
 #[derive(Debug, Default)]
@@ -26,8 +28,7 @@ pub struct CatalogueApplicationState {
     secret: Option<String>,
     store: Option<CatalogueSnapshotStore>,
     resolved: Option<ResolvedCatalogue>,
-    query_result: Option<CatalogueSnapshot>,
-    projected: Option<ModelListing>,
+    listing: Option<ModelListingOutcome>,
 }
 
 #[derive(Debug)]
@@ -102,15 +103,6 @@ fn app_layer(name: &str) -> SourceLayer {
         "user-defined" => SourceLayer::UserDefined,
         "user-override" => SourceLayer::UserOverride,
         other => panic!("unknown source layer '{other}'"),
-    }
-}
-
-fn app_filter(name: &str) -> CatalogueQuery {
-    match name {
-        "all" => CatalogueQuery::All,
-        "available" => CatalogueQuery::Available,
-        "runnable" => CatalogueQuery::Runnable,
-        other => panic!("unknown filter '{other}'"),
     }
 }
 
@@ -214,17 +206,62 @@ fn when_resolve_runs(world: &mut QuectoWorld) {
     resolve_and_publish(world);
 }
 
-#[when(expr = "the model listing is queried with filter {string}")]
-fn when_query_runs(world: &mut QuectoWorld, filter: String) {
-    let store = app_store(world);
-    let query = QueryCatalogueUseCase::new(store);
-    world.catalogue_application.query_result = Some(query.query(app_filter(&filter)));
+/// The world's fake sources and credential port as one loaded input set:
+/// the port the list-models use case resolves from.
+struct AppFakeInputs {
+    sources: Vec<Arc<AppFakeSource>>,
+    credentials: AppFakeCredentials,
 }
 
-#[when(expr = "the model listing is projected from the current snapshot")]
-fn when_listing_projected(world: &mut QuectoWorld) {
+impl LoadedCatalogueInputs for AppFakeInputs {
+    fn sources(&self) -> Vec<&dyn CatalogueSource> {
+        self.sources
+            .iter()
+            .map(|source| source.as_ref() as &dyn CatalogueSource)
+            .collect()
+    }
+    fn credentials(&self) -> &dyn CredentialStatusPort {
+        &self.credentials
+    }
+}
+
+struct AppFakeLoader {
+    sources: Vec<Arc<AppFakeSource>>,
+    denied: Vec<String>,
+}
+
+impl CatalogueInputsLoader for AppFakeLoader {
+    fn load(&self) -> Box<dyn LoadedCatalogueInputs> {
+        Box::new(AppFakeInputs {
+            sources: self.sources.clone(),
+            credentials: AppFakeCredentials {
+                denied: self.denied.clone(),
+                secret: None,
+            },
+        })
+    }
+}
+
+#[when(expr = "the models are listed through the use case")]
+fn when_models_listed(world: &mut QuectoWorld) {
     let store = app_store(world);
-    world.catalogue_application.projected = Some(project_model_listing(&store.current()));
+    let loader = Arc::new(AppFakeLoader {
+        sources: world.catalogue_application.sources.clone(),
+        denied: world.catalogue_application.credential_denied.clone(),
+    });
+    world.catalogue_application.listing = Some(ListModels::new(loader, store).execute());
+}
+
+fn listed(world: &QuectoWorld) -> &quecto::application::catalogue::dto::ModelCatalogueListing {
+    match world
+        .catalogue_application
+        .listing
+        .as_ref()
+        .expect("the models were not listed")
+    {
+        ModelListingOutcome::Listed(listing) => listing,
+        other => panic!("expected a listing, got {other:?}"),
+    }
 }
 
 #[then(expr = "the published snapshot has {int} model")]
@@ -303,42 +340,61 @@ fn then_no_secret_in_snapshot(world: &mut QuectoWorld, secret: String) {
     );
 }
 
-#[then(expr = "the query result lists {int} model(s)")]
-fn then_query_lists(world: &mut QuectoWorld, count: usize) {
-    let result = world
-        .catalogue_application
-        .query_result
-        .as_ref()
-        .expect("query did not run");
-    assert_eq!(result.entries().len(), count);
-}
-
-#[then(expr = "the query result contains model {string}")]
-fn then_query_contains(world: &mut QuectoWorld, qualified: String) {
-    let result = world
-        .catalogue_application
-        .query_result
-        .as_ref()
-        .expect("query did not run");
-    assert!(
-        result
-            .find(&ModelRef::parse_qualified(&qualified).unwrap())
-            .is_some(),
-        "query result missing '{qualified}'"
-    );
-}
-
-#[then(expr = "the projected listing shows model {string} at generation {int}")]
-fn then_projection_lists(world: &mut QuectoWorld, qualified: String, generation: u64) {
-    let listing = world
-        .catalogue_application
-        .projected
-        .as_ref()
-        .expect("listing was not projected");
+#[then(expr = "the listing shows {int} model(s) at generation {int}")]
+fn then_listing_shows(world: &mut QuectoWorld, count: usize, generation: u64) {
+    let listing = listed(world);
+    assert_eq!(listing.models.len(), count, "{:?}", listing.models);
     assert_eq!(listing.generation, generation);
-    assert!(
-        listing.rows.iter().any(|row| row.qualified_id == qualified),
-        "projection missing '{qualified}': {:?}",
-        listing.rows
+}
+
+#[then(expr = "the listing contains model {string} named {string}")]
+fn then_listing_contains(world: &mut QuectoWorld, qualified: String, display: String) {
+    let listing = listed(world);
+    let model = listing
+        .models
+        .iter()
+        .find(|m| m.entry.reference().qualified_id() == qualified)
+        .unwrap_or_else(|| panic!("listing missing '{qualified}'"));
+    assert_eq!(
+        model.entry.model.display_name.as_deref(),
+        Some(display.as_str())
     );
+}
+
+#[then(expr = "the listed model {string} is runnable")]
+fn then_listed_runnable(world: &mut QuectoWorld, qualified: String) {
+    let listing = listed(world);
+    let model = listing
+        .models
+        .iter()
+        .find(|m| m.entry.reference().qualified_id() == qualified)
+        .unwrap_or_else(|| panic!("listing missing '{qualified}'"));
+    assert!(model.runnable, "{qualified} should be runnable");
+}
+
+#[then(expr = "the listed model {string} is not runnable")]
+fn then_listed_not_runnable(world: &mut QuectoWorld, qualified: String) {
+    let listing = listed(world);
+    let model = listing
+        .models
+        .iter()
+        .find(|m| m.entry.reference().qualified_id() == qualified)
+        .unwrap_or_else(|| panic!("listing missing '{qualified}'"));
+    assert!(!model.runnable, "{qualified} should not be runnable");
+}
+
+#[then(expr = "the listing reports source {string} unavailable with {string}")]
+fn then_listing_source_unavailable(world: &mut QuectoWorld, source: String, message: String) {
+    match world
+        .catalogue_application
+        .listing
+        .as_ref()
+        .expect("the models were not listed")
+    {
+        ModelListingOutcome::SourceUnavailable(error) => {
+            assert_eq!(error.source, source);
+            assert!(error.error.contains(&message), "{}", error.error);
+        }
+        other => panic!("expected a source error, got {other:?}"),
+    }
 }

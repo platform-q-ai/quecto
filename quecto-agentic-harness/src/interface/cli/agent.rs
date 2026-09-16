@@ -543,6 +543,12 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         stderr.push_str("agent: sessions capability not composed\n");
         return 1;
     };
+    // Likewise the catalogue (#1845): the loop answers `list_models` through
+    // the controller composition builds, never one it assembles itself.
+    let Some(catalogue) = ctx.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return 1;
+    };
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
     let Some(session_identity) = resolve_startup_identity(ctx, &flags, ephemeral, stderr) else {
@@ -651,6 +657,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         socket_override: None,
         session_store_override: None,
         sessions,
+        catalogue,
         ext_registry: Some(build.ext_registry),
         lifetime,
         notification_rx: build.notification_rx,

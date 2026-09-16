@@ -710,3 +710,12 @@ pub(crate) fn list_handle(
 ) -> std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController> {
     composed_sessions(base).list_sessions
 }
+
+/// The composed `list_models` controller for `base` (#1845), for rigs that
+/// build a `DispatchCtx` by hand.
+pub(crate) fn list_models_handle(
+    base: &std::path::Path,
+) -> std::sync::Arc<crate::interface::uds::catalogue::list_models_controller::ListModelsController>
+{
+    crate::composition::catalogue::build_catalogue_handles(base).list_models
+}

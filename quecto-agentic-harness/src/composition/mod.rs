@@ -1,4 +1,5 @@
 pub mod active_session;
+pub mod catalogue;
 pub mod configuration;
 pub mod environments;
 pub mod find;

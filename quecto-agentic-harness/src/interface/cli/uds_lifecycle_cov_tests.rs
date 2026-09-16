@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::message::Message;
 
 #[test]
 fn inject_system_prompt_inserts_when_history_has_no_system_message() {

@@ -1606,6 +1606,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles,
             session_store_override: None,
             ext_registry: Some(ext_reg),
             lifetime: if persist {

@@ -1,6 +1,6 @@
-//! Tests for issue #1572 (epic #1193 slice 2): application resolve/query
-//! use cases, snapshot store, and the shared listing projection, exercised
-//! against fake ports only.
+//! Tests for issue #1572 (epic #1193 slice 2): the application resolve use
+//! case and snapshot store, exercised against fake ports only. The listing
+//! read lives with `use_cases::list_models` (#1845).
 
 use std::sync::Mutex;
 
@@ -289,93 +289,6 @@ fn secrets_never_appear_in_a_published_snapshot() {
         "snapshot must never carry credential values"
     );
     assert_eq!(store.current().entries().len(), 1);
-}
-
-#[test]
-fn query_reads_the_snapshot_only_and_never_reloads_sources() {
-    let builtin = FakeSource::ok(
-        "builtin",
-        SourceLayer::BuiltIn,
-        vec![entry("openai-api", "gpt-5", "Builtin GPT")],
-    );
-    let store = CatalogueSnapshotStore::empty();
-    ResolveCatalogueUseCase.resolve_and_publish(
-        &[&builtin],
-        &FakeCredentials::granting(&["openai-api"]),
-        &store,
-    );
-    // Source grows a new model AFTER publication; queries must not see it.
-    // (That queries cannot re-read sources at all is enforced by construction:
-    // `QueryCatalogueUseCase` holds only the snapshot store, so no source port
-    // is even reachable from `query`.)
-    builtin.set_result(Ok(vec![
-        entry("openai-api", "gpt-5", "Builtin GPT"),
-        entry("openai-api", "gpt-6", "Next GPT"),
-    ]));
-    let query = QueryCatalogueUseCase::new(store.clone());
-    let all = query.query(CatalogueQuery::All);
-    assert_eq!(all.entries().len(), 1);
-    assert_eq!(all.generation(), 1);
-}
-
-#[test]
-fn query_filters_narrow_by_availability() {
-    let builtin = FakeSource::ok(
-        "builtin",
-        SourceLayer::BuiltIn,
-        vec![
-            entry("openai-api", "gpt-5", "Builtin GPT"),
-            entry("anthropic", "opus", "Opus"),
-        ],
-    );
-    let store = CatalogueSnapshotStore::empty();
-    ResolveCatalogueUseCase.resolve_and_publish(
-        &[&builtin],
-        &FakeCredentials::granting(&["anthropic"]),
-        &store,
-    );
-    let query = QueryCatalogueUseCase::new(store.clone());
-    assert_eq!(query.query(CatalogueQuery::All).entries().len(), 2);
-    // openai-api is Available-but-not-Runnable (credential missing): it must
-    // appear under `Available` and be excluded from `Runnable`.
-    let available = query.query(CatalogueQuery::Available);
-    assert_eq!(available.entries().len(), 2);
-    assert!(
-        available
-            .find(&ModelRef::parse("openai-api", "gpt-5").unwrap())
-            .is_some()
-    );
-    let runnable = query.query(CatalogueQuery::Runnable);
-    assert_eq!(runnable.entries().len(), 1);
-    assert_eq!(
-        runnable.entries()[0].reference().qualified_id(),
-        "anthropic/opus"
-    );
-    // Filtered projections keep the source generation.
-    assert_eq!(runnable.generation(), store.current().generation());
-}
-
-#[test]
-fn model_listing_projection_carries_generation_and_rows() {
-    let builtin = FakeSource::ok(
-        "builtin",
-        SourceLayer::BuiltIn,
-        vec![entry("openai-api", "gpt-5", "Builtin GPT")],
-    );
-    let store = CatalogueSnapshotStore::empty();
-    ResolveCatalogueUseCase.resolve_and_publish(
-        &[&builtin],
-        &FakeCredentials::granting(&["openai-api"]),
-        &store,
-    );
-    // The real CLI/UDS/TUI surfaces are covered by the consumer contract test
-    // (tests/contracts/catalogue_consumers.rs); this pins the projection shape.
-    let listing = project_model_listing(&store.current());
-    assert_eq!(listing.generation, 1);
-    assert_eq!(listing.rows.len(), 1);
-    assert_eq!(listing.rows[0].qualified_id, "openai-api/gpt-5");
-    assert_eq!(listing.rows[0].display_name.as_deref(), Some("Builtin GPT"));
-    assert!(listing.rows[0].runnable);
 }
 
 #[test]
