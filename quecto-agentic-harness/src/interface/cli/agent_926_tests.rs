@@ -45,6 +45,7 @@ fn spawn_capable_flags() -> AgentFlags {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     }
@@ -62,6 +63,10 @@ fn test_926_spawn_capable_build_has_live_notification_rx_with_real_base_dir() {
     let mut stderr = String::new();
     let build = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
@@ -95,6 +100,10 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
     let cwd = tempfile::TempDir::new().unwrap();
     let build = build_tool_registry(ToolRegistryArgs {
         base_dir: std::path::Path::new(""),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: std::path::Path::new(""),
         config: &config,
         http_client: &reqwest::Client::new(),
@@ -128,6 +137,10 @@ async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
     let mut stderr = String::new();
     let build = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),

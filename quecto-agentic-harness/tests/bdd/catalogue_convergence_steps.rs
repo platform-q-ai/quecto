@@ -142,10 +142,13 @@ fn then_all_models_carry_effort(world: &mut QuectoWorld) {
     assert!(!models.is_empty(), "builtin listing is empty");
     for model in &models {
         let levels = model["effortLevels"].as_array();
-        assert!(
-            levels.is_some_and(|l| !l.is_empty()),
-            "listed model lacks a snapshot effort vocabulary: {model}"
-        );
+        assert!(levels.is_some(), "listed model lacks effortLevels: {model}");
+        if model["reasoning"] == true {
+            assert!(
+                levels.is_some_and(|l| !l.is_empty()),
+                "reasoning model lacks an effort vocabulary: {model}"
+            );
+        }
     }
 }
 

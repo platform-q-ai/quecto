@@ -49,8 +49,8 @@ fn real_harness_get_state_contract_drives_effort_and_resume() {
     .unwrap();
     let snap = parse_get_state(&data, &sanitize);
     assert_eq!(
-        snap.effort_levels,
-        vec!["none", "low", "medium", "high", "xhigh"]
+        snap.effort_levels.as_deref(),
+        Some(&["none", "low", "medium", "high", "xhigh"].map(String::from)[..])
     );
     assert_eq!(snap.footer.effort.as_deref(), Some("high"));
     assert_eq!(snap.session_key.as_deref(), Some("cli:contract-worker"));
@@ -68,7 +68,10 @@ fn parse_get_state_collects_effort_levels_and_session_key() {
         &sanitize,
     );
     // Empty strings after sanitize are retained (historical parity).
-    assert_eq!(snap.effort_levels, vec!["low", "high", ""]);
+    assert_eq!(
+        snap.effort_levels,
+        Some(vec!["low".into(), "high".into(), "".into()])
+    );
     assert_eq!(snap.session_key.as_deref(), Some("cli:worker"));
     assert!(snap.workflow.is_some());
 }

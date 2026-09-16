@@ -123,7 +123,7 @@ impl OpenAiProvider {
     }
 
     /// Build the JSON request body for OpenAI chat completions.
-    fn build_request_body(request: &ChatRequest<'_>) -> serde_json::Value {
+    fn build_request_body(&self, request: &ChatRequest<'_>) -> serde_json::Value {
         let messages = request.messages;
         let tools = request.tools;
         let model = request.model;
@@ -191,6 +191,22 @@ impl OpenAiProvider {
             "max_completion_tokens": max_tokens,
         });
 
+        // #1996: a selected effort is transmitted verbatim as the
+        // chat-completions `reasoning_effort` parameter (Fireworks, xAI and
+        // compatible endpoints document the same name). The application
+        // admits a level only from the model's own catalogue vocabulary, so
+        // this adapter never decides support and never sends a reasoning
+        // option to a model that declared none. Fireworks' alternative
+        // `thinking` parameter is mutually exclusive with this one and is
+        // never emitted here. OpenAI's own Chat Completions endpoint is the
+        // one exception: it rejects `reasoning_effort` with function tools
+        // (its reasoning ids are routed to the Responses API, and the OAuth
+        // fallback without an account id lands here), so the `openai`
+        // adapter never transmits one.
+        if let Some(effort) = request.effort.filter(|_| self.transmits_reasoning_effort()) {
+            body["reasoning_effort"] = serde_json::Value::String(effort.as_str().to_string());
+        }
+
         if !tools.is_empty() {
             let tool_defs: Vec<serde_json::Value> = tools
                 .iter()
@@ -211,6 +227,12 @@ impl OpenAiProvider {
         }
 
         body
+    }
+
+    /// Whether this endpoint accepts `reasoning_effort` on chat completions:
+    /// every OpenAI-compatible provider except OpenAI's own (`openai`).
+    fn transmits_reasoning_effort(&self) -> bool {
+        self.provider_name != "openai"
     }
 
     /// Parse the OpenAI response JSON into our domain LlmResponse.
@@ -403,7 +425,7 @@ impl LlmProvider for OpenAiProvider {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
         let model = request.model.to_string();
-        let body = Self::build_request_body(&request);
+        let body = self.build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
 
         Box::pin(async move {
@@ -472,7 +494,7 @@ impl LlmProvider for OpenAiProvider {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
         let model = request.model.to_string();
-        let mut body = Self::build_request_body(&request);
+        let mut body = self.build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         // Ask OpenAI-compatible providers (OpenAI, Fireworks, …) to emit a
         // final usage chunk so we report exact context tokens instead of a
@@ -505,7 +527,7 @@ impl LlmProvider for OpenAiProvider {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
         let model = request.model.to_string();
-        let mut body = Self::build_request_body(&request);
+        let mut body = self.build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         // Request a final usage chunk (see `chat_stream`).
         body["stream_options"] = serde_json::json!({ "include_usage": true });
@@ -545,5 +567,26 @@ pub(crate) mod openai_sse_parser;
 mod cov_tests;
 
 #[cfg(test)]
+#[path = "openai_effort_1996_tests.rs"]
+mod effort_1996_tests;
+#[cfg(test)]
 #[path = "openai_tests.rs"]
 mod tests;
+
+#[cfg(any(test, feature = "test-support"))]
+impl OpenAiProvider {
+    /// Public accessor for the chat-completions request builder (BDD and
+    /// integration tests, #1996).
+    pub fn build_chat_completions_body_for_test(
+        provider_name: &str,
+        request: &ChatRequest<'_>,
+    ) -> serde_json::Value {
+        Self::with_client_and_name(
+            provider_name,
+            "sk-test".to_string(),
+            None,
+            reqwest::Client::new(),
+        )
+        .build_request_body(request)
+    }
+}

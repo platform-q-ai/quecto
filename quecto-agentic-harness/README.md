@@ -225,7 +225,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--workflow-guards` | No | UDS mode only — enable workflow bash command guards; does not force prompt injection |
 | `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
-| `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
+| `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`), validated against the startup model's catalogue vocabulary (see [Reasoning effort is a per-model capability](../docs/runtime-models-providers.md#reasoning-effort-is-a-per-model-capability)); a level the model does not accept refuses to start, naming the ones it does. Overrides config and env var |
 | `--disable-tool` | No | Disable a registered tool before the session starts (repeatable). Disabled tools remain in the descriptor catalogue for policy/UI callers, but are hidden from model-visible tool definitions and reject execution. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Every named tool is denied for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/subagents.md)). |
 | `--config` | No | Override config file path (else `./config.json` in the working directory, else `<base_dir>/config.json`) |
 
@@ -276,7 +276,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `new_session` | optional `id` | Switch to a fresh user-chat session (idle only) |
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted session (a listed `chat-…` key, a `cli:<name>` key, or a bare CLI session name) |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
-| `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's provider vocabulary) |
+| `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's catalogue vocabulary — the `effortLevels` `get_state` reports; a model with none refuses every level) |
 | `get_tool_catalogue` / `list_tools` | optional `id` | Return the rich `ToolCatalogueEntry` snapshot for control/query clients in `data.tools` (bundled-native and UDS tools, policy/effective availability, source/owner/lifecycle/health) |
 | `reload` | optional `id` | Force a provider/model config reload |
 | `register_tools` | `tools` array, optional `id` | Register extension tools from a connected client |

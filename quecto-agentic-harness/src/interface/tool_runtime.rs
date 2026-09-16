@@ -141,6 +141,10 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// The parent agent's own config path, forwarded so container spawns can
     /// fall back to it when the spawn call omits `config` (#1369 follow-up).
     pub parent_config_path: Option<std::path::PathBuf>,
+    /// The change-reasoning-effort use case (#1848) the spawn tool validates
+    /// an explicit-model `effort` against.
+    pub effort_control:
+        Option<std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
@@ -204,6 +208,7 @@ pub(crate) fn build_tool_runtime(
         spawned,
         parent_session_name,
         parent_config_path,
+        effort_control,
         kill_tool,
         disabled_tools,
         inherited_tool_policy,
@@ -298,6 +303,7 @@ pub(crate) fn build_tool_runtime(
         parent_config_path,
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
+        effort_control,
     });
     // The agent-control use cases — `kill`, the environment member
     // shutdown, the swarm member termination, the spawn lifecycle and the

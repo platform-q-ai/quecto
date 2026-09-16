@@ -711,11 +711,10 @@ pub(crate) fn list_handle(
     composed_sessions(base).list_sessions
 }
 
-/// The composed `list_models` controller for `base` (#1845), for rigs that
+/// The composed catalogue handles for `base` (#1845, #1848), for rigs that
 /// build a `DispatchCtx` by hand.
-pub(crate) fn list_models_handle(
+pub(crate) fn catalogue_handles(
     base: &std::path::Path,
-) -> std::sync::Arc<crate::interface::uds::catalogue::list_models_controller::ListModelsController>
-{
-    crate::composition::catalogue::build_catalogue_handles(base).list_models
+) -> crate::interface::cli::catalogue_handles::CatalogueHandles {
+    crate::composition::catalogue::build_catalogue_handles(base)
 }

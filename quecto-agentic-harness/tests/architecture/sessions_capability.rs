@@ -609,7 +609,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
     ("src/interface/cli/uds_dispatch_query.rs", 187),
-    ("src/interface/cli/uds_dispatch_session.rs", 239),
+    // #1848: the switch runtime takes the change-reasoning-effort use case
+    // (was 239).
+    ("src/interface/cli/uds_dispatch_session.rs", 241),
     ("src/interface/cli/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).
@@ -631,7 +633,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/agent_loop/agent_loop_session.rs", 22),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
     // D8 #1977 adds the workflow restore (was 93 before D8).
-    ("src/interface/cli/uds_session_switch_runtime.rs", 97),
+    // #1848: the adapter holds the change-reasoning-effort use case and
+    // restores the startup effort through it (was 97).
+    ("src/interface/cli/uds_session_switch_runtime.rs", 103),
     ("src/interface/cli/uds.rs", 713),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),

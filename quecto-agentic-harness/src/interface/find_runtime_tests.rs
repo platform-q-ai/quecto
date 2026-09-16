@@ -56,6 +56,7 @@ fn runtime(
         spawned: false,
         parent_session_name: None,
         parent_config_path: None,
+        effort_control: None,
         kill_tool: None,
         disabled_tools: &disabled,
         inherited_tool_policy: inherited,

@@ -51,13 +51,14 @@ pub(super) fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io:
 pub(super) fn parse_effort_arg(
     arg: Option<&serde_json::Value>,
     model: Option<&str>,
+    effort_control: Option<&crate::application::catalogue::use_cases::ChangeReasoningEffort>,
 ) -> Result<Option<String>, String> {
     use crate::domain::provider::EffortLevel;
     match arg {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(s)) => match s.trim() {
             "" => Ok(None),
-            level => validate_effort(level, model).map(Some),
+            level => validate_effort(level, model, effort_control).map(Some),
         },
         Some(_) => Err(format!(
             "effort must be a string; valid values: {}",
@@ -66,15 +67,31 @@ pub(super) fn parse_effort_arg(
     }
 }
 
-/// Validate a spawn `effort` level, honoring the target model's effort
-/// vocabulary when a model is specified. Returns the normalized level string.
-pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String, String> {
+/// Validate a spawn `effort` level. With an explicit target model the level
+/// must be in that model's catalogue vocabulary through the composed use
+/// case — the same rule as UDS `set_effort`, so the two surfaces cannot
+/// drift; a tool composed without the use case refuses rather than letting
+/// an unchecked level through. Without a model (the child inherits the
+/// parent's) only the syntax is checked here; the child validates at
+/// startup. Returns the normalized level string.
+pub(super) fn validate_effort(
+    level: &str,
+    model: Option<&str>,
+    effort_control: Option<&crate::application::catalogue::use_cases::ChangeReasoningEffort>,
+) -> Result<String, String> {
     use crate::domain::provider::EffortLevel;
-    let parsed = match model {
-        // The shared domain check: same membership rule and error message as
-        // UDS `set_effort`, so the two surfaces cannot drift.
-        Some(model) => crate::domain::catalogue::ModelCapabilities::parse_effort_for(model, level)?,
-        None => EffortLevel::parse(level).ok_or_else(|| {
+    let parsed = match (model, effort_control) {
+        (Some(model), Some(effort_control)) => effort_control
+            .validate(model, level)
+            .map_err(|error| error.to_string())?,
+        (Some(_), None) => {
+            return Err(
+                "effort cannot be validated for an explicit model: the spawn tool was composed \
+                 without the reasoning-effort capability"
+                    .to_string(),
+            );
+        }
+        (None, _) => EffortLevel::parse(level).ok_or_else(|| {
             format!(
                 "invalid effort level \"{level}\"; valid levels: {}",
                 EffortLevel::VALID_VALUES

@@ -16,6 +16,7 @@ fn default_ctx() -> CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     }
 }
@@ -430,6 +431,7 @@ fn test_build_agent_from_config_no_config_file() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -470,6 +472,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -513,6 +516,7 @@ fn test_build_agent_from_config_invalid_json() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -558,6 +562,7 @@ fn test_build_agent_from_config_no_providers() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     };
@@ -603,6 +608,7 @@ fn test_build_agent_from_config_with_model_override() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     };

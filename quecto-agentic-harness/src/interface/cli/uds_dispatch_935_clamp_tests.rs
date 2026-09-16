@@ -106,10 +106,9 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
                 &session_key,
             ),
-            list_models:
-                crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
-                    tmp.path(),
-                ),
+            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+                tmp.path(),
+            ),
             fleet_teardown: None,
             list_sessions: list_handle(tmp.path()),
         };

@@ -61,7 +61,10 @@ fn build_request_body_maps_all_roles_and_tool_fields() {
         description: "run".into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
     }];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &tools, "gpt-5.2"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &tools, "gpt-5.2"),
+    );
 
     assert_eq!(body["model"], "gpt-5.2");
     assert_eq!(body["max_completion_tokens"], 256);
@@ -79,7 +82,10 @@ fn build_request_body_maps_all_roles_and_tool_fields() {
 #[test]
 fn build_request_body_omits_tools_when_empty() {
     let messages = vec![Message::user("hi")];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "gpt-5.2"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &[], "gpt-5.2"),
+    );
     assert!(body.get("tools").is_none());
 }
 
@@ -101,7 +107,10 @@ fn build_request_body_demotes_non_leading_system_to_user() {
         Message::system("subagent finished"),
         Message::user("continue"),
     ];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &[], "qwen3p7-plus"),
+    );
     // Mirrors the live curl repro: no non-leading "system" role survives.
     assert_eq!(
         roles_of(&body),
@@ -122,7 +131,10 @@ fn build_request_body_consecutive_leading_system_demotes_second() {
         Message::system("Also be terse."),
         Message::user("hi"),
     ];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &[], "qwen3p7-plus"),
+    );
     assert_eq!(roles_of(&body), ["system", "user", "user"]);
     assert_eq!(body["messages"][0]["content"], "You are helpful.");
     assert_eq!(body["messages"][1]["content"], "[system] Also be terse.");
@@ -131,7 +143,10 @@ fn build_request_body_consecutive_leading_system_demotes_second() {
 #[test]
 fn build_request_body_leading_only_system_unchanged() {
     let messages = vec![Message::system("You are helpful."), Message::user("hi")];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &[], "qwen3p7-plus"),
+    );
     assert_eq!(roles_of(&body), ["system", "user"]);
     assert_eq!(body["messages"][0]["content"], "You are helpful.");
 }
@@ -370,7 +385,10 @@ fn build_request_body_invalid_tool_schema_defaults_to_null_parameters() {
         description: "bad schema".into(),
         parameters_schema: "{not json".into(),
     }];
-    let body = OpenAiProvider::build_request_body(&req(&messages, &tools, "gpt-5.2"));
+    let body = OpenAiProvider::build_chat_completions_body_for_test(
+        "openai",
+        &req(&messages, &tools, "gpt-5.2"),
+    );
     assert_eq!(body["tools"][0]["function"]["name"], "bad");
     assert!(body["tools"][0]["function"]["parameters"].is_null());
 }

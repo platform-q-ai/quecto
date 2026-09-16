@@ -193,6 +193,19 @@ pub(crate) fn build_uds_agent(
     } else {
         config.agents.defaults.max_tool_iterations
     };
+    // The configured default effort is admitted for the startup model
+    // through the composed use case, as the binary's startup does (#1848).
+    let startup_effort = quecto::composition::catalogue::build_catalogue_handles(base)
+        .effort
+        .admit(
+            &model,
+            config
+                .agents
+                .defaults
+                .effort
+                .as_deref()
+                .and_then(quecto::domain::provider::EffortLevel::parse),
+        );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -205,7 +218,7 @@ pub(crate) fn build_uds_agent(
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
-        effort: None,
+        effort: startup_effort,
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
@@ -420,7 +433,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             socket_path: socket_path_for_thread,
             socket_override: Some(server_tokio),
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
@@ -625,7 +638,10 @@ fn given_config_default_model(world: &mut QuectoWorld, model: String) {
 }
 
 #[given(expr = "a models registry with Fireworks model {string}")]
-fn given_models_registry_with_fireworks_model(world: &mut QuectoWorld, model_id: String) {
+pub(super) fn given_models_registry_with_fireworks_model(
+    world: &mut QuectoWorld,
+    model_id: String,
+) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let fireworks = wiremock::MockServer::start().await;
@@ -2130,7 +2146,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
@@ -2552,7 +2568,7 @@ fn mc_spawn_agent(
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles,
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: if persist {

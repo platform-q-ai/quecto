@@ -248,6 +248,7 @@ fn test_agent_config_flag_loads_custom_path() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     };
     let args = vec![
@@ -275,6 +276,7 @@ fn test_agent_config_flag_missing_value() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -293,6 +295,7 @@ fn test_agent_config_flag_nonexistent_path() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     };
     let args = vec![

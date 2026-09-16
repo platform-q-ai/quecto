@@ -84,7 +84,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             tmp.path(),
         ),
         fleet_teardown: None,
@@ -156,7 +156,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             tmp.path(),
         ),
         fleet_teardown: None,
@@ -229,7 +229,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        list_models: crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
+        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
             tmp.path(),
         ),
         fleet_teardown: None,

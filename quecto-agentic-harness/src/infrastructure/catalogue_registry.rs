@@ -48,6 +48,12 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                 .map_err(|e| e.to_string())?,
         },
     };
+    let effort_levels = crate::domain::catalogue::EffortVocabulary::strings_for_model(
+        &provider_id,
+        &transport,
+        &record.id,
+        record.reasoning,
+    );
     Ok(CatalogueEntry {
         provider: ProviderDescriptor {
             id: provider_id,
@@ -65,10 +71,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                 context_window_explicit: record.context_window_explicit,
                 max_output_tokens_explicit: record.max_tokens_explicit,
                 reasoning: record.reasoning,
-                effort_levels: ModelCapabilities::effort_vocabulary_for(&format!(
-                    "{}/{}",
-                    record.provider, record.id
-                )),
+                effort_levels,
                 cost: DomainModelCost {
                     input: record.cost.input,
                     output: record.cost.output,
@@ -142,7 +145,9 @@ fn unsupported_entry(
         model: ModelDescriptor {
             reference,
             display_name: name.map(str::to_string),
-            capabilities: default_capabilities(&format!("{}/{model_id}", config.provider)),
+            // An unsupported transport has no reasoning-option adapter, so the
+            // synthesized defaults carry no effort vocabulary.
+            capabilities: default_capabilities(),
             availability: Availability::runnable(),
         },
     })
@@ -151,10 +156,12 @@ fn unsupported_entry(
 /// The synthesized capability defaults matching a `models.json` entry that
 /// declares only an id (nothing explicit, so nothing clamps). The numbers
 /// come from the registry's shared constants so every layer synthesizes the
-/// same defaults (#1581 review).
-pub(crate) fn default_capabilities(reference: &str) -> ModelCapabilities {
+/// same defaults (#1581 review). A record that declares nothing declares no
+/// reasoning either, so the effort vocabulary is empty (#1996): the caller
+/// seeds one from `EffortVocabulary` when it knows better.
+pub(crate) fn default_capabilities() -> ModelCapabilities {
     ModelCapabilities {
-        effort_levels: ModelCapabilities::effort_vocabulary_for(reference),
+        effort_levels: Vec::new(),
         input_modalities: vec!["text".to_string()],
         context_window: DEFAULT_CONTEXT_WINDOW,
         max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
@@ -489,3 +496,57 @@ pub fn runtime_store_for(base_dir: &Path) -> crate::application::ports::RuntimeS
 #[cfg(test)]
 #[path = "catalogue_registry_tests.rs"]
 mod tests;
+
+/// The catalogue capability's [`EffortVocabularySource`] over the published
+/// snapshot of one base directory (#1996): the vocabulary is the entry's
+/// seeded `effort_levels`, read from the current generation on every call so
+/// a refresh or reload is honoured. A model the snapshot does not hold has no
+/// vocabulary.
+///
+/// A bare model id (no `provider/` prefix — the router serves it from the
+/// first configured provider) is looked up across the *runnable* providers
+/// serving that id, since only a runnable provider can be the one the
+/// router picks: when they all seed the same vocabulary that vocabulary is
+/// the answer (an OAuth-only user's bare `gpt-5.5` is openai-oauth's); when
+/// they disagree the id is ambiguous and no vocabulary is affirmed; when
+/// none is runnable nothing is known.
+#[derive(Debug)]
+pub struct PublishedEffortVocabulary {
+    store: CatalogueSnapshotStore,
+}
+
+impl PublishedEffortVocabulary {
+    pub fn for_base_dir(base_dir: &Path) -> Self {
+        Self {
+            store: snapshot_store_for(base_dir),
+        }
+    }
+}
+
+impl crate::application::catalogue::ports::EffortVocabularySource for PublishedEffortVocabulary {
+    fn effort_vocabulary(&self, model: &str) -> Option<Vec<crate::domain::provider::EffortLevel>> {
+        let snapshot = self.store.current();
+        let levels = |entry: &CatalogueEntry| -> Vec<crate::domain::provider::EffortLevel> {
+            entry
+                .model
+                .capabilities
+                .effort_levels
+                .iter()
+                .filter_map(|level| crate::domain::provider::EffortLevel::parse(level))
+                .collect()
+        };
+        if let Ok(reference) = ModelRef::parse_qualified(model) {
+            return snapshot.find(&reference).map(levels);
+        }
+        let mut serving = snapshot
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry.reference().model().as_str() == model
+                    && entry.model.availability.is_runnable()
+            })
+            .map(levels);
+        let first = serving.next()?;
+        serving.all(|other| other == first).then_some(first)
+    }
+}

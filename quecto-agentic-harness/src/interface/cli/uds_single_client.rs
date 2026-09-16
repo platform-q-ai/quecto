@@ -65,7 +65,7 @@ pub(super) async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model);
-    let effort = agent.effort().map(|l| l.as_str().to_string());
+    let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =
         agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
@@ -109,7 +109,7 @@ pub(super) async fn single_client_loop(
             save_session: sessions.save_session.clone(),
             rewrite: sessions.rewrite.clone(),
             switch: sessions.switch.clone(),
-            list_models: catalogue.list_models.clone(),
+            catalogue: catalogue.clone(),
         },
     )
     .await;

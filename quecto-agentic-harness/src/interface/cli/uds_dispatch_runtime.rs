@@ -53,17 +53,13 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     let selection = selection_status(ctx.base_dir, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
-    // Every model switch resets the session effort to `low` (#1067): a level
-    // chosen for one provider (e.g. OpenAI `xhigh`) must not silently carry
-    // into another provider's vocabulary, where it would be clamped on the
-    // wire while the UI still displays the stale level. Explicit `low` is
-    // predictable and cost-safe; the user re-raises effort via set_effort.
-    let reset_effort = crate::domain::provider::EffortLevel::Low;
-    if ctx.agent.effort() != Some(reset_effort) {
-        ctx.agent.set_effort(reset_effort);
+    // Every model switch resets the session effort (#1067, #1848): the
+    // use case decides the level the new model admits.
+    let effort = ctx.catalogue.effort.clone();
+    if effort.reset_for_model_switch(ctx.agent, ctx.session.model()) {
         ctx.session.bump_visible_generation();
     }
-    tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
+    tracing::debug!(new_model = %ctx.session.model(), effort = ?ctx.agent.effort(), "UDS: model switched; effort reset");
     let ev = AgentEvent::ok(
         args.id.as_deref(),
         &args.type_name,
@@ -115,36 +111,37 @@ pub(super) fn selection_status(
     }
 }
 
-/// Switch the session's reasoning effort at runtime (#1067).
+/// Switch the session's reasoning effort at runtime (#1067, #1848).
 ///
-/// The level is validated against the ACTIVE model's provider vocabulary
-/// (OpenAI-shaped: none/low/medium/high/xhigh; Anthropic: low/medium/high/max)
-/// — never the cross-provider union — so a level another provider accepts is
-/// rejected here, listing exactly the levels this session can use. On
-/// rejection the previous setting stays in effect.
+/// The change-reasoning-effort use case validates the level against the
+/// ACTIVE model's catalogue vocabulary — never a cross-provider union — so a
+/// level another model accepts is rejected here, listing exactly the levels
+/// this session can use. On rejection the previous setting stays in effect.
 pub(super) async fn handle_set_effort(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
     effort: &str,
 ) -> bool {
-    let ev = match crate::domain::catalogue::ModelCapabilities::parse_effort_for(
-        ctx.session.model(),
-        effort,
-    ) {
-        Ok(level) => {
-            if ctx.agent.effort() != Some(level) {
-                ctx.agent.set_effort(level);
+    use crate::interface::uds::catalogue::effort_presenter;
+    let request = crate::application::catalogue::dto::EffortChangeRequest {
+        model: ctx.session.model().to_string(),
+        level: effort.to_string(),
+    };
+    let before = ctx.agent.effort();
+    let ev = match ctx.catalogue.effort.execute(ctx.agent, &request) {
+        Ok(outcome) => {
+            if before != Some(outcome.effective) {
                 ctx.session.bump_visible_generation();
             }
-            tracing::debug!(effort = level.as_str(), "UDS: effort switched");
+            tracing::debug!(effort = outcome.effective.as_str(), "UDS: effort switched");
             AgentEvent::ok(
                 id,
                 type_name,
-                Some(serde_json::json!({ "effort": level.as_str() })),
+                Some(effort_presenter::render_change(&outcome)),
             )
         }
-        Err(message) => AgentEvent::err(id, type_name, message),
+        Err(error) => AgentEvent::err(id, type_name, effort_presenter::render_error(&error)),
     };
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

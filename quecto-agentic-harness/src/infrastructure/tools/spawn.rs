@@ -144,6 +144,10 @@ pub struct SpawnTool {
     pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// child events (PRD Stage B).
     pub(super) parent_id: Arc<Mutex<Option<String>>>,
+    /// Composition's change-reasoning-effort use case (#1848): validates a
+    /// spawn `effort` for an explicit `model`; `None` checks syntax only.
+    pub(super) effort_control:
+        Option<Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>>,
     pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
     /// Session-scoped script-managed environment registry (ADR-0021: built
     /// once at composition and injected).
@@ -210,6 +214,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: Arc::new(Mutex::new(None)),
+            effort_control: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
@@ -233,6 +238,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: Arc::new(Mutex::new(None)),
+            effort_control: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
@@ -248,6 +254,16 @@ impl SpawnTool {
     /// container spawns can fall back to it when `config` is omitted
     /// (#1369 follow-up). `None` leaves only the inherited runtime config
     /// (`QUECTO_RUNTIME_CONFIG_PATH`) as a fallback source.
+    pub fn with_effort_control(
+        mut self,
+        effort_control: Option<
+            Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
+        >,
+    ) -> Self {
+        self.effort_control = effort_control;
+        self
+    }
+
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
         self.container_config_roster =
             container_config_roster(parent_config_path.as_deref(), &self.base_dir);
@@ -423,8 +439,11 @@ impl SpawnTool {
         .map_err(|e| format!("invalid model: {e}"))?;
         let model = model_arg.map(|m| m.to_model_string());
 
-        let effort =
-            super::spawn_launch_args::parse_effort_arg(args.get("effort"), model.as_deref())?;
+        let effort = super::spawn_launch_args::parse_effort_arg(
+            args.get("effort"),
+            model.as_deref(),
+            self.effort_control.as_deref(),
+        )?;
 
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;

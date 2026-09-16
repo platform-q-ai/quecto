@@ -391,6 +391,9 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort switches the session reasoning effort
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
     And I send command "get_state" with id "gs-1"
@@ -402,6 +405,9 @@ Feature: UDS mode for headless agent operation
   Scenario: Switching models resets the effort to low
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
     And I send set_model "anthropic-api/claude-sonnet-4-6"
@@ -413,6 +419,9 @@ Feature: UDS mode for headless agent operation
   Scenario: A switched effort is carried on the next LLM request
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     And a capturing Anthropic mock LLM returning text "ok"
     When I start the UDS agent with no [session]
     And I send set_model "anthropic-api/claude-sonnet-4-6"
@@ -427,6 +436,9 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort rejects an invalid level and keeps the previous setting
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "high"
     And I send set_effort "turbo"
@@ -439,6 +451,9 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort rejects a level outside the active provider's vocabulary
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "high"
     And I send set_effort "max"
@@ -451,6 +466,9 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort does not leak into a fresh session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
     And I send command "new_session" with id "ns-1"
@@ -462,6 +480,9 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort is session-scoped and survives client reconnect over the socket
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
+    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
+    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    And the config default model is "openai-api/gpt-5.6-sol"
     And the mock LLM returns a text response "ok"
     When I start the multi-client UDS agent with persist
     And client 1 connects

@@ -464,7 +464,7 @@ mod cov2_tests;
 mod cov_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_fixture_tests.rs"]
-mod fixture_tests;
+pub(super) mod fixture_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_1060_lifecycle_tests.rs"]
 mod lifecycle_1060_tests;

@@ -40,6 +40,7 @@ fn workflow_flags() -> AgentFlags {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     }
@@ -76,6 +77,10 @@ fn build(
     let tmp = tempfile::TempDir::new().unwrap();
     build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config,
         http_client: &reqwest::Client::new(),

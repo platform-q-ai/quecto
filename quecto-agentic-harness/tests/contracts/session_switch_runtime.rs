@@ -22,16 +22,31 @@ fn generation(rt: &Runtime) -> u64 {
 #[test]
 fn an_effort_override_is_reset_to_the_default_and_the_change_is_visible() {
     let mut rt = runtime("cli:contract");
-    rt.agent.set_effort(EffortLevel::Low);
+    quecto::application::catalogue::ports::EffortRuntime::apply_effort(
+        &mut rt.agent,
+        Some(EffortLevel::Low),
+    );
     let before = generation(&rt);
-    LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
-        .reset_effort_to_default();
+    LoopSessionSwitchRuntime::new(
+        &mut rt.agent,
+        &mut rt.session,
+        &rt.execution,
+        None,
+        rt.effort.clone(),
+    )
+    .reset_effort_to_default();
     assert_eq!(rt.agent.effort(), None, "the startup default was no effort");
     assert!(generation(&rt) > before);
     // Already at the default: nothing changes, nothing is announced.
     let before = generation(&rt);
-    LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
-        .reset_effort_to_default();
+    LoopSessionSwitchRuntime::new(
+        &mut rt.agent,
+        &mut rt.session,
+        &rt.execution,
+        None,
+        rt.effort.clone(),
+    )
+    .reset_effort_to_default();
     assert_eq!(generation(&rt), before);
 }
 
@@ -50,14 +65,21 @@ fn a_workflow_run_is_reset_and_the_change_is_visible_only_when_it_moved() {
         &mut rt.session,
         &rt.execution,
         Some(&rt.workflow),
+        rt.effort.clone(),
     )
     .reset_workflow();
     assert!(rt.workflow.lock().unwrap().persisted_run().is_none());
     assert!(generation(&rt) > before);
     // Without a bound engine the reset is a no-op.
     let before = generation(&rt);
-    LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
-        .reset_workflow();
+    LoopSessionSwitchRuntime::new(
+        &mut rt.agent,
+        &mut rt.session,
+        &rt.execution,
+        None,
+        rt.effort.clone(),
+    )
+    .reset_workflow();
     assert_eq!(generation(&rt), before);
 }
 
@@ -82,6 +104,7 @@ fn a_saved_workflow_run_is_restored_and_the_change_is_visible_only_when_it_moved
         &mut rt.session,
         &rt.execution,
         Some(&rt.workflow),
+        rt.effort.clone(),
     )
     .restore_workflow(saved.clone());
     assert_eq!(
@@ -96,13 +119,20 @@ fn a_saved_workflow_run_is_restored_and_the_change_is_visible_only_when_it_moved
         &mut rt.session,
         &rt.execution,
         Some(&rt.workflow),
+        rt.effort.clone(),
     )
     .restore_workflow(saved.clone());
     assert_eq!(generation(&rt), before);
     // Without a bound engine the restore is a no-op.
     let before = generation(&rt);
-    LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
-        .restore_workflow(saved);
+    LoopSessionSwitchRuntime::new(
+        &mut rt.agent,
+        &mut rt.session,
+        &rt.execution,
+        None,
+        rt.effort.clone(),
+    )
+    .restore_workflow(saved);
     assert_eq!(generation(&rt), before);
 }
 
@@ -113,8 +143,14 @@ fn the_inherited_accounting_reset_still_zeroes_usage_and_reports_the_count() {
         .record_usage("cli:contract", UsageTotals::billed(10, 5, 2, 1, 7));
     rt.session.set_context_tokens(42);
     assert!(rt.session.enqueue_pending("follow-up".into()));
-    LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)
-        .history_replaced(3);
+    LoopSessionSwitchRuntime::new(
+        &mut rt.agent,
+        &mut rt.session,
+        &rt.execution,
+        None,
+        rt.effort.clone(),
+    )
+    .history_replaced(3);
     assert_eq!(rt.session.usage_snapshot().tokens.total, 0);
     assert_eq!(rt.session.context_tokens(), 0);
     assert!(rt.session.drain_pending().is_empty());

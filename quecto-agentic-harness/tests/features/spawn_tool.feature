@@ -335,12 +335,30 @@ Feature: SpawnTool — child agent process spawning
     And the spawn result should contain "effort must be a string"
     And the spawn result should contain "none, low, medium, high, xhigh, max"
 
-  Scenario: Spawn effort is checked against the selected provider vocabulary
-    Given a SpawnTool with empty allowlist
+  Scenario: Spawn effort is checked against the selected model's catalogue vocabulary
+    Given a SpawnTool with empty allowlist and the composed effort control
     When I execute the SpawnTool with '{"task":"work","model":"anthropic-api/claude-fable-5","effort":"xhigh"}'
     Then the spawn result should be an error
     And the spawn result should contain "invalid effort"
     And the spawn result should contain "low, medium, high, max"
+
+  Scenario: Spawn effort for a model with no effort control is refused
+    Given a SpawnTool with empty allowlist and the composed effort control
+    When I execute the SpawnTool with '{"task":"work","model":"plain/m","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "no reasoning-effort control"
+
+  Scenario: Spawn effort for a model the catalogue does not know is refused as unknown
+    Given a SpawnTool with empty allowlist and the composed effort control
+    When I execute the SpawnTool with '{"task":"work","model":"openrouter/typo","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "not in the model catalogue"
+
+  Scenario: An explicit-model effort is refused when the tool has no effort capability composed
+    Given a SpawnTool with empty allowlist
+    When I execute the SpawnTool with '{"task":"work","model":"openai-api/gpt-5.6-sol","effort":"low"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "composed without the reasoning-effort capability"
 
   Scenario: Tool definition schema includes effort field
     Given a SpawnTool with allowlist "bot"

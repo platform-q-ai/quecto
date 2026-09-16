@@ -29,6 +29,7 @@ fn flags() -> AgentFlags {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         admission_context: None,
         parent_control: None,
     }
@@ -61,6 +62,10 @@ fn build_tool_registry_uses_empty_session_for_no_session() {
 
     let built = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -92,6 +97,10 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
 
     let built = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -125,6 +134,10 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     let mut stderr = String::new();
     let spawned = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -174,6 +187,10 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     stderr.clear();
     let top = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -222,6 +239,10 @@ fn build_tool_registry_registers_agent_control_tools_as_official_native() {
 
     let built = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -294,6 +315,10 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
 
     let built = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -342,6 +367,10 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
 
     let built = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+        )
+        .effort,
         config_path: tmp.path(),
         config: &config,
         http_client: &http,

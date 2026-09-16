@@ -62,10 +62,12 @@ struct EffortFx {
 impl EffortFx {
     fn new(effort: Option<EffortLevel>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
+        // The vocabulary comes from the published catalogue (#1848).
+        let _ = crate::composition::catalogue::list_models_wire_for(tmp.path());
         Self {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into()),
+            session: AgentSession::new(super::uds_dispatch::fixture_tests::RIG_MODEL.into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             _tmp: tmp,
@@ -125,10 +127,9 @@ impl EffortFx {
             switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
                 &self.session_key,
             ),
-            list_models:
-                crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
-                    self._tmp.path(),
-                ),
+            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+                self._tmp.path(),
+            ),
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }
@@ -266,8 +267,9 @@ async fn set_model_same_model_effort_reset_advances_get_state_since_cursor() {
 
     {
         let mut ctx = fx.ctx();
-        let cmd: AgentCommand = serde_json::from_str(r#"{"type":"set_model","model":"stub"}"#)
-            .expect("set_model parses");
+        let cmd: AgentCommand =
+            serde_json::from_str(r#"{"type":"set_model","model":"openai-api/gpt-5.6-sol"}"#)
+                .expect("set_model parses");
         crate::interface::cli::uds::uds_dispatch::dispatch_command(cmd, &mut ctx).await;
     }
 

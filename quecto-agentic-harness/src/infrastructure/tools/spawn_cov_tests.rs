@@ -105,7 +105,13 @@ fn validate_config_path_rejects_parent_dir_component() {
 
 #[test]
 fn parse_args_accepts_all_optional_spawn_fields() {
-    let tool = SpawnTool::new(vec!["allowed".to_string()]);
+    // An explicit model plus effort is validated against the model's
+    // catalogue vocabulary (#1848), so the tool is composed with the use
+    // case over a published catalogue.
+    let dir = tempfile::TempDir::new().unwrap();
+    let _ = crate::composition::catalogue::list_models_wire_for(dir.path());
+    let effort = crate::composition::catalogue::build_catalogue_handles(dir.path()).effort;
+    let tool = SpawnTool::new(vec!["allowed".to_string()]).with_effort_control(Some(effort));
     let cfg = tool
         .parse_args(
             r#"{
@@ -115,7 +121,7 @@ fn parse_args_accepts_all_optional_spawn_fields() {
                 "config":"configs/child.toml",
                 "workflow":true,
                 "workflow_guards":true,
-                "model":"openai/gpt-5",
+                "model":"openai-api/gpt-5.6-sol",
                 "effort":"high",
                 "read_only":true,
                 "disable_tools":["grep"]
@@ -132,7 +138,7 @@ fn parse_args_accepts_all_optional_spawn_fields() {
     );
     assert!(cfg.workflow);
     assert!(cfg.workflow_guards);
-    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5"));
+    assert_eq!(cfg.model.as_deref(), Some("openai-api/gpt-5.6-sol"));
     assert_eq!(cfg.effort.as_deref(), Some("high"));
     assert_eq!(cfg.disable_tools, vec!["write", "edit", "grep"]);
     assert!(cfg.read_only);

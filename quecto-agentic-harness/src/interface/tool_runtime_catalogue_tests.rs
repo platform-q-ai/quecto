@@ -50,6 +50,7 @@ fn build_runtime_with_entrypoint(
         spawned,
         parent_session_name: None,
         parent_config_path: None,
+        effort_control: None,
         kill_tool: None,
         disabled_tools,
         inherited_tool_policy: None,

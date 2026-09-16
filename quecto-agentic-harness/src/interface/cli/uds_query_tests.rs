@@ -204,10 +204,9 @@ impl Fx {
             switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
                 &self.session_key,
             ),
-            list_models:
-                crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
-                    self._tmp.path(),
-                ),
+            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+                self._tmp.path(),
+            ),
             fleet_teardown: None,
             list_sessions: list_handle(self._tmp.path()),
         }

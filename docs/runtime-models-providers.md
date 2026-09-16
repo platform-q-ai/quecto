@@ -8,8 +8,8 @@ One authority owns each concern; nothing outside its layer re-derives it. Contri
 
 | Layer | Owns | Never does |
 |---|---|---|
-| `domain` (`domain/catalogue.rs`) | Stable provider/model identities, capability metadata (limits, cost, the reasoning-effort vocabulary), availability semantics, immutable snapshot generations | I/O, parsing external formats |
-| `application` (`application/catalogue/` — `use_cases/`, `ports/`, `dto/` and the resolve/snapshot store in `mod.rs`; `catalogue_refresh.rs`, `provider_runtime.rs`) | Source-layer precedence and the resolve/merge, the list-models use case, selection, refresh orchestration, publishing catalogue + routing as one generation | Reading files or the network directly |
+| `domain` (`domain/catalogue.rs`) | Stable provider/model identities, capability metadata (limits, cost, the per-model reasoning-effort vocabulary rule `EffortVocabulary`), availability semantics, immutable snapshot generations | I/O, parsing external formats |
+| `application` (`application/catalogue/` — `use_cases/`, `ports/`, `dto/` and the resolve/snapshot store in `mod.rs`; `catalogue_refresh.rs`, `provider_runtime.rs`) | Source-layer precedence and the resolve/merge, the list-models and change-reasoning-effort use cases, selection, refresh orchestration, publishing catalogue + routing as one generation | Reading files or the network directly |
 | `infrastructure` (`infrastructure/catalogue_registry.rs`, `catalogue_inputs.rs`, `catalogue_discovery.rs`, `providers/`) | Parsing `models.json` and discovery caches into domain descriptors, credential resolution, concrete transport adapters | Deciding precedence, defining canonical types, inferring capabilities |
 | `composition` (`composition/catalogue.rs`) | Building the catalogue use cases over the file-backed inputs port and the per-directory snapshot store; `main` hands the builder to the CLI | Policy of any kind |
 | `interface` (`interface/uds/catalogue/`, `interface/catalogue_runtime.rs`, CLI/UDS/REPL, TUI) | Parsing commands, invoking the injected use-case handles and rendering their DTOs on the wire (`catalogue_runtime.rs` still composes the provider runtime and model selection at entry points until #1847/#1849 migrate them) | Parsing catalogue data, merging sources, constructing use cases, caching its own model metadata |
@@ -57,6 +57,31 @@ Choose a supported transport (`openai-completions`, `anthropic-messages`, `googl
 ```
 
 A provider block declaring a transport with no adapter in this build is still listed: its models are *known but not runnable*, with a structured unsupported-transport reason naming the declared transport. Catalogue data does not make an unsupported protocol runnable, and the rest of the file keeps working.
+
+### Reasoning effort is a per-model capability
+
+Which `/effort` levels a model offers — and whether the selection is sent on the wire at all — is the catalogue's per-model capability (`effortLevels`), seeded by one domain rule (`domain::catalogue::EffortVocabulary`) from the provider's documented scale and applied by the change-reasoning-effort use case (`application/catalogue/use_cases/change_reasoning_effort.rs`) on every surface: the `get_state` vocabulary the selector shows, `set_effort`, spawn `effort`, startup `--effort`, and the reset on a model switch. Nothing infers a vocabulary from a model name, and no provider adapter decides support: an adapter transmits only a level the use case admitted for the active model.
+
+| Provider | Levels offered and sent | Wire parameter |
+|---|---|---|
+| Anthropic (`anthropic-messages`) | `low, medium, high, max` | `output_config.effort` |
+| `openai-oauth` (Codex Responses API; an OAuth token without an account id falls back to Chat Completions, which never transmits an effort) | `none, low, medium, high, xhigh` | `reasoning.effort` |
+| `openai-api` models declaring `reasoning` (routed to the Responses API) | `none, low, medium, high, xhigh` | `reasoning.effort` |
+| `openai-api` models without `reasoning` (Chat Completions, which rejects `reasoning_effort` with tools) — including the default `gpt-5.5` | none | — |
+| xAI `grok-4.6` declaring `reasoning` | `low, medium, high, xhigh` | `reasoning_effort` |
+| other xAI Grok models declaring `reasoning` | `low, medium, high` | `reasoning_effort` |
+| Any other `openai-completions` endpoint (Fireworks, local servers, gateways) | `low, medium, high` **only when the record declares `"reasoning": true`**; otherwise none. Do not declare it on a provider block that points at OpenAI's own Chat Completions endpoint — that endpoint rejects `reasoning_effort` with function tools | `reasoning_effort` |
+| Transports without a reasoning-option adapter | none | — |
+
+So for a Fireworks (or any OpenAI-compatible) reasoning model, declare it:
+
+```json
+{"providers": {"fireworks": {"api": "openai-completions",
+  "baseUrl": "https://api.fireworks.ai/inference/v1", "apiKey": "$FIREWORKS_API_KEY",
+  "models": [{"id": "accounts/fireworks/models/glm-5p3", "reasoning": true}]}}}
+```
+
+A model with no effort control advertises an empty `effortLevels`, which the TUI treats as authoritative (the selector reports that the model has no control; it never keeps a previous model's vocabulary); a model the catalogue does not know reports none. A bare id (no `provider/` prefix, as the default `gpt-5.5` is) resolves across the *runnable* providers serving it — an OAuth-only setup gets `openai-oauth`'s scale, an API-key-only setup gets nothing — and is refused as ambiguous when those providers disagree; select it as a qualified `provider/model` in that case. In both cases `set_effort`, spawn `effort` and `--effort` are refused with a message naming the model, a configured `agents.defaults.effort` is dropped with a startup warning, and no reasoning option is ever sent. Switching models resets the session effort to `low` when the new model accepts it, else to the provider default; a fresh or resumed session restores the startup effort only where the *active* model accepts it. `reasoning_effort` and Fireworks' `thinking` are never sent together.
 
 ### User overrides: patch a model's metadata by stable ID
 

@@ -411,6 +411,17 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "KillDelegatedAgentRequest",
                     ..,
                 ] => true,
+                // The spawn tool (#1848) holds the composed change-reasoning-
+                // effort handle to validate an explicit-model `effort` the
+                // same way `set_effort` does; the vocabulary rule is the use
+                // case's, the tool only invokes it.
+                [
+                    "crate",
+                    "application",
+                    "catalogue",
+                    "use_cases",
+                    "ChangeReasoningEffort",
+                ] => true,
                 [
                     "crate",
                     "application",
@@ -2541,6 +2552,17 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
         paths.iter().all(|path| {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
+                // The spawn tool (#1848) holds the composed change-reasoning-
+                // effort handle to validate an explicit-model `effort` the
+                // same way `set_effort` does; the vocabulary rule is the use
+                // case's, the tool only invokes it.
+                [
+                    "crate",
+                    "application",
+                    "catalogue",
+                    "use_cases",
+                    "ChangeReasoningEffort",
+                ] => true,
                 [
                     "crate",
                     "application",

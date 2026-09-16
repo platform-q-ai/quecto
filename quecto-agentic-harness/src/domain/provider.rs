@@ -98,15 +98,10 @@ impl ThinkingLevel {
 /// Reasoning/output effort level.
 ///
 /// The accepted vocabulary is the union of the providers' documented scales
-/// (#1066):
-///
-/// - OpenAI reasoning models document `none, low, medium, high, xhigh`
-///   (transmitted verbatim as `reasoning.effort` on the Responses API).
-/// - Anthropic documents `low, medium, high` plus `max` (Opus 4.6 only),
-///   emitted as `output_config: {effort: "<level>"}`.
-///
-/// Each provider adapter maps levels outside its own documented scale to its
-/// nearest documented value; parsing rejects anything outside the union.
+/// (#1066): OpenAI's `none, low, medium, high, xhigh` and Anthropic's
+/// `low, medium, high, max`. Which subset a given model accepts is the
+/// catalogue's per-model capability (`domain::catalogue::EffortVocabulary`,
+/// #1996); parsing here is syntax only and rejects anything outside the union.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffortLevel {
     /// OpenAI only: disable reasoning ("none").
@@ -133,29 +128,6 @@ impl EffortLevel {
             Self::High => "high",
             Self::XHigh => "xhigh",
             Self::Max => "max",
-        }
-    }
-
-    /// OpenAI's documented reasoning-effort scale (#1066).
-    pub const OPENAI_LEVELS: &'static [Self] =
-        &[Self::None, Self::Low, Self::Medium, Self::High, Self::XHigh];
-
-    /// Anthropic's documented effort scale (`max` is Opus 4.6 only).
-    pub const ANTHROPIC_LEVELS: &'static [Self] = &[Self::Low, Self::Medium, Self::High, Self::Max];
-
-    /// The effort vocabulary valid for the provider serving `model`
-    /// (a `provider/model-id` pair, or a bare model id).
-    ///
-    /// Anthropic-served models (provider prefix contains "anthropic", or a
-    /// bare `claude-*` id) use [`Self::ANTHROPIC_LEVELS`]; everything else
-    /// uses the OpenAI-shaped scale, which is also what OpenAI-compatible
-    /// providers accept.
-    pub fn levels_for_model(model: &str) -> &'static [Self] {
-        let (provider, id) = model.split_once('/').unwrap_or(("", model));
-        if provider.contains("anthropic") || id.starts_with("claude") {
-            Self::ANTHROPIC_LEVELS
-        } else {
-            Self::OPENAI_LEVELS
         }
     }
 

@@ -16,6 +16,10 @@ use crate::interface::cli::uds_session::AgentSession;
 /// The sessions graph (#1970, #1972) is composed once over the fixture's own
 /// store, so the context's read handles, its `list_sessions` and its save
 /// transaction share one active-session state and one file store.
+/// A built-in model with the OpenAI effort scale, so effort rigs exercise a
+/// real catalogue vocabulary.
+pub(crate) const RIG_MODEL: &str = "openai-api/gpt-5.6-sol";
+
 pub(super) struct Fixture {
     pub(super) agent: AgentLoopImpl,
     pub(super) messages: Vec<Message>,
@@ -47,13 +51,17 @@ pub(super) struct Fixture {
 impl Fixture {
     pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
+        // Publish the rig directory's catalogue generation (#1848): the
+        // effort vocabulary every `get_state`/`set_effort` reads comes from
+        // the published snapshot, as the composed loop has at startup.
+        let _ = crate::composition::catalogue::list_models_wire_for(tmp.path());
         let store = std::sync::Arc::new(FileSessionStore::new(FlatSessionLayout::new(tmp.path())));
         let agent = make_agent();
         let latch = agent.durable_prefix_latch();
         let mut fixture = Self {
             agent,
             messages: Vec::new(),
-            session: AgentSession::new("stub".into()),
+            session: AgentSession::new(RIG_MODEL.into()),
             session_key: "cli:test".to_string(),
             store: store.clone(),
             sessions: list_handle_placeholder(&store),
@@ -202,10 +210,9 @@ impl Fixture {
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
             switch: self.sessions.switch.clone(),
-            list_models:
-                crate::interface::cli::uds::dispatch_session_roster_tests::list_models_handle(
-                    self._tmp.path(),
-                ),
+            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+                self._tmp.path(),
+            ),
         }
     }
 }

@@ -195,6 +195,10 @@ pub struct AgentControlToolDeps {
     /// The one owner of every process this composition spawns (#1935).
     pub owned_child_supervisor:
         Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
+    /// The change-reasoning-effort use case (#1848) the spawn tool validates
+    /// an explicit-model `effort` against; `None` in unit rigs.
+    pub effort_control:
+        Option<Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>>,
 }
 
 pub struct AgentControlToolBuild {
@@ -230,6 +234,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path)
+            .with_effort_control(deps.effort_control)
             .with_owned_child_supervisor(deps.owned_child_supervisor)
             .with_harness_lifecycle(harness_lifecycle.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
