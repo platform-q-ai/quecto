@@ -1258,19 +1258,21 @@ Feature: UDS mode for headless agent operation
     And the agent output should not contain text "ORIGINAL_SHOULD_BE_CANCELLED"
 
   # ─── List saved sessions (#1861, #1970) ──────────────────────────────────────
-  # The `list_sessions` command is answered by the composed sessions query:
-  # every saved session, newest first, in the summary shape the TUI resume
-  # selector reads (key, title, messageCount, updatedUnixSecs, updatedAt).
+  # Global discovery remains available and is answered by the composed sessions
+  # query: every saved session, newest first, in the summary shape the TUI
+  # resume selector reads (key, title, messageCount, updatedUnixSecs,
+  # updatedAt). The approved additive public request spells this explicitly as
+  # scope "global"; omission remains the issue #2001 local default.
 
-  @done @issue-1970 @issue-1861
-  Scenario: list_sessions reports every saved session newest first in the summary shape
+  @done @issue-1970 @issue-1861 @global-session-list
+  Scenario: Global session discovery retains every saved session newest first in the summary shape
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "hello"
     And a saved [session] "older" titled "first question" with 2 messages updated at 1000
     And a saved [session] "newer" titled "latest question" with 1 messages updated at 2000
     When I start the UDS agent with [session] "current"
-    And I send command "list_sessions" with id "ls-1"
+    And I send global list_sessions with id "ls-1"
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the list_sessions response should list the [session] keys "cli:newer, cli:older" in order

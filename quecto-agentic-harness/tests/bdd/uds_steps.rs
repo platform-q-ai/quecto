@@ -397,6 +397,20 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
 
     let system_prompt = world.system_prompt.clone().unwrap_or_default();
     let base_for_thread = base.clone();
+    // Match the production launch boundary: the UDS loop receives the
+    // authoritative effective execution directory, not the persistence base.
+    // `CliContext.cwd` is the BDD fixture's public equivalent of the process
+    // CWD selected by the CLI build path.
+    let workspace_for_thread = world
+        .cli_context
+        .cwd
+        .clone()
+        .expect("UDS BDD launch requires an effective execution directory");
+    assert!(
+        workspace_for_thread.is_dir(),
+        "UDS BDD execution directory must exist: {}",
+        workspace_for_thread.display()
+    );
     let socket_path_for_thread = socket_path.clone();
 
     // Convert std UnixStream to tokio UnixStream for the server half.
@@ -410,7 +424,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             agent,
             retention: None,
             base_dir: &base_for_thread,
-            workspace: &base_for_thread,
+            workspace: &workspace_for_thread,
             identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
@@ -855,6 +869,16 @@ fn when_send_prompt_with_id(world: &mut QuectoWorld, id: String, message: String
 #[when(expr = "I send command {string} with id {string}")]
 fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: String) {
     let cmd = serde_json::json!({"type": command, "id": id});
+    world.uds_commands.push(cmd.to_string());
+}
+
+#[when(expr = "I send global list_sessions with id {string}")]
+fn when_send_global_list_sessions(world: &mut QuectoWorld, id: String) {
+    let cmd = serde_json::json!({
+        "type": "list_sessions",
+        "id": id,
+        "scope": "global"
+    });
     world.uds_commands.push(cmd.to_string());
 }
 

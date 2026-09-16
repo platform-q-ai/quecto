@@ -6,8 +6,12 @@ async fn harness() -> TuiHarness {
 }
 
 #[tokio::test]
-async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
+async fn local_default_selector_renders_discovery_metadata_and_selects_opaque_key() {
     let mut h = harness().await;
+    // A fieldless list_sessions response is local-by-default discovery. Rows
+    // may be grouped by repository/worktree, but selecting one sends only its
+    // opaque key: the server still decides whether the canonical execution
+    // directory/worktree matches or an explicit safe disposition is required.
     let data = serde_json::json!({
         "sessions": [{
             "key": "chat-123",

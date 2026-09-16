@@ -1802,4 +1802,6 @@ mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
 mod issue_2001_folder_resume_steps;
+mod issue_2001_safe_resume_steps;
+mod issue_2001_scope_discovery_steps;
 mod list_sessions_steps;

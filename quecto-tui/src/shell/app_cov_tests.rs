@@ -146,21 +146,44 @@ async fn send_session_and_list_commands_emit_expected_types() {
 }
 
 #[tokio::test]
-async fn send_resume_session_empty_falls_back_to_list() {
+async fn blank_resume_defaults_to_local_list_and_exact_key_only_requests_global_lookup() {
     let mut h = harness().await;
-    h.app_mut().send_resume_session("   ");
-    h.app_mut().send_resume_session("my-session");
+    let a = h.app_mut();
+    a.ac_mut().session_key = Some("cli:current".into());
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+        text: "current folder history".into(),
+    });
+    let chat_entries_before_lookup = a.ac().master_session.chat.entry_count();
+
+    a.send_resume_session("   ");
+    a.send_resume_session("opaque:key/from-anywhere");
+
+    // Exact-key compatibility guarantees global lookup, not eager foreign-dir
+    // history replacement. A response may still require an explicit allowlisted
+    // disposition; merely sending the lookup must leave active state untouched.
+    assert_eq!(a.ac().session_key.as_deref(), Some("cli:current"));
+    assert_eq!(
+        a.ac().master_session.chat.entry_count(),
+        chat_entries_before_lookup
+    );
+
     let cmds = h.drain_commands().await;
-    // drain_commands is FIFO: assert positionally so the blank→list and
-    // named→resume mapping can't pass if the two were swapped.
+    // drain_commands is FIFO: assert positionally so the blank→local-list and
+    // named→global-lookup mapping cannot pass if the two were swapped.
     assert_eq!(cmds.len(), 2, "exactly two commands expected: {cmds:?}");
     assert!(
-        cmds[0].contains("\"type\":\"list_sessions\""),
-        "blank resume name should fall back to list_sessions: {cmds:?}"
+        command_has_string_fields(&cmds[0], &[("type", "list_sessions")]),
+        "blank resume should request the fieldless local-default list: {cmds:?}"
     );
     assert!(
-        cmds[1].contains("\"type\":\"resume_session\""),
-        "named resume should send resume_session: {cmds:?}"
+        command_has_string_fields(
+            &cmds[1],
+            &[
+                ("type", "resume_session"),
+                ("session", "opaque:key/from-anywhere"),
+            ]
+        ),
+        "exact opaque key should be sent for global lookup: {cmds:?}"
     );
 }
 
@@ -203,24 +226,34 @@ async fn open_resume_selector_empty_shows_status_no_selector() {
 }
 
 #[tokio::test]
-async fn open_resume_selector_with_names_builds_list() {
+async fn local_default_resume_response_builds_repository_grouped_discovery_rows() {
     let mut h = harness().await;
+    // A fieldless list_sessions response is local-by-default discovery. Being
+    // listed by repository/worktree grouping does not authorize restoration:
+    // resume_session must still classify the selected opaque key against the
+    // exact canonical execution directory/worktree.
     let data = serde_json::json!({
         "sessions": [
-            {"name": "alpha", "messageCount": 3},
-            {"name": "beta"}
+            {"key": "cli:alpha", "name": "alpha", "messageCount": 3},
+            {"key": "cli:beta", "name": "beta"}
         ]
     });
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
+    let selector = a
+        .ac()
+        .sessions
+        .resume_selector
+        .as_ref()
+        .expect("local discovery selector");
+    assert_eq!(selector.item_count(), 2);
     assert_eq!(
-        a.ac()
-            .sessions
-            .resume_selector
-            .as_ref()
-            .unwrap()
-            .item_count(),
-        2
+        selector
+            .items_for_tests()
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["session:cli:alpha", "session:cli:beta"]
     );
 }
 
@@ -235,9 +268,15 @@ async fn open_resume_selector_without_names_shows_status() {
 }
 
 #[tokio::test]
-async fn handle_resume_selector_key_enter_selects_and_closes() {
+async fn enter_on_local_discovery_row_requests_server_side_resume_classification() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3}]});
+    // Enter submits only the opaque key. The server may immediately resume only
+    // after an exact canonical execution-directory/worktree match; a related
+    // worktree with a different actual execution directory is foreign and must
+    // return decision_required rather than silently replace history.
+    let data = serde_json::json!({
+        "sessions": [{"key": "cli:alpha", "name": "alpha", "messageCount": 3}]
+    });
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Enter);
@@ -246,10 +285,79 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
     assert!(
         cmds.iter().any(|c| command_has_string_fields(
             c,
-            &[("type", "resume_session"), ("session", "alpha")]
+            &[("type", "resume_session"), ("session", "cli:alpha")]
         )),
-        "Enter should send resume_session for selected session: {cmds:?}"
+        "Enter should request authoritative classification of the selected opaque key: {cmds:?}"
     );
+}
+
+#[tokio::test]
+async fn foreign_execution_directory_decision_keeps_safe_fork_visible_without_mutation() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.ac_mut().session_key = Some("cli:current".into());
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+        text: "current execution-dir history".into(),
+    });
+    let entries_before = a.ac().master_session.chat.entry_count();
+
+    // Approved minimal response contract: do not require speculative home-state,
+    // generation, repository, launcher, or socket fields. Even a related
+    // repository/worktree is foreign when its canonical execution dir differs.
+    a.handle_resume_response(
+        None,
+        true,
+        Some(serde_json::json!({
+            "status": "decision_required",
+            "session": "cli:foreign",
+            "decisionId": "opaque-foreign-decision",
+            "choices": ["open_original", "fork_current", "cancel"],
+            "activeSessionKey": "cli:current"
+        })),
+        None,
+    );
+
+    assert_eq!(a.ac().session_key.as_deref(), Some("cli:current"));
+    assert_eq!(a.ac().master_session.chat.entry_count(), entries_before);
+    let frame = super::app_render_helpers::strip_ansi(&a.compose_frame().join("\n"));
+    assert!(frame.contains("Open original"), "frame={frame}");
+    assert!(
+        frame.contains("Fork"),
+        "foreign decisions must retain the safe fork-current option; frame={frame}"
+    );
+    assert!(frame.contains("Cancel"), "frame={frame}");
+}
+
+#[tokio::test]
+async fn legacy_unscoped_decision_keeps_associate_fork_and_cancel_visible() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.ac_mut().session_key = Some("cli:current".into());
+
+    // Only the approved minimal decision fields are asserted. `choices` is the
+    // authoritative affirmative allowlist; legacy association must not erase
+    // the safer fork-current alternative.
+    a.handle_resume_response(
+        None,
+        true,
+        Some(serde_json::json!({
+            "status": "decision_required",
+            "session": "cli:legacy",
+            "decisionId": "opaque-legacy-decision",
+            "choices": ["associate_current", "fork_current", "cancel"],
+            "activeSessionKey": "cli:current"
+        })),
+        None,
+    );
+
+    assert_eq!(a.ac().session_key.as_deref(), Some("cli:current"));
+    let frame = super::app_render_helpers::strip_ansi(&a.compose_frame().join("\n"));
+    assert!(frame.contains("Associate"), "frame={frame}");
+    assert!(
+        frame.contains("Fork"),
+        "legacy decisions must retain the safe fork-current option; frame={frame}"
+    );
+    assert!(frame.contains("Cancel"), "frame={frame}");
 }
 
 #[tokio::test]

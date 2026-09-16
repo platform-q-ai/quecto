@@ -12,7 +12,7 @@ fn app() -> App {
 }
 
 #[test]
-fn resume_selector_ignores_workspace_manifests_and_lists_sessions_directly() {
+fn local_default_resume_selector_ignores_unrelated_tui_workspace_manifests() {
     let mut a = app();
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json");
@@ -29,20 +29,28 @@ fn resume_selector_ignores_workspace_manifests_and_lists_sessions_directly() {
     ));
     store.store(&mpath).unwrap();
 
+    // The fieldless response is local-by-default discovery; repository/worktree
+    // grouping alone does not certify an exact execution-directory match. The
+    // older TUI workspace-manifest feature is separate and must not inject
+    // globally stored tab rows into this list.
     let data = serde_json::json!({
         "sessions": [
-            {"name": "alpha", "messageCount": 2}
+            {"key": "cli:alpha", "name": "alpha", "messageCount": 2}
         ]
     });
     a.open_resume_selector_at(&data, &mpath);
     let sel = a.ac().sessions.resume_selector.as_ref().expect("selector");
-    assert_eq!(sel.item_count(), 1, "workspace rows must be hidden");
+    assert_eq!(
+        sel.item_count(),
+        1,
+        "unrelated TUI workspace-manifest rows must remain hidden"
+    );
     let values: Vec<_> = sel
         .items_for_tests()
         .iter()
         .map(|i| i.value.clone())
         .collect();
-    assert_eq!(values, vec!["session:alpha".to_string()]);
+    assert_eq!(values, vec!["session:cli:alpha".to_string()]);
 }
 
 #[test]
@@ -74,29 +82,53 @@ fn apply_workspace_manifest_opens_tabs() {
 }
 
 #[test]
-fn bare_session_selection_still_current_tab() {
+fn local_discovery_selection_requests_classification_without_switching_tabs() {
     let mut a = app();
-    // Live writer so resume commands are observable on the active tab sender.
+    // `session:` identifies a local-discovery row, not pre-authorized history
+    // restoration. The server may resume an exact canonical execution-dir/
+    // worktree match; legacy or foreign rows must return decision_required.
     let (mut live, mut rx) = crate::shell::connection::Connection::live_for_tests();
     live.set_tab_for_tests(TabId::MASTER);
     a.ac_mut().transport = live;
     a.ac_mut().agent_connected = true;
     assert_eq!(a.active_tab, TabId::MASTER);
+
     a.apply_resume_selection("session:my-key");
+
     let line = rx
         .try_recv()
-        .expect("session: prefix must send resume on active tab");
+        .expect("local discovery row must request classification on the active tab");
     assert!(line.contains("resume_session"), "wire={line}");
     assert!(line.contains("my-key"), "wire={line}");
     assert_eq!(a.active_tab, TabId::MASTER, "must not open/switch tabs");
-    a.apply_resume_selection("plain-key");
+    assert_eq!(a.tabs.len(), 1);
+}
+
+#[test]
+fn exact_opaque_key_lookup_does_not_replace_active_state_before_response() {
+    let mut a = app();
+    let (mut live, mut rx) = crate::shell::connection::Connection::live_for_tests();
+    live.set_tab_for_tests(TabId::MASTER);
+    a.ac_mut().transport = live;
+    a.ac_mut().agent_connected = true;
+    a.ac_mut().session_key = Some("cli:active".into());
+    let active_tab = a.active_tab;
+    let tab_count = a.tabs.len();
+
+    // Bare values model exact global /resume <key> lookup. Lookup remains
+    // compatible, but legacy/foreign classification happens in the response.
+    // Foreign includes a different execution directory in a related worktree;
+    // no active state may change before an affirmative returned choice.
+    a.apply_resume_selection("opaque:global/key");
+
     let line = rx
         .try_recv()
-        .expect("bare key must send resume on active tab");
+        .expect("exact opaque key must remain globally resolvable");
     assert!(line.contains("resume_session"), "wire={line}");
-    assert!(line.contains("plain-key"), "wire={line}");
-    assert_eq!(a.active_tab, TabId::MASTER);
-    assert_eq!(a.tabs.len(), 1);
+    assert!(line.contains("opaque:global/key"), "wire={line}");
+    assert_eq!(a.ac().session_key.as_deref(), Some("cli:active"));
+    assert_eq!(a.active_tab, active_tab);
+    assert_eq!(a.tabs.len(), tab_count);
 }
 
 #[test]
@@ -284,30 +316,40 @@ fn apply_workspace_manifest_reattaches_live_registry_socket_on_connected_tab() {
 }
 
 #[test]
-fn resume_key_and_selector_latch_deferred_resume_while_disconnected() {
+fn local_discovery_selector_latches_classification_request_while_disconnected() {
+    let mut a = app();
+    a.ac_mut().agent_connected = false;
+
+    // A `session:` row belongs to local discovery, which may group related
+    // worktrees. This only defers the opaque-key classification request; it
+    // does not pre-authorize resume for a legacy or foreign execution dir.
+    a.apply_resume_selection("session:sel-key");
+
+    assert_eq!(
+        a.ac().pending_session_resume.as_deref(),
+        Some("sel-key"),
+        "opaque-key classification request must latch until its tab connects"
+    );
+}
+
+#[test]
+fn exact_key_lookup_while_connecting_preserves_active_identity() {
     let mut a = app();
     a.ac_mut().agent_connected = false;
     a.ac_mut().pending_attach = true;
-    a.handle_submit("/resume my-session");
+    a.ac_mut().session_key = Some("cli:active".into());
+
+    a.handle_submit("/resume opaque:global/key");
+
     assert_eq!(
         a.ac().pending_session_resume.as_deref(),
-        Some("my-session"),
-        "AC5: /resume <key> on a connecting tab must latch deferred resume"
+        Some("opaque:global/key"),
+        "exact global key must remain resolvable while connecting"
     );
-
-    let mut b = app();
-    b.ac_mut().agent_connected = false;
-    b.apply_resume_selection("session:sel-key");
     assert_eq!(
-        b.ac().pending_session_resume.as_deref(),
-        Some("sel-key"),
-        "AC5: selector session rows must latch deferred resume when disconnected"
-    );
-    b.apply_resume_selection("plain-key");
-    assert_eq!(
-        b.ac().pending_session_resume.as_deref(),
-        Some("plain-key"),
-        "AC5: bare selector keys must also latch"
+        a.ac().session_key.as_deref(),
+        Some("cli:active"),
+        "lookup alone must not replace active state before an exact execution-dir match or explicit safe choice"
     );
 }
 

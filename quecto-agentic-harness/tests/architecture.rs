@@ -17,6 +17,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Folder-aware resume (#2001): bounded public UDS command-shape and inward
+/// interface dependency ratchets. Outcome semantics stay in black-box BDD.
+#[path = "architecture/session_home_scope.rs"]
+mod session_home_scope;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]

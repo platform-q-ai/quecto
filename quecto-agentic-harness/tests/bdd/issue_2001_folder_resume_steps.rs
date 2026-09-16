@@ -1,9 +1,8 @@
-//! Issue #2001 RED acceptance slice at the existing CLI/UDS runtime boundary.
+//! Issue #2001 RED acceptance at the existing CLI/UDS runtime boundary.
 //!
-//! The fixture creates sessions by running the real agent command after changing
-//! only its public configured workspace, then observes the existing fieldless
-//! `list_sessions` command. No scope metadata or prospective production API is
-//! assumed here.
+//! Fixtures save through the real agent command from explicit execution
+//! directories. The UDS fixture is then launched from the asserted current
+//! execution directory and observed only through public wire events.
 
 use super::*;
 
@@ -15,39 +14,56 @@ fn base_dir(world: &QuectoWorld) -> PathBuf {
         .expect("temp base directory must be configured")
 }
 
-fn configure_execution_folder(world: &mut QuectoWorld, folder: &str) -> PathBuf {
+fn select_execution_folder(world: &mut QuectoWorld, folder: &str) -> PathBuf {
     assert!(
         !folder.is_empty()
-            && folder
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
-        "BDD folder fixture only accepts non-empty ASCII alphanumeric/hyphen names"
+            && folder.split('/').all(|component| {
+                !component.is_empty()
+                    && component
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            }),
+        "BDD folder fixture only accepts non-empty relative ASCII alphanumeric/hyphen path components"
     );
-    let base = base_dir(world);
-    let workspace = base.join(folder);
-    std::fs::create_dir_all(&workspace).expect("create configured execution folder");
-
-    let config_path = base.join("config.json");
-    let raw = std::fs::read_to_string(&config_path).expect("read configured mock provider");
-    let mut config: serde_json::Value =
-        serde_json::from_str(&raw).expect("mock provider config should be JSON");
-    config["agents"]["defaults"]["workspace"] =
-        serde_json::Value::String(workspace.display().to_string());
-    std::fs::write(
-        &config_path,
-        serde_json::to_string_pretty(&config).expect("serialize workspace config"),
-    )
-    .expect("write workspace config");
+    let workspace = base_dir(world).join(folder);
+    std::fs::create_dir_all(&workspace).expect("create execution folder");
     world.cli_context.cwd = Some(workspace.clone());
     workspace
 }
 
-#[given(expr = "the configured execution folder is {string}")]
-fn given_configured_execution_folder(world: &mut QuectoWorld, folder: String) {
-    configure_execution_folder(world, &folder);
+#[given(expr = "the current execution folder is {string}")]
+fn given_current_execution_folder(world: &mut QuectoWorld, folder: String) {
+    select_execution_folder(world, &folder);
 }
 
-#[given(expr = "the real agent runtime saves session {string} from configured folder {string}")]
+#[given(expr = "a Git repository {string} with execution directories {string} and {string}")]
+fn given_git_repository_with_execution_directories(
+    world: &mut QuectoWorld,
+    repository: String,
+    first: String,
+    second: String,
+) {
+    let repository_path = select_execution_folder(world, &repository);
+    for relative in [&first, &second] {
+        assert!(
+            !relative.is_empty()
+                && relative
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+            "repository execution-directory fixture requires allowlisted relative names"
+        );
+        std::fs::create_dir_all(repository_path.join(relative))
+            .expect("create repository execution directory");
+    }
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&repository_path)
+        .status()
+        .expect("launch git init");
+    assert!(status.success(), "create fixture Git repository");
+}
+
+#[given(expr = "the real agent runtime saves session {string} from execution folder {string}")]
 fn given_agent_saves_from_folder(world: &mut QuectoWorld, session: String, folder: String) {
     assert!(
         !session.is_empty()
@@ -56,7 +72,7 @@ fn given_agent_saves_from_folder(world: &mut QuectoWorld, session: String, folde
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
         "BDD session fixture only accepts a production-valid CLI session name"
     );
-    let workspace = configure_execution_folder(world, &folder);
+    let workspace = select_execution_folder(world, &folder);
     let args = vec![
         "quecto".to_string(),
         "agent".to_string(),
@@ -70,6 +86,27 @@ fn given_agent_saves_from_folder(world: &mut QuectoWorld, session: String, folde
         output.exit_code, 0,
         "real agent runtime should save fixture session {session:?}; stderr: {}",
         output.stderr
+    );
+}
+
+#[then(expr = "the UDS workspace event should announce execution folder {string}")]
+fn then_workspace_event_announces_folder(world: &mut QuectoWorld, folder: String) {
+    let expected = base_dir(world).join(folder);
+    let workspace = world
+        .agent_events
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["type"] == "workspace")
+        .unwrap_or_else(|| {
+            panic!(
+                "UDS launch emitted no workspace event: {:#?}",
+                world.agent_events
+            )
+        });
+    assert_eq!(
+        workspace["path"].as_str(),
+        Some(expected.to_string_lossy().as_ref()),
+        "public workspace event must report the authoritative UDS launch directory"
     );
 }
 
@@ -94,6 +131,100 @@ fn then_folder_local_list_contains_exactly(world: &mut QuectoWorld, keys: String
     let expected: Vec<&str> = keys.split(',').map(str::trim).collect();
     assert_eq!(
         actual, expected,
-        "fieldless list_sessions must default to the configured folder; unrelated global sessions were exposed"
+        "fieldless list_sessions must default to the current execution folder; unrelated global sessions were exposed"
+    );
+}
+
+fn resume_response(world: &QuectoWorld, id: &str) -> serde_json::Value {
+    let response = uds_steps::find_agent_response_by_id(world, id)
+        .unwrap_or_else(|| panic!("missing resume_session response {id:?}"));
+    assert_eq!(response["command"], "resume_session", "{response:#?}");
+    assert_eq!(response["success"], true, "{response:#?}");
+    response
+}
+
+#[then(
+    expr = "the resume_session response with id {string} should successfully select session key {string}"
+)]
+fn then_resume_successfully_selects_key(world: &mut QuectoWorld, id: String, key: String) {
+    let response = resume_response(world, &id);
+    assert_eq!(response["data"]["sessionKey"], key, "{response:#?}");
+}
+
+fn assert_decision_required(
+    world: &QuectoWorld,
+    id: &str,
+    expected_choices: &str,
+    allow_additional: bool,
+) {
+    let response = resume_response(world, id);
+    assert_eq!(
+        response["data"]["status"], "decision_required",
+        "exact lookup must distinguish planning from completed resume: {response:#?}"
+    );
+    let decision_id = response["data"]["decisionId"]
+        .as_str()
+        .expect("decision_required must carry an opaque decisionId");
+    assert!(!decision_id.is_empty(), "decisionId must be non-empty");
+    let actual: std::collections::BTreeSet<&str> = response["data"]["choices"]
+        .as_array()
+        .expect("decision_required must carry an affirmative choices array")
+        .iter()
+        .map(|choice| {
+            choice
+                .as_str()
+                .expect("each eligible resume action must be a string")
+        })
+        .collect();
+    let expected: std::collections::BTreeSet<&str> =
+        expected_choices.split(',').map(str::trim).collect();
+    if allow_additional {
+        assert!(
+            expected.is_subset(&actual),
+            "decision choices omit a required action: actual={actual:?}, expected at least={expected:?}"
+        );
+    } else {
+        assert_eq!(
+            actual, expected,
+            "foreign existing-directory choice allowlist must be exact"
+        );
+    }
+}
+
+#[then(
+    expr = "the resume_session response with id {string} should require a decision allowing exactly {string}"
+)]
+fn then_resume_requires_exact_decision(world: &mut QuectoWorld, id: String, choices: String) {
+    let response = resume_response(world, &id);
+    assert_eq!(
+        response["data"]["status"], "decision_required",
+        "foreign exact lookup must return an explicit disposition plan: {response:#?}"
+    );
+    assert_decision_required(world, &id, &choices, false);
+}
+
+#[then(
+    expr = "the resume_session response with id {string} should require a decision allowing at least {string}"
+)]
+fn then_resume_requires_decision(world: &mut QuectoWorld, id: String, choices: String) {
+    let response = resume_response(world, &id);
+    assert_eq!(
+        response["data"]["status"], "decision_required",
+        "legacy exact lookup must return an explicit association plan: {response:#?}"
+    );
+    assert_decision_required(world, &id, &choices, true);
+}
+
+#[then(expr = "the message histories of responses {string} and {string} should match")]
+fn then_message_histories_match(world: &mut QuectoWorld, first: String, second: String) {
+    let first_response = uds_steps::find_agent_response_by_id(world, &first)
+        .unwrap_or_else(|| panic!("missing get_messages response {first:?}"));
+    let second_response = uds_steps::find_agent_response_by_id(world, &second)
+        .unwrap_or_else(|| panic!("missing get_messages response {second:?}"));
+    assert_eq!(first_response["command"], "get_messages");
+    assert_eq!(second_response["command"], "get_messages");
+    assert_eq!(
+        first_response["data"]["messages"], second_response["data"]["messages"],
+        "decision_required planning must not replace or mutate current history"
     );
 }

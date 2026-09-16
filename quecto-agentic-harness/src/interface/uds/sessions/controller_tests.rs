@@ -65,10 +65,15 @@ fn controller(fail: bool) -> (Arc<RecordingStore>, ListSessionsController) {
 }
 
 #[tokio::test]
-async fn list_all_maps_the_fieldless_command_to_the_all_query() {
+async fn explicit_global_list_maps_to_the_all_query() {
     let (store, controller) = controller(false);
     let listed = controller.list_all().await.unwrap();
-    assert_eq!(listed.len(), 1);
+
+    assert_eq!(
+        listed.len(),
+        1,
+        "the store result still reaches the presenter"
+    );
     assert_eq!(listed[0].key, "chat-1");
     assert_eq!(*store.queries.lock().unwrap(), vec![SessionListQuery::All]);
 }

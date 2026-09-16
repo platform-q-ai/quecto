@@ -61,6 +61,8 @@ mod fresh_session_identity_generator;
 mod historical_roster_source;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
+#[path = "contracts/issue_2001_session_catalogue.rs"]
+mod issue_2001_session_catalogue;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/provider_runtime_factory.rs"]
