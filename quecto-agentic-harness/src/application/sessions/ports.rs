@@ -1,22 +1,28 @@
 //! Capability-local ports of the sessions capability (#1960, #1970, #1972,
-//! #1974, #1975, #1976, #1978): session persistence and the context spill store
-//! here, the outbound export port in [`export`], the session-runtime ports
-//! the save, clear and rewind transactions reach in [`session_runtime`],
-//! the transition ports the fresh session reaches in
-//! [`session_transition`]. Infrastructure implements them over files.
-//! Signatures name only domain values and the capability's own DTOs: every
-//! operation is keyed by the typed [`SessionIdentity`], never by a raw
-//! string, filename or path.
+//! #1974, #1975, #1976, #1978, #2001): session persistence and the context spill
+//! store here, the outbound export port in [`export`], the session-runtime
+//! ports the save, clear and rewind transactions reach in [`session_runtime`],
+//! the transition ports the fresh session reaches in [`session_transition`],
+//! and folder-aware scope discovery in [`workspace_discovery`]. Infrastructure
+//! implements them over files, Git, and process launch. Signatures name only
+//! domain values and the capability's own DTOs: every session operation is
+//! keyed by the typed [`SessionIdentity`], never by a raw string, filename or
+//! path-derived identity.
 pub mod export;
 use std::future::Future;
 use std::pin::Pin;
 
 pub mod session_runtime;
 pub mod session_transition;
+pub mod workspace_discovery;
 pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
 pub use session_transition::{
     DelegatedChildrenRoster, FleetSettlement, FreshSessionIdentityGenerator, SessionKeyPropagation,
     SessionSwitchRuntime,
+};
+pub use workspace_discovery::{
+    scoped_exact_folder, scoped_git_home, PathCanonicalizer, WorkspaceDiscovery,
+    WorkspaceDiscoveryOutcome,
 };
 
 use super::dto::SessionListQuery;
