@@ -10,9 +10,17 @@ fn composed_handles_list_the_real_catalogue_of_a_base_directory() {
     )
     .unwrap();
     let handles = build_catalogue_handles(tmp.path());
+    let before = snapshot_store_for(tmp.path()).current().generation();
     let ModelListingOutcome::Listed(listing) = handles.list_models.list() else {
         panic!("a valid models.json lists");
     };
+    // The handles publish into the directory's shared store, not a private
+    // one: the generation every other reader of `tmp` sees advanced.
+    assert_eq!(
+        snapshot_store_for(tmp.path()).current().generation(),
+        before + 1
+    );
+    assert_eq!(listing.generation, before + 1);
     assert!(
         listing
             .models

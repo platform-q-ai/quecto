@@ -100,6 +100,13 @@ fn api_key_auth_has_no_oauth_provider() {
 }
 
 #[test]
+fn an_empty_failure_list_still_renders_a_string_error() {
+    let json = render(&ModelListingOutcome::SourcesUnavailable(vec![]));
+    assert_eq!(json["models"], serde_json::json!([]));
+    assert!(json["error"].is_string());
+}
+
+#[test]
 fn a_failed_source_renders_no_models_and_the_error() {
     let json = render(&ModelListingOutcome::SourcesUnavailable(vec![
         CatalogueSourceError {

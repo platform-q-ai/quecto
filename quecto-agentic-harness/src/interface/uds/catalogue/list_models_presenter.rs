@@ -13,7 +13,10 @@ pub fn render(outcome: &ModelListingOutcome) -> serde_json::Value {
         // longer match. The DTO carries every failed source; the legacy
         // shape has one `error` field.
         ModelListingOutcome::SourcesUnavailable(errors) => {
-            let first = errors.first().map(|error| error.error.as_str());
+            let first = errors
+                .first()
+                .map(|error| error.error.as_str())
+                .unwrap_or("catalogue sources unavailable");
             serde_json::json!({ "models": [], "error": first })
         }
         ModelListingOutcome::Listed(listing) => render_listing(listing),

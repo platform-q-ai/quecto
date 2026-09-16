@@ -1,5 +1,5 @@
 @done @catalogue-application
-Feature: Effective catalogue resolution and snapshot queries (epic #1193, slice 2)
+Feature: Effective catalogue resolution and the list-models use case (epic #1193 slice 2, #1845)
   As a maintainer of the provider/model catalogue
   I want catalogue sources resolved into one published snapshot
   So that every consumer reads the same immutable catalogue generation

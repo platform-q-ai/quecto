@@ -10,7 +10,7 @@ use crate::infrastructure::catalogue_inputs::FileCatalogueInputs;
 use crate::infrastructure::catalogue_registry::snapshot_store_for;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
-pub use crate::interface::cli::catalogue_handles::CatalogueHandles;
+use crate::interface::cli::catalogue_handles::CatalogueHandles;
 
 /// The catalogue handles one loop holds, over the shared snapshot store of
 /// `base_dir`.

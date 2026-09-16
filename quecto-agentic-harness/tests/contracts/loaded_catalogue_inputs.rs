@@ -41,12 +41,13 @@ fn a_malformed_models_json_fails_its_own_layer_only() {
 }
 
 #[test]
-fn credential_status_is_a_per_record_verdict() {
+fn credential_status_is_a_per_record_verdict_driven_by_the_credential() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
         r#"{"providers":{
-            "keyed":{"api":"openai-completions","baseUrl":"https://keyed.test/v1","apiKey":"$KEYED_KEY","models":[{"id":"m"}]},
+            "keyed":{"api":"openai-completions","apiKey":"sk-keyed","models":[{"id":"m"}]},
+            "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY","models":[{"id":"m"}]},
             "bare":{"api":"openai-completions","models":[{"id":"m"}]}
         }}"#,
     )
@@ -64,6 +65,11 @@ fn credential_status_is_a_per_record_verdict() {
             .find(|e| e.reference().qualified_id() == id)
             .unwrap_or_else(|| panic!("{id} loads"))
     };
-    assert!(loaded.credentials().credential_available(find("keyed/m")));
-    assert!(!loaded.credentials().credential_available(find("bare/m")));
+    let credentials = loaded.credentials();
+    assert!(credentials.credential_available(find("keyed/m")));
+    assert!(
+        !credentials.credential_available(find("unset/m")),
+        "an unresolved $ENV reference is no credential"
+    );
+    assert!(!credentials.credential_available(find("bare/m")));
 }
