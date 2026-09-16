@@ -132,6 +132,11 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
         }
+        AgentCommand::ResumeDecision { session, action, location, .. } => {
+            super::uds_dispatch_session::handle_resume_decision(
+                ctx, id.as_deref(), &type_name, session, action, location,
+            ).await
+        }
         AgentCommand::PersistSession { restore_reason, .. } => {
             let reason = match restore_reason.as_deref() {
                 Some(SubagentRestoreReason::ORDINARY_TUI_EXIT_STOPPED_WIRE) => {

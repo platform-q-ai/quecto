@@ -99,6 +99,32 @@ fn parse_resume_sessions_extracts_selector_metadata() {
 }
 
 #[test]
+fn parse_resume_sessions_keeps_folder_picker_metadata_defensively() {
+    let sessions = parse_resume_sessions(&json!({
+        "sessions": [{
+            "key": "cli:other",
+            "title": "Other checkout",
+            "messageCount": 3,
+            "scope": {
+                "kind": "scoped",
+                "executionLocation": "/work/other",
+                "repositoryLabel": "quecto",
+                "isLocal": false
+            }
+        }, {
+            "key": "cli:legacy",
+            "title": "Legacy",
+            "scope": {"kind": "legacy_unscoped"}
+        }]
+    }));
+
+    assert_eq!(sessions[0].execution_location.as_deref(), Some("/work/other"));
+    assert_eq!(sessions[0].repository_label.as_deref(), Some("quecto"));
+    assert_eq!(sessions[0].is_local, Some(false));
+    assert!(sessions[1].legacy_unscoped);
+}
+
+#[test]
 fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
     let messages = parse_resumed_messages(&json!({
         "messages": [

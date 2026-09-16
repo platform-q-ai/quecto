@@ -2,6 +2,15 @@ use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Serialize};
 
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeDecisionActionCommand {
+    OpenOriginal,
+    ForkCurrent,
+    Locate,
+    Cancel,
+}
+
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -134,6 +143,16 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session: String,
+    },
+    /// Execute an explicit folder-aware resume decision through the application transaction.
+    #[serde(rename_all = "camelCase")]
+    ResumeDecision {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        session: String,
+        action: ResumeDecisionActionCommand,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<String>,
     },
     /// Switch the active model at runtime.
     ///
@@ -355,6 +374,7 @@ impl AgentCommand {
             Self::ListSessions { id } => id.as_deref(),
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
+            Self::ResumeDecision { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
             Self::SetEffort { id, .. } => id.as_deref(),
             Self::RegisterTools { id, .. } => id.as_deref(),
@@ -387,6 +407,7 @@ impl AgentCommand {
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
+            Self::ResumeDecision { .. } => "resume_decision",
             Self::SetModel { .. } => "set_model",
             Self::SetEffort { .. } => "set_effort",
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",

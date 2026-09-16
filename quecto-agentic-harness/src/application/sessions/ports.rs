@@ -8,6 +8,8 @@
 //! operation is keyed by the typed [`SessionIdentity`], never by a raw
 //! string, filename or path.
 pub mod export;
+pub mod scope_discovery;
+pub mod resume_transaction;
 use std::future::Future;
 use std::pin::Pin;
 

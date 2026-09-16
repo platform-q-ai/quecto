@@ -91,14 +91,11 @@ impl App {
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
         use crate::shell::connection::SourcedEvent;
-        // #1465: fan-in may carry any known tab (unknown tabs no-op in arms);
-        // touching `.tab()` keeps the helper live under deny(dead_code).
         let _routed_tab = item.tab();
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
                 let was_running = self.tab_spinner_active(tab);
-                // Route to the owner tab (#1465); unknown tabs no-op.
                 let Some(paint) = self.with_routing_tab(tab, |app| {
                     app.handle_event(ev);
                     if app.surface_dropped_oversized_events() {
@@ -112,7 +109,6 @@ impl App {
                 self.background_render_gate(tab, paint, was_running)
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
-                // Direct child feeds belong to the tab that opened them.
                 let stream = SourcedRender::Stream {
                     is_token: Self::is_token_event(&ev),
                 };
@@ -125,7 +121,6 @@ impl App {
                 }
             }
             SourcedEvent::Closed(tab) => {
-                // Owner-targeted disconnect (#1465 / #1047 via #1462).
                 self.begin_agent_stream_closed(tab);
                 SourcedRender::Immediate
             }
@@ -142,9 +137,6 @@ impl App {
         match render {
             SourcedRender::Immediate => self.render_and_note(coalescer),
             SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
-            // Background-tab event (#1466 decision 3): the coalescer is left
-            // untouched, so an idle loop stays idle no matter how many
-            // background tabs are streaming.
             SourcedRender::Silent => {}
         }
     }
@@ -205,15 +197,12 @@ impl App {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
 
-        // Query Kitty keyboard protocol support.
         self.kitty.query();
 
         self.send_startup_requests();
 
-        // Set up SIGWINCH handler.
         let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
 
-        // Set up stdin reader (async, byte-level).
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(64);
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
@@ -232,24 +221,20 @@ impl App {
             }
         });
 
-        // Kitty protocol fallback timer.
         let kitty_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
         let mut kitty_fallback_done = false;
 
         let mut stream_render_coalescer = StreamRenderCoalescer::default();
 
-        // Initial render.
         self.render_and_note(&mut stream_render_coalescer);
 
         let mut next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
 
-        // Git branch footer refresh timer.
         let mut git_branch_interval = tokio::time::interval(app_git::GIT_BRANCH_POLL_INTERVAL);
         git_branch_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let (git_branch_tx, mut git_branch_rx) = mpsc::channel::<Option<String>>(1);
         let mut git_branch_refresh_in_flight = false;
 
-        // @files autocomplete workspace enumeration. Loading can shell out to git
         // or walk the filesystem, so keep it off the input/render loop.
         let (files_autocomplete_tx, mut files_autocomplete_rx) =
             mpsc::channel::<(PathBuf, Vec<String>)>(1);
@@ -421,6 +406,27 @@ impl App {
             return;
         }
 
+        if let Key::MouseClick { col, row } = key {
+            if self.ac().sessions.resume_selector.is_some() {
+                self.handle_resume_picker_click(col, row);
+            }
+            return;
+        }
+
+        // Ctrl+G remains the global jump-to-latest action even while the
+        // folder-aware resume picker owns modal navigation.
+        if matches!(key, Key::Ctrl('g')) {
+            self.active_chat_mut().scroll_to_latest();
+            return;
+        }
+
+        // Explicit cross-folder decision owns focus until selection/cancel.
+        if self.ac().sessions.resume_decision.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
+            self.handle_resume_decision_key(&key);
+            return;
+        }
+
         // If the resume selector is active, route input to it.
         if self.ac().sessions.resume_selector.is_some() {
             self.ac_mut().rewind.last_idle_escape = None;
@@ -517,12 +523,6 @@ impl App {
                 }
                 _ => {}
             }
-        }
-
-        // Jump before panel/editor input; selectors/autocomplete retain ownership.
-        if matches!(key, Key::Ctrl('g')) {
-            self.active_chat_mut().scroll_to_latest();
-            return;
         }
 
         // Panel focus model (#802): when the side panel holds focus, keys drive

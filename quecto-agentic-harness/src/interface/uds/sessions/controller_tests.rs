@@ -49,6 +49,7 @@ impl SessionStore for RecordingStore {
                     title: "hi".into(),
                     message_count: 1,
                     updated_unix_secs: Some(1),
+            scope: None,
                 }])
             }
         })

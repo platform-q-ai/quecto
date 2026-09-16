@@ -69,6 +69,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
             None,
             &[],
         ),
+        resume_decision: crate::interface::cli::uds::test_resume_decision(),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot("cli:test", 0, None, 0, None),
         )),

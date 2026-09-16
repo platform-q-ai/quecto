@@ -43,8 +43,8 @@ pub(crate) fn build_resume_selector_overlay(
     terminal_height: usize,
 ) -> (Vec<String>, usize) {
     build_select_list_overlay(
-        "Resume session",
-        "Enter resume · Esc cancel",
+        "Resume session   Local | Global",
+        "Tab/Shift+Tab/Space switch scope · Enter resume · Esc cancel",
         selector,
         terminal_width,
         terminal_height,

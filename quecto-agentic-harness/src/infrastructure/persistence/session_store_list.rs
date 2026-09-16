@@ -88,6 +88,7 @@ pub(super) async fn list_summaries(
             key: header.key.into_owned(),
             message_count,
             updated_unix_secs,
+            scope: header.scope,
         });
     }
     summaries.sort_by(|a, b| {

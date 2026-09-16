@@ -542,6 +542,7 @@ fn test_session_header_stays_in_sync_with_full_record() {
         ],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        scope: None,
     };
     let json = serde_json::to_string(&file).unwrap();
 

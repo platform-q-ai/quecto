@@ -63,6 +63,7 @@ fn summary(key: &str, updated: Option<u64>) -> SessionSummary {
         title: format!("title of {key}"),
         message_count: 2,
         updated_unix_secs: updated,
+            scope: None,
     }
 }
 

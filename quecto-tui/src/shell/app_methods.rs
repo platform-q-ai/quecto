@@ -5,24 +5,19 @@ use super::app_selection::apply_selection_highlight;
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::components::select_overlay::{
-    build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
+    build_resume_selector_overlay, build_rewind_selector_overlay, build_select_list_overlay,
+    build_select_overlay,
 };
 use crate::components::theme;
 use crate::protocol::session_payloads;
 use crate::shell::app_session_stats_text;
 
-// Wall-clock formatting helpers live in `app_time` (this module is at the
-// source line cap); re-exported so `app_methods::format_utc_minutes` and the
-// internal `format_unix_minutes` call sites stay put.
 use super::app_time::format_unix_minutes;
 
-// Only the unit tests reference these through `app_methods::…`; production reads
-// go straight to `app_time` (via `format_unix_minutes`), so gate the re-export.
 #[cfg(test)]
 pub(super) use super::app_time::{civil_from_days, format_utc_minutes};
 
 impl App {
-    // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
         self.ac_mut()
@@ -42,7 +37,6 @@ impl App {
         self.kitty.cleanup();
         self.terminal.show_cursor();
         crate::shell::signals::suspend();
-        // Resumed — re-enter raw mode.
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
         self.kitty.query();
@@ -50,12 +44,7 @@ impl App {
     }
 
     pub(super) fn show_help(&mut self) {
-        // Slash commands first, keyboard shortcuts last: compose_frame follows the
-        // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
-        // slash list grows (#1465 /tab-* entries).
         let mut text = String::from("Slash commands:");
-        // Derive the slash-command listing from the single source of truth so it
-        // can never drift from the autocomplete set or the dispatch handler.
         for command in builtin_commands() {
             text.push_str(&format!(
                 "\n  /{:<14} {}",
@@ -166,7 +155,6 @@ impl App {
         if stats.context_usage.is_some() {
             self.ac_mut().sessions.context_stats_requested = true;
         }
-        // Shared session-stats→footer mapping (context + cost gate); see #805.
         self.ac_mut()
             .master_session
             .footer
@@ -174,7 +162,6 @@ impl App {
     }
 
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
-        // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
         self.ac_mut()
@@ -185,7 +172,6 @@ impl App {
             });
     }
 
-    // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
         self.open_resume_selector_at(
@@ -201,8 +187,6 @@ impl App {
         manifest_path: &std::path::Path,
     ) {
         let mut sessions = session_payloads::parse_resume_sessions(data);
-        // #1466 fix pass item 3: sessions, like workspaces, list most
-        // recently active first (unknown times sink to the bottom).
         sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
         let empty_hint = if sessions.is_empty() {
             if session_payloads::has_session_entries(data) {
@@ -213,27 +197,113 @@ impl App {
         } else {
             None
         };
-        let session_items = sessions
-            .into_iter()
-            .map(|session| {
-                let when = session
-                    .updated_unix_secs
-                    .map(format_unix_minutes)
-                    .unwrap_or_else(|| "unknown time".to_string());
-                SelectItem {
-                    value: format!("session:{}", session.key),
-                    label: session.title,
-                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
-                }
-            })
-            .collect::<Vec<_>>();
+        self.ac_mut().sessions.resume_items = sessions;
+        self.ac_mut().sessions.resume_global = false;
+        self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Scope;
+        let session_items = self.resume_picker_items();
         self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
 
+    fn resume_picker_items(&self) -> Vec<SelectItem> {
+        let global = self.ac().sessions.resume_global;
+        self.ac().sessions.resume_items.iter()
+            .filter(|session| global || (!session.legacy_unscoped && session.is_local != Some(false)))
+            .map(|session| {
+                let when = session.updated_unix_secs.map(format_unix_minutes)
+                    .unwrap_or_else(|| "unknown time".to_string());
+                let location = if session.legacy_unscoped {
+                    "legacy unscoped".to_string()
+                } else {
+                    session.repository_label.as_deref()
+                        .zip(session.execution_location.as_deref())
+                        .map(|(repo, path)| format!("{repo} · {path}"))
+                        .or_else(|| session.execution_location.clone())
+                        .unwrap_or_else(|| "scope unavailable".to_string())
+                };
+                SelectItem {
+                    value: format!("session:{}", session.key),
+                    label: session.title.clone(),
+                    description: Some(format!("{location} · {when} · {} msgs", session.message_count)),
+                }
+            }).collect()
+    }
+
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
-            self.apply_resume_selection(&choice);
+        use app_sessions::ResumePickerFocus;
+        if matches!(key, Key::Tab | Key::BackTab) {
+            self.ac_mut().sessions.resume_focus = match (self.ac().sessions.resume_focus, key) {
+                (ResumePickerFocus::Scope, Key::Tab) => ResumePickerFocus::Query,
+                (ResumePickerFocus::Query, Key::Tab) => ResumePickerFocus::Results,
+                (ResumePickerFocus::Results, Key::Tab) => ResumePickerFocus::Scope,
+                (ResumePickerFocus::Scope, Key::BackTab) => ResumePickerFocus::Results,
+                (ResumePickerFocus::Results, Key::BackTab) => ResumePickerFocus::Query,
+                (ResumePickerFocus::Query, Key::BackTab) => ResumePickerFocus::Scope,
+                _ => unreachable!("allowlisted focus navigation is exhaustive"),
+            };
+            return;
         }
+        if self.ac().sessions.resume_focus == ResumePickerFocus::Scope
+            && matches!(key, Key::Enter | Key::Char(' '))
+        {
+            self.ac_mut().sessions.resume_global = !self.ac().sessions.resume_global;
+            let items = self.resume_picker_items();
+            if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() { selector.sync_items(items); }
+            return;
+        }
+        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
+            let key = choice.strip_prefix("session:").unwrap_or(&choice).to_string();
+            let selected = self.ac().sessions.resume_items.iter().find(|item| item.key == key).cloned();
+            if selected.as_ref().is_some_and(|item| item.is_local == Some(false) || item.legacy_unscoped) {
+                let missing = selected.as_ref().and_then(|item| item.execution_location.as_deref()).is_none();
+                let mut actions = Vec::new();
+                if missing {
+                    actions.push(SelectItem { value: "locate".into(), label: "Locate folder".into(), description: Some("Validate and explicitly reassociate".into()) });
+                } else {
+                    actions.push(SelectItem { value: "open_original".into(), label: "Open original folder".into(), description: Some("Start a fresh runtime with folder config/tools".into()) });
+                }
+                actions.push(SelectItem { value: "fork_current".into(), label: "Fork into current folder".into(), description: Some("Transcript only; new identity".into()) });
+                actions.push(SelectItem { value: "cancel".into(), label: "Cancel".into(), description: None });
+                self.ac_mut().sessions.pending_decision_session = Some(key);
+                self.ac_mut().sessions.resume_decision = Some(SelectList::new(actions, 4));
+            } else {
+                self.apply_resume_selection(&choice);
+            }
+        }
+    }
+
+    pub(super) fn handle_resume_picker_click(&mut self, col: usize, row: usize) {
+        let Some((left, top, width, height)) = self.ac().sessions.resume_bounds else { return };
+        if !(left..left.saturating_add(width)).contains(&col)
+            || !(top..top.saturating_add(height)).contains(&row) { return; }
+        if row == top {
+            self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Scope;
+            let global = col >= left.saturating_add(width / 2);
+            if self.ac().sessions.resume_global != global {
+                self.ac_mut().sessions.resume_global = global;
+                let items = self.resume_picker_items();
+                if let Some(selector) = self.ac_mut().sessions.resume_selector.as_mut() { selector.sync_items(items); }
+            }
+            return;
+        }
+        let index = row.saturating_sub(top.saturating_add(2));
+        let count = self.ac().sessions.resume_selector.as_ref().map_or(0, SelectList::len);
+        if index < count {
+            self.ac_mut().sessions.resume_focus = app_sessions::ResumePickerFocus::Results;
+            for _ in 0..index { self.handle_resume_selector_key(&Key::Down); }
+            self.handle_resume_selector_key(&Key::Enter);
+        }
+    }
+
+    pub(super) fn handle_resume_decision_key(&mut self, key: &Key) {
+        let choice = route_overlay_key(&mut self.ac_mut().sessions.resume_decision, key);
+        let Some(action) = choice else { return };
+        let session = self.ac_mut().sessions.pending_decision_session.take().unwrap_or_default();
+        if action == "cancel" || session.is_empty() { return; }
+        let location = self.ac().sessions.resume_items.iter().find(|item| item.key == session)
+            .and_then(|item| item.execution_location.clone());
+        self.send_command(Command::ResumeDecision {
+            id: Some(self.ac().namespaced_id("resume-decision")), session, action, location,
+        });
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
@@ -274,21 +344,16 @@ impl App {
         has_displayable_messages
     }
 
-    // ── Notifications ─────────────────────────────────────────────────
 
     pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {
         self.notifications.push(Notification::new(message, level));
     }
 
-    // ── Rendering ─────────────────────────────────────────────────────
 
     /// Diagnostic: append one frame (ANSI-stripped) to the render log.
     fn log_render_frame(&self, path: &str, bottom: &[String]) {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        // Frames can contain conversation/tool content, so create owner-only
-        // (0600) and refuse to follow a pre-planted symlink (O_NOFOLLOW) — this
-        // is a diagnostic that may run on a shared host.
         let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -312,14 +377,10 @@ impl App {
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
         let mut bottom = Vec::new();
 
-        // Sub-agent/workflow bars moved out of the bottom stack.
         let active_is_master = self.ac().roster.active_agent_id.is_none();
         let active_spinner_visible = self.ac().spinner.is_some();
         let active_roster_empty = self.ac().roster.tracked.is_empty();
         if active_is_master && active_spinner_visible {
-            // Master is active and mid-turn: show its richer tool spinner (tool
-            // name + elapsed), the only master-local render telemetry layered on
-            // top of the shared per-session `running` flag (#828).
             if let Some(spinner) = &mut self.ac_mut().spinner {
                 if active_roster_empty {
                     bottom.push(String::new());
@@ -327,9 +388,6 @@ impl App {
                 bottom.extend(spinner.render(width));
             }
         } else if self.active_subagent_running() {
-            // The active session is mid-turn (a sub-agent processing queued
-            // follow-up work, or the master before its spinner exists); show the
-            // working indicator so it never looks dead.
             bottom.push(String::new());
             bottom.push(subagent_activity_line(1, self.ac().roster.frame));
         } else if !self.ac().roster.tracked.is_empty() {
@@ -342,19 +400,12 @@ impl App {
             }
         }
 
-        // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
         bottom.extend(self.workspace.files_autocomplete.render(width));
-        // Editor. Hide the block cursor while the sub-agent panel has focus so
-        // it's unambiguous that keystrokes won't land in the input.
         self.editor
             .set_show_cursor(!matches!(self.subagents.focus, Focus::Panel));
         bottom.extend(self.editor.render(width));
-        // Notifications.
         bottom.extend(self.notifications.render(width));
-        // Footer — render the ACTIVE session's gauges (master's own, or the
-        // selected sub-agent's context-window / cost / model), so a selected
-        // sub-agent shows ITS usage rather than the master's (#805).
         bottom.extend(self.active_footer_render(width));
 
         bottom
@@ -372,8 +423,6 @@ impl App {
         } else {
             0
         };
-        // Two columns when visible: the focus-highlighted vertical divider (#802)
-        // plus a one-space gutter so the main pane isn't flush against the bar.
         let divider_width = if panel_visible { 2 } else { 0 };
         (
             panel_width,
@@ -401,51 +450,26 @@ impl App {
     pub(super) fn compose_frame(&mut self) -> Vec<String> {
         let height = self.terminal.height;
 
-        // A persistent left panel (#800/#820) splits the screen horizontally:
-        // the body renders into the reduced right column and the panel cell is
-        // prefixed onto each row afterward.
         let panel_visible = self.subagent_panel_visible();
         let (panel_width, _divider_width, width) = self.frame_split();
 
-        // Sample the wall clock ONCE per frame and thread it through every
-        // elapsed-timer render path (panel rows, Coordinator elapsed timer, main-pane
-        // title). compose_frame is contractually render-idempotent, so the
-        // clock must not be re-sampled deeper in the call tree (#820 review).
         let now = tokio::time::Instant::now();
 
         let mut lines = Vec::new();
 
-        // ── Render bottom section first to know its height ──────────
         let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
 
-        // ── Render top section (spacer + chat) ──────────────────────
-        // The version/help header line is gone (#1466 round 2): a BLANK
-        // spacer keeps the tab bar / Master status breathing room and the
-        // frame geometry stays otherwise identical.
         lines.push(String::new());
 
-        // Sub-agent-first main pane (#820 / #1288 / #1309): title + optional
-        // compact workflow progress framed by separator rules above the chat.
-        // Phase pills / shortcut hints stay omitted (#1246).
         let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         lines.extend(main_pane_workflow);
 
-        // Chat uses all space above bottom, with one blank separator above the
-        // streaming area so it does not sit tight against the master idle
-        // timer/title area (#1323). The bottom stack already reserves the blank
-        // separator before the working spinner. Top-pad short transcripts so the
-        // latest output sits directly above that lower separator.
         let top_chrome_height = lines.len();
         let unpadded_chat_height = height.saturating_sub(bottom_height + top_chrome_height);
         let streaming_vertical_padding = usize::from(unpadded_chat_height > 1);
         let chat_height = unpadded_chat_height.saturating_sub(streaming_vertical_padding);
-        // Environment selected (#1369 follow-up): the main pane body is
-        // container info ONLY — no parent/agent transcript may render beneath
-        // the environment chrome, so the conversation is suppressed entirely.
-        // Overflow: the conversation shows its tail (auto-scroll); the
-        // environment body head-anchors (#1401 review, `clamp_environment_body`).
         let (mut chat_lines, show_latest_tip) = match self.render_environment_body(width) {
             Some(body) => (Self::clamp_environment_body(body, chat_height), false),
             None => {
@@ -461,16 +485,13 @@ impl App {
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
-        // Preserve the breathing room between the main-pane title and chat.
         lines.push(String::new());
         lines.extend(chat_lines);
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
             lines.insert(top_chrome_height + 1, String::new());
         }
-        // ── Append bottom section ───────────────────────────────────
         lines.extend(bottom);
-        // Final safety: ensure exactly `height` lines.
         if lines.len() > height {
             let start = lines.len() - height;
             lines = lines[start..].to_vec();
@@ -496,12 +517,22 @@ impl App {
                 width,
             );
         }
-        // Composite the active centered overlay (only one is ever active at a
-        // time). All three splice through the same ANSI-aware helper so the
-        // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
+            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
+            self.ac_mut().sessions.resume_bounds = Some((
+                width.saturating_sub(overlay_width) / 2,
+                height.saturating_sub(overlay_height) / 2,
+                overlay_width,
+                overlay_height,
+            ));
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
+        }
+        if let Some(selector) = &mut self.ac_mut().sessions.resume_decision {
+            let (selector_lines, overlay_width) = build_select_list_overlay(
+                "Resume from another folder", "Enter choose · Esc cancel", selector, width, height,
+            );
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.ac_mut().rewind.selector {
@@ -557,7 +588,6 @@ impl App {
             }
         }
 
-        // Store rendered lines for text selection extraction (#528).
         if self.selection.is_some() {
             self.last_rendered_lines = lines.clone();
         } else {
@@ -605,33 +635,22 @@ impl App {
             }
         }
         let mut lines = self.compose_frame();
-        // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
-        // line (too fast to see) can be replayed from the log.
         if let Some(path) = self.render_log_path.as_deref() {
             self.log_render_frame(path, &lines);
         }
 
-        // Apply mouse selection highlight (#546) to the display copy only, so
-        // the extraction buffer (`last_rendered_lines`) stays clean. The body
-        // begins after the optional sidepanel + divider, so clamp highlights to
-        // that visible offset (#833).
         let (panel_width, divider_width, _body_width) = self.frame_split();
         let body_start_col = panel_width
             .saturating_add(divider_width)
             .min(u16::MAX as usize) as u16;
         apply_selection_highlight(&self.selection, &mut lines, body_start_col);
 
-        // Write only changed terminal lines; the renderer tracks the previous
-        // frame and performs a full draw on first use or after invalidation.
         if let Err(e) = self.renderer.render(&lines, self.terminal.width) {
             self.handle_render_failure(&e);
         }
     }
 
     pub(super) fn handle_render_failure(&mut self, error: &std::io::Error) {
-        // A failed write/flush can leave the terminal cursor and synchronized
-        // output state unknown. Do not trust the diff cache after that; force
-        // the next successful frame to redraw from a known origin.
         self.renderer.invalidate();
         self.notify(
             &format!("Failed to render frame: {error}"),
@@ -677,13 +696,7 @@ impl App {
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)
-        // so the stale completion never lands in the fresh transcript.
         self.ac_mut().disconnect_diag_pending = false;
-        // A dead connection still clears the LOCAL transcript (/clear must
-        // work on a dead session) but reports honestly (#1470 r3).
-        // Optimistic-enqueue window (#1470 r5): a just-died socket whose
-        // Closed sentinel has not drained still enqueues successfully —
         // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.ac().agent_connected;
         let agent_reset = self.send_new_session();

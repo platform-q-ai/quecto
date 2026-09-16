@@ -1,9 +1,27 @@
 use crate::components::select_list::SelectList;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResumePickerFocus {
+    #[default]
+    Scope,
+    Query,
+    Results,
+}
+
 #[derive(Default)]
 pub(crate) struct SessionsFlow {
     /// Session resume selector shown after `/resume` lists persisted sessions.
     pub(super) resume_selector: Option<SelectList>,
+    /// All server-provided rows retained while the modal switches Local/Global.
+    pub(super) resume_items: Vec<crate::protocol::session_payloads::ResumeSessionSummary>,
+    /// False is the safe local-default discovery scope.
+    pub(super) resume_global: bool,
+    pub(super) resume_focus: ResumePickerFocus,
+    /// Explicit decision dialog shown instead of unsafe cross-folder resume.
+    pub(super) resume_decision: Option<SelectList>,
+    pub(super) pending_decision_session: Option<String>,
+    /// Screen-space picker bounds from the last render: col,row,width,height.
+    pub(super) resume_bounds: Option<(usize, usize, usize, usize)>,
     /// Session stats fallback to learn real context window for current session/model.
     pub(super) context_stats_requested: bool,
 }

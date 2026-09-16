@@ -42,6 +42,8 @@ pub(super) struct SessionFile {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(super) subagent_roster: Vec<PersistedSubagentRosterEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scope: Option<crate::domain::session_scope::SessionScopeMetadata>,
 }
 
 #[derive(serde::Serialize)]
@@ -52,6 +54,8 @@ pub(super) struct SessionFileRef<'a> {
     pub(super) workflow_run: Option<&'a WorkflowRunPersisted>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     pub(super) subagent_roster: &'a [PersistedSubagentRosterEntry],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) scope: Option<&'a crate::domain::session_scope::SessionScopeMetadata>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -179,6 +183,8 @@ pub(super) struct SessionHeader<'a> {
     pub(super) key: std::borrow::Cow<'a, str>,
     #[serde(default, borrow)]
     pub(super) messages: Vec<MessageHeader<'a>>,
+    #[serde(default)]
+    pub(super) scope: Option<crate::domain::session_scope::SessionScopeMetadata>,
 }
 
 /// Per-message header: just the role (for counting/title selection) and the

@@ -269,6 +269,7 @@ async fn single_client_loop(
             agent: &mut agent,
             messages: &mut messages,
             sessions: session_reads.clone(),
+            resume_decision: crate::infrastructure::resume_decision_adapter::production_resume_handle(base_dir, sessions.store.clone()).expect("production resume composition"),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),

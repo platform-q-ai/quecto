@@ -120,6 +120,13 @@ pub(super) async fn run_command_loop(
     reader_task.abort();
 }
 
+#[cfg(test)]
+pub(crate) fn test_resume_decision()->std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects>{
+    let base=std::env::temp_dir().join("quecto-resume-fixture");
+    let store=std::sync::Arc::new(crate::infrastructure::persistence::session_store::FileSessionStore::new(crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(&base)));
+    crate::infrastructure::resume_decision_adapter::production_resume_handle(&base,store).expect("test resume composition")
+}
+
 pub(crate) struct DispatchCtx<'a> {
     pub wire_mode: super::uds_wire::ConnectionWireMode,
     pub base_dir: &'a std::path::Path,
@@ -128,6 +135,7 @@ pub(crate) struct DispatchCtx<'a> {
     /// The active session and its read use cases (#1971): the one
     /// conversation read model every transport serves from.
     pub sessions: super::uds_session_handles::SessionReadHandles,
+    pub resume_decision: std::sync::Arc<dyn crate::application::sessions::resume_decision::ResumeDecisionEffects>,
     pub state_snapshot: super::uds_multi::StateSnapshot, // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880

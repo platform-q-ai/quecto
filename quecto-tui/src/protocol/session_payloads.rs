@@ -27,6 +27,10 @@ pub struct ResumeSessionSummary {
     pub title: String,
     pub message_count: u64,
     pub updated_unix_secs: Option<u64>,
+    pub execution_location: Option<String>,
+    pub repository_label: Option<String>,
+    pub is_local: Option<bool>,
+    pub legacy_unscoped: bool,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -150,6 +154,7 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                 .or_else(|| session.get("name"))
                 .and_then(|v| v.as_str())?;
             let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
+            let scope = session.get("scope");
             Some(ResumeSessionSummary {
                 key: key.to_string(),
                 title: title.to_string(),
@@ -161,6 +166,21 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                     .get("updatedUnixSecs")
                     .or_else(|| session.get("updatedAt"))
                     .and_then(|v| v.as_u64()),
+                execution_location: scope
+                    .and_then(|v| v.get("executionLocation"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+                repository_label: scope
+                    .and_then(|v| v.get("repositoryLabel"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+                is_local: scope
+                    .and_then(|v| v.get("isLocal"))
+                    .and_then(|v| v.as_bool()),
+                legacy_unscoped: scope
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str())
+                    == Some("legacy_unscoped"),
             })
         })
         .collect()

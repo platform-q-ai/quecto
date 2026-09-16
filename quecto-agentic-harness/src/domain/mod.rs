@@ -22,6 +22,10 @@ pub mod redaction;
 pub mod request_observation;
 pub mod session;
 pub mod session_identity;
+pub mod session_scope;
+#[cfg(test)]
+#[path = "session_scope_tests.rs"]
+mod session_scope_tests;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod subagent_teardown;

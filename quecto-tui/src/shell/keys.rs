@@ -13,6 +13,8 @@ pub enum Key {
     Delete,
     Tab,
     BackTab, // Shift+Tab
+    /// Normalized terminal primary-button press in screen cell coordinates.
+    MouseClick { col: usize, row: usize },
     Up,
     Down,
     Left,

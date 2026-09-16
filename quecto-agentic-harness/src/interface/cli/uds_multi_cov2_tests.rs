@@ -299,6 +299,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             None,
             &[],
         ),
+        resume_decision: crate::interface::cli::uds::test_resume_decision(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot("cli:test", 0, None, 0, None),
         )),

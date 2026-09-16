@@ -37,6 +37,8 @@ pub struct SessionSummary {
     pub message_count: usize,
     /// Last modification time in Unix seconds, when available.
     pub updated_unix_secs: Option<u64>,
+    /// Versioned home metadata; absent for legacy globally discoverable records.
+    pub scope: Option<super::session_scope::SessionScopeMetadata>,
 }
 
 /// Cross-process liveness of a persisted sub-agent roster entry.

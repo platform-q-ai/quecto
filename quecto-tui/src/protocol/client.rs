@@ -26,7 +26,6 @@ pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 /// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
-// ─── Protocol types (subset matching quecto's wire format) ────────────────────
 /// A command sent from the TUI to the agent.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -143,6 +142,15 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    ResumeDecision {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        session: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location: Option<String>,
     },
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,7 +314,6 @@ pub enum Event {
         /// own workflow bar.
         #[serde(default)]
         agent_id: Option<String>,
-        // Forwarded child events (PRD Stage B) are re-emitted canonically with
         // only type/agent_id/parent_id/mode/progress — no `steps`. Default these
         // so such events still parse (then the handler ignores them by agent_id)
         // instead of failing and printing raw JSON over the TUI.
@@ -418,6 +425,7 @@ impl Command {
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
+            Self::ResumeDecision { .. } => "resume_decision",
             Self::SetModel { .. } => "set_model",
             Self::SetEffort { .. } => "set_effort",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",

@@ -210,6 +210,7 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
 
     let mut key = std::borrow::Cow::Borrowed("");
     let mut messages = Vec::new();
+    let mut scope = None;
     let mut parsed_any = false;
     for line in data.lines().filter(|line| !line.trim().is_empty()) {
         let record: SessionRecord = match serde_json::from_str(line) {
@@ -224,6 +225,7 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
         match record {
             SessionRecord::Snapshot(file) => {
                 key = file.key.into();
+                scope = None;
                 messages = file
                     .messages
                     .into_iter()
@@ -243,7 +245,7 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
             }
         }
     }
-    Ok(SessionHeader { key, messages })
+    Ok(SessionHeader { key, messages, scope })
 }
 
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
@@ -394,7 +396,7 @@ async fn compact_or_append_delta(
             workflow_run: workflow_run.cloned(),
             subagent_roster,
         };
-        return write_compacted(path, &session).await;
+        return write_compacted_with_scope(path, &session, None).await;
     }
     let assigned = messages_with_assigned_ordinals(messages);
     let record = SessionRecordRef::Append {
@@ -420,7 +422,7 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
         session
     };
     if !path.exists() || !is_jsonl_session_file(path).await? {
-        return write_compacted(path, session).await;
+        return write_compacted_with_scope(path, session, None).await;
     }
 
     let data = tokio::fs::read_to_string(path)
@@ -436,7 +438,7 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
             .zip(previous.messages.iter().map(message_to_record))
             .any(|(current, saved)| current != saved)
     {
-        return write_compacted(path, session).await;
+        return write_compacted_with_scope(path, session, None).await;
     }
 
     let added = &session.messages[previous.messages.len()..];
@@ -455,12 +457,22 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     append_record(path, &record).await
 }
 
+#[cfg(test)]
 async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
+    write_compacted_with_scope(path, session, None).await
+}
+
+pub async fn write_compacted_with_scope(
+    path: &Path,
+    session: &Session,
+    scope: Option<&crate::domain::session_scope::SessionScopeMetadata>,
+) -> Result<(), DomainError> {
     let record = SessionRecordRef::Snapshot(SessionFileRef {
         key: session.key.runtime_key(),
         messages: session.messages.iter().map(message_to_record_ref).collect(),
         workflow_run: session.workflow_run.as_ref(),
         subagent_roster: &session.subagent_roster,
+        scope,
     });
     let mut line = serde_json::to_string(&record)
         .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;

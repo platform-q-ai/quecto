@@ -20,6 +20,7 @@ pub mod provider_runtime;
 pub mod provider_runtime_admission;
 pub mod providers;
 pub mod reload;
+pub mod resume_decision_adapter;
 pub mod repo_local_container_config;
 pub mod runtime_identity;
 pub mod security;
@@ -37,3 +38,4 @@ mod issue_996_efficiency_tests;
 
 pub mod http;
 pub mod session_export;
+pub mod session_scope_discovery;

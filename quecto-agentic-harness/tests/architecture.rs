@@ -29,6 +29,10 @@ mod sessions_capability;
 mod sessions_epic_close;
 #[path = "architecture/sessions_epic_close_retirement.rs"]
 mod sessions_epic_close_retirement;
+/// Issue #2001 D6: lock folder-aware session ownership, documentation, and
+/// retirement of unsafe cross-folder behavior.
+#[path = "architecture/folder_aware_sessions.rs"]
+mod folder_aware_sessions;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]

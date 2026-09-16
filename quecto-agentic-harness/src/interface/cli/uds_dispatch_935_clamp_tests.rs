@@ -80,6 +80,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
                 None,
                 &[],
             ),
+            resume_decision: crate::interface::cli::uds::test_resume_decision(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 session.state_snapshot("cli:test", 0, None, 0, None),
             )),

@@ -176,6 +176,7 @@ impl Fixture {
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: self.sessions.read_handles(),
+            resume_decision: crate::interface::cli::uds::test_resume_decision(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
