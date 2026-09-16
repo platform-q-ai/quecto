@@ -21,6 +21,7 @@ pub mod provider_retry;
 pub mod redaction;
 pub mod request_observation;
 pub mod session;
+pub mod session_home_scope;
 pub mod session_identity;
 pub mod subagent;
 pub mod subagent_launch;
