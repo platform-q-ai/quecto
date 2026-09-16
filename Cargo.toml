@@ -26,3 +26,16 @@ panic = "abort"
 # For a debugger session, override once: CARGO_PROFILE_DEV_DEBUG=2 cargo build.
 [profile.dev]
 debug = "line-tables-only"
+
+# The harness fingerprints its own executable (sha256 of /proc/self/exe,
+# infrastructure/runtime_identity.rs) once per process. A debug test binary
+# is 200-500 MB and sha2 at opt-level 0 hashes it at ~30 MB/s: 10-17 s of CPU
+# per BDD shard or nextest process, charged to whatever tests run meanwhile.
+# Optimising just the hashing crates makes that ~1 s; they are small, so the
+# cold build cost is negligible.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.generic-array]
+opt-level = 3
