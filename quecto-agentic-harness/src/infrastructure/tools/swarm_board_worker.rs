@@ -8,8 +8,12 @@
 //!
 //! Protocol: one JSON line `[method, args]` in, one JSON line
 //! `{"ok": value}` or `{"error": text}` out; the interpreter exits when its
-//! stdin closes. Workers are kept in a small process-wide LRU; eviction closes
-//! stdin and reaps the child. No signal is ever sent.
+//! stdin closes or its checkout directory disappears. Workers are kept in a
+//! small process-wide LRU; eviction closes stdin and reaps the child. No
+//! signal is ever sent by the harness. The packaged modules never write to
+//! stdout or stderr themselves (stderr is read only after an exit), and a
+//! call is never retried: an interpreter that vanished mid-call may already
+//! have applied a mutating board method.
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -24,10 +28,6 @@ use crate::domain::error::DomainError;
 /// the supervising session and the test suites touch a handful.
 const MAX_WORKERS: usize = 8;
 
-/// An interpreter idle this long exits on its own; a later call restarts one
-/// (paying the start-up once, as every call used to).
-const IDLE_EXIT_SECS: u32 = 10;
-
 struct Worker {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -40,12 +40,13 @@ impl Worker {
         // (PR_SET_PDEATHSIG): the harness never signals it, and a harness that
         // dies mid-idle leaves no interpreter behind for the exit canary to
         // name. The signal is bound to the spawning *thread*, hence the
-        // resident spawner below. While idle it watches its own checkout and
-        // leaves when that is gone or after IDLE_EXIT_SECS; the next call
-        // simply starts a fresh one. One request is outstanding at a time, so
-        // selecting on the descriptor before each buffered readline is exact.
+        // resident spawner below. It also leaves the harness's process group
+        // (setsid), as bash children and members do, so a group-wide canary
+        // never sees it. While idle it watches its own checkout every 100 ms
+        // and leaves when that is gone; one request is outstanding at a time,
+        // so selecting on the descriptor before each buffered readline is exact.
         let source = format!(
-            "{PDEATHSIG}{bootstrap}\nimport os, select, time\n_checkout={checkout}\n_idle=time.monotonic()\nwhile True:\n _ready,_,_=select.select([sys.stdin],[],[],0.1)\n if not _ready:\n  if not os.path.isdir(_checkout) or time.monotonic()-_idle>{IDLE_EXIT_SECS}: break\n  continue\n _line=sys.stdin.readline()\n if not _line: break\n _idle=time.monotonic()\n try:\n  _req=json.loads(_line); print(json.dumps({{'ok':getattr(swarm.board,_req[0])(*_req[1])}}))\n except Exception as e:\n  print(json.dumps({{'error':str(e)}}))\n sys.stdout.flush()\n",
+            "{PDEATHSIG}{bootstrap}\nimport os, select\n_checkout={checkout}\nwhile True:\n _ready,_,_=select.select([sys.stdin],[],[],0.1)\n if not _ready:\n  if not os.path.isdir(_checkout): break\n  continue\n _line=sys.stdin.readline()\n if not _line: break\n try:\n  _req=json.loads(_line); print(json.dumps({{'ok':getattr(swarm.board,_req[0])(*_req[1])}}))\n except Exception as e:\n  print(json.dumps({{'error':str(e)}}))\n sys.stdout.flush()\n",
             checkout = serde_json::json!(checkout.to_string_lossy()),
         );
         let mut child = spawn_on_resident_thread(source)
@@ -76,12 +77,12 @@ impl Worker {
     /// Whatever the interpreter wrote to stderr before it exited.
     fn stderr_after_exit(&mut self) -> String {
         self.stdin.take();
-        let mut text = String::new();
+        let mut bytes = Vec::new();
         if let Some(mut err) = self.child.stderr.take() {
-            let _ = err.read_to_string(&mut text);
+            let _ = err.read_to_end(&mut bytes);
         }
         let _ = self.child.wait();
-        text
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 }
 
@@ -94,8 +95,12 @@ impl Drop for Worker {
     }
 }
 
-const PDEATHSIG: &str =
-    "try:\n import ctypes; ctypes.CDLL(None).prctl(1, 9)\nexcept Exception:\n pass\n";
+/// Prelude the interpreter runs first. `ctypes` may be absent on a minimal
+/// python; then the worker degrades to exiting on stdin EOF / checkout loss.
+/// The parent is re-checked after arming, as `parent_death_signal.rs` does:
+/// a harness that died during interpreter start-up would otherwise never be
+/// signalled.
+const PDEATHSIG: &str = "import os\n_ppid=os.getppid()\ntry:\n os.setsid()\nexcept Exception:\n pass\ntry:\n import ctypes; ctypes.CDLL(None).prctl(1, ctypes.c_ulong(9))\n if os.getppid()!=_ppid: raise SystemExit(0)\nexcept SystemExit:\n raise\nexcept Exception:\n pass\n";
 
 /// Spawns interpreters from one thread that lives as long as the process, so
 /// their parent-death signal fires at process exit and not when a pooled
@@ -138,51 +143,108 @@ fn spawn_on_resident_thread(source: String) -> std::io::Result<Child> {
 type Key = (PathBuf, String);
 type Slot = Arc<Mutex<Option<Worker>>>;
 
+/// The interpreters one process keeps, keyed by (checkout, member).
 #[derive(Default)]
-struct Registry {
+pub(super) struct Registry {
+    inner: Mutex<RegistryInner>,
+}
+
+#[derive(Default)]
+struct RegistryInner {
     workers: HashMap<Key, (Slot, u64)>,
     tick: u64,
 }
 
-fn registry() -> &'static Mutex<Registry> {
-    static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(Mutex::default)
+/// The process-wide registry every production caller shares.
+fn global() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(Registry::default)
 }
 
-/// The slot for `(checkout, member)`, evicting the least recently used
-/// worker when the registry is full. The slot is created empty; the caller
-/// spawns into it under the slot's own lock so the registry lock is never
-/// held across a spawn.
-fn slot(checkout: &Path, member: &str) -> Slot {
-    let mut registry = registry().lock().unwrap_or_else(|p| p.into_inner());
-    registry.tick += 1;
-    let tick = registry.tick;
-    let key = (checkout.to_path_buf(), member.to_string());
-    if let Some((slot, used)) = registry.workers.get_mut(&key) {
-        *used = tick;
-        return slot.clone();
+impl Registry {
+    /// The slot for `(checkout, member)`, evicting the least recently used
+    /// worker when full. Slots are created empty; the caller spawns into
+    /// one under the slot's own lock, so the registry lock is never held
+    /// across a spawn.
+    fn slot(&self, checkout: &Path, member: &str) -> Slot {
+        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner.tick += 1;
+        let tick = inner.tick;
+        let key = (checkout.to_path_buf(), member.to_string());
+        if let Some((slot, used)) = inner.workers.get_mut(&key) {
+            *used = tick;
+            return slot.clone();
+        }
+        if inner.workers.len() >= MAX_WORKERS {
+            let oldest = inner
+                .workers
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                let evicted = inner.workers.remove(&oldest);
+                drop(inner);
+                drop(evicted);
+                return self.slot(checkout, member);
+            }
+        }
+        let created: Slot = Arc::new(Mutex::new(None));
+        inner.workers.insert(key, (created.clone(), tick));
+        created
     }
-    if registry.workers.len() >= MAX_WORKERS {
-        if let Some(oldest) = registry
-            .workers
-            .iter()
-            .min_by_key(|(_, (_, used))| *used)
-            .map(|(key, _)| key.clone())
+
+    /// One board call against this registry's interpreter for
+    /// `(checkout, member)`, started from `bootstrap` when absent or already
+    /// exited. An interpreter that goes away mid-call is an error, never a
+    /// retry (see the module doc); its stderr is the diagnostic.
+    pub(super) fn call(
+        &self,
+        checkout: &Path,
+        member: &str,
+        bootstrap: &str,
+        method: &str,
+        args: Value,
+    ) -> Result<Value, DomainError> {
+        let request = serde_json::to_string(&serde_json::json!([method, args]))
+            .map_err(|e| DomainError::Tool(format!("swarm coordination request: {e}")))?;
+        let slot = self.slot(checkout, member);
+        let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+        // An interpreter that already left (its checkout vanished) is reaped
+        // and replaced before the request is written, so the write never
+        // targets a dead peer.
+        if guard
+            .as_mut()
+            .is_some_and(|w| matches!(w.child.try_wait(), Ok(Some(_)) | Err(_)))
         {
-            let evicted = registry.workers.remove(&oldest);
-            drop(registry);
-            drop(evicted);
-            return slot(checkout, member);
+            *guard = None;
+        }
+        let worker = match guard.as_mut() {
+            Some(worker) => worker,
+            None => guard.insert(Worker::spawn(checkout, bootstrap)?),
+        };
+        match worker.exchange(&request) {
+            Some(line) => decode(&line),
+            None => {
+                let stderr = worker.stderr_after_exit();
+                *guard = None;
+                Err(DomainError::Tool(format!(
+                    "swarm coordination failed: {stderr}"
+                )))
+            }
         }
     }
-    let created = Arc::new(Mutex::new(None));
-    registry.workers.insert(key, (created.clone(), tick));
-    created
+
+    #[cfg(test)]
+    pub(super) fn resident(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .workers
+            .len()
+    }
 }
 
-/// One board call against the interpreter for `(checkout, member)`, starting
-/// it from `bootstrap` when absent. An interpreter that has exited is started
-/// again once; if that also fails the interpreter's stderr is the error.
+/// One board call through the process-wide registry.
 pub(super) fn call(
     checkout: &Path,
     member: &str,
@@ -190,36 +252,7 @@ pub(super) fn call(
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
-    let request = serde_json::to_string(&serde_json::json!([method, args]))
-        .map_err(|e| DomainError::Tool(format!("swarm coordination request: {e}")))?;
-    let slot = slot(checkout, member);
-    let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
-    for attempt in 0..2 {
-        let worker = match guard.as_mut() {
-            Some(worker) => worker,
-            None => guard.insert(Worker::spawn(checkout, bootstrap)?),
-        };
-        if let Some(line) = worker.exchange(&request) {
-            return decode(&line);
-        }
-        let stderr = worker.stderr_after_exit();
-        *guard = None;
-        if attempt == 1 || !stderr.is_empty() {
-            return Err(DomainError::Tool(format!(
-                "swarm coordination failed: {stderr}"
-            )));
-        }
-    }
-    unreachable!("two attempts return or fail")
-}
-
-#[cfg(test)]
-pub(super) fn resident() -> usize {
-    registry()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .workers
-        .len()
+    global().call(checkout, member, bootstrap, method, args)
 }
 
 fn decode(line: &str) -> Result<Value, DomainError> {

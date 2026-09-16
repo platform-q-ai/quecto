@@ -1,6 +1,21 @@
 use serde_json::json;
 
-use super::call;
+use super::Registry;
+
+fn call(
+    checkout: &std::path::Path,
+    member: &str,
+    bootstrap: &str,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, crate::domain::error::DomainError> {
+    // Every test owns a registry: the process-wide one would let unrelated
+    // swarm tests evict these workers between two asserted calls.
+    thread_local! {
+        static REGISTRY: Registry = Registry::default();
+    }
+    REGISTRY.with(|r| r.call(checkout, member, bootstrap, method, args))
+}
 
 /// A stand-in board: `echo` returns its arguments, `boom` raises, `quit`
 /// ends the interpreter mid-call (an exit with nothing on stderr).
@@ -48,14 +63,13 @@ fn a_board_exception_is_the_swarm_error_text() {
 }
 
 #[test]
-fn an_interpreter_that_exits_quietly_is_started_again_once() {
+fn an_interpreter_that_exits_mid_call_is_an_error_and_the_next_call_gets_a_fresh_one() {
     let dir = checkout("quit");
     call(dir.path(), "m", STUB, "echo", json!([])).unwrap();
+    // `quit` exits before answering. The call is not retried — the board
+    // method may already have run — so it fails with the (empty) stderr.
     let err = call(dir.path(), "m", STUB, "quit", json!([])).unwrap_err();
-    // `quit` exits before answering: the retry runs it again and it exits
-    // again, so the call fails with the (empty) stderr.
     assert_eq!(err.to_string(), "tool error: swarm coordination failed: ");
-    // The next call gets a fresh interpreter.
     assert_eq!(
         call(dir.path(), "m", STUB, "echo", json!([])).unwrap()["calls"],
         1
@@ -82,23 +96,33 @@ fn a_bootstrap_failure_reports_the_interpreter_stderr() {
 
 #[test]
 fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
+    let registry = Registry::default();
     let dirs: Vec<_> = (0..super::MAX_WORKERS + 1)
         .map(|i| checkout(&format!("lru{i}")))
         .collect();
     for dir in &dirs {
         assert_eq!(
-            call(dir.path(), "m", STUB, "echo", json!([])).unwrap()["calls"],
+            registry
+                .call(dir.path(), "m", STUB, "echo", json!([]))
+                .unwrap()["calls"],
             1
         );
     }
+    assert_eq!(registry.resident(), super::MAX_WORKERS);
     // The first checkout was evicted when the ninth arrived: its counter
-    // restarts. (Other tests share the process-wide registry, so residency
-    // of a later checkout is not asserted; the bound is.)
+    // restarts. The second is still resident and keeps counting.
     assert_eq!(
-        call(dirs[0].path(), "m", STUB, "echo", json!([])).unwrap()["calls"],
+        registry
+            .call(dirs[0].path(), "m", STUB, "echo", json!([]))
+            .unwrap()["calls"],
         1
     );
-    assert!(super::resident() <= super::MAX_WORKERS);
+    assert_eq!(
+        registry
+            .call(dirs[2].path(), "m", STUB, "echo", json!([]))
+            .unwrap()["calls"],
+        2
+    );
 }
 
 /// The interpreter prelude binds the worker's life to its parent: when the
