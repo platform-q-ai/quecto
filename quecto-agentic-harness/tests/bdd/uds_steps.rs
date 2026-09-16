@@ -408,7 +408,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
     let exit_code = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
-            spill_store: None,
+            retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,
@@ -2115,7 +2115,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
-            spill_store: None,
+            retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
             session_key,
@@ -2534,7 +2534,7 @@ fn mc_spawn_agent(
     let handle = std::thread::spawn(move || {
         quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
             agent,
-            spill_store: None,
+            retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,

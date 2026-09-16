@@ -5,7 +5,7 @@ use super::uds_session::AgentSession;
 use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
+use crate::application::sessions::ports::SessionStore;
 pub(crate) use crate::domain::conversation_view::inject_system_prompt;
 #[cfg(test)]
 pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
@@ -26,10 +26,11 @@ type ExtRegistry = std::sync::Arc<
 
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
-    /// The run's retention store (D9 #1978), the active session's
-    /// recovery backstop; `None` runs the loop without retained context
-    /// (unit rigs).
-    pub spill_store: Option<std::sync::Arc<dyn ContextSpillStore>>,
+    /// The run's retained-context handles (D9 #1978): the one store the
+    /// agent's pruning writer and the active session's recovery backstop
+    /// share, derived here so the two cannot diverge; `None` runs the loop
+    /// without retained context (unit rigs).
+    pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
     pub session_key: String,
@@ -83,7 +84,7 @@ use super::uds_socket::{SocketGuard, bind_secure_socket};
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
-        spill_store,
+        retention,
         base_dir,
         workspace,
         session_key,
@@ -113,7 +114,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         session_key: session_key.clone(),
         ephemeral,
         system_prompt: system_prompt.clone(),
-        spill_store,
+        spill_store: retention.as_ref().map(|handles| handles.store.clone()),
         durable_prefix: agent.durable_prefix_latch(),
         workflow_state: workflow_state.clone(),
         subagent_registry: subagent_registry.clone(),

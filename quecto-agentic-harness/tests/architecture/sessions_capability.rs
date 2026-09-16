@@ -380,11 +380,60 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "tools::recall::",
     ".list_entries(",
     ".has_entries(",
-    "spill_store.append(",
-    "spill_store.recall(",
-    "spill_store.clear(",
     "fn spill_store(",
 ];
+
+/// A line that reaches a retention store method by its identity-keyed
+/// argument shape — `.append(&identity, …)`, `.recall(&identity, …)`,
+/// `.clear(&identity)` — whatever the binding is called (D9 #1978). The
+/// `(&mut` shape of `Vec::append` and the argument-less `.clear()` are not
+/// store reaches.
+fn reaches_a_retention_store(line: &str) -> bool {
+    [".append(&", ".recall(&", ".clear(&"].iter().any(|needle| {
+        line.match_indices(needle)
+            .any(|(index, _)| !line[index + needle.len()..].starts_with("mut "))
+    })
+}
+
+#[test]
+fn retention_store_reach_predicate_catches_a_rogue_call_and_spares_vec_and_set() {
+    for rogue in [
+        "retention.store.recall(&identity, &SpillId::new(id)).await",
+        "store.clear(&identity).await?;",
+        "handles.store.append(&state.identity().clone(), &entry).await",
+        "ctx.retention.as_ref().unwrap().store.recall(&key, &id)",
+    ] {
+        assert!(reaches_a_retention_store(rogue), "must catch: {rogue}");
+    }
+    for benign in [
+        "messages.append(&mut other);",
+        "seen.clear();",
+        "self.recall_counts.lock().unwrap().clear();",
+        "let page = history.recall(page_size);",
+    ] {
+        assert!(!reaches_a_retention_store(benign), "must spare: {benign}");
+    }
+}
+
+/// D9 (#1978): no interface production line reaches a retention store
+/// method, whatever the binding is called.
+#[test]
+fn interface_never_reaches_a_retention_store_method() {
+    let reaches: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with("src/interface/"))
+        .flat_map(|path| {
+            production_code(&path)
+                .into_iter()
+                .filter(|(_, line)| reaches_a_retention_store(line))
+                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
+        })
+        .collect();
+    assert!(
+        reaches.is_empty(),
+        "interface reaches a retention store method: {reaches:#?}"
+    );
+}
 
 /// The interface files still holding a raw persisted key the active session
 /// does not stand for (exact, decrease-only): none since D8 #1977 moved the
@@ -510,14 +559,14 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/resume_saved_session.rs", 114),
     // D9 #1978: retained context.
     ("src/application/sessions/use_cases/recall_context.rs", 80),
-    ("src/application/sessions/use_cases/retain_context.rs", 120),
+    ("src/application/sessions/use_cases/retain_context.rs", 118),
     ("src/application/sessions/dto/retained_context.rs", 92),
-    ("src/composition/retention.rs", 36),
-    ("src/interface/cli/retention_handles.rs", 35),
-    ("src/infrastructure/tools/recall.rs", 185),
+    ("src/composition/retention.rs", 35),
+    ("src/interface/cli/retention_handles.rs", 33),
+    ("src/infrastructure/tools/recall.rs", 183),
     ("src/application/context.rs", 336),
     ("src/application/context_pruning.rs", 248),
-    ("src/application/context_pruning_messages.rs", 305),
+    ("src/application/context_pruning_messages.rs", 304),
     ("src/application/agent_loop_spill.rs", 56),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
@@ -526,7 +575,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/composition/session_report.rs", 40),
     // D7 #1976 adds the fresh-identity generator builder (was 38 before D7);
     // D9 #1978 adds the retention store and graph builder (was 48 before D9).
-    ("src/composition/sessions.rs", 62),
+    ("src/composition/sessions.rs", 61),
     ("src/composition/fleet_settlement.rs", 39),
     (
         "src/infrastructure/persistence/session_snapshot_sources.rs",
@@ -545,7 +594,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // before D8).
     ("src/domain/session_identity.rs", 148),
     // D9 #1978 moves the ephemeral scrub onto the port (was 376 before D9).
-    ("src/infrastructure/persistence/context_spill.rs", 380),
+    ("src/infrastructure/persistence/context_spill.rs", 377),
     ("src/infrastructure/persistence/session_layout.rs", 83),
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     ("src/infrastructure/persistence/session_store.rs", 687),
@@ -557,9 +606,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_dispatch_query.rs", 190),
     ("src/interface/cli/uds_dispatch_session.rs", 239),
     ("src/interface/cli/uds_latest_report.rs", 85),
-    // D9 #1978 hands the loop its retention store as an input (was 305
-    // before D9).
-    ("src/interface/cli/uds_lifecycle.rs", 310),
+    // D9 #1978 hands the loop its retained-context handles as an input
+    // (was 305 before D9).
+    ("src/interface/cli/uds_lifecycle.rs", 311),
     ("src/interface/cli/uds_multi.rs", 633),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
     ("src/interface/cli/uds_session_handles.rs", 125),
@@ -1226,7 +1275,6 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/context_spill.rs",
     "src/interface/cli/retention_handles.rs",
-    "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

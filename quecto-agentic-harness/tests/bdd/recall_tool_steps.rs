@@ -148,7 +148,7 @@ fn when_i_run_recall_with_raw_arguments(world: &mut QuectoWorld, args: String) {
     execute_recall_raw(world, &args);
 }
 
-#[then(expr = "the recall tool consulted the retention store {int} times")]
+#[then(expr = "the in-memory retention double behind the tool was consulted {int} times")]
 fn then_recall_consulted_store_times(world: &mut QuectoWorld, times: usize) {
     let consulted = recall_store(world)
         .consulted

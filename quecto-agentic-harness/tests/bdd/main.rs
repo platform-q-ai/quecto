@@ -993,6 +993,9 @@ pub struct QuectoWorld {
     pub _paged_response: Option<serde_json::Value>,
     /// Message contents collected while paging backward to the beginning.
     pub _paged_collected: Vec<String>,
+    /// Retained context over the real loop (D9 #1978): the built agent,
+    /// its composed retention handles and the loop's wire events.
+    pub retained_context_run: Option<uds_retained_context_steps::RetainedContextRun>,
     /// Live multi-client: socket path while agent is kept up across steps.
     pub _mc_live_socket: Option<std::path::PathBuf>,
     /// Live multi-client: agent thread handle.
@@ -1487,6 +1490,7 @@ mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_report_export_steps;
 mod uds_resume_session_steps;
+mod uds_retained_context_steps;
 mod uds_steps;
 mod uds_subagent_liveness_steps;
 mod uds_transcript_sync_steps;

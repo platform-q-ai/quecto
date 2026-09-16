@@ -624,7 +624,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     let retention = build.retention;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
-        spill_store: Some(retention.store.clone()),
+        retention: Some(retention.clone()),
         base_dir: &base_dir,
         workspace: &build.workspace,
         session_key,

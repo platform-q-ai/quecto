@@ -415,7 +415,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
-            spill_store: None,
+            retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
             session_key,

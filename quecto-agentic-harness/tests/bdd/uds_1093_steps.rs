@@ -300,7 +300,9 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         &mut registry,
         &ext_registry,
     );
-    let spill_store = Arc::new(FileContextSpillStore::new(FlatSessionLayout::new(base)));
+    let retention = quecto::composition::retention::retention_handles_over(Arc::new(
+        FileContextSpillStore::new(FlatSessionLayout::new(base)),
+    ));
     let session_key = Session::build_key("cli", ISSUE_1093_SESSION);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -309,9 +311,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        retention: Some(quecto::composition::retention::context_retention_over(
-            spill_store.clone(),
-        )),
+        retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -332,7 +332,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
-            spill_store: Some(spill_store),
+            retention: Some(retention),
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
             session_key,

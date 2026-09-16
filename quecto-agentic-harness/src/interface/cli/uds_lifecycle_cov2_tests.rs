@@ -58,7 +58,7 @@ fn make_agent() -> AgentLoopImpl {
 fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> UdsLoopArgs<'a> {
     UdsLoopArgs {
         agent: make_agent(),
-        spill_store: None,
+        retention: None,
         base_dir: base,
         workspace: base,
         session_key: "cli:life".into(),
