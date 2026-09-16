@@ -1,4 +1,4 @@
-//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976, D8 #1977, D9 #1978): exact-inventory
+//! The sessions capability (#1968, D1 #1970, D2 #1971, D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976, D8 #1977, D9 #1978, D10 #1979): exact-inventory
 //! ratchets for the plural capability, its composition sites, and the
 //! single owner of the flat storage layout. Affirmative throughout: each
 //! check states the set that is allowed and asserts the observed set equals
@@ -48,6 +48,10 @@
 //!   calls the sanitizer and forms the `.json`/`.owner`/`spill.jsonl`
 //!   names; the layout is created at an exact, non-growing set of sites.
 //! - Retirement: no interface production code lists the store directly.
+//! - D10 (#1979, epic close): the tracker holds no raw session key — the
+//!   presenters read the active session's identity, the loop's startup
+//!   identity is typed end to end; the exact end-state inventories live in
+//!   `sessions_epic_close.rs` / `sessions_epic_close_retirement.rs`.
 //! - Ceilings: the per-owner line ceilings are non-empty and decrease-only.
 //!
 //! `LINE_CEILINGS` and `LAYOUT_CREATION_SITES` are decrease-only by review
@@ -570,8 +574,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/agent_loop_spill.rs", 56),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
-    // before D8).
-    ("src/composition/active_session.rs", 119),
+    // before D8); D10 #1979 drops the raw-key conversion (was 119).
+    ("src/composition/active_session.rs", 117),
     ("src/composition/session_report.rs", 40),
     // D7 #1976 adds the fresh-identity generator builder (was 38 before D7);
     // D9 #1978 adds the retention store and graph builder (was 48 before D9).
@@ -603,15 +607,25 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),
     ("src/interface/cli/uds_dispatch.rs", 500),
-    ("src/interface/cli/uds_dispatch_query.rs", 190),
+    // D10 #1979 hands the presenters the active session's key (was 190).
+    ("src/interface/cli/uds_dispatch_query.rs", 187),
     ("src/interface/cli/uds_dispatch_session.rs", 239),
     ("src/interface/cli/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).
     ("src/interface/cli/uds_lifecycle.rs", 311),
     ("src/interface/cli/uds_multi.rs", 633),
-    // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7).
-    ("src/interface/cli/uds_session_handles.rs", 125),
+    // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
+    // types the loop's identity and reads the key from the active session
+    // (was 125).
+    ("src/interface/cli/uds_session_handles.rs", 123),
+    // D10 #1979: the tracker keeps no session key; the presenters, the
+    // workflow-nudge descendant check and the agent loop's key accessor are
+    // pinned at their D10 size.
+    ("src/interface/cli/uds_session.rs", 628),
+    ("src/interface/cli/uds_query.rs", 232),
+    ("src/interface/cli/uds_workflow_nudge.rs", 109),
+    ("src/application/agent_loop/agent_loop_session.rs", 22),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
     // D8 #1977 adds the workflow restore (was 93 before D8).
     ("src/interface/cli/uds_session_switch_runtime.rs", 97),

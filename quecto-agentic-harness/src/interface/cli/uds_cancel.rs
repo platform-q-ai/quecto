@@ -242,8 +242,8 @@ pub enum PromptOutcome {
     /// Agent completed successfully.
     ///
     /// Deliberately carries NO durable-prefix-dirty payload (#1073 review):
-    /// the agent-level latch (`AgentLoopImpl::take_durable_prefix_dirty`,
-    /// drained centrally by `persist_current_session`) is the single
+    /// the agent-level latch (`DurablePrefixLatch`, drained centrally by the
+    /// sessions capability's `SaveSession` transaction, #1972) is the single
     /// authoritative channel. A result-carried flag existed briefly but was
     /// success-only — dirtiness from an Error/Cancelled turn would be lost by
     /// any consumer that trusted it — and no production code ever read it.
