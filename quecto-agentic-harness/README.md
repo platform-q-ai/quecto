@@ -859,7 +859,7 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ```
 ~/.quecto/
-  config.json              # Main configuration
+  config.json              # Global configuration (a ./config.json in the working directory takes precedence)
   credentials.json         # Stored API tokens (from quecto auth)
   sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json
