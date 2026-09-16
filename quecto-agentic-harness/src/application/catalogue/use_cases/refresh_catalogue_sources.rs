@@ -32,22 +32,15 @@ impl RefreshCatalogueSources {
         Self { inputs, store }
     }
 
-    /// Refresh `selection` under `bounds` and report per source.
+    /// Refresh `selection` under `bounds` and report per source. No entry
+    /// point cancels a run today; cooperative cancellation is exercised at
+    /// the [`refresh_loaded`](Self::refresh_loaded) seam.
     pub fn execute(
         &self,
         selection: &RefreshSelection,
         bounds: RefreshBounds,
     ) -> CatalogueRefreshReport {
-        self.execute_with(selection, &RefreshContext::new(bounds))
-    }
-
-    /// As [`execute`](Self::execute), over a caller-owned context so the run
-    /// can be cancelled cooperatively.
-    pub fn execute_with(
-        &self,
-        selection: &RefreshSelection,
-        ctx: &RefreshContext,
-    ) -> CatalogueRefreshReport {
+        let ctx = RefreshContext::new(bounds);
         let loaded = match self.inputs.load() {
             Ok(loaded) => loaded,
             // A catalogue file that cannot be enumerated is one failed
@@ -63,11 +56,13 @@ impl RefreshCatalogueSources {
                 };
             }
         };
-        self.refresh_loaded(loaded.as_ref(), selection, ctx)
+        self.refresh_loaded(loaded.as_ref(), selection, &ctx)
     }
 
     /// Refresh over inputs already loaded (the loader's one read, or a
     /// rig's fakes): the whole policy of a run, independent of loading.
+    /// Public so the use-case rigs (unit and contract tests) can drive the
+    /// policy over fakes without a loader.
     pub fn refresh_loaded(
         &self,
         inputs: &dyn LoadedRefreshInputs,

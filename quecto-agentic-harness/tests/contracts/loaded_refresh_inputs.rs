@@ -52,7 +52,7 @@ fn a_refreshable_provider_feeds_the_resolve_sources_exactly_once() {
 }
 
 #[test]
-fn the_redaction_strips_the_configured_secrets_and_the_credential_port_answers() {
+fn the_redaction_strips_the_configured_secrets() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("models.json"), REGISTRY).unwrap();
     let loaded = under_test(tmp.path()).load().unwrap();
@@ -60,12 +60,31 @@ fn the_redaction_strips_the_configured_secrets_and_the_credential_port_answers()
         loaded.redaction().redact("401 for bearer sk-or-secret"),
         "401 for bearer [redacted]"
     );
+}
+
+#[test]
+fn the_credential_port_answers_per_entry_of_the_loaded_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{
+            "keyed":{"api":"openai-completions","baseUrl":"https://k.test/v1","apiKey":"sk-k","models":[{"id":"m"}]},
+            "bare":{"api":"openai-completions","models":[{"id":"m"}]}
+        }}"#,
+    )
+    .unwrap();
+    let loaded = under_test(tmp.path()).load().unwrap();
     let entries: Vec<_> = loaded
         .sources()
         .iter()
-        .filter(|s| s.id() == "openrouter")
         .flat_map(|s| s.load().unwrap().entries)
         .collect();
-    // Nothing discovered yet: no entries, but the port answers per entry.
-    assert!(entries.is_empty());
+    let find = |provider: &str| {
+        entries
+            .iter()
+            .find(|e| e.reference().provider().as_str() == provider)
+            .unwrap_or_else(|| panic!("{provider}/m loads"))
+    };
+    assert!(loaded.credentials().credential_available(find("keyed")));
+    assert!(!loaded.credentials().credential_available(find("bare")));
 }

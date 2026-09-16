@@ -249,9 +249,15 @@ fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
     )
     .unwrap();
     let err = discover_once(&refresh_for(&ctx), "broken").unwrap_err();
+    // The registry-file failure surfaces through the `models.json` outcome
+    // fallback, never as a confusing "no outcome for 'broken'".
     assert!(
-        err.contains("refresh reported no outcome") || err.to_lowercase().contains("parse"),
-        "unexpected error: {err}"
+        !err.contains("refresh reported no outcome"),
+        "the models.json outcome must be surfaced: {err}"
+    );
+    assert!(
+        err.contains("failed to parse models registry"),
+        "the fallback carries the parse failure: {err}"
     );
 }
 

@@ -529,16 +529,20 @@ fn user_override_still_wins_over_refreshed_discovered_data() {
 }
 
 #[test]
-fn failure_reasons_are_redacted() {
+fn failure_and_unsupported_reasons_are_redacted() {
     let secret = "sk-refresh-secret-123";
     let flaky = FakeRefreshable::new(
         "flaky",
         Behaviour::Fail(format!("401 unauthorized for bearer {secret}")),
     );
+    let bare = FakeRefreshable::new(
+        "bare",
+        Behaviour::Unsupported(format!("no listing endpoint for token {secret}")),
+    );
     let store = CatalogueSnapshotStore::empty();
 
     let report = run(
-        &[&flaky],
+        &[&flaky, &bare],
         &[],
         &store,
         &RefreshSelection::All,
@@ -558,5 +562,15 @@ fn failure_reasons_are_redacted() {
             assert!(reason.contains("401 unauthorized"), "got: {reason}");
         }
         other => panic!("expected failed outcome, got {other:?}"),
+    }
+    match &outcome(&report, "bare").status {
+        SourceRefreshStatus::Unsupported { reason } => {
+            assert!(
+                !reason.contains(secret),
+                "unsupported outcome leaked the secret: {reason}"
+            );
+            assert!(reason.contains("[redacted]"), "got: {reason}");
+        }
+        other => panic!("expected unsupported outcome, got {other:?}"),
     }
 }

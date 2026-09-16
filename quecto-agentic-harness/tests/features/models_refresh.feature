@@ -16,6 +16,7 @@ Feature: Refresh model catalogue sources over UDS
     Then the agent output should contain a response command "refresh_models" with success true
     And the refresh_models response reports source "openrouter" as "updated" with 2 models
     And the refresh_models response carries a published generation
+    And the list_models generation is exactly one after the refresh_models generation
     And the agent output should contain a response command "list_models" with model "openrouter/alpha"
 
   Scenario: refresh_models with a source nobody configured is a failed outcome, not an error

@@ -9,6 +9,30 @@ fn outcome(source: &str, status: SourceRefreshStatus) -> SourceRefreshOutcome {
 }
 
 #[test]
+fn a_republish_renders_the_exact_published_generation() {
+    let store = crate::application::catalogue::CatalogueSnapshotStore::empty();
+    let resolved = crate::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
+        &[],
+        &GrantNone,
+        &store,
+    );
+    let json = render(&CatalogueRefreshReport {
+        outcomes: vec![],
+        resolved: Some(resolved),
+    });
+    assert_eq!(json["generation"], store.current().generation());
+    assert_eq!(json["generation"], 1);
+}
+
+struct GrantNone;
+
+impl crate::application::catalogue::CredentialStatusPort for GrantNone {
+    fn credential_available(&self, _entry: &crate::domain::catalogue::CatalogueEntry) -> bool {
+        false
+    }
+}
+
+#[test]
 fn every_status_renders_its_legacy_shape_and_no_republish_is_a_null_generation() {
     let json = render(&CatalogueRefreshReport {
         outcomes: vec![
