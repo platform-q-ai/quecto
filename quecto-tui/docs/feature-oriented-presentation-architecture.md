@@ -54,6 +54,24 @@ Deleted interim buckets: `application/` (Phase 2), `domain/` (Phase 3), `infrast
 - Shared IDs/newtypes are introduced only when they encode an invariant or prevent a demonstrated class of mistakes.
 - Preserve command FIFO semantics and existing observable behavior.
 
+## Harness session protocol at epic #1968 close
+
+The `sessions`, `conversation` and `protocol` modules consume the harness's
+session command family — `list_sessions`, `resume_session`, `new_session`,
+`persist_session`, `clear_history`, `rewind_to`, `get_messages`, `get_message`,
+`sync` and `get_session_stats` — through the typed mappers of `protocol/`
+(`parse_resume_sessions`, `parse_resume_session`, the session-stats and
+state payload parsers, `persist_session_response`). The harness's sessions
+epic (#1968, closed by #1979) moved every one of those commands behind one
+application use case each (`quecto-agentic-harness/docs/sessions.md`,
+"Architecture") and changed **no command, field or refusal text**: the TUI's
+mappers, resume selector, rewind correlation, paged history and stats footer
+are untouched, and `tests/features/tui_clean_architecture.feature` pins the
+command set the TUI relies on. The folder/workspace-scoped sessions the TUI
+may one day select are not part of that epic (no scope field, no workspace
+behaviour; #1966 is on hold) — when they arrive they change the harness's
+`SessionIdentity` and its one layout adapter, not this protocol surface.
+
 ## Policy worth extracting
 
 Extract pure state machines only where the client owns non-trivial rules, such as:

@@ -8,6 +8,12 @@
 //! explicit read failure. We drive `FileSessionStore` (the production
 //! adapter) through a trait object so the tests can't accidentally depend
 //! on adapter-specific surface.
+//!
+//! Epic close (D10 #1979): `FileSessionStore` is the port's only production
+//! implementor, `FlatSessionLayout` its only path former, and every caller
+//! of the port is a sessions use case composed by `composition/` — the
+//! interface neither holds the store on its dispatch context nor calls a
+//! store method (`tests/architecture/sessions_epic_close*.rs`).
 
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;

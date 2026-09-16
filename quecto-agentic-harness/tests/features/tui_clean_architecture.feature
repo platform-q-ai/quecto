@@ -95,6 +95,22 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     Then the UDS protocol should support listing sessions
     And the UDS protocol should support resuming a session
 
+  @issue-1979 @issue-1968
+  Scenario: TUI session commands are unchanged at the sessions epic close
+    Then the UDS protocol should support listing sessions
+    And the UDS protocol should support resuming a session
+    And the quecto-tui protocol client should still send the harness session command "list_sessions"
+    And the quecto-tui protocol client should still send the harness session command "resume_session"
+    And the quecto-tui protocol client should still send the harness session command "new_session"
+    And the quecto-tui protocol client should still send the harness session command "persist_session"
+    And the quecto-tui protocol client should still send the harness session command "clear_history"
+    And the quecto-tui protocol client should still send the harness session command "rewind_to"
+    And the quecto-tui protocol client should still send the harness session command "get_messages"
+    And the quecto-tui protocol client should still send the harness session command "get_message"
+    And the quecto-tui protocol client should still send the harness session command "sync"
+    And the quecto-tui protocol client should still send the harness session command "get_session_stats"
+    And the quecto-tui architecture document should record the unchanged session protocol at the sessions epic close
+
   Scenario: TUI resume selector is readable above chat history
     Then the quecto-tui resume selector should render with a themed box border
 

@@ -588,6 +588,44 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
     );
 }
 
+/// D10 #1979: the harness's sessions epic moved every session command behind
+/// one use case and changed no command; the TUI's protocol client still
+/// spells each of them as a command name.
+#[then(
+    expr = "the quecto-tui protocol client should still send the harness session command {string}"
+)]
+fn then_tui_client_still_sends_session_command(_world: &mut QuectoWorld, command: String) {
+    let client = std::fs::read_to_string("../quecto-tui/src/protocol/client.rs")
+        .expect("read quecto-tui protocol client source");
+    let needle = format!("=> \"{command}\"");
+    assert!(
+        client.contains(&needle),
+        "quecto-tui protocol client must still name the session command `{command}`"
+    );
+    let harness = read_uds_protocol_sources();
+    assert!(
+        harness.contains(&format!("\"{command}\"")),
+        "the harness protocol must still accept the session command `{command}`"
+    );
+}
+
+#[then(
+    "the quecto-tui architecture document should record the unchanged session protocol at the sessions epic close"
+)]
+fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld) {
+    let doc =
+        std::fs::read_to_string("../quecto-tui/docs/feature-oriented-presentation-architecture.md")
+            .expect("read quecto-tui architecture document");
+    assert!(
+        doc.contains("#1968") && doc.contains("no command, field or refusal text"),
+        "the TUI architecture document must record that the sessions epic changed no session command"
+    );
+    assert!(
+        doc.contains("#1966") && doc.contains("no scope field"),
+        "the TUI architecture document must state the workspace seam is not implemented by the epic"
+    );
+}
+
 #[then("the quecto-tui resume selector should render with a themed box border")]
 fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
     let overlay = std::fs::read_to_string("../quecto-tui/src/components/select_overlay.rs")

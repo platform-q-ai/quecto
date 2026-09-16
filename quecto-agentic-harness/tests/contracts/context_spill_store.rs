@@ -7,6 +7,12 @@
 //! (D9 #1978). Every operation is keyed by the typed
 //! `SessionIdentity` (#1970); the ephemeral identity retains in-run entries
 //! exactly like any other key.
+//!
+//! Epic close (D10 #1979): the sessions capability is the single owner of
+//! this port — `FileContextSpillStore` its only implementor, the
+//! `RecallContext`/`RetainContext`/`ListRetainedContext` use cases its only
+//! consumers; the context-pruning policy reaches it through those handles
+//! and the interface not at all.
 
 use quecto::application::sessions::ports::ContextSpillStore;
 use quecto::domain::session::SpillEntry;
