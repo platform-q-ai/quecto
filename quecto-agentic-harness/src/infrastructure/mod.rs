@@ -11,6 +11,7 @@ pub mod config;
 pub mod config_admission;
 pub mod extensions;
 pub mod line_cap;
+pub mod local_config_probe;
 pub mod logging;
 pub mod model_registry;
 pub mod persistence;

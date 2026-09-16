@@ -8,6 +8,7 @@ fn ctx(dir: &std::path::Path) -> CliContext {
         config_path: Some(dir.join("config.json")),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..CliContext::default()
     }
 }

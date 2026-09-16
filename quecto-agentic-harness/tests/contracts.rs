@@ -63,6 +63,8 @@ mod historical_roster_source;
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
+#[path = "contracts/local_config_probe.rs"]
+mod local_config_probe;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
 #[path = "contracts/refresh_redaction_port.rs"]

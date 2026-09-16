@@ -243,11 +243,17 @@ pub(crate) fn cmd_agent(
     };
 
     let base_dir = ctx.base_dir();
-    let config_path = ctx.config_path();
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
     let build = match build_agent_from_config(
         &base_dir,
-        &config_path,
-        ctx.config_path.is_some(),
+        selection.path(),
+        selection.must_exist(),
         &flags,
         stderr,
         None,
@@ -301,14 +307,14 @@ pub(crate) struct AgentBuildResult {
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     config_path: &std::path::Path,
-    config_explicit: bool,
+    config_must_exist: bool,
     flags: &AgentFlags,
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    // An explicitly-provided --config path must exist; only a missing DEFAULT
-    // config falls back to zero-config defaults.
-    if let Some(msg) = super::explicit_config_missing(config_path, config_explicit) {
+    // An explicit --config or a selected working-directory config must exist;
+    // only a missing GLOBAL config falls back to zero-config defaults.
+    if let Some(msg) = super::selected_config_missing(config_path, config_must_exist) {
         stderr.push_str(&msg);
         stderr.push('\n');
         return None;
@@ -320,7 +326,11 @@ pub(crate) fn build_agent_from_config(
     let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
         Ok(c) => c,
         Err(e) => {
-            stderr.push_str(&format!("failed to load config: {}\n", e));
+            stderr.push_str(&format!(
+                "failed to load config {}: {}\n",
+                config_path.display(),
+                e
+            ));
             return None;
         }
     };
@@ -550,7 +560,13 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
 
     let base_dir = ctx.base_dir();
-    let config_path = ctx.config_path();
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
     // Create the broadcast channel early so the WorkflowTool emitter can
     // send workflow_state events from the moment it is constructed (#598).
     let workflow_available = flags.uds_mode && !flags.workflow_disabled;
@@ -564,8 +580,8 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
     let build = match build_agent_from_config(
         &base_dir,
-        &config_path,
-        ctx.config_path.is_some(),
+        selection.path(),
+        selection.must_exist(),
         &flags,
         stderr,
         broadcast_tx.clone(),

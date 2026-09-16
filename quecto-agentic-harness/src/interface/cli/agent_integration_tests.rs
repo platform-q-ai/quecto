@@ -46,6 +46,7 @@ fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
         base_dir: Some(base_dir.to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     }
 }

@@ -1431,6 +1431,7 @@ mod catalogue_refresh_steps;
 mod catalogue_runtime_steps;
 mod catalogue_user_config_steps;
 mod codex_provider_steps;
+mod config_discovery_steps;
 mod config_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
@@ -1737,6 +1738,8 @@ impl QuectoWorld {
         let mut world = Self::default();
         world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
         world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
+        world.cli_context.config_selection =
+            Some(quecto::composition::configuration::build_select_config);
         world
     }
 }

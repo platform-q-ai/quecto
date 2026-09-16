@@ -50,6 +50,15 @@ quecto
 quecto-tui
 ```
 
+## Project-local configuration
+
+With no `--config`, quecto looks for `config.json` in the directory you launch
+it from before falling back to `~/.quecto/config.json`. One file is selected,
+never merged, and parent directories are not searched. A local file that exists
+but cannot be loaded is an error rather than a fallback, so trust a project's
+`config.json` before running quecto inside it. See the README's
+[Configuration discovery and precedence](../README.md#configuration-discovery-and-precedence).
+
 ## Next steps
 
 | Need | Where |

@@ -19,10 +19,24 @@ pub(crate) fn cmd_admission_broker(
         return 2;
     };
     let base_dir = ctx.base_dir();
-    let config = match Config::load(ctx.config_path().to_str().unwrap_or("")) {
-        Ok(config) => config.with_admission_base_dir(&base_dir),
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
         Err(error) => {
             stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
+    if let Some(msg) = super::selected_config_missing(selection.path(), selection.must_exist()) {
+        stderr.push_str(&format!("admission-broker: {msg}\n"));
+        return 1;
+    }
+    let config = match Config::load(selection.path().to_str().unwrap_or("")) {
+        Ok(config) => config.with_admission_base_dir(&base_dir),
+        Err(error) => {
+            stderr.push_str(&format!(
+                "admission-broker: failed to load config {}: {error}\n",
+                selection.path().display()
+            ));
             return 1;
         }
     };

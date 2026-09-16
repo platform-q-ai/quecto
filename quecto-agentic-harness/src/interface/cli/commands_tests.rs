@@ -32,6 +32,7 @@ fn test_status_shows_summary() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -71,6 +72,7 @@ fn test_status_respects_global_config_flag() {
         base_dir: Some(base.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
 
@@ -111,6 +113,7 @@ fn test_status_no_config_uses_defaults() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -132,6 +135,7 @@ fn test_status_redacts_api_keys() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -154,6 +158,7 @@ fn test_status_both_providers_configured() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -170,6 +175,7 @@ fn test_status_explicit_missing_config_fails() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
 
@@ -200,6 +206,7 @@ fn test_status_invalid_config_fails() {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
+        config_selection: Some(crate::composition::configuration::build_select_config),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);

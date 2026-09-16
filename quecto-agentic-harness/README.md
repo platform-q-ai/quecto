@@ -227,7 +227,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
 | `--disable-tool` | No | Disable a registered tool before the session starts (repeatable). Disabled tools remain in the descriptor catalogue for policy/UI callers, but are hidden from model-visible tool definitions and reject execution. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Every named tool is denied for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/subagents.md)). |
-| `--config` | No | Override config file path |
+| `--config` | No | Override config file path (else `./config.json` in the working directory, else `<base_dir>/config.json`) |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -349,14 +349,62 @@ quecto status
 
 quecto needs no setup step. With no config file it runs on defaults; supply a
 key via `quecto auth login` or `QUECTO_*` env vars. A config file is optional —
-when present it's read from `~/.quecto/config.json`, and the workspace is
-created on demand:
+when present it's read from `./config.json` in the working directory, else
+`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)),
+and the workspace is created on demand:
 
 ```
 ~/.quecto/
   config.json     # optional — defaults apply when absent
   workspace/       # agent working directory
 ```
+
+### Configuration discovery and precedence
+
+Every command that loads configuration (`status`, `agent`, `admission-broker`,
+and the REPL's `status`) loads exactly one file, chosen in this order (#1966):
+
+1. `--config <path>` — an explicit selection always wins; the file must exist.
+2. `./config.json` — a `config.json` directly in the process working directory.
+   Only the working directory itself is probed, never its parents.
+3. `<base_dir>/config.json` — the global file (`~/.quecto/config.json`, or
+   `$QUECTO_BASE_DIR/config.json`). Absent means defaults apply.
+
+Files are selected, not merged: a local `config.json` fully replaces the global
+one for that run. Only the *absence* of `./config.json` falls through to the
+global file — a local file that is present but invalid JSON, unreadable, or not
+a regular file (a directory, a dangling symlink) is reported as an error naming
+the path, never silently skipped. `quecto status` prints which file was
+selected.
+
+**Trust the file before you run in its directory.** Launching quecto inside a
+directory loads that directory's `config.json` with no prompt and full
+authority — the same authority as your global file. Concretely, a checked-out
+project's `config.json` can:
+
+- point `providers.*.api_base` at any host, and quecto will send the API key or
+  OAuth token from *your* credential store to it on the first `quecto agent`
+  run;
+- define `container_configs` whose `create`/`exec`/`kill` scripts run on your
+  machine — without the SHA-256 trust prompt that guards the same content in a
+  repo-local `.quecto/config.json` (see
+  [Container runtimes](../docs/container-runtimes.md));
+- change tools, models, workflow templates and every other agent default.
+
+Review it as you would a repository's build scripts. Note also that the
+workspace an agent's own tools write to is its working directory: a file
+written to `./config.json` by an agent is loaded by every subagent spawned
+locally afterwards, exactly as a file the user placed there would be.
+
+Subagents: a locally spawned subagent inherits the parent's working directory
+and performs its own discovery there — it loads `./config.json` when present,
+else the global file. A parent's explicit `--config` is *not* forwarded to
+local children (pre-existing behaviour; pass `config` in the spawn call, or set
+`QUECTO_RUNTIME_CONFIG_PATH`, to pin a child's file). Container subagents are
+always handed the parent's selected file explicitly. `QUECTO_RUNTIME_CONFIG_PATH`
+is a child-launch mechanism only: it is the `--config` given to spawned
+children when neither the spawn call nor (for containers) the parent supplies
+one; it does not affect the launching process's own selection above.
 
 ### `quecto help` — Show usage
 
@@ -380,7 +428,8 @@ Also available as `quecto --version` or `quecto -v`.
 
 ## Configuration
 
-Config file: `~/.quecto/config.json`
+Config file: `./config.json` in the working directory, else
+`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)).
 
 ```json
 {

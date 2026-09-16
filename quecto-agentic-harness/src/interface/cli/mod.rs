@@ -2,6 +2,7 @@ mod admission_broker;
 mod agent;
 mod auth;
 mod commands;
+mod config_flag;
 mod models;
 pub mod protocol;
 pub mod provider_reload;
@@ -220,6 +221,8 @@ pub mod uds_turn_accounting;
 pub mod uds_wire;
 mod uds_workflow_nudge;
 
+use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
+use config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
 
 // Re-export public types for external consumers.
@@ -317,11 +320,18 @@ pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::Re
 pub type FreshSessionIdentityBuilder =
     fn() -> std::sync::Arc<dyn crate::application::sessions::ports::FreshSessionIdentityGenerator>;
 
+/// Composition's builder of the configuration-selection use case (#1966):
+/// which one file a run loads its configuration from. Injected through the
+/// CLI context; the interface never probes the filesystem for a config.
+pub type ConfigSelectionBuilder =
+    fn() -> std::sync::Arc<crate::application::configuration::use_cases::SelectConfig>;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
     pub base_dir: Option<PathBuf>,
-    /// Override config file path (default: <base_dir>/config.json).
+    /// Explicit `--config` override; otherwise `./config.json` in the working
+    /// directory, then `<base_dir>/config.json` (#1966).
     pub config_path: Option<PathBuf>,
     /// Pre-loaded stdin data for testing interactive commands.
     pub stdin_data: Option<String>,
@@ -357,14 +367,29 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
     /// chat run refuses to start without it.
     pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
+    /// Composition's configuration-selection builder (#1966). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; any command
+    /// that loads configuration refuses to run without it.
+    pub config_selection: Option<ConfigSelectionBuilder>,
 }
 
 impl CliContext {
-    /// Resolve the config file path: explicit override > base_dir/config.json.
-    pub(crate) fn config_path(&self) -> PathBuf {
-        self.config_path
-            .clone()
-            .unwrap_or_else(|| self.base_dir().join("config.json"))
+    /// Select the config file (#1966): explicit override > `./config.json` in
+    /// the working directory > `<base_dir>/config.json`. A local file that is
+    /// present but unusable is an error, never a fallback. The working
+    /// directory is the one handed in (`run` supplies the process's; rigs
+    /// supply a hermetic one); without one nothing local is discovered.
+    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
+        let Some(select_config) = self.config_selection else {
+            return Err("configuration selection capability not composed".to_string());
+        };
+        select_config()
+            .execute(ConfigSelectionRequest {
+                explicit: self.config_path.clone(),
+                working_directory: self.cwd.clone(),
+                global: self.base_dir().join("config.json"),
+            })
+            .map_err(|error| error.to_string())
     }
 
     /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
@@ -375,73 +400,6 @@ impl CliContext {
             .or_else(|| dirs::home_dir().map(|h| h.join(".quecto")))
             .unwrap_or_else(|| PathBuf::from(".quecto"))
     }
-}
-
-/// Extract `--config <path>` from args (consumed globally).
-/// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
-/// misinterpreting message text like `-m "--config"` as the flag.
-fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, String> {
-    /// Flags that consume the next arg as a value (skip their value during scan).
-    const VALUE_FLAGS: &[&str] = &[
-        "-m",
-        "--message",
-        "-s",
-        "--session",
-        "--system",
-        "--model",
-        "--max-iterations",
-        "--max-time",
-        "--mode",
-        "--socket",
-        "--disable-tool",
-    ];
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--config" {
-            let value = args
-                .get(i + 1)
-                .filter(|value| !value.starts_with('-'))
-                .ok_or_else(|| "--config requires a path".to_string())?;
-            return Ok(Some(PathBuf::from(value)));
-        }
-        if VALUE_FLAGS.contains(&args[i].as_str()) {
-            i += 2; // skip the flag and its value
-        } else {
-            i += 1;
-        }
-    }
-    Ok(None)
-}
-
-fn strip_global_config_flag(args: &[String]) -> Vec<String> {
-    const VALUE_FLAGS: &[&str] = &[
-        "-m",
-        "--message",
-        "-s",
-        "--session",
-        "--system",
-        "--model",
-        "--max-iterations",
-        "--max-time",
-        "--mode",
-        "--socket",
-        "--disable-tool",
-    ];
-    let mut stripped = Vec::with_capacity(args.len());
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--config" && i + 1 < args.len() {
-            i += 2;
-        } else if VALUE_FLAGS.contains(&args[i].as_str()) && i + 1 < args.len() {
-            stripped.push(args[i].clone());
-            stripped.push(args[i + 1].clone());
-            i += 2;
-        } else {
-            stripped.push(args[i].clone());
-            i += 1;
-        }
-    }
-    stripped
 }
 
 /// The outer-owned graph builders a binary's `main` hands to the CLI: the
@@ -455,6 +413,7 @@ pub struct CliComposition {
     pub sessions: SessionHandlesBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
+    pub config_selection: ConfigSelectionBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -470,6 +429,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
     let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
     let ctx = CliContext {
         config_path,
+        cwd: std::env::current_dir().ok(),
         stdin_is_tty: Some(stdin_is_tty),
         web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
         teardown_graph: Some(composition.teardown_graph),
@@ -477,6 +437,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         sessions: Some(composition.sessions),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
+        config_selection: Some(composition.config_selection),
         ..Default::default()
     };
 
@@ -487,7 +448,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         if let Some(error) = ctx
             .config_path
             .as_deref()
-            .and_then(|path| explicit_config_missing(path, true))
+            .and_then(|path| selected_config_missing(path, true))
         {
             eprintln!("{error}");
             return 1;
@@ -634,11 +595,14 @@ fn run_repl_command(
     (stdout, stderr, code)
 }
 
-pub(crate) fn explicit_config_missing(
+/// A selected config that must exist (an explicit `--config`, or the
+/// working-directory file that was present at selection) but is missing
+/// now: an error naming the path, never a fall-through to defaults.
+pub(crate) fn selected_config_missing(
     config_path: &std::path::Path,
-    explicit: bool,
+    must_exist: bool,
 ) -> Option<String> {
-    (explicit && !config_path.exists())
+    (must_exist && !config_path.exists())
         .then(|| format!("config not found: {}", config_path.display()))
 }
 
@@ -691,9 +655,8 @@ fn help_text(out: &mut String) {
     out.push_str("\nWhen run with no arguments, quecto enters the setup and configuration REPL.\n");
     out.push_str("  Use `quecto agent` or `quecto-tui` for agent operation.\n");
     out.push_str("\nGlobal options:\n");
-    out.push_str(
-        "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
-    );
+    out.push_str("  --config <path>  Override config file path (default: ./config.json in the\n");
+    out.push_str("                   working directory, else <base_dir>/config.json)\n");
     out.push_str("\nCommands:\n");
     out.push_str("  admission-broker run|status|reset\n");
     out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
