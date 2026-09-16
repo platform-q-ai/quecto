@@ -357,6 +357,7 @@ mod tui_end_of_turn_refs_steps;
 mod tui_environment_grouping_steps;
 mod tui_esc_abort_recovery_steps;
 mod tui_file_mention_steps;
+mod tui_folder_resume_2001_steps;
 mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
 mod tui_list_render_state_steps;
