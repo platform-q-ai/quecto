@@ -56,9 +56,11 @@ fn set_model_payload_carries_the_structured_selection_verdicts() {
         .expect("runtime published")
         .generation();
     assert_eq!(ok["generation"].as_u64().unwrap(), published);
+    // The plan above republished the catalogue (one generation), the
+    // recompose publishes one more: the verdict reports exactly that.
     compose(tmp.path());
     let recomposed = selection_status(tmp.path(), "udsish/uds-model").expect("runtime published");
-    assert!(recomposed["generation"].as_u64().unwrap() > published);
+    assert_eq!(recomposed["generation"].as_u64().unwrap(), published + 2);
 
     let unknown = selection_status(tmp.path(), "udsish/no-such-model").expect("runtime published");
     assert_eq!(unknown["status"], "unknown_model");

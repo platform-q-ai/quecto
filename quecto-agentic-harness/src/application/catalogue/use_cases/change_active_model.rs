@@ -19,7 +19,7 @@ use crate::application::catalogue::ports::{
 };
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
-use crate::application::provider_runtime::{SelectionError, select_in_snapshot};
+use crate::application::provider_runtime::{SelectionError, select_in_runtime};
 use crate::domain::catalogue::{CatalogueSnapshot, ModelRef};
 
 pub struct ChangeActiveModel {
@@ -94,10 +94,8 @@ impl ChangeActiveModel {
     /// runnable on its provider, unknown, not runnable for structured
     /// reasons, or no runtime composed yet.
     fn verdict(&self, reference: &ModelRef) -> ModelSelectionVerdict {
-        let Some(snapshot) = self.runtime.current_runtime() else {
-            return ModelSelectionVerdict::NoRuntime;
-        };
-        match select_in_snapshot(&snapshot, reference) {
+        let runtime = self.runtime.current_runtime();
+        match select_in_runtime(runtime.as_deref(), reference) {
             Ok(selection) => ModelSelectionVerdict::Runnable {
                 provider: selection.entry.provider.id.as_str().to_string(),
                 generation: selection.generation,

@@ -12,7 +12,7 @@ use quecto::application::catalogue::{
 };
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, ComposedRuntime, CompositionPorts, ProviderRuntimeFactory,
-    ResolveModelSelectionUseCase, RuntimeCompositionError, RuntimeSnapshotStore, SelectionError,
+    RuntimeCompositionError, RuntimeSnapshotStore, SelectionError, select_in_runtime,
 };
 use quecto::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
@@ -268,7 +268,7 @@ fn when_model_selected(world: &mut QuectoWorld, qualified: String) {
         .clone();
     let reference = ModelRef::parse_qualified(&qualified).unwrap();
     world.catalogue_runtime.selection =
-        Some(ResolveModelSelectionUseCase::new().select(&store, &reference));
+        Some(select_in_runtime(store.current().as_deref(), &reference));
 }
 
 #[then(expr = "the published runtime generation matches the published catalogue generation")]

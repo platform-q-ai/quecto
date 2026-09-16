@@ -78,7 +78,7 @@ impl AgentLoopImpl {
 
     /// Test builder: the model's known context window (#1044). Production
     /// threads this through `AgentLoopConfig::model_context_window` at
-    /// construction; `set_model` re-derives it on a model switch.
+    /// construction; `apply_model` re-derives it on a model switch.
     #[cfg(test)]
     pub fn with_model_context_window(mut self, window: Option<usize>) -> Self {
         self.model_context_window = window;

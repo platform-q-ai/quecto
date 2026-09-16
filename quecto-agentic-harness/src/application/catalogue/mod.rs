@@ -289,33 +289,6 @@ pub fn derive_availability(
         .expect("non-runnable status with at least one reason is always constructible")
 }
 
-/// The per-model limits a qualified `provider/model` reference declares in one
-/// snapshot: `(output cap, context window)`, each `None` when not explicitly
-/// declared. Every limits read goes through this one rule so a session cannot
-/// silently gain or lose a clamp.
-pub fn model_limits_in(
-    snapshot: &CatalogueSnapshot,
-    qualified: &str,
-) -> (Option<u32>, Option<usize>) {
-    let Ok(reference) = crate::domain::catalogue::ModelRef::parse_qualified(qualified) else {
-        return (None, None);
-    };
-    let Some(entry) = snapshot.find(&reference) else {
-        return (None, None);
-    };
-    // A synthesized default is not a real limit and must not clamp: only
-    // explicitly declared values count.
-    let capabilities = &entry.model.capabilities;
-    (
-        capabilities
-            .max_output_tokens_explicit
-            .then_some(capabilities.max_output_tokens),
-        capabilities
-            .context_window_explicit
-            .then_some(capabilities.context_window as usize),
-    )
-}
-
 #[cfg(test)]
 #[path = "catalogue_tests.rs"]
 mod tests;

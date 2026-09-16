@@ -12,6 +12,10 @@ fn model_and_limits_switch_together_and_reclamp() {
     let mut rt = runtime("cli:model-contract");
     assert_eq!(rt.agent.model(), "stub");
     let before = rt.agent.effective_max_tokens();
+    assert!(
+        before > 8,
+        "the fixture's configured cap exceeds the clamp under test"
+    );
     rt.agent.apply_model(
         "acme/limited".into(),
         ModelLimits {
@@ -20,7 +24,7 @@ fn model_and_limits_switch_together_and_reclamp() {
         },
     );
     assert_eq!(ModelRuntime::model(&rt.agent), "acme/limited");
-    assert_eq!(rt.agent.effective_max_tokens(), 8.min(before));
+    assert_eq!(rt.agent.effective_max_tokens(), 8);
     assert_eq!(rt.agent.effective_max_context_tokens(), 2_048);
     // No declared limits lifts the clamp back to the configured values.
     rt.agent

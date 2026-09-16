@@ -183,26 +183,18 @@ pub struct ModelSelection {
     pub generation: u64,
 }
 
-/// Resolve a stable model reference against the current published runtime
-/// generation: descriptor plus runnable provider, or a structured reason.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ResolveModelSelectionUseCase;
-
-impl ResolveModelSelectionUseCase {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn select(
-        &self,
-        store: &RuntimeSnapshotStore,
-        reference: &ModelRef,
-    ) -> Result<ModelSelection, SelectionError> {
-        let Some(snapshot) = store.current() else {
-            return Err(SelectionError::NoRuntime);
-        };
-        select_in_snapshot(&snapshot, reference)
-    }
+/// Resolve a stable model reference against a published runtime generation
+/// when one exists: descriptor plus runnable provider, or a structured
+/// reason (`NoRuntime` before the first successful composition). The
+/// selection rule the change-active-model use case applies (#1847).
+pub fn select_in_runtime(
+    runtime: Option<&CatalogueRuntimeSnapshot>,
+    reference: &ModelRef,
+) -> Result<ModelSelection, SelectionError> {
+    let Some(snapshot) = runtime else {
+        return Err(SelectionError::NoRuntime);
+    };
+    select_in_snapshot(snapshot, reference)
 }
 
 /// Resolve a model reference against one published runtime generation:

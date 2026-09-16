@@ -245,6 +245,31 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
 }
 
 #[test]
+fn each_limit_clamps_only_when_declared_explicitly() {
+    // maxTokens declared, contextWindow synthesized: only the cap clamps.
+    let mut capped = entry("acme", "capped", Some((50, 128_000)));
+    capped.model.capabilities.context_window_explicit = false;
+    // contextWindow declared, maxTokens synthesized: only the window clamps.
+    let mut windowed = entry("acme", "windowed", Some((4096, 1234)));
+    windowed.model.capabilities.max_output_tokens_explicit = false;
+    let rig = rig(vec![capped, windowed], FakeRuntime::none());
+    assert_eq!(
+        rig.use_case.plan("acme/capped").limits,
+        ModelLimits {
+            max_output_tokens: Some(50),
+            context_window: None,
+        }
+    );
+    assert_eq!(
+        rig.use_case.plan("acme/windowed").limits,
+        ModelLimits {
+            max_output_tokens: None,
+            context_window: Some(1234),
+        }
+    );
+}
+
+#[test]
 fn synthesized_defaults_never_clamp() {
     let rig = rig(vec![entry("acme", "plain", None)], FakeRuntime::none());
     let plan = rig.use_case.plan("acme/plain");

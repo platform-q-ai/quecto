@@ -167,7 +167,6 @@ fn gpt5() -> CatalogueEntry {
 #[test]
 fn use_case_constructors_return_ready_instances() {
     let _compose = ComposeProviderRuntimeUseCase::new();
-    let _select = ResolveModelSelectionUseCase::new();
 }
 
 #[test]
@@ -252,8 +251,7 @@ fn selection_resolves_runnable_model_to_catalogue_identity() {
     let fixture = Fixture::new(vec![gpt5()]);
     fixture.compose().expect("composition succeeds");
     let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
-    let selection = ResolveModelSelectionUseCase::new()
-        .select(&fixture.runtime_store, &reference)
+    let selection = select_in_runtime(fixture.runtime_store.current().as_deref(), &reference)
         .expect("selection succeeds");
     // The selection surfaces exactly what the catalogue shows for this model:
     // provider identity, transport, auth path, and metadata.
@@ -279,8 +277,7 @@ fn selection_of_unknown_model_returns_structured_reason() {
     let fixture = Fixture::new(vec![gpt5()]);
     fixture.compose().expect("composition succeeds");
     let reference = ModelRef::parse_qualified("openai-api/no-such-model").unwrap();
-    let error = ResolveModelSelectionUseCase::new()
-        .select(&fixture.runtime_store, &reference)
+    let error = select_in_runtime(fixture.runtime_store.current().as_deref(), &reference)
         .expect_err("selection fails");
     assert_eq!(
         error,
@@ -296,8 +293,7 @@ fn selection_without_credential_returns_missing_credential_reason() {
     fixture.credentials.denied.push("openai-api".to_string());
     fixture.compose().expect("composition succeeds");
     let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
-    let error = ResolveModelSelectionUseCase::new()
-        .select(&fixture.runtime_store, &reference)
+    let error = select_in_runtime(fixture.runtime_store.current().as_deref(), &reference)
         .expect_err("selection fails");
     match error {
         SelectionError::NotRunnable { reasons, .. } => {
@@ -314,9 +310,8 @@ fn selection_without_credential_returns_missing_credential_reason() {
 fn selection_before_any_composition_returns_no_runtime() {
     let store = RuntimeSnapshotStore::new();
     let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
-    let error = ResolveModelSelectionUseCase::new()
-        .select(&store, &reference)
-        .expect_err("selection fails");
+    let error =
+        select_in_runtime(store.current().as_deref(), &reference).expect_err("selection fails");
     assert_eq!(error, SelectionError::NoRuntime);
 }
 
@@ -333,11 +328,9 @@ fn selection_never_swaps_api_key_and_oauth_identities() {
     );
     let fixture = Fixture::new(vec![api, oauth]);
     fixture.compose().expect("composition succeeds");
-    let use_case = ResolveModelSelectionUseCase::new();
 
     let oauth_ref = ModelRef::parse_qualified("openai/gpt-5").unwrap();
-    let selection = use_case
-        .select(&fixture.runtime_store, &oauth_ref)
+    let selection = select_in_runtime(fixture.runtime_store.current().as_deref(), &oauth_ref)
         .expect("oauth selection succeeds");
     assert!(
         matches!(selection.entry.provider.auth, AuthIdentity::OAuth { .. }),
@@ -346,8 +339,7 @@ fn selection_never_swaps_api_key_and_oauth_identities() {
     );
 
     let api_ref = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
-    let selection = use_case
-        .select(&fixture.runtime_store, &api_ref)
+    let selection = select_in_runtime(fixture.runtime_store.current().as_deref(), &api_ref)
         .expect("api-key selection succeeds");
     assert_eq!(
         selection.entry.provider.auth,
@@ -362,8 +354,7 @@ fn selection_generation_tracks_recomposition_past_the_first_generation() {
     fixture.compose().expect("first composition succeeds");
     fixture.compose().expect("second composition succeeds");
     let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
-    let selection = ResolveModelSelectionUseCase::new()
-        .select(&fixture.runtime_store, &reference)
+    let selection = select_in_runtime(fixture.runtime_store.current().as_deref(), &reference)
         .expect("selection succeeds");
     // The selection reads the published snapshot's generation — a hardcoded
     // first generation must fail here.
