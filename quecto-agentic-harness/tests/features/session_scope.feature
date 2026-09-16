@@ -14,7 +14,7 @@ Feature: Folder-aware saved sessions through the production runtime
 
   Scenario: Exact global lookup cannot reuse a foreign conversation
     Given saved production sessions in two different folders
-    When the operator opens resume through the production socket and TUI
+    When the operator opens resume with the active local conversation
     And the operator requests the foreign session by exact key
     Then the runtime refuses replacement and preserves the selected conversation
 
@@ -26,14 +26,14 @@ Feature: Folder-aware saved sessions through the production runtime
   Scenario: Corrupt authoritative home stays globally visible but cannot restore
     Given saved production sessions in two different folders
     And the foreign saved home metadata is corrupt
-    When the operator opens resume through the production socket and TUI
+    When the operator opens resume with the active local conversation
     And the operator selects Global in the resume picker
     Then both saved conversations remain discoverable without repairing the corrupt home
     When the operator requests the foreign session by exact key
     Then the runtime refuses replacement and preserves the selected conversation
 
   Scenario: An ephemeral runtime leaves no durable home record
-    When the operator opens resume through the production socket and TUI
+    When the operator opens resume in an ephemeral production runtime
     Then the ephemeral runtime has published no transcript or home authority
 
   Scenario: Legacy sessions remain global and exact-key startup refuses association

@@ -65,6 +65,18 @@ impl SelectList {
         self.navigator.clamp(self.items.len());
     }
 
+    /// Use the same navigation window for rendering and pointer hit testing.
+    pub fn set_max_visible(&mut self, max_visible: usize) {
+        self.max_visible = max_visible;
+    }
+
+    pub fn visible_item(&self, offset: usize) -> Option<&SelectItem> {
+        let mut range = self
+            .navigator
+            .visible_range(self.items.len(), self.max_visible);
+        range.nth(offset).and_then(|index| self.items.get(index))
+    }
+
     pub fn item_count(&self) -> usize {
         self.items.len()
     }

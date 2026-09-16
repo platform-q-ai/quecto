@@ -522,3 +522,52 @@ fn test_lock_file_is_owner_only() {
         & 0o777;
     assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
 }
+
+/// A descriptor inherited across fork shares the same open file description.
+/// Retain a real duplicate deterministically, rather than relying on concurrent
+/// process-launch scheduling to hit the fork-to-exec window.
+#[test]
+fn credentials_lock_releases_while_inherited_descriptor_remains_open() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    let lock = store.lock_exclusive().unwrap();
+    let inherited = lock.0.try_clone().unwrap();
+    let contender = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    assert!(matches!(
+        contender.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    drop(lock);
+    contender
+        .try_lock()
+        .expect("credential transaction must release lock before inherited descriptors close");
+    drop(inherited);
+}
+
+#[test]
+fn credential_mutation_errors_release_the_transaction_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    std::fs::write(store.path(), "{invalid credentials").unwrap();
+    assert!(
+        store
+            .store(make_credential("openai", "sk-test", AuthMethod::Token))
+            .is_err()
+    );
+    assert!(store.remove("openai").is_err());
+    assert!(
+        store
+            .store_refreshed(oauth_credential("openai", "at", "rt", far_future()), "old")
+            .is_err()
+    );
+    let contender = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    contender
+        .try_lock()
+        .expect("parse-error returns must release the transaction lock");
+}

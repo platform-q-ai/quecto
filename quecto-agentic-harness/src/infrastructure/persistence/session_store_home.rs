@@ -60,7 +60,7 @@ pub(super) fn encode(home: &SessionHome) -> Result<Vec<u8>, DomainError> {
         _ => Err(error("home facts failed validation")),
     }
 }
-fn decode(bytes: &[u8]) -> SessionHomeScope {
+pub(in crate::infrastructure::persistence) fn decode(bytes: &[u8]) -> SessionHomeScope {
     let parsed = (|| -> Result<SessionHome, String> {
         let record: HomeRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if record.version == 1 && record.provenance == "saved_here" {

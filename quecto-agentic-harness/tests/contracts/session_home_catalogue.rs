@@ -250,3 +250,194 @@ fn dangling_home_authority_is_unavailable_not_absent() {
         SessionHomeScope::Unavailable(_)
     ));
 }
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn warm_projection_reuses_only_unchanged_validated_transcripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-incremental");
+    store.save(&session(identity.clone())).await.unwrap();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 1);
+    let reads = catalogue.transcript_reads();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 1);
+    assert_eq!(
+        catalogue.transcript_reads(),
+        reads,
+        "warm query reread transcript"
+    );
+    std::fs::write(layout.session_file(&identity), b"{broken").unwrap();
+    assert!(catalogue.list().unwrap().entries.is_empty());
+    assert!(catalogue.transcript_reads() > reads);
+    store.save(&session(identity.clone())).await.unwrap();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 1);
+    let reads = catalogue.transcript_reads();
+    std::fs::write(layout.home_catalogue_file(), b"broken").unwrap();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 1);
+    assert!(catalogue.transcript_reads() > reads);
+    assert!(store.load(&identity).await.unwrap().is_some());
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn warm_projection_invalidates_same_length_rewrites_and_home_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-rewrite");
+    store.save(&session(identity.clone())).await.unwrap();
+    catalogue.list().unwrap();
+    let path = layout.session_file(&identity);
+    let old = std::fs::metadata(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(&path, vec![b'x'; bytes.len()]).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(old.modified().unwrap()))
+        .unwrap();
+    assert!(catalogue.list().unwrap().entries.is_empty());
+    store.save(&session(identity.clone())).await.unwrap();
+    catalogue.list().unwrap();
+    let reads = catalogue.transcript_reads();
+    std::fs::write(layout.home_file(&identity), b"{broken").unwrap();
+    let result = catalogue.list().unwrap();
+    assert!(matches!(
+        result.entries[0].1,
+        SessionHomeScope::Unavailable(_)
+    ));
+    assert_eq!(reads, catalogue.transcript_reads());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_saves_and_catalogue_publication_recover_to_complete_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = Arc::new(FileSessionHomeCatalogue::with_store(
+        layout.clone(),
+        store.clone(),
+    ));
+    let identity = SessionIdentity::from_persisted_key("chat-concurrent");
+    store.save(&session(identity.clone())).await.unwrap();
+    catalogue.list().unwrap();
+    let reader = catalogue.clone();
+    let listing = tokio::task::spawn_blocking(move || {
+        for _ in 0..30 {
+            let rows = reader.list().unwrap();
+            assert!(rows.entries.len() <= 1);
+        }
+    });
+    for _ in 0..30 {
+        store.save(&session(identity.clone())).await.unwrap();
+    }
+    listing.await.unwrap();
+    assert_eq!(
+        catalogue.list().unwrap().entries,
+        vec![(identity.clone(), SessionHomeScope::LegacyUnscoped)]
+    );
+    assert!(store.load(&identity).await.unwrap().is_some());
+    let disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+    assert_eq!(disk["version"], 1);
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn asynchronous_projection_preserves_warm_cache_and_checks_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-permissions");
+    store.save(&session(identity.clone())).await.unwrap();
+    catalogue.list_async().await.unwrap();
+    let reads = catalogue.transcript_reads();
+    catalogue.list_async().await.unwrap();
+    assert_eq!(reads, catalogue.transcript_reads());
+    std::fs::set_permissions(
+        layout.session_file(&identity),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    catalogue.list_async().await.unwrap();
+    assert!(catalogue.transcript_reads() > reads);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_home_replacement_keeps_published_observation_consistent() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-home-race");
+    catalogue.record_new(&identity, &home()).unwrap();
+    store.save(&session(identity.clone())).await.unwrap();
+    let valid = std::fs::read(layout.home_file(&identity)).unwrap();
+    let path = layout.home_file(&identity);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer_stop = stop.clone();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let writer_barrier = barrier.clone();
+    let writer = std::thread::spawn(move || {
+        writer_barrier.wait();
+        while matches!(
+            writer_stop.load(std::sync::atomic::Ordering::Acquire),
+            false
+        ) {
+            for bytes in [valid.as_slice(), b"{broken"] {
+                let mut temporary =
+                    tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
+                temporary.write_all(bytes).unwrap();
+                temporary.persist(&path).unwrap();
+            }
+        }
+    });
+    barrier.wait();
+    for _ in 0..100 {
+        let rows = catalogue.list_async().await.unwrap();
+        let index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+        let bytes: Vec<u8> =
+            serde_json::from_value(index["records"]["home:chat-home-race"].clone()).unwrap();
+        match &rows.entries[0].1 {
+            SessionHomeScope::Scoped(observed) => {
+                assert_eq!(observed, &home());
+                assert!(serde_json::from_slice::<serde_json::Value>(&bytes).is_ok());
+            }
+            SessionHomeScope::Unavailable(_) => assert_eq!(bytes, b"{broken"),
+            SessionHomeScope::LegacyUnscoped => panic!("atomic replacement cannot remove home"),
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Release);
+    writer.join().unwrap();
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn summary_projection_skips_warm_reads_and_invalidates_rewrites() {
+    use quecto::application::sessions::dto::SessionListQuery;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = FileSessionStore::new(layout.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-summary-cache");
+    store.save(&session(identity.clone())).await.unwrap();
+    let query = SessionListQuery::default();
+    assert_eq!(store.list(&query).await.unwrap().len(), 1);
+    let reads = store.summary_transcript_reads();
+    assert_eq!(store.list(&query).await.unwrap().len(), 1);
+    assert_eq!(store.summary_transcript_reads(), reads);
+    std::fs::write(layout.session_file(&identity), b"{broken").unwrap();
+    assert!(store.list(&query).await.unwrap().is_empty());
+    assert!(store.summary_transcript_reads() > reads);
+    store.save(&session(identity.clone())).await.unwrap();
+    assert_eq!(store.list(&query).await.unwrap().len(), 1);
+    std::fs::remove_file(layout.session_file(&identity)).unwrap();
+    assert!(store.list(&query).await.unwrap().is_empty());
+}

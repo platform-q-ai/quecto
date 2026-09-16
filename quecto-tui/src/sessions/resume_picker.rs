@@ -33,11 +33,11 @@ struct HitLayout {
 pub struct ResumePicker {
     list: SelectList,
     items: Vec<SelectItem>,
-    filtered_ids: Vec<String>,
     scope: SessionListScope,
     focus: Focus,
     query: String,
     hits: HitLayout,
+    result_rows: usize,
 }
 impl Default for ResumePicker {
     fn default() -> Self {
@@ -49,11 +49,11 @@ impl ResumePicker {
         let mut picker = Self {
             list: SelectList::new(Vec::new(), 12),
             items: Vec::new(),
-            filtered_ids: Vec::new(),
             scope,
             focus: Focus::Results,
             query: String::new(),
             hits: HitLayout::default(),
+            result_rows: 12,
         };
         picker.sync_items(items);
         picker
@@ -74,7 +74,6 @@ impl ResumePicker {
             .into_iter()
             .cloned()
             .collect();
-        self.filtered_ids = items.iter().map(|i| i.value.clone()).collect();
         self.list.sync_items(items);
     }
     pub fn item_count(&self) -> usize {
@@ -146,12 +145,14 @@ impl ResumePicker {
                 self.filter();
             }
             (Focus::Query, Key::Enter) => self.focus = Focus::Results,
-            (Focus::Results, key) => {
-                self.list.handle_input(if *key == Key::Char(' ') {
-                    &Key::Enter
-                } else {
-                    key
-                });
+            (Focus::Results, key) if self.result_rows > 0 => {
+                let key = match key {
+                    Key::Char(' ') => &Key::Enter,
+                    Key::ScrollDown => &Key::Down,
+                    Key::ScrollUp => &Key::Up,
+                    key => key,
+                };
+                self.list.handle_input(key);
                 if let SelectResult::Selected(value) = self.list.take_result() {
                     return ResumePickerEvent::Selected(value);
                 }
@@ -178,18 +179,14 @@ impl ResumePicker {
                 self.focus = Focus::Query;
             }
             if row >= h.border + 3 {
-                let selected = self
-                    .list
-                    .selected_item()
-                    .and_then(|s| self.filtered_ids.iter().position(|id| id == &s.value))
-                    .unwrap_or(0);
-                let start = (selected + 1).saturating_sub(12);
                 let offset = row - (h.border + 3);
-                if offset < 12
-                    && let Some(id) = self.filtered_ids.get(start + offset).cloned()
+                if let Some(id) = self
+                    .list
+                    .visible_item(offset)
+                    .map(|item| item.value.clone())
                 {
                     self.focus = Focus::Results;
-                    for _ in 0..self.filtered_ids.len() {
+                    for _ in 0..self.list.item_count() {
                         if self.list.selected_item().is_some_and(|s| s.value == id) {
                             return ResumePickerEvent::Selected(id);
                         }
@@ -219,17 +216,25 @@ impl ResumePicker {
                 scope.into(),
                 format!("Query: {}", self.query),
             ];
-            lines.extend(self.list.render(content_width));
-            if let Some(description) = self
+            // Budget before rendering: outer margins, borders, three headers,
+            // footer, overflow indicator and wrapped selected details all consume rows.
+            let border_rows = if width.saturating_sub(4) >= 6 { 2 } else { 0 };
+            let budget = height.saturating_sub(4 + border_rows + 4);
+            let details = self
                 .list
                 .selected_item()
                 .and_then(|item| item.description.as_deref())
-            {
-                lines.extend(crate::components::utils::wrap_text(
-                    description,
-                    content_width,
-                ));
+                .map(|description| crate::components::utils::wrap_text(description, content_width))
+                .unwrap_or_default();
+            let indicator = usize::from(self.list.item_count() > 1);
+            let detail_rows = details.len().min(budget.saturating_sub(indicator + 1));
+            self.result_rows = budget.saturating_sub(indicator + detail_rows).min(12);
+            debug_assert!(self.result_rows + detail_rows <= budget);
+            self.list.set_max_visible(self.result_rows);
+            if self.result_rows > 0 {
+                lines.extend(self.list.render(content_width));
             }
+            lines.extend(details.into_iter().take(detail_rows));
             lines.push(format!(
                 "Tab focus ({focus}) · Enter/Space select · Esc cancel"
             ));

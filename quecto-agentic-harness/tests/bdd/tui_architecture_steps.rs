@@ -628,7 +628,8 @@ fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld
             && doc.contains("No Git,")
             && doc.contains("filesystem or launch eligibility policy belongs in the TUI")
             && doc.contains("Cross-folder action")
-            && doc.contains("execution and global metadata search are not part of this first slice"),
+            && doc
+                .contains("execution and global metadata search are not part of this first slice"),
         "the TUI architecture document must distinguish the later #2009 typed discovery slice from the unchanged epic and preserve backend policy ownership"
     );
 }

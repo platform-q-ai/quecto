@@ -6,7 +6,7 @@
 //! (allowlisted session files, summary-only reads, tolerant skipping of
 //! unreadable or malformed records, newest-first order); the interface
 //! presents the summaries. Nothing here forms a path or reads a directory.
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::application::sessions::dto::{
     ListSessionsRequest, ListSessionsResult, ListedSession, SessionListQuery, SessionListScope,
@@ -61,7 +61,7 @@ impl ListSessions {
         };
         let mut catalogue_available = false;
         let entries = match &self.home {
-            Some(context) => match context.catalogue.list() {
+            Some(context) => match context.catalogue.list_async().await {
                 Ok(snapshot) => {
                     catalogue_available = true;
                     result.diagnostics.extend(snapshot.diagnostics);
@@ -75,6 +75,13 @@ impl ListSessions {
             },
             None => Vec::new(),
         };
+        // Query-local observations only: resume still performs fresh admission under
+        // its claim. Cache failures too, and reuse the current canonical observation.
+        let mut observations = HashMap::new();
+        if let (Some(context), Some(current)) = (&self.home, &current) {
+            observations.insert(context.execution_dir.clone(), Some(current.clone()));
+            observations.insert(current.execution_dir.clone(), Some(current.clone()));
+        }
         for summary in summaries {
             let home = match entries
                 .iter()
@@ -86,10 +93,16 @@ impl ListSessions {
             };
             let local = matches!((&home, &current), (SessionHomeScope::Scoped(home), Some(current)) if home.group == current.group);
             if request.scope == SessionListScope::Global || local {
-                let resume_eligible = self
-                    .home
-                    .as_ref()
-                    .is_some_and(|context| context.eligible(&home));
+                let resume_eligible = match (&self.home, &current, &home) {
+                    (Some(context), Some(current), SessionHomeScope::Scoped(saved)) => observations
+                        .entry(saved.execution_dir.clone())
+                        .or_insert_with(|| context.discovery.discover(&saved.execution_dir).ok())
+                        .as_ref()
+                        .is_some_and(|observed| {
+                            observed == saved && observed.same_execution(current)
+                        }),
+                    _ => false,
+                };
                 result.sessions.push(ListedSession {
                     summary,
                     home,

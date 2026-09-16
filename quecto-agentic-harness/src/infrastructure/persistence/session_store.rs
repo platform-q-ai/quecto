@@ -16,6 +16,7 @@ use super::session_layout::FlatSessionLayout;
 pub struct FileSessionStore {
     layout: FlatSessionLayout,
     ownership: super::session_ownership::SessionOwnershipRegistry,
+    summaries: std::sync::Arc<std::sync::Mutex<session_store_list::SummaryCache>>,
 }
 
 #[path = "session_store_home.rs"]
@@ -34,8 +35,14 @@ impl FileSessionStore {
     pub fn new(layout: FlatSessionLayout) -> Self {
         Self {
             layout,
+            summaries: Default::default(),
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn summary_transcript_reads(&self) -> usize {
+        self.summaries.lock().expect("summary cache lock").reads
     }
 
     fn claim_key(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
@@ -201,7 +208,9 @@ impl SessionStore for FileSessionStore {
         query: &SessionListQuery,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
         let query = query.clone();
-        Box::pin(async move { session_store_list::list_summaries(&self.layout, &query).await })
+        Box::pin(async move {
+            session_store_list::list_summaries(&self.layout, &query, self.summaries.clone()).await
+        })
     }
 }
 

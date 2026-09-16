@@ -161,3 +161,75 @@ fn selected_details_show_long_path_suffix_and_unavailable_actions() {
     );
     assert_eq!(picker.selected_item().unwrap().value, "a");
 }
+
+#[test]
+fn short_height_selected_result_is_visible_before_keyboard_and_mouse_activation() {
+    let items = (0..20).map(|i| item(&format!("ROW-{i:02}"))).collect();
+    let mut picker = ResumePicker::new(items, SessionListScope::Local);
+    picker.render_overlay(100, 18);
+    for _ in 0..10 {
+        picker.handle_key(&Key::Down);
+    }
+    let (lines, width) = picker.render_overlay(100, 18);
+    assert!(lines.join("\n").contains("ROW-10"));
+    assert!(lines.join("\n").contains("Esc cancel"));
+    assert_eq!(
+        picker.handle_key(&Key::Enter),
+        ResumePickerEvent::Selected("ROW-10".into())
+    );
+    picker.handle_key(&Key::ScrollDown);
+    let (lines, _) = picker.render_overlay(100, 18);
+    assert_eq!(picker.selected_item().unwrap().value, "ROW-11");
+    assert!(lines.join("\n").contains("ROW-11"));
+    let first_row = lines.iter().position(|line| line.contains("ROW-")).unwrap();
+    let expected = (0..20)
+        .map(|i| format!("ROW-{i:02}"))
+        .find(|id| lines[first_row].contains(id))
+        .unwrap();
+    let x = (100 - width) / 2 + 3;
+    let y = (18 - lines.len()) / 2 + first_row;
+    assert_eq!(
+        picker.handle_key(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::Selected(expected)
+    );
+}
+
+#[test]
+fn terminal_without_result_space_cannot_activate_hidden_selection() {
+    let mut picker = ResumePicker::new(vec![item("ROW-00")], SessionListScope::Local);
+    picker.render_overlay(100, 8);
+    assert_eq!(picker.handle_key(&Key::Enter), ResumePickerEvent::Pending);
+    assert_eq!(
+        picker.handle_key(&Key::Char(' ')),
+        ResumePickerEvent::Pending
+    );
+}
+
+#[test]
+fn resizing_and_wrapping_navigation_keep_selection_visible_and_details_inert() {
+    let items = (0..20).map(|i| item(&format!("ROW-{i:02}"))).collect();
+    let mut picker = ResumePicker::new(items, SessionListScope::Local);
+    for height in [40, 18, 12, 30] {
+        for key in [Key::Up, Key::Down, Key::ScrollUp, Key::ScrollDown] {
+            picker.render_overlay(100, height);
+            picker.handle_key(&key);
+            let (lines, width) = picker.render_overlay(100, height);
+            let selected = picker.selected_item().unwrap().value.clone();
+            assert!(lines.join("\n").contains(&selected), "height={height}");
+            let footer = lines
+                .iter()
+                .position(|line| line.contains("Esc cancel"))
+                .unwrap();
+            let x = (100 - width) / 2 + 3;
+            let y = (height - lines.len()) / 2 + footer;
+            assert_eq!(
+                picker.handle_key(&Key::MousePress(x as u16, y as u16)),
+                ResumePickerEvent::Pending
+            );
+            assert_eq!(
+                picker.handle_key(&Key::Enter),
+                ResumePickerEvent::Selected(selected)
+            );
+        }
+    }
+}

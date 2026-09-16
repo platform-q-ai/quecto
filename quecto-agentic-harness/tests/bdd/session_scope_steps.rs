@@ -12,6 +12,9 @@ pub struct ScopeProcess {
     child: Child,
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    before_history: Option<serde_json::Value>,
+    before_state: Option<serde_json::Value>,
+    source_home: Option<Vec<u8>>,
 }
 impl Drop for ScopeProcess {
     fn drop(&mut self) {
@@ -107,11 +110,24 @@ fn exchange(world: &mut QuectoWorld) {
 }
 #[when("the operator opens resume through the production socket and TUI")]
 fn open_resume(world: &mut QuectoWorld) {
+    open_runtime(world, &["-s", "scope-active"]);
+}
+#[when("the operator opens resume in an ephemeral production runtime")]
+fn open_ephemeral(world: &mut QuectoWorld) {
+    open_runtime(world, &["--no-session"]);
+}
+#[when("the operator opens resume with the active local conversation")]
+fn open_active(world: &mut QuectoWorld) {
+    open_runtime(world, &["-s", "local"]);
+}
+fn open_runtime(world: &mut QuectoWorld, mode: &[&str]) {
     let base = world.cli_context.base_dir.as_ref().unwrap();
     let socket = base.join("scope.sock");
     let cwd = world.cli_context.cwd.as_ref().expect("execution directory");
     let mut child = command(base, cwd)
-        .args(["agent", "--mode", "uds", "--no-session", "--socket"])
+        .args(["agent", "--mode", "uds"])
+        .args(mode)
+        .arg("--socket")
         .arg(&socket)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -142,6 +158,9 @@ fn open_resume(world: &mut QuectoWorld) {
         child,
         stream,
         reader,
+        before_history: None,
+        before_state: None,
+        source_home: None,
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let h = rt.block_on(TuiHarness::sized(180, 40));
@@ -187,6 +206,13 @@ fn exact_foreign(world: &mut QuectoWorld) {
     let base = world.cli_context.base_dir.as_ref().unwrap();
     let path = base.join("sessions/cli_foreign.json");
     world.stdout = fs::read_to_string(&path).expect("source transcript");
+    let home = fs::read(base.join("sessions/cli_foreign.home")).unwrap();
+    assert_eq!(query(world, "get_session_stats")["sessionKey"], "cli:local");
+    let state = query(world, "get_state");
+    world.session_scope_process.as_mut().unwrap().before_state = Some(state);
+    let history = query(world, "get_messages");
+    world.session_scope_process.as_mut().unwrap().before_history = Some(history);
+    world.session_scope_process.as_mut().unwrap().source_home = Some(home);
     drive(world, |h| {
         h.press(Key::Escape).submit("/resume cli:foreign");
     });
@@ -228,21 +254,108 @@ fn exact_foreign(world: &mut QuectoWorld) {
 fn refused(world: &mut QuectoWorld) {
     let response: serde_json::Value = serde_json::from_str(&world.stderr).unwrap();
     assert_eq!(response["success"], false, "{response}");
-    assert!(
-        response["error"].as_str().is_some_and(|e| !e.is_empty()),
-        "{response}"
+    use quecto::application::sessions::dto::{
+        ResumeSavedSessionError, resume_saved_session::ResumeDisposition,
+    };
+    let process = world.session_scope_process.as_ref().unwrap();
+    let home = process.source_home.as_ref().unwrap().clone();
+    let disposition = match serde_json::from_slice::<serde_json::Value>(&home) {
+        Ok(_) => ResumeDisposition::DifferentExecutionDirectory,
+        Err(_) => ResumeDisposition::Unavailable("corrupt authority".into()),
+    };
+    assert_eq!(
+        response["error"],
+        ResumeSavedSessionError::Scope(disposition).to_string()
     );
+    let before = process.before_history.as_ref().unwrap().clone();
+    let before_state = process.before_state.as_ref().unwrap().clone();
+    let after_state = query(world, "get_state");
+    for field in ["sessionKey", "model", "effort", "workflow"] {
+        assert_eq!(
+            after_state[field], before_state[field],
+            "active {field} preserved"
+        );
+    }
+    assert!(
+        before.to_string().contains("LOCAL-CONVERSATION"),
+        "nonempty active history: {before}"
+    );
+    assert_eq!(
+        query(world, "get_messages"),
+        before,
+        "active history preserved"
+    );
+    assert_eq!(query(world, "get_session_stats")["sessionKey"], "cli:local");
     let base = world.cli_context.base_dir.as_ref().unwrap();
     assert_eq!(
         fs::read_to_string(base.join("sessions/cli_foreign.json")).unwrap(),
         world.stdout
     );
+    assert_eq!(
+        fs::read(base.join("sessions/cli_foreign.home")).unwrap(),
+        home
+    );
+    use quecto::domain::session_identity::SessionIdentity;
+    use quecto::infrastructure::persistence::{
+        session_layout::FlatSessionLayout, session_ownership::SessionOwnershipGuard,
+    };
+    let layout = FlatSessionLayout::new(base);
+    assert!(
+        SessionOwnershipGuard::acquire(&layout, &SessionIdentity::from_persisted_key("cli:local"))
+            .is_err(),
+        "active owner retained"
+    );
+    let target = SessionOwnershipGuard::acquire(
+        &layout,
+        &SessionIdentity::from_persisted_key("cli:foreign"),
+    )
+    .expect("failed target claim released");
+    drop(target);
     let frame = drive(world, TuiHarness::full_frame);
     assert!(
-        !frame.contains("Saved reply"),
-        "foreign history must never enter active view: {frame}"
+        frame.contains("session resume unavailable"),
+        "typed refusal visible: {frame}"
     );
+    // ScopeProcess waits for exit; both keys must be claimable after teardown.
+    drop(world.session_scope_process.take());
+    for key in ["cli:local", "cli:foreign"] {
+        let claim =
+            SessionOwnershipGuard::acquire(&layout, &SessionIdentity::from_persisted_key(key))
+                .expect("runtime teardown releases every owner");
+        drop(claim);
+    }
 }
+fn query(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
+    let process = world.session_scope_process.as_mut().unwrap();
+    let id = format!("scope-check-{kind}");
+    writeln!(
+        process.stream,
+        "{}",
+        serde_json::json!({"type": kind, "id": id})
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let mut line = String::new();
+        match process.reader.read_line(&mut line) {
+            Ok(n) if n > 0 => {
+                let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+                if value["id"] == id && value["command"] == kind {
+                    assert_eq!(value["success"], true, "{value}");
+                    return value["data"].clone();
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            result => panic!("socket query failed: {result:?}"),
+        }
+        assert!(Instant::now() < deadline, "{kind} timed out");
+    }
+}
+
 fn git(cwd: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(cwd)

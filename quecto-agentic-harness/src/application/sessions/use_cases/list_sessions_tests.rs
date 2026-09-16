@@ -152,3 +152,140 @@ async fn local_discovery_without_workspace_facts_never_broadens_to_global() {
     assert!(listed.sessions.is_empty());
     assert!(!listed.diagnostics.is_empty());
 }
+
+use crate::application::sessions::ports::session_home::{
+    HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
+};
+use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
+use std::path::{Path, PathBuf};
+
+struct CountingDiscovery(Mutex<Vec<PathBuf>>);
+impl WorkspaceDiscovery for CountingDiscovery {
+    fn discover(&self, path: &Path) -> Result<SessionHome, DomainError> {
+        self.0.lock().unwrap().push(path.into());
+        match path.to_str() {
+            Some("/missing") => Err(DomainError::Session("missing directory".into())),
+            _ => Ok(observed_home(path)),
+        }
+    }
+}
+
+fn observed_home(path: &Path) -> SessionHome {
+    SessionHome {
+        execution_dir: path.into(),
+        group: WorkspaceGroup::Git {
+            common_dir: "/repo/.git".into(),
+        },
+        provenance: AssociationProvenance::SavedHere,
+    }
+}
+
+struct FixedCatalogue(Vec<(SessionIdentity, SessionHomeScope)>);
+impl SessionHomeCatalogue for FixedCatalogue {
+    fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
+        panic!("listing must use summary catalogue")
+    }
+    fn record_new(&self, _: &SessionIdentity, _: &SessionHome) -> Result<(), DomainError> {
+        panic!("listing must not mutate authority")
+    }
+    fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
+        Ok(HomeCatalogueSnapshot {
+            entries: self.0.clone(),
+            diagnostics: vec![],
+            rebuilt: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn discovery_observations_scale_with_directories_not_rows() {
+    let scopes = [
+        SessionHomeScope::Scoped(observed_home(Path::new("/here"))),
+        SessionHomeScope::Scoped(observed_home(Path::new("/elsewhere"))),
+        SessionHomeScope::Scoped(observed_home(Path::new("/missing"))),
+        SessionHomeScope::LegacyUnscoped,
+        SessionHomeScope::Unavailable("broken authority".into()),
+    ];
+    let entries: Vec<_> = (0..100)
+        .map(|i| {
+            (
+                SessionIdentity::user_chat(&format!("chat-{i}")).unwrap(),
+                scopes[i % scopes.len()].clone(),
+            )
+        })
+        .collect();
+    let summaries = entries
+        .iter()
+        .map(|(id, _)| summary(id.runtime_key(), None))
+        .collect();
+    let discovery = Arc::new(CountingDiscovery(Mutex::new(vec![])));
+    let listed = ListSessions::new(ScriptedStore::answering(Ok(summaries)))
+        .with_home(SessionHomeContext {
+            catalogue: Arc::new(FixedCatalogue(entries)),
+            discovery: discovery.clone(),
+            execution_dir: "/here".into(),
+        })
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Global,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.sessions.len(), 100);
+    for (i, row) in listed.sessions.iter().enumerate() {
+        assert_eq!(row.resume_eligible, i % scopes.len() == 0);
+    }
+    assert_eq!(
+        *discovery.0.lock().unwrap(),
+        vec![
+            PathBuf::from("/here"),
+            PathBuf::from("/elsewhere"),
+            PathBuf::from("/missing")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn discovery_observations_are_fresh_each_query_and_failure_never_admits() {
+    let identity = SessionIdentity::user_chat("chat-fresh").unwrap();
+    let saved = observed_home(Path::new("/here"));
+    let store = ScriptedStore::answering(Ok(vec![summary(identity.runtime_key(), None)]));
+    let discovery = Arc::new(CountingDiscovery(Mutex::new(vec![])));
+    let context = SessionHomeContext {
+        catalogue: Arc::new(FixedCatalogue(vec![(
+            identity.clone(),
+            SessionHomeScope::Scoped(saved.clone()),
+        )])),
+        discovery: discovery.clone(),
+        execution_dir: "/here".into(),
+    };
+    let query = ListSessions::new(store.clone()).with_home(context.clone());
+    let request = ListSessionsRequest {
+        query: SessionListQuery::All,
+        scope: SessionListScope::Global,
+    };
+    for _ in 0..2 {
+        *store.outcome.lock().unwrap() = Some(Ok(vec![summary(identity.runtime_key(), None)]));
+        assert!(query.discover(&request).await.unwrap().sessions[0].resume_eligible);
+    }
+    assert_eq!(discovery.0.lock().unwrap().len(), 2);
+    // Advisory query caching does not change the authoritative context's checks.
+    assert!(context.eligible(&SessionHomeScope::Scoped(saved)));
+    assert_eq!(discovery.0.lock().unwrap().len(), 4);
+    *store.outcome.lock().unwrap() = Some(Ok(vec![summary(identity.runtime_key(), None)]));
+    let unavailable = ListSessions::new(store)
+        .with_home(SessionHomeContext {
+            execution_dir: "/missing".into(),
+            ..context
+        })
+        .discover(&request)
+        .await
+        .unwrap();
+    assert!(!unavailable.sessions[0].resume_eligible);
+    assert_eq!(unavailable.diagnostics.len(), 1);
+    assert_eq!(
+        discovery.0.lock().unwrap().len(),
+        5,
+        "failed current discovery skips row observations"
+    );
+}

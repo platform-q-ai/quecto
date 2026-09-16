@@ -92,6 +92,19 @@ pub struct CredentialStore {
     path: PathBuf,
 }
 
+/// Transaction-scoped lock, explicitly released even if a concurrently forked
+/// child still holds a duplicate of the open file description until exec.
+struct CredentialLock(std::fs::File);
+
+impl Drop for CredentialLock {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Closing only our descriptor can leave the flock owned by an inherited
+        // duplicate. Match the ownership/singleton guards' explicit release.
+        let _ = self.0.unlock();
+    }
+}
+
 impl CredentialStore {
     /// Create a credential store at the given base directory.
     /// Credentials will be stored in `<base_dir>/credentials.json`.
@@ -138,7 +151,7 @@ impl CredentialStore {
     // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
     // the #1460 locking work and awaits a coordinated MSRV bump.
     #[expect(clippy::incompatible_msrv)]
-    fn lock_exclusive(&self) -> Result<std::fs::File, DomainError> {
+    fn lock_exclusive(&self) -> Result<CredentialLock, DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 DomainError::Config(format!("failed to create credentials dir: {}", e))
@@ -168,7 +181,7 @@ impl CredentialStore {
         })?;
         file.lock()
             .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
-        Ok(file)
+        Ok(CredentialLock(file))
     }
 
     /// Save all credentials to disk with restricted file permissions (0600).
