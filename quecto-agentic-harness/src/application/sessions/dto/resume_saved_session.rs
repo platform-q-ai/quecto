@@ -70,6 +70,30 @@ pub struct StartupSessionOpened {
     pub workflow_run: Option<WorkflowRunPersisted>,
 }
 
+/// Minimum scope admission. Unimplemented actions never authorize history reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeDisposition {
+    LegacyUnscoped,
+    DifferentExecutionDirectory,
+    Unavailable(String),
+}
+
+impl std::fmt::Display for ResumeDisposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LegacyUnscoped => {
+                f.write_str("legacy session requires explicit first association (unavailable)")
+            }
+            Self::DifferentExecutionDirectory => {
+                f.write_str("session belongs to a different execution directory")
+            }
+            Self::Unavailable(_) => f.write_str(
+                "session home or workspace is unavailable and needs validation or repair",
+            ),
+        }
+    }
+}
+
 /// Why no saved session was resumed. Every failure precedes the key
 /// replacement: the current session, its key, its conversation and its
 /// roster records are kept; a claim taken on the target is released;
@@ -80,6 +104,7 @@ pub enum ResumeSavedSessionError {
     Ephemeral,
     /// The target is not one of the accepted spellings.
     InvalidName,
+    Scope(ResumeDisposition),
     Refused(SessionTransitionRefused),
     /// The departing session could not be saved.
     Save(SaveSessionError),
@@ -98,6 +123,10 @@ impl std::fmt::Display for ResumeSavedSessionError {
             Self::InvalidName => {
                 f.write_str("session name must contain only alphanumeric, '-', or '_'")
             }
+            Self::Scope(disposition) => write!(
+                f,
+                "session resume unavailable: {disposition}; Cancel (open/fork/locate are unavailable)"
+            ),
             Self::Refused(refused) => write!(f, "{refused}"),
             Self::Save(error) => write!(f, "failed to save current session: {error}"),
             Self::Claim(error) => write!(f, "{error}"),

@@ -7,6 +7,7 @@ use crate::domain::session_identity::SessionKeyPrefix;
 
 pub mod clear_conversation;
 pub mod history;
+pub mod list_sessions;
 pub mod message_recovery;
 pub mod resume_saved_session;
 pub mod retained_context;
@@ -18,6 +19,7 @@ pub mod sync;
 
 pub use clear_conversation::{ClearConversationError, ClearedConversation};
 pub use history::{HistoryError, HistoryPage, HistoryQuery};
+pub use list_sessions::{ListSessionsRequest, ListSessionsResult, ListedSession, SessionListScope};
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
 };

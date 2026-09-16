@@ -115,7 +115,7 @@ the architecture tests refuse a use case the docs do not name.
 
 | Use case | Catalogue | Triggered by | Owns |
 |----------|-----------|--------------|------|
-| `ListSessions` | #1861 | `list_sessions` | the saved-session query over `SessionStore` (every record, newest first) |
+| `ListSessions` | #1861 | `list_sessions` | local/global discovery over saved summaries and authoritative home metadata, newest first |
 | `ReadHistory` | #1856 | `get_messages`, connect-time snapshot, child transcript forwarding | stable-id cursor selection and chronological paging of the live, published or persisted transcript |
 | `RecoverMessage` | #1858 | `get_message` | full-copy recovery of a possibly collapsed message (ledger, then retention store), content ranges, tool-call arguments |
 | `SynchronizeTranscript` | #1857 | `sync` (idle loop and busy reader) | epoch/revision reconciliation, reset-or-delta selection |
@@ -142,6 +142,8 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery |
+| `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
 | `SessionExportPort` | `infrastructure/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
@@ -154,6 +156,26 @@ Declared only under `src/application/sessions/ports.rs` and
 | `DelegatedChildrenRoster` | `infrastructure/tools/delegated_roster.rs` | live delegated rows and roster replacement |
 | `SessionKeyPropagation` | `interface/cli/uds_session_switch_runtime.rs` | the agent loop and its session-aware tools adopt the new identity |
 | `SessionSwitchRuntime` | `interface/cli/uds_session_switch_runtime.rs` | effort reset, workflow reset/restore |
+
+### Home authority and recovery (#2009)
+
+`FileSessionStore` stores versioned optional home authority alongside each global
+transcript as a `.home` sidecar. Ordinary full and delta transcript saves preserve
+existing authority bytes, including unsupported or corrupt metadata. Only a new
+persistent identity can receive its initial home; existing legacy records are not
+automatically associated. Ephemeral runs write neither transcripts nor homes.
+
+The derived `home.catalogue` is discardable. Listing validates it against
+authoritative records, reports missing/corrupt/stale data and rebuilds by atomic
+replacement. A failed replacement returns valid discovered rows with diagnostics,
+not a transcript rewrite. Orphan home files without committed transcripts are not
+rows. Exact-key admission reads authority independently of catalogue health.
+
+`SessionHomeContext` is an application observation collaborator, not another
+query/save/restore owner. `ListSessions`, `SaveSession` and `ResumeSavedSession`
+retain those responsibilities. Resume admission rechecks canonical facts after
+ownership admission for both explicit resume and startup; a discovery group is
+not permission to execute history in another directory.
 
 ### DTOs and the active session
 
@@ -219,15 +241,18 @@ uniq)`, and the total persistence round-trip `from_persisted_key`. It has no
 scope field, no variant, no path conversion and no workspace behaviour, and
 this epic adds none.
 
-The seam for folder/workspace-scoped sessions is exactly this identity plus
-one repository-layout adapter: every port operation is keyed by
-`SessionIdentity`, and the only code that turns an identity into a path is
-`FlatSessionLayout` in `src/infrastructure/persistence/session_layout.rs`.
-Scoping sessions to a workspace therefore becomes a change to the domain
-identity and to that one adapter — not to any use case, controller, handle or
-client. The scoping issue itself (#1966) is untouched, still on hold, and
-nothing here implements or anticipates its behaviour: no scope field, no
-workspace variant, no persistence migration, no compatibility period.
+Folder-aware discovery (#2009, parent #2001) keeps `SessionIdentity` opaque
+and retains `FlatSessionLayout` and the global transcript store. Home metadata
+is separate from identity: repository/worktree grouping controls discovery,
+not the permission to restore history in a different execution directory.
+Canonical exact-folder identity applies outside Git; the nearest repository
+wins inside Git. Legacy records without home metadata remain unassociated.
+Invalid or unsupported home metadata is unavailable, never legacy-unscoped.
+
+The first discovery slice excludes metadata search and executable cross-folder
+actions. Open-original, fork, locate and first association belong to later
+children of #2001; discovery must never silently substitute history reuse for
+an unavailable action.
 
 ## Context management
 

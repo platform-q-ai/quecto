@@ -23,6 +23,9 @@
 //! one write, so the snapshot and the spill key follow the target
 //! atomically. Every refusal precedes the key replacement and keeps the
 //! current session whole; children the fleet already settled stay settled.
+use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
+use crate::application::sessions::session_home::SessionHomeContext;
+use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
 use std::sync::Arc;
 
 use super::clear_conversation::visible_message_count;
@@ -44,6 +47,21 @@ pub struct ResumeSavedSession {
     children: Arc<DepartingChildren>,
     /// A `--no-session` loop: nothing is claimed, loaded or resumed.
     ephemeral: bool,
+    home: Option<SessionHomeContext>,
+}
+
+/// Release only a newly acquired target on failure or cancellation.
+struct PendingClaim {
+    store: Arc<dyn SessionStore>,
+    identity: SessionIdentity,
+    release: bool,
+}
+impl Drop for PendingClaim {
+    fn drop(&mut self) {
+        if self.release {
+            self.store.release(&self.identity);
+        }
+    }
 }
 
 impl ResumeSavedSession {
@@ -60,7 +78,40 @@ impl ResumeSavedSession {
             store,
             children,
             ephemeral,
+            home: None,
         }
+    }
+
+    pub fn with_home(mut self, home: SessionHomeContext) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    /// The caller owns the key while authoritative metadata is re-read.
+    fn admit_home(&self, identity: &SessionIdentity) -> Result<(), ResumeSavedSessionError> {
+        let Some(context) = &self.home else {
+            return Ok(());
+        };
+        context.current().map_err(|error| {
+            ResumeSavedSessionError::Scope(ResumeDisposition::Unavailable(error.to_string()))
+        })?;
+        let scope = context
+            .catalogue
+            .read(identity)
+            .map_err(ResumeSavedSessionError::Load)?;
+        if context.eligible(&scope) {
+            return Ok(());
+        }
+        let disposition = match scope {
+            SessionHomeScope::LegacyUnscoped => ResumeDisposition::LegacyUnscoped,
+            SessionHomeScope::Unavailable(reason) => ResumeDisposition::Unavailable(reason),
+            SessionHomeScope::Scoped(home) => match context.discovery.discover(&home.execution_dir)
+            {
+                Ok(_) => ResumeDisposition::DifferentExecutionDirectory,
+                Err(error) => ResumeDisposition::Unavailable(error.to_string()),
+            },
+        };
+        Err(ResumeSavedSessionError::Scope(disposition))
     }
 
     /// Leave the current session for the saved session `raw_target` names.
@@ -86,23 +137,23 @@ impl ResumeSavedSession {
             .save(messages, SaveTrigger::Routine)
             .await
             .map_err(ResumeSavedSessionError::Save)?;
+        let old_identity = self.state.read().await.identity().clone();
         self.store
             .claim(&target.identity)
             .map_err(ResumeSavedSessionError::Claim)?;
-        let loaded = match self.load_claimed(&target).await {
-            Ok(loaded) => loaded,
-            Err(err) => {
-                self.store.release(&target.identity);
-                return Err(err);
-            }
+        let mut claim = PendingClaim {
+            store: self.store.clone(),
+            identity: target.identity.clone(),
+            release: old_identity != target.identity,
         };
+        let loaded = self.load_claimed(&target).await?;
+        self.admit_home(&target.identity)?;
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {
-            self.store.release(&target.identity);
             return Err(ResumeSavedSessionError::Refused(refused));
         }
-        let old_identity = self.state.read().await.identity().clone();
+        claim.release = false;
         if old_identity != target.identity {
             self.store.release(&old_identity);
         }
@@ -139,7 +190,10 @@ impl ResumeSavedSession {
         target: &ResumeTarget,
     ) -> Result<Session, ResumeSavedSessionError> {
         match self.store.load(&target.identity).await {
-            Ok(Some(session)) => Ok(session),
+            Ok(Some(session)) => {
+                self.admit_home(&target.identity)?;
+                Ok(session)
+            }
             Ok(None) => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
             Err(err) => Err(ResumeSavedSessionError::Load(err)),
         }
@@ -159,13 +213,35 @@ impl ResumeSavedSession {
             self.store
                 .claim(&identity)
                 .map_err(ResumeSavedSessionError::Claim)?;
-            match self.store.load(&identity).await {
-                Ok(session) => session.unwrap_or_else(|| Session::new(identity.clone())),
+            let mut claim = PendingClaim {
+                store: self.store.clone(),
+                identity: identity.clone(),
+                release: true,
+            };
+            let session = match self.store.load(&identity).await {
+                Ok(Some(session)) => {
+                    self.admit_home(&identity)?;
+                    session
+                }
+                Ok(None) => {
+                    if let Some(context) = &self.home {
+                        let scope = context
+                            .catalogue
+                            .read(&identity)
+                            .map_err(ResumeSavedSessionError::Load)?;
+                        match scope {
+                            SessionHomeScope::LegacyUnscoped => {}
+                            _ => self.admit_home(&identity)?,
+                        }
+                    }
+                    Session::new(identity.clone())
+                }
                 Err(err) => {
-                    self.store.release(&identity);
                     return Err(ResumeSavedSessionError::Load(err));
                 }
-            }
+            };
+            claim.release = false;
+            session
         };
         self.state
             .write()

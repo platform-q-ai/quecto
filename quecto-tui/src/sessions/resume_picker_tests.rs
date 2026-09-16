@@ -1,0 +1,163 @@
+use crate::components::{
+    component::Component,
+    select_list::{SelectItem, SelectList},
+};
+use crate::shell::keys::{Key, parse_key};
+fn item(id: &str) -> SelectItem {
+    SelectItem {
+        value: id.into(),
+        label: id.into(),
+        description: Some("/execution/path".into()),
+    }
+}
+#[test]
+fn baseline_focus_keys_are_available_to_feature() {
+    let mut list = SelectList::new(vec![item("a")], 10);
+    assert!(!list.handle_input(&Key::Tab));
+    assert!(!list.handle_input(&Key::BackTab));
+    assert_eq!(parse_key(b"\x1b[Z").unwrap().0, Key::BackTab);
+}
+#[test]
+fn baseline_mouse_decode_is_zero_based() {
+    assert_eq!(
+        parse_key(b"\x1b[<0;12;8M").unwrap().0,
+        Key::MousePress(11, 7)
+    );
+}
+#[test]
+fn baseline_async_refresh_preserves_stable_identity() {
+    let mut list = SelectList::new(vec![item("a"), item("b")], 10);
+    list.handle_input(&Key::Down);
+    list.sync_items(vec![item("b"), item("a")]);
+    assert_eq!(list.selected_item().unwrap().value, "b");
+    assert!(list.render_text(70).contains("/execution/path"));
+}
+
+use super::resume_picker::{ResumePicker, ResumePickerEvent};
+use crate::protocol::session_payloads::SessionListScope;
+#[test]
+fn scope_focus_and_query_cycle_with_title_only_filter() {
+    let mut picker = ResumePicker::new(vec![item("a"), item("b")], SessionListScope::Local);
+    picker.handle_input(&Key::Tab);
+    assert_eq!(
+        picker.handle_input(&Key::Char(' ')),
+        ResumePickerEvent::ScopeChanged(SessionListScope::Global)
+    );
+    picker.sync_items(vec![item("a"), item("b")]);
+    picker.handle_input(&Key::Tab);
+    picker.handle_input(&Key::Char('b'));
+    assert_eq!(picker.selected_item().unwrap().value, "b");
+    picker.handle_input(&Key::Tab);
+    assert_eq!(
+        picker.handle_input(&Key::Enter),
+        ResumePickerEvent::Selected("b".into())
+    );
+    picker.handle_input(&Key::BackTab);
+    picker.handle_input(&Key::Backspace);
+    picker.handle_input(&Key::Char('/'));
+    assert!(picker.selected_item().is_none());
+    assert_eq!(
+        picker.handle_input(&Key::Escape),
+        ResumePickerEvent::Dismissed
+    );
+}
+#[test]
+fn empty_picker_scope_mouse_is_centered_and_visible() {
+    let mut picker = ResumePicker::default();
+    let (lines, width) = picker.render(100, 30);
+    assert!(
+        lines
+            .iter()
+            .any(|s| s.contains("Local") && s.contains("Global"))
+    );
+    let x = (100 - width) / 2 + 2 + 10;
+    let y = (30 - lines.len()) / 2 + 2;
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::ScopeChanged(SessionListScope::Global)
+    );
+    assert_eq!(
+        picker.handle_input(&Key::Enter),
+        ResumePickerEvent::ScopeChanged(SessionListScope::Local)
+    );
+}
+
+#[test]
+fn refresh_preserves_selection_and_scope_change_clears_actionable_rows() {
+    let mut picker = ResumePicker::new(vec![item("a"), item("b")], SessionListScope::Local);
+    picker.handle_input(&Key::Down);
+    picker.sync_items(vec![item("b"), item("a")]);
+    assert_eq!(picker.selected_item().unwrap().value, "b");
+    picker.handle_input(&Key::Tab);
+    picker.handle_input(&Key::Right);
+    picker.handle_input(&Key::BackTab);
+    assert_eq!(picker.handle_input(&Key::Enter), ResumePickerEvent::Pending);
+    assert_eq!(picker.item_count(), 0);
+}
+#[test]
+fn mouse_result_uses_visible_window_and_ignores_outside_clicks() {
+    let items = (0..20).map(|i| item(&i.to_string())).collect();
+    let mut picker = ResumePicker::new(items, SessionListScope::Local);
+    for _ in 0..15 {
+        picker.handle_input(&Key::Down);
+    }
+    let (lines, width) = picker.render(100, 40);
+    let x = (100 - width) / 2 + 3;
+    let y = (40 - lines.len()) / 2 + 4;
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(0, 0)),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::Selected("4".into())
+    );
+}
+#[test]
+fn safe_rows_preserve_opaque_identity_and_small_terminals_do_not_panic() {
+    let mut hostile = item("opaque\x1bkey");
+    hostile.label = "hello\n\x1b[31mworld".into();
+    hostile.description = Some("/tmp\r\t\x07path".into());
+    let mut picker = ResumePicker::new(vec![hostile], SessionListScope::Local);
+    assert_eq!(picker.selected_item().unwrap().value, "opaque\x1bkey");
+    assert!(
+        picker
+            .selected_item()
+            .unwrap()
+            .label
+            .chars()
+            .all(|c| c >= ' ')
+    );
+    for width in 0..10 {
+        for height in 0..10 {
+            picker.render(width, height);
+            picker.handle_input(&Key::MousePress(0, 0));
+        }
+    }
+}
+
+#[test]
+fn selected_details_show_long_path_suffix_and_unavailable_actions() {
+    let mut row = item("a");
+    row.description = Some(format!(
+        "/{} /distinct-worktree — Open original / Fork / Locate unavailable; Cancel",
+        "long-path/".repeat(18)
+    ));
+    let mut picker = ResumePicker::new(vec![row], SessionListScope::Global);
+    let (lines, width) = picker.render_overlay(180, 40);
+    let text = lines.join("\n");
+    assert!(text.contains("/distinct-worktree"), "{text}");
+    assert!(text.contains("Locate unavailable"), "{text}");
+    assert!(text.contains("Cancel"));
+    let x = (180 - width) / 2 + 3;
+    let y = (40 - lines.len()) / 2 + 5; // details, immediately after the sole result
+    assert_eq!(
+        picker.handle_key(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(
+        picker.handle_key(&Key::Ctrl('g')),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(picker.selected_item().unwrap().value, "a");
+}

@@ -27,6 +27,8 @@ pub struct ResumeSessionSummary {
     pub title: String,
     pub message_count: u64,
     pub updated_unix_secs: Option<u64>,
+    pub execution_dir: Option<String>,
+    pub resume_eligible: bool,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -144,23 +146,16 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
 pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
     session_values(data)
         .iter()
-        .filter_map(|session| {
-            let title = session
-                .get("title")
-                .or_else(|| session.get("name"))
-                .and_then(|v| v.as_str())?;
-            let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
+        .filter_map(|value| {
+            let row: DiscoveryRow = serde_json::from_value(value.clone()).ok()?;
+            let title = row.title.or(row.name)?;
             Some(ResumeSessionSummary {
-                key: key.to_string(),
-                title: title.to_string(),
-                message_count: session
-                    .get("messageCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                updated_unix_secs: session
-                    .get("updatedUnixSecs")
-                    .or_else(|| session.get("updatedAt"))
-                    .and_then(|v| v.as_u64()),
+                key: row.key.unwrap_or_else(|| title.clone()),
+                title: safe_session_display(&title),
+                execution_dir: row.execution_path.as_deref().map(safe_session_display),
+                resume_eligible: row.resume_eligible,
+                message_count: row.message_count,
+                updated_unix_secs: row.updated_unix_secs.or(row.updated_at),
             })
         })
         .collect()
@@ -330,3 +325,46 @@ fn message_values(data: &serde_json::Value) -> Result<&[serde_json::Value], Resu
 #[cfg(test)]
 #[path = "session_payloads_tests.rs"]
 mod tests;
+
+fn safe_session_display(value: &str) -> String {
+    crate::components::ansi::sanitize_control(value)
+        .chars()
+        .take(512)
+        .collect()
+}
+
+/// Discovery scope, independent of opaque session identity.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionListScope {
+    #[default]
+    Local,
+    Global,
+}
+
+/// User-observable discovery diagnostics, bounded and safe for terminal display.
+pub fn session_discovery_diagnostics(data: &serde_json::Value) -> Vec<String> {
+    data.get("diagnostics")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .take(16)
+        .map(safe_session_display)
+        .collect()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoveryRow {
+    key: Option<String>,
+    title: Option<String>,
+    name: Option<String>,
+    execution_path: Option<String>,
+    #[serde(default)]
+    resume_eligible: bool,
+    #[serde(default)]
+    message_count: u64,
+    updated_unix_secs: Option<u64>,
+    updated_at: Option<u64>,
+}

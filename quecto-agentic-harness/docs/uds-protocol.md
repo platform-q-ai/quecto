@@ -232,38 +232,56 @@ The system prompt (injected via `--system` flag) is preserved at `messages[0]`. 
 
 ### `list_sessions`
 
-Return every persisted session this UDS agent can resume, newest first. Owner: `ListSessions` (#1861, #1968).
+Discover persisted sessions, newest first. Owner: `ListSessions` (#1861,
+#1968, #2009). Listing is not authorization to restore a row.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"list_sessions"` | yes | |
 | `id` | string | no | Correlation ID |
+| `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
 
 **Response data:**
 
 ```json
 {
+  "scope": "local",
   "sessions": [
-    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000},
-    {"key":"cli:default","title":"(untitled)","messageCount":42,"updatedUnixSecs":1765920000,"updatedAt":1765920000}
-  ]
+    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000,"homeState":"scoped","executionPath":"/work/project","resumeEligible":true}
+  ],
+  "diagnostics": [],
+  "rebuilt": false
 }
 ```
 
-| Field | Type | Description |
+| Row field | Type | Description |
 |---|---|---|
-| `key` | string | The session key, passed as is to `resume_session` |
-| `title` | string | The session's first user message, trimmed and truncated for display; `(untitled)` when there is none |
+| `key` | string | Stable opaque identity, passed unchanged to `resume_session` |
+| `title` | string | First user message, bounded for display; `(untitled)` when absent |
 | `messageCount` | integer | Persisted user/assistant messages |
 | `updatedUnixSecs` | integer \| null | Last modification time in Unix seconds |
-| `updatedAt` | integer \| null | Same value as `updatedUnixSecs` (retained alias) |
+| `updatedAt` | integer \| null | Retained alias of `updatedUnixSecs` |
+| `homeState` | string | `scoped`, `legacy_unscoped`, or `unavailable` |
+| `executionPath` | string \| null | Safely rendered execution directory, not a shell command |
+| `resumeEligible` | boolean | Advisory same-execution-directory admission; resume rechecks authority |
 
-Both `chat-…` user-chat sessions and `cli:<name>` named sessions are listed; records that cannot be read or summarised are skipped rather than failing the list.
+Local scope groups the nearest Git repository and related worktrees using Git
+facts and canonical paths. Outside Git it matches the canonical exact folder.
+Grouped worktrees can have different execution directories and are not thereby
+eligible for restore. Global lists all saved identities, including legacy
+unassociated and unavailable-home records. Metadata search is not part of this
+slice. Malformed records and discovery/catalogue failures produce diagnostics;
+one bad record does not hide valid siblings. `rebuilt` reports derived catalogue
+recovery, not transcript modification. Exact-key resume does not rely on the
+catalogue.
 
-**Example:**
+The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
+Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse
+selects, and Escape cancels. Ctrl+G retains its existing global behavior.
+Cross-folder actions are unavailable until their implementing slices ship.
 
 ```json
-{"type":"list_sessions","id":"ls-1"}
+{"type":"list_sessions","id":"ls-1","scope":"global"}
 ```
 
 ---

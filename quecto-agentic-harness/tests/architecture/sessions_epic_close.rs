@@ -137,6 +137,15 @@ const TRANSACTION_OWNERS: &[(&str, &str, &str)] = &[
 /// exact: infrastructure adapters, the composition-side fleet adaptation,
 /// the application's own latch, and the two interface runtime adapters.
 pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
+    // #2009 capability-local ports retain one concrete adapter each.
+    (
+        "SessionHomeCatalogue",
+        &["src/infrastructure/persistence/session_home_catalogue.rs"],
+    ),
+    (
+        "WorkspaceDiscovery",
+        &["src/infrastructure/workspace/git_scope_discovery.rs"],
+    ),
     (
         "SessionStore",
         &["src/infrastructure/persistence/session_store.rs"],
@@ -191,6 +200,9 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
 /// the capability, composition, persistence, and the interface handle
 /// declarations the loop is composed over.
 const SESSION_STORE_HOLDERS: &[&str] = &[
+    // #2009 authority and derived catalogue share the composed store.
+    "src/infrastructure/persistence/session_home_catalogue.rs",
+    "src/infrastructure/persistence/session_store_home.rs",
     "src/application/sessions/ports.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
@@ -458,10 +470,11 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     assert_eq!(
         handler_fns,
         set(&[
+            "src/interface/cli/uds_dispatch_session.rs::handle_list_sessions",
             "src/interface/cli/uds_dispatch_session.rs::handle_new_session",
             "src/interface/cli/uds_dispatch_session.rs::handle_resume_session",
         ]),
-        "the session handlers are exactly the two transition edges"
+        "the session handlers are exactly the discovery and two transition edges"
     );
 }
 

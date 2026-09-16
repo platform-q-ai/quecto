@@ -14,6 +14,7 @@ async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
             "title": "Fix the auth bug",
             "name": "Fix the auth bug",
             "messageCount": 12,
+            "resumeEligible": true,
             "updatedUnixSecs": 1781980920u64
         }]
     });
@@ -71,4 +72,67 @@ fn format_utc_minutes_formats_known_timestamps() {
     // 1_700_000_000 = 2023-11-14 22:13:20 UTC (the UTC fallback path).
     assert_eq!(format_utc_minutes(1_700_000_000), "2023-11-14 22:13");
     assert_eq!(format_utc_minutes(0), "1970-01-01 00:00");
+}
+
+#[tokio::test]
+async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
+    use crate::protocol::session_payloads::SessionListScope;
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.send_list_sessions();
+    let old = a.ac().sessions.pending_list_id.clone().unwrap();
+    a.request_session_scope(SessionListScope::Global);
+    let current = a.ac().sessions.pending_list_id.clone().unwrap();
+    let data = serde_json::json!({"sessions":[{"key":"foreign","title":"Foreign","executionPath":"/elsewhere","resumeEligible":false}]});
+    a.handle_session_list_response(Some(&old), Some(data.clone()));
+    assert_eq!(
+        a.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count(),
+        0
+    );
+    a.handle_session_list_response(Some(&current), Some(data));
+    assert!(a.ac().sessions.resume_selector.is_some());
+    a.handle_resume_selector_key(&Key::Enter);
+    assert!(a.ac().pending_session_resume_id.is_none());
+    a.handle_resume_selector_key(&Key::Escape);
+    assert!(a.ac().sessions.resume_selector.is_none());
+    a.handle_session_list_response(Some(&current), Some(serde_json::json!({"sessions":[]})));
+    assert!(a.ac().sessions.resume_selector.is_none());
+}
+
+#[tokio::test]
+async fn pending_discovery_escape_cancels_before_first_response() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.send_list_sessions();
+    let id = a.ac().sessions.pending_list_id.clone().unwrap();
+    a.handle_resume_selector_key(&Key::Escape);
+    a.handle_session_list_response(
+        Some(&id),
+        Some(serde_json::json!({"sessions":[{"key":"x","title":"X","resumeEligible":true}]})),
+    );
+    assert!(a.ac().sessions.resume_selector.is_none());
+    assert!(a.ac().pending_session_resume_id.is_none());
+}
+
+#[tokio::test]
+async fn discovery_mouse_global_uses_full_frame_coordinates_with_panel() {
+    let mut h = TuiHarness::sized(180, 50).await;
+    h.app_mut().send_list_sessions();
+    let frame = h.full_frame();
+    let (y, line) = frame
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("[Local] | Global"))
+        .unwrap();
+    let x = line[..line.find("Global").unwrap()].chars().count();
+    h.press(Key::MousePress(x as u16, y as u16));
+    assert_eq!(
+        h.app_mut().ac().sessions.scope,
+        crate::protocol::session_payloads::SessionListScope::Global
+    );
 }

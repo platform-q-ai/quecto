@@ -80,3 +80,32 @@ async fn store_errors_pass_through_for_the_presenter() {
     assert_eq!(err.to_string(), "session error: read failed");
     assert_eq!(format!("{controller:?}"), "ListSessionsController { .. }");
 }
+
+#[tokio::test]
+async fn scoped_controller_uses_application_discovery_without_guessing_home() {
+    let (store, controller) = controller(false);
+    let local = controller
+        .list(SessionListScopeCommand::Local)
+        .await
+        .unwrap();
+    assert!(local.sessions.is_empty());
+    assert!(!local.diagnostics.is_empty());
+    let global = controller
+        .list(SessionListScopeCommand::Global)
+        .await
+        .unwrap();
+    assert_eq!(global.sessions[0].summary.key, "chat-1");
+    assert!(!global.sessions[0].resume_eligible);
+    assert!(matches!(
+        global.sessions[0].home,
+        crate::domain::session_home::SessionHomeScope::Unavailable(_)
+    ));
+    assert!(
+        store
+            .queries
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|q| *q == SessionListQuery::All)
+    );
+}

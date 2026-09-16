@@ -37,6 +37,7 @@ pub(crate) fn build_select_list_overlay(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn build_resume_selector_overlay(
     selector: &mut SelectList,
     terminal_width: usize,

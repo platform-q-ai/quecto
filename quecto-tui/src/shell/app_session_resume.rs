@@ -6,9 +6,53 @@ use super::super::*;
 
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
+        self.request_session_scope(crate::protocol::session_payloads::SessionListScope::Local);
+    }
+
+    pub(in crate::shell) fn request_session_scope(
+        &mut self,
+        scope: crate::protocol::session_payloads::SessionListScope,
+    ) {
+        let id = self.ac().namespaced_id(&format!(
+            "resume-list-{}",
+            super::super::app_events::uuid_like()
+        ));
+        self.ac_mut().sessions.pending_list_id = Some(id.clone());
+        self.ac_mut().sessions.scope = scope;
+        self.ac_mut().sessions.eligible_keys.clear();
+        if self.ac().sessions.resume_selector.is_none() {
+            self.ac_mut().sessions.resume_selector = Some(
+                crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope),
+            );
+        }
         self.send_command(Command::ListSessions {
-            id: Some(self.ac().namespaced_id("resume-list")),
+            id: Some(id),
+            scope,
         });
+    }
+
+    pub(in crate::shell) fn handle_session_list_response(
+        &mut self,
+        id: Option<&str>,
+        data: Option<serde_json::Value>,
+    ) {
+        if self
+            .ac()
+            .sessions
+            .pending_list_id
+            .as_deref()
+            .is_some_and(|pending| Some(pending) == id)
+        {
+            self.ac_mut().sessions.pending_list_id = None;
+            if let Some(data) = data {
+                for diagnostic in
+                    crate::protocol::session_payloads::session_discovery_diagnostics(&data)
+                {
+                    self.notify(&diagnostic, NotifyLevel::Warning);
+                }
+                self.open_resume_selector(&data);
+            }
+        }
     }
 
     pub(in crate::shell) fn send_resume_session(&mut self, session: &str) {

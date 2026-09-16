@@ -18,6 +18,7 @@
 //! concurrent requests so a later save always sees the watermark the
 //! earlier one committed. Readers of the active session are never blocked
 //! on store I/O — the state lock is held only to read inputs and to commit.
+use crate::application::sessions::session_home::SessionHomeContext;
 use std::sync::Arc;
 
 use crate::application::sessions::active_session::ActiveSessionHandle;
@@ -43,6 +44,7 @@ pub struct SaveSession {
     /// A `--no-session` run: every save is affirmatively a no-op.
     ephemeral: bool,
     barrier: tokio::sync::Mutex<()>,
+    home: Option<SessionHomeContext>,
 }
 
 /// The inputs read from the active session under one short lock.
@@ -70,7 +72,29 @@ impl SaveSession {
             roster,
             ephemeral,
             barrier: tokio::sync::Mutex::new(()),
+            home: None,
         }
+    }
+
+    pub fn with_home(mut self, home: SessionHomeContext) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    async fn prepare_home(&self, identity: &SessionIdentity) -> Result<(), SaveSessionError> {
+        if let Some(home) = &self.home {
+            self.store
+                .claim(identity)
+                .map_err(SaveSessionError::Store)?;
+            if SessionStore::exists(self.store.as_ref(), identity)
+                .await
+                .map_err(SaveSessionError::Store)?
+            {
+                return Ok(());
+            }
+            home.record_new(identity).map_err(SaveSessionError::Store)?;
+        }
+        Ok(())
     }
 
     /// Persist `messages` (the loop's live conversation, injected prompt
@@ -84,6 +108,7 @@ impl SaveSession {
         let Some(inputs) = self.begin(trigger).await else {
             return Ok(SaveOutcome::Ephemeral);
         };
+        self.prepare_home(&inputs.identity).await?;
         remove_injected_system_prompt(messages, &inputs.injected_prompt);
         assign_missing_ordinals(messages);
         // Drain the agent's latch into the session state before the store is
@@ -157,6 +182,7 @@ impl SaveSession {
         let Some(inputs) = self.begin(SaveTrigger::Routine).await else {
             return Ok(SaveOutcome::Ephemeral);
         };
+        self.prepare_home(&inputs.identity).await?;
         let mut persisted = messages.to_vec();
         remove_injected_system_prompt(&mut persisted, &inputs.injected_prompt);
         persisted.push(pending.clone());

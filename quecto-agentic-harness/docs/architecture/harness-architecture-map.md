@@ -134,11 +134,13 @@ sessions_capability.rs`, `sessions_epic_close.rs` and
 `sessions_epic_close_retirement.rs` pin these rules as exact, decrease-only
 inventories, and `docs/sessions.md` names every use case and port.
 
-The wire protocol is unchanged by the epic. The seam for folder/workspace
-scoping is the existing-key-only `SessionIdentity` plus the one
-repository-layout adapter (`FlatSessionLayout`): a scoped store changes the
-identity and that one projection, not the callers. The epic adds no scope
-field or variant and no workspace behaviour; #1966 is untouched.
+The wire protocol was unchanged by epic #1968. Folder-aware discovery
+(#2009, parent #2001) extends the existing sessions query/save/resume owners;
+it does not change opaque `SessionIdentity` or the global `FlatSessionLayout`.
+Home metadata is separate from identity. Git-reported common-dir/worktree
+relationships and canonical paths define discovery grouping; identical group
+membership does not authorize restore in another execution directory.
+Cross-folder executors and metadata search are later slices, not #2009.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a

@@ -3,10 +3,7 @@ pub(super) use super::app_render_helpers::{
 };
 use super::app_selection::apply_selection_highlight;
 use super::*;
-use crate::components::select_list::route_overlay_key;
-use crate::components::select_overlay::{
-    build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
-};
+use crate::components::select_overlay::{build_rewind_selector_overlay, build_select_overlay};
 use crate::components::theme;
 use crate::protocol::session_payloads;
 use crate::shell::app_session_stats_text;
@@ -213,6 +210,11 @@ impl App {
         } else {
             None
         };
+        self.ac_mut().sessions.eligible_keys = sessions
+            .iter()
+            .filter(|s| s.resume_eligible)
+            .map(|s| s.key.clone())
+            .collect();
         let session_items = sessions
             .into_iter()
             .map(|session| {
@@ -223,17 +225,23 @@ impl App {
                 SelectItem {
                     value: format!("session:{}", session.key),
                     label: session.title,
-                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
+                    description: Some(format!(
+                        "{} · {when} ({} msgs) · {}",
+                        session
+                            .execution_dir
+                            .as_deref()
+                            .unwrap_or("Unassociated / unavailable home"),
+                        session.message_count,
+                        if session.resume_eligible {
+                            "Resume"
+                        } else {
+                            "Open original / Fork / Locate unavailable; Cancel"
+                        }
+                    )),
                 }
             })
             .collect::<Vec<_>>();
         self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
-    }
-
-    pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
-            self.apply_resume_selection(&choice);
-        }
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
@@ -500,8 +508,7 @@ impl App {
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
-            let (selector_lines, overlay_width) =
-                build_resume_selector_overlay(selector, width, height);
+            let (selector_lines, overlay_width) = selector.render_overlay(width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.ac_mut().rewind.selector {

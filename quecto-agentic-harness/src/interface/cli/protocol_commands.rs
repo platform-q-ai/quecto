@@ -1,6 +1,8 @@
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Serialize};
 
+pub use crate::interface::uds::sessions::controller::SessionListScopeCommand;
+
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,6 +123,8 @@ pub enum AgentCommand {
     },
     /// Return persisted CLI sessions available for resume.
     ListSessions {
+        #[serde(default)]
+        scope: SessionListScopeCommand,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
@@ -352,7 +356,7 @@ impl AgentCommand {
             Self::PersistSession { id, .. } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
             Self::RefreshModels { id, .. } => id.as_deref(),
-            Self::ListSessions { id } => id.as_deref(),
+            Self::ListSessions { id, .. } => id.as_deref(),
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),

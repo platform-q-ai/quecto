@@ -193,12 +193,20 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
 }
 
 #[tokio::test]
-async fn open_resume_selector_empty_shows_status_no_selector() {
+async fn open_resume_selector_empty_keeps_scope_control() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": []});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
-    assert!(a.ac().sessions.resume_selector.is_none());
+    assert_eq!(
+        a.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count(),
+        0
+    );
     assert!(chat_text(a).contains("No persisted sessions"));
 }
 
@@ -207,7 +215,7 @@ async fn open_resume_selector_with_names_builds_list() {
     let mut h = harness().await;
     let data = serde_json::json!({
         "sessions": [
-            {"name": "alpha", "messageCount": 3},
+            {"name": "alpha", "messageCount": 3, "resumeEligible": true},
             {"name": "beta"}
         ]
     });
@@ -230,14 +238,22 @@ async fn open_resume_selector_without_names_shows_status() {
     let data = serde_json::json!({"sessions": [{"messageCount": 1}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
-    assert!(a.ac().sessions.resume_selector.is_none());
+    assert_eq!(
+        a.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count(),
+        0
+    );
     assert!(chat_text(a).contains("No resumable"));
 }
 
 #[tokio::test]
 async fn handle_resume_selector_key_enter_selects_and_closes() {
     let mut h = harness().await;
-    let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3}]});
+    let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3, "resumeEligible": true}]});
     let a = h.app_mut();
     a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Enter);

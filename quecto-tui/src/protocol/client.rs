@@ -132,6 +132,7 @@ pub enum Command {
         source: Option<String>,
     },
     ListSessions {
+        scope: crate::protocol::session_payloads::SessionListScope,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },

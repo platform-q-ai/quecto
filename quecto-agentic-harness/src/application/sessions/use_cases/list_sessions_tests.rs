@@ -137,3 +137,18 @@ fn debug_does_not_print_the_store() {
         "ListSessions { .. }"
     );
 }
+
+#[tokio::test]
+async fn local_discovery_without_workspace_facts_never_broadens_to_global() {
+    use crate::application::sessions::dto::{ListSessionsRequest, SessionListScope};
+    let store = ScriptedStore::answering(Ok(vec![summary("chat-foreign", Some(1))]));
+    let listed = ListSessions::new(store)
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Local,
+        })
+        .await
+        .unwrap();
+    assert!(listed.sessions.is_empty());
+    assert!(!listed.diagnostics.is_empty());
+}

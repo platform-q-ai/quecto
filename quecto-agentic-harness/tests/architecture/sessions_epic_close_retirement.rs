@@ -51,6 +51,8 @@ const INTERFACE_FORBIDDEN_ADAPTERS: &[&str] = &[
 /// Orchestration verbs the session handlers admit, request and present
 /// around but never sequence themselves.
 const RAW_KEY_CONVERSION_SITES: &[&str] = &[
+    // #2009 catalogue maps persisted opaque keys at the adapter boundary.
+    "src/infrastructure/persistence/session_home_catalogue.rs",
     "src/application/agent_loop.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/infrastructure/persistence/session_store.rs",
@@ -614,10 +616,13 @@ fn documentation_names_every_use_case_port_command_and_the_seam() {
         "composition/active_session.rs",
         "composition/session_report.rs",
         "composition/retention.rs",
-        "#1966",
-        "no scope field",
-        "no workspace behaviour",
-        "repository-layout adapter",
+        "#2009",
+        "Home metadata",
+        "global transcript store",
+        "Legacy records",
+        "unavailable",
+        "`SessionHomeCatalogue`",
+        "`WorkspaceDiscovery`",
         "Tool::set_session_key",
     ] {
         assert!(

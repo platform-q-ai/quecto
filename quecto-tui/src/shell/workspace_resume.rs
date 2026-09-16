@@ -4,7 +4,7 @@
 //! `/resume <key>` resumes it in the current single session.
 
 use crate::components::notification::NotifyLevel;
-use crate::components::select_list::{SelectItem, SelectList};
+use crate::components::select_list::SelectItem;
 use crate::shell::connection::TabId;
 use crate::shell::tab_registry::unix_now_s;
 #[cfg(any(test, feature = "test-harness"))]
@@ -35,9 +35,15 @@ impl super::App {
                         .to_string(),
                 },
             );
-            return;
         }
-        self.ac_mut().sessions.resume_selector = Some(SelectList::new(items, 12));
+        let scope = self.ac().sessions.scope;
+        if let Some(picker) = self.ac_mut().sessions.resume_selector.as_mut() {
+            picker.sync_items(items);
+        } else {
+            self.ac_mut().sessions.resume_selector = Some(
+                crate::sessions::resume_picker::ResumePicker::new(items, scope),
+            );
+        }
     }
 
     /// Dispatch a resume-selector choice: workspace restore or current-tab session.

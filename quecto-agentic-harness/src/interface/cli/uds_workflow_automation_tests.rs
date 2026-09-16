@@ -1,6 +1,16 @@
 use super::dispatch_test_env::DispatchTestEnv;
 use crate::domain::session::Session;
 
+fn seed_existing_home(base: &std::path::Path, name: &str) {
+    use crate::application::sessions::ports::session_home::WorkspaceDiscovery;
+    let store = crate::composition::sessions::build_file_session_store(base);
+    let identity = crate::domain::session_identity::SessionIdentity::named_cli(name).unwrap();
+    let home = crate::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery::default()
+        .discover(&std::env::current_dir().unwrap())
+        .unwrap();
+    store.record_new_home(&identity, &home).unwrap();
+}
+
 fn persisted_feature_run(done: Vec<bool>) -> crate::domain::workflow::WorkflowRunPersisted {
     crate::domain::workflow::WorkflowRunPersisted {
         template_id: Some("feature".into()),
@@ -28,6 +38,7 @@ async fn resume_session_restores_target_workflow_run_state() {
     let mut env = DispatchTestEnv::with_unselected_workflow();
     env.messages = vec![crate::domain::message::Message::user("current")];
     let key = Session::build_key("cli", "saved");
+    seed_existing_home(env.tmp.path(), "saved");
     env.store
         .save(&Session {
             key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key.clone()),
@@ -56,6 +67,7 @@ async fn resume_session_restores_target_workflow_run_state() {
 #[tokio::test]
 async fn resume_session_clears_workflow_when_target_has_none() {
     let mut env = DispatchTestEnv::with_selected_feature();
+    seed_existing_home(env.tmp.path(), "plain");
     env.messages = vec![crate::domain::message::Message::user("current")];
     env.store
         .save(&Session {

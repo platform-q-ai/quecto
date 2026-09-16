@@ -46,6 +46,17 @@ pub fn assemble_session_handles(
     export: Option<Arc<dyn SessionExportPort>>,
     identities: Arc<dyn FreshSessionIdentityGenerator>,
 ) -> SessionHandles {
+    assemble_session_handles_with_home(inputs, store, list_sessions, export, identities, None)
+}
+
+pub(crate) fn assemble_session_handles_with_home(
+    inputs: SessionLoopInputs,
+    store: Arc<dyn SessionStore>,
+    list_sessions: Arc<ListSessionsController>,
+    export: Option<Arc<dyn SessionExportPort>>,
+    identities: Arc<dyn FreshSessionIdentityGenerator>,
+    home: Option<crate::application::sessions::session_home::SessionHomeContext>,
+) -> SessionHandles {
     let mut state = ActiveSessionState::new(inputs.identity);
     state.set_spill_store(inputs.spill_store);
     state.set_injected_system_prompt(inputs.system_prompt);
@@ -63,14 +74,18 @@ pub fn assemble_session_handles(
     let delegated = inputs.subagent_registry.map(|registry| {
         Arc::new(RegistryDelegatedRoster::new(registry)) as Arc<dyn DelegatedChildrenRoster>
     });
-    let save_session = Arc::new(SaveSession::new(
+    let save_session = SaveSession::new(
         active_session.clone(),
         store.clone(),
         inputs.durable_prefix,
         workflow,
         roster,
         inputs.ephemeral,
-    ));
+    );
+    let save_session = Arc::new(match &home {
+        Some(home) => save_session.with_home(home.clone()),
+        None => save_session,
+    });
     let rewrite = ConversationRewriteHandles {
         clear: Arc::new(ClearConversation::new(
             active_session.clone(),
@@ -82,6 +97,17 @@ pub fn assemble_session_handles(
         )),
     };
     let departing_children = Arc::new(DepartingChildren::new(delegated));
+    let resume = ResumeSavedSession::new(
+        active_session.clone(),
+        save_session.clone(),
+        store.clone(),
+        departing_children.clone(),
+        inputs.ephemeral,
+    );
+    let resume = match home {
+        Some(home) => resume.with_home(home),
+        None => resume,
+    };
     let switch = SessionSwitchHandles {
         fresh: Arc::new(StartFreshConversation::new(
             active_session.clone(),
@@ -90,13 +116,7 @@ pub fn assemble_session_handles(
             identities,
             departing_children.clone(),
         )),
-        resume: Arc::new(ResumeSavedSession::new(
-            active_session.clone(),
-            save_session.clone(),
-            store.clone(),
-            departing_children,
-            inputs.ephemeral,
-        )),
+        resume: Arc::new(resume),
     };
     SessionHandles {
         store,

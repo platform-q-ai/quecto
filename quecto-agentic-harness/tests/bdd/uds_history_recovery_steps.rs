@@ -24,6 +24,10 @@ pub(super) fn seed_session(world: &mut QuectoWorld, messages: Vec<Message>) {
     ensure_query_only_provider_config(world);
     let base = base_path(world);
     let store = FileSessionStore::new(FlatSessionLayout::new(&base));
+    super::session_scope_steps::record_fixture_home(
+        &base_path(world),
+        &Session::build_key("cli", PAGED_SESSION),
+    );
     let session = Session {
         key: SessionIdentity::from_persisted_key(Session::build_key("cli", PAGED_SESSION)),
         messages,

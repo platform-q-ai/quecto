@@ -420,9 +420,13 @@ async fn response_list_sessions_success_and_failure() {
     let mut h = harness().await;
     let a = h.app_mut();
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
-    respond(a, None, "list_sessions", true, Some(data), None);
+    a.send_list_sessions();
+    let id = a.ac().sessions.pending_list_id.clone().unwrap();
+    respond(a, Some(&id), "list_sessions", true, Some(data), None);
     assert!(a.ac().sessions.resume_selector.is_some());
-    respond(a, None, "list_sessions", false, None, Some("err"));
+    a.send_list_sessions();
+    let id = a.ac().sessions.pending_list_id.clone().unwrap();
+    respond(a, Some(&id), "list_sessions", false, None, Some("err"));
     assert!(!a.notifications.is_empty());
 }
 

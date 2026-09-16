@@ -36,6 +36,7 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     assert!(
         !super::dispatch_command(
             AgentCommand::ListSessions {
+                scope: Default::default(),
                 id: Some("resume-list".into()),
             },
             &mut ctx,

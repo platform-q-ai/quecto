@@ -242,6 +242,7 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         }
         messages
     });
+    super::session_scope_steps::record_fixture_home(&base, &session_key);
     let session = Session {
         key: SessionIdentity::from_persisted_key(&session_key),
         messages,

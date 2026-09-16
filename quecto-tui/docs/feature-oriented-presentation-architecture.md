@@ -67,10 +67,13 @@ application use case each (`quecto-agentic-harness/docs/sessions.md`,
 "Architecture") and changed **no command, field or refusal text**: the TUI's
 mappers, resume selector, rewind correlation, paged history and stats footer
 are untouched, and `tests/features/tui_clean_architecture.feature` pins the
-command set the TUI relies on. The folder/workspace-scoped sessions the TUI
-may one day select are not part of that epic (no scope field, no workspace
-behaviour; #1966 is on hold) — when they arrive they change the harness's
-`SessionIdentity` and its one layout adapter, not this protocol surface.
+command set the TUI relies on. Folder-aware discovery (#2009, parent #2001)
+is a subsequent product slice: it extends the typed session protocol while
+retaining the harness's opaque `SessionIdentity` and global flat layout. The
+`sessions` feature coordinates Local/Global presentation; `protocol` maps typed
+rows and diagnostics; `shell` owns runtime, correlation and rendering. No Git,
+filesystem or launch eligibility policy belongs in the TUI. Cross-folder action
+execution and global metadata search are not part of this first slice.
 
 ## Policy worth extracting
 
@@ -351,6 +354,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/client_result_text.rs` | `protocol` tool-result text extraction (split from `client.rs` for the 750-line cap, #1679 P4; protocol-mapper allowlist as a `client.rs` relocation) |
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |

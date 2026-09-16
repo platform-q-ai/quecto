@@ -621,8 +621,15 @@ fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld
         "the TUI architecture document must record that the sessions epic changed no session command"
     );
     assert!(
-        doc.contains("#1966") && doc.contains("no scope field"),
-        "the TUI architecture document must state the workspace seam is not implemented by the epic"
+        doc.contains("#2009")
+            && doc.contains("subsequent product slice")
+            && doc.contains("extends the typed session protocol")
+            && doc.contains("Local/Global presentation")
+            && doc.contains("No Git,")
+            && doc.contains("filesystem or launch eligibility policy belongs in the TUI")
+            && doc.contains("Cross-folder action")
+            && doc.contains("execution and global metadata search are not part of this first slice"),
+        "the TUI architecture document must distinguish the later #2009 typed discovery slice from the unchanged epic and preserve backend policy ownership"
     );
 }
 

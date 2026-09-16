@@ -526,6 +526,7 @@ pub struct QuectoWorld {
     pub tui_parity_rt: Option<tokio::runtime::Runtime>,
     /// TUI sub-agent session-parity BDD (#805): the headless render harness.
     pub tui_parity: Option<TuiParityHarness>,
+    pub session_scope_process: Option<session_scope_steps::ScopeProcess>,
     /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
     /// each is read-only, used to exercise selective departure.
     pub tui_expected_subagents: Vec<(String, bool)>,
@@ -1809,3 +1810,4 @@ mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
 mod list_sessions_steps;
+mod session_scope_steps;

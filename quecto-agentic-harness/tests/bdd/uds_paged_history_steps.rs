@@ -568,6 +568,7 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
     messages.push(Message::assistant(oversized.clone(), vec![]));
     world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
     world._bounded_expected_body = Some(oversized);
+    super::session_scope_steps::record_fixture_home(&base, &session_key);
     let session = Session {
         key: SessionIdentity::from_persisted_key(&session_key),
         messages,
@@ -617,6 +618,10 @@ fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
             },
         ],
     );
+    super::session_scope_steps::record_fixture_home(
+        &base_path(world),
+        &Session::build_key("cli", PAGED_SESSION),
+    );
     let session = Session {
         key: SessionIdentity::from_persisted_key(Session::build_key("cli", PAGED_SESSION)),
         messages: vec![message],
@@ -649,6 +654,7 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
         .map(|i| Message::user(format!("paged-msg-{i:04}-{body}")))
         .collect();
     world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
+    super::session_scope_steps::record_fixture_home(&base, &session_key);
     let session = Session {
         key: SessionIdentity::from_persisted_key(&session_key),
         messages,
@@ -736,6 +742,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
         assert!(collapsed.content.contains("recall("));
         messages
     });
+    super::session_scope_steps::record_fixture_home(&base, &session_key);
     let session = Session {
         key: SessionIdentity::from_persisted_key(&session_key),
         messages,

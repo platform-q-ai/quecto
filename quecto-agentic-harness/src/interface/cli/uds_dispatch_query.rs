@@ -26,24 +26,52 @@ pub(super) fn session_summary_to_json(
 ) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,
-        "title": display_title(&summary.title),
+        "title": display_title(&safe_display(&summary.title)),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
     })
 }
 
-/// The `list_sessions` response data: the summaries in store order under
-/// the `sessions` field the TUI resume selector reads.
-pub(super) fn sessions_json(
-    sessions: &[crate::domain::session::SessionSummary],
+/// Present only application-approved metadata; never infer resume eligibility here.
+pub(super) fn discovery_json(
+    result: &crate::application::sessions::dto::ListSessionsResult,
+    scope: super::super::protocol::SessionListScopeCommand,
 ) -> serde_json::Value {
+    use crate::domain::session_home::SessionHomeScope;
+    let sessions: Vec<_> = result
+        .sessions
+        .iter()
+        .map(|row| {
+            let mut value = session_summary_to_json(&row.summary);
+            let (state, execution_path) = match &row.home {
+                SessionHomeScope::Scoped(home) => (
+                    "scoped",
+                    Some(safe_display(&home.execution_dir.to_string_lossy())),
+                ),
+                SessionHomeScope::LegacyUnscoped => ("legacy_unscoped", None),
+                SessionHomeScope::Unavailable(_) => ("unavailable", None),
+            };
+            value["homeState"] = serde_json::json!(state);
+            value["executionPath"] = serde_json::json!(execution_path);
+            value["resumeEligible"] = serde_json::json!(row.resume_eligible);
+            value
+        })
+        .collect();
     serde_json::json!({
-        "sessions": sessions
-            .iter()
-            .map(session_summary_to_json)
-            .collect::<Vec<_>>()
+        "sessions": sessions,
+        "scope": scope,
+        "diagnostics": result.diagnostics.iter().map(|s| safe_display(s)).collect::<Vec<_>>(),
+        "rebuilt": result.rebuilt,
     })
+}
+
+/// Untrusted persisted metadata is bounded and cannot inject terminal controls.
+fn safe_display(raw: &str) -> String {
+    raw.chars()
+        .take(4096)
+        .map(|ch| if ch.is_control() { '\u{fffd}' } else { ch })
+        .collect()
 }
 
 /// Returns `Some(bool)` if handled, `None` to fall through to the main match.
@@ -68,13 +96,8 @@ pub(super) async fn dispatch_fieldless_command(
     // List saved sessions (#1861): invoked through the composed controller
     // and presented here; the scope and order are the application's and
     // the store's, never decided at this edge.
-    if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let list_sessions = ctx.list_sessions.clone();
-        let event = match list_sessions.list_all().await {
-            Ok(sessions) => AgentEvent::ok(id, tn, Some(sessions_json(&sessions))),
-            Err(err) => AgentEvent::err(id, tn, err.to_string()),
-        };
-        emit_event_to_broadcast_or_writer(ctx, &event).await;
+    if let AgentCommand::ListSessions { scope, .. } = cmd {
+        super::uds_dispatch_session::handle_list_sessions(ctx, id, tn, *scope).await;
         return Some(false);
     }
     // Recover full message/tool-call content (#1858, #1971): the composed
@@ -185,3 +208,7 @@ pub(super) async fn dispatch_fieldless_command(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "uds_dispatch_discovery_tests.rs"]
+mod discovery_tests;

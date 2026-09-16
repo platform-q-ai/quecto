@@ -1849,6 +1849,7 @@ fn uds_session_key(session_name: &str) -> SessionIdentity {
 
 fn save_uds_session(world: &QuectoWorld, session: &Session) {
     let base = world.cli_context.base_dir.clone().expect("no base dir");
+    super::session_scope_steps::record_fixture_home(&base, session.key.runtime_key());
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     rt.block_on(store.save(session))

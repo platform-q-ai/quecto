@@ -588,6 +588,16 @@ fn test_run_with_deadline_exercises_timeout_path() {
 // Agent session with pre-existing session (session load path)
 // ===================================================================
 
+fn seed_existing_home(base: &std::path::Path, name: &str) {
+    use crate::application::sessions::ports::session_home::WorkspaceDiscovery;
+    let store = crate::composition::sessions::build_file_session_store(base);
+    let identity = crate::domain::session_identity::SessionIdentity::named_cli(name).unwrap();
+    let home = crate::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery::default()
+        .discover(&std::env::current_dir().unwrap())
+        .unwrap();
+    store.record_new_home(&identity, &home).unwrap();
+}
+
 #[test]
 fn test_run_agent_session_loads_existing_session() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -600,6 +610,7 @@ fn test_run_agent_session_loads_existing_session() {
             {"role": "assistant", "content": "previous response"}
         ]
     }"#;
+    seed_existing_home(tmp.path(), "existing");
     std::fs::write(sessions_dir.join("cli_existing.json"), session_json).unwrap();
 
     let agent = make_test_agent(tmp.path());
@@ -634,6 +645,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
             {"role": "assistant", "content": "old reply"}
         ]
     }"#;
+    seed_existing_home(tmp.path(), "sysprompt");
     std::fs::write(sessions_dir.join("cli_sysprompt.json"), session_json).unwrap();
 
     let agent = make_test_agent(tmp.path());

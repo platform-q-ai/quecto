@@ -400,6 +400,7 @@ fn command_rewind_to_serializes() {
 #[test]
 fn command_list_sessions_serializes() {
     let cmd = Command::ListSessions {
+        scope: crate::protocol::session_payloads::SessionListScope::Local,
         id: Some("ls".into()),
     };
     let json = serde_json::to_string(&cmd).unwrap();
