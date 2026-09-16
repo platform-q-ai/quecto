@@ -2652,7 +2652,14 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
     } else {
         2
     };
-    std::thread::sleep(std::time::Duration::from_secs(settle_secs));
+    mc_settle(
+        world,
+        &mut streams,
+        connected,
+        disconnected,
+        commands,
+        std::time::Duration::from_secs(settle_secs),
+    );
     mc_collect_events(world, &mut streams, connected, disconnected);
 
     // Persist mode: reconnect clients after all initial clients have disconnected (#348).
@@ -4944,4 +4951,119 @@ fn when_run_live_delayed_steer(world: &mut QuectoWorld, original: String, steer:
     let _ = steer_stream.shutdown(std::net::Shutdown::Both);
     world.agent_events = events;
     world.uds_exit_code = Some(handle.join().unwrap_or(1));
+}
+
+/// Wait for the agent to finish the work the clients sent, reading and
+/// recording each client's events meanwhile. This used to be a flat sleep of
+/// `cap` (2 s; 20 s for workflow scenarios) in every multi-client scenario.
+/// Now the wait ends early once the evidence is in — every connected client
+/// has seen the `agent_end` broadcast of every prompt any client sent, and
+/// each client has a response for each of its own non-prompt commands — and
+/// then a short quiet period passes with nothing more arriving (trailing
+/// broadcasts such as `workflow_state` land within it). `cap` remains the
+/// ceiling, so a scenario that never satisfies the counts waits exactly as
+/// long as before. Events read here are kept in `mc_client_events`; the
+/// final collection step drains whatever follows.
+fn mc_settle(
+    world: &mut QuectoWorld,
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    connected: &[u32],
+    disconnected: &[u32],
+    commands: &HashMap<u32, Vec<String>>,
+    cap: std::time::Duration,
+) {
+    use std::io::BufRead;
+    const QUIET: std::time::Duration = std::time::Duration::from_millis(150);
+    let live: Vec<u32> = connected
+        .iter()
+        .copied()
+        .filter(|cid| !disconnected.contains(cid))
+        .collect();
+    let command_kinds = |cid: u32| -> Vec<String> {
+        commands
+            .get(&cid)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter_map(|c| c["type"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let is_turn = |kind: &str| matches!(kind, "prompt" | "follow_up");
+    let total_turns = live
+        .iter()
+        .flat_map(|cid| command_kinds(*cid))
+        .filter(|k| is_turn(k))
+        .count();
+    let deadline = std::time::Instant::now() + cap;
+    let mut readers: Vec<(
+        u32,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        usize,
+        usize,
+        usize,
+    )> = Vec::new();
+    for &cid in &live {
+        let Some(stream) = streams.get(&cid) else {
+            continue;
+        };
+        let Ok(clone) = stream.try_clone() else {
+            continue;
+        };
+        clone
+            .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+            .ok();
+        let own_responses = command_kinds(cid).iter().filter(|k| !is_turn(k)).count();
+        readers.push((cid, std::io::BufReader::new(clone), own_responses, 0, 0));
+    }
+    let mut last_event = std::time::Instant::now();
+    loop {
+        let mut all_satisfied = true;
+        for (cid, reader, own_responses, agent_ends, responses) in readers.iter_mut() {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {}
+                Ok(_) => {
+                    let line = line.trim_end().to_string();
+                    if !line.is_empty() {
+                        last_event = std::time::Instant::now();
+                        if line.contains(r#""type":"agent_end""#) {
+                            *agent_ends += 1;
+                        } else if serde_json::from_str::<serde_json::Value>(&line)
+                            .ok()
+                            .is_some_and(|e| e["type"] == "response" && e["command"] != "prompt")
+                        {
+                            *responses += 1;
+                        }
+                        world.mc_client_events.entry(*cid).or_default().push(line);
+                    }
+                }
+                // A 50 ms read timeout is the poll interval, not a failure;
+                // anything else ends this client's reading and the collection
+                // step reports it.
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => break,
+            }
+            if *agent_ends < total_turns || *responses < *own_responses {
+                all_satisfied = false;
+            }
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline || (all_satisfied && now.duration_since(last_event) >= QUIET) {
+            break;
+        }
+    }
+    // The clones shared the streams' descriptors; restore the timeout the
+    // collection step expects.
+    for stream in streams.values() {
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .ok();
+    }
 }
