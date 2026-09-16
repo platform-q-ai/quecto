@@ -48,7 +48,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     assert_eq!(agent.effective_max_tokens(), 100);
 
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let initial_stats =
@@ -81,7 +81,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
                 &[],
             ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                session.state_snapshot(0, None, 0, None),
+                session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

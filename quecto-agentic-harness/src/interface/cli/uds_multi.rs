@@ -194,9 +194,8 @@ pub(super) async fn multi_client_loop(
     // The active session's read model (#828, #1971): published with the
     // starting messages (same shape as a normal get_messages response, i.e.
     // including the injected system prompt), refreshed by the dispatch loop
-    // at each turn boundary, and read by the accept loop to serve
-    // newly-connected clients immediately — even while the dispatch loop is
-    // busy mid-turn.
+    // at each turn boundary, and read by the accept loop to serve newly
+    // connected clients immediately — even while the dispatch loop is busy.
     let session_reads = sessions.read_handles();
     let _ = session_reads
         .active_session
@@ -204,8 +203,9 @@ pub(super) async fn multi_client_loop(
         .await
         .publish(&messages);
 
-    let mut agent_session = AgentSession::new(model, session_key.clone());
+    let mut agent_session = AgentSession::new(model);
     let initial_state = agent_session.state_snapshot(
+        &session_key,
         messages.len(),
         None,
         agent.max_context_tokens(),

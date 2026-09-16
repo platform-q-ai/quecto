@@ -12,6 +12,25 @@ pub struct UsageTotals {
 }
 
 impl UsageTotals {
+    /// Billed totals only (no context occupancy): the shape a caller records
+    /// against a session tracker.
+    pub fn billed(
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        cost_micro_usd: u64,
+    ) -> Self {
+        Self {
+            billed_input_tokens: input_tokens,
+            billed_output_tokens: output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cost_micro_usd,
+            ..Self::default()
+        }
+    }
+
     pub fn record(&mut self, usage: &UsageInfo) {
         self.context_input_tokens = usage.context_input_tokens();
         self.output_tokens = self.output_tokens.saturating_add(usage.completion_tokens);

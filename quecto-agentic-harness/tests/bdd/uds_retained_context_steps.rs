@@ -175,7 +175,9 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             retention: Some(retention),
             base_dir: &base,
             workspace: &base,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model: "retained-context-model".into(),
             ephemeral: false,
             system_prompt: String::new(),

@@ -21,6 +21,14 @@ use std::path::Path;
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
 mod sessions_capability;
+/// Sessions epic close (#1968, D10 #1979): exact use-case/port/DTO
+/// inventories, one owner per transaction, signature vocabulary, the
+/// interface's parse/map/present rule, admitted raw-key sites, retirement
+/// and disposition inventories, documentation lockstep.
+#[path = "architecture/sessions_epic_close.rs"]
+mod sessions_epic_close;
+#[path = "architecture/sessions_epic_close_retirement.rs"]
+mod sessions_epic_close_retirement;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]

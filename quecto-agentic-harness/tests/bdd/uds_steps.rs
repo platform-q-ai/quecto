@@ -411,7 +411,9 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt,
@@ -2118,7 +2120,9 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt: String::new(),
@@ -2537,7 +2541,9 @@ fn mc_spawn_agent(
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt,

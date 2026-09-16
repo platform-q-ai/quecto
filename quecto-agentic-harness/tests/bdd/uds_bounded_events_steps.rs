@@ -1597,7 +1597,9 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt: String::new(),

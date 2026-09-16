@@ -9,6 +9,7 @@
 
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
+use quecto::application::agent_loop::UsageTotals;
 use quecto::application::context_pruning::estimate_total_tokens;
 use quecto::domain::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
@@ -247,10 +248,10 @@ fn then_provider_usage_drives_gauge_and_totals(world: &mut QuectoWorld) {
 
 #[given("multiple LLM calls return input, output, cache, and cost usage")]
 fn given_multiple_llm_calls(world: &mut QuectoWorld) {
-    let mut session = AgentSession::new("test-model".to_string(), "cli:default".to_string());
+    let mut session = AgentSession::new("test-model".to_string());
     // Two turns' worth of provider usage accumulate into the session totals.
-    session.record_usage(1_200, 340, 500, 20, 4_200);
-    session.record_usage(800, 160, 300, 10, 1_800);
+    session.record_usage("cli:test", UsageTotals::billed(1_200, 340, 500, 20, 4_200));
+    session.record_usage("cli:test", UsageTotals::billed(800, 160, 300, 10, 1_800));
     let messages = vec![
         Message::user("first"),
         Message::assistant("reply one", vec![]),

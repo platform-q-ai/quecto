@@ -5,6 +5,7 @@
 //! bound engine's run and `restore_workflow` replaces it with a saved run
 //! the same way; and the accounting reset it inherits still zeroes usage,
 //! drops the pending queue and reports the visible count.
+use quecto::application::agent_loop::UsageTotals;
 use quecto::application::sessions::ports::SessionSwitchRuntime;
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
 use quecto::domain::provider::EffortLevel;
@@ -13,7 +14,9 @@ use quecto::interface::cli::uds_session_switch_runtime::LoopSessionSwitchRuntime
 use super::switch_runtime_fixture::{Runtime, runtime};
 
 fn generation(rt: &Runtime) -> u64 {
-    rt.session.state_snapshot(0, None, 0, None).generation
+    rt.session
+        .state_snapshot("cli:contract", 0, None, 0, None)
+        .generation
 }
 
 #[test]
@@ -106,7 +109,8 @@ fn a_saved_workflow_run_is_restored_and_the_change_is_visible_only_when_it_moved
 #[test]
 fn the_inherited_accounting_reset_still_zeroes_usage_and_reports_the_count() {
     let mut rt = runtime("cli:contract");
-    rt.session.record_usage(10, 5, 2, 1, 7);
+    rt.session
+        .record_usage("cli:contract", UsageTotals::billed(10, 5, 2, 1, 7));
     rt.session.set_context_tokens(42);
     assert!(rt.session.enqueue_pending("follow-up".into()));
     LoopSessionSwitchRuntime::new(&mut rt.agent, &mut rt.session, &rt.execution, None)

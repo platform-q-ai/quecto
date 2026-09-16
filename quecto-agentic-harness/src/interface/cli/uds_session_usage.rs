@@ -1,3 +1,9 @@
+//! Session usage and statistics presenters (`get_session_stats`, the
+//! normalized usage log #1567): token, cost and context-occupancy
+//! accounting of the [`AgentSession`] tracker and the stats wire shape.
+//! Owner role: stats. Child module of `uds_session`; the `sessionKey` it
+//! presents is handed in by the caller from the active session's identity;
+//! it holds no session persistence.
 use super::*;
 
 #[derive(Debug, Clone, Default)]

@@ -2,6 +2,13 @@ use super::AgentLoopImpl;
 use crate::domain::session_identity::SessionIdentity;
 
 impl AgentLoopImpl {
+    /// The raw key of the session this loop runs for: the provider session
+    /// id, and the key the propagation adapter compares a new identity
+    /// against (D10 #1979).
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
+
     /// Adopt the session identity used for provider session IDs, spill
     /// retention and the session-aware tools (D7 #1976: propagated by the
     /// session transactions through the `SessionKeyPropagation` port,

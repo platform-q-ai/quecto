@@ -497,7 +497,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
             return;
         }
         let before = workflow_progress_fingerprint(ctx);
-        let Some(nudge) = workflow_nudge_message(ctx) else {
+        let Some(nudge) = workflow_nudge_message(ctx).await else {
             break;
         };
         let auto_continue = nudge.is_auto_continue();
@@ -507,7 +507,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
         // and model execution cancels this auto turn instead of racing it.
         #[cfg(test)]
         run_before_workflow_nudge_injection_test_hook();
-        if has_active_workflow_descendant(ctx) {
+        if has_active_workflow_descendant(ctx).await {
             break;
         }
         // A stalled previous nudged turn switches the auto-continue path to
@@ -611,7 +611,7 @@ async fn run_drained_message_guarded(
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return PromptOutcome::Cancelled;
     };
-    let session_key = ctx.session.session_key().to_string();
+    let session_key = ctx.sessions.current_session_key().await;
     let outcome = {
         let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
         let run = run_agent_message(PromptRun {

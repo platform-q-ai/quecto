@@ -61,7 +61,7 @@ impl Fx {
                 tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".into(),
             store: std::sync::Arc::new(store),
             _tmp: tmp,
@@ -84,7 +84,7 @@ impl Fx {
             messages: &mut self.messages,
             sessions: read_handles_over(self.store.clone(), &self.session_key, None, &[]),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

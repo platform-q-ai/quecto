@@ -59,7 +59,7 @@ impl Fixture {
             Self {
                 agent: make_agent(),
                 messages: Vec::new(),
-                session: AgentSession::new("stub".into(), "cli:test".into()),
+                session: AgentSession::new("stub".into()),
                 session_key: "cli:test".to_string(),
                 _tmp: tmp,
                 writer: tokio::io::sink(),
@@ -92,7 +92,7 @@ impl Fixture {
                 &[],
             ),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -399,7 +399,7 @@ async fn run_stub_turn_event_types_with_sink(
 
     let mut agent = make_agent();
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

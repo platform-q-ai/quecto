@@ -28,12 +28,12 @@ pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     /// The run's retained-context handles (D9 #1978): the one store the
     /// agent's pruning writer and the active session's recovery backstop
-    /// share, derived here so the two cannot diverge; `None` runs the loop
-    /// without retained context (unit rigs).
+    /// share, derived here so the two cannot diverge; `None` for unit rigs.
     pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
-    pub session_key: String,
+    /// The typed identity the loop opens (D10 #1979).
+    pub identity: crate::domain::session_identity::SessionIdentity,
     pub model: String,
     pub ephemeral: bool,
     pub system_prompt: String,
@@ -87,7 +87,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         retention,
         base_dir,
         workspace,
-        session_key,
+        identity,
         model,
         ephemeral,
         system_prompt,
@@ -108,10 +108,11 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         parent_control,
         teardown_graph,
     } = args;
+    let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         store: session_store_override,
-        session_key: session_key.clone(),
+        identity,
         ephemeral,
         system_prompt: system_prompt.clone(),
         spill_store: retention.as_ref().map(|handles| handles.store.clone()),
@@ -248,9 +249,10 @@ async fn single_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut agent_session = AgentSession::new(model, session_key.clone());
-    let max_context_tokens = agent.max_context_tokens();
-    let initial_effort = agent.effort().map(|l| l.as_str().to_string());
+    let mut agent_session = AgentSession::new(model);
+    let effort = agent.effort().map(|l| l.as_str().to_string());
+    let initial_state =
+        agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
     let session_reads = sessions.read_handles();
     let _ = session_reads
@@ -267,9 +269,7 @@ async fn single_client_loop(
             agent: &mut agent,
             messages: &mut messages,
             sessions: session_reads.clone(),
-            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
-            )),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

@@ -53,7 +53,7 @@ impl Fixture {
         let mut fixture = Self {
             agent,
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".to_string(),
             store: store.clone(),
             sessions: list_handle_placeholder(&store),
@@ -133,10 +133,16 @@ impl Fixture {
         self.compose_sessions();
     }
 
-    /// The key the loop currently stands for, as the tracker reports it
+    /// The key the loop currently stands for, read from the active session
     /// (`session_key` is the key the fixture was opened on).
     pub(super) fn current_session_key(&self) -> String {
-        self.session.session_key().to_string()
+        self.sessions
+            .active_session
+            .try_read()
+            .expect("the fixture holds no other lock")
+            .identity()
+            .runtime_key()
+            .to_string()
     }
 
     /// Track a sub-agent roster: the context sees it and the save
@@ -171,7 +177,7 @@ impl Fixture {
             messages: &mut self.messages,
             sessions: self.sessions.read_handles(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

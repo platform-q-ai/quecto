@@ -128,7 +128,7 @@ fn test_clear_history_type_name() {
 
 #[test]
 fn test_clear_history_drains_pending() {
-    let mut session = AgentSession::new("model".into(), "key".into());
+    let mut session = AgentSession::new("model".into());
     session.enqueue_pending("follow-up-1".into());
     session.enqueue_pending("follow-up-2".into());
 
@@ -137,7 +137,7 @@ fn test_clear_history_drains_pending() {
 
     assert_eq!(
         session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         0
     );
@@ -145,7 +145,7 @@ fn test_clear_history_drains_pending() {
 
 #[test]
 fn test_clear_history_blocked_while_streaming() {
-    let mut session = AgentSession::new("model".into(), "key".into());
+    let mut session = AgentSession::new("model".into());
     session.set_streaming(true);
     // The handler checks is_streaming() and returns error — verify the guard.
     assert!(session.is_streaming());

@@ -55,7 +55,7 @@ impl ActEnv {
                 },
             ),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".to_string(),
             writer: tokio::io::sink(),
         }
@@ -66,7 +66,7 @@ impl ActEnv {
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0, None);
+        let state = self.session.state_snapshot("cli:test", 0, None, 0, None);
         let save_session =
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,
@@ -148,7 +148,7 @@ async fn test_926_single_completion_drives_a_parent_turn() {
 
     assert_eq!(
         ctx.session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         0,
         "the buffered completion note must be consumed by the idle drain"

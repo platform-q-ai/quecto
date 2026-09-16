@@ -8,7 +8,9 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
     let handles = build_session_handles(SessionLoopInputs {
         base_dir: tmp.path().to_path_buf(),
         store: None,
-        session_key: "cli:export".into(),
+        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+            "cli:export",
+        ),
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,

@@ -647,7 +647,7 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
 #[test]
 fn wake_nudges_queue_as_automatic_messages() {
     use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
-    let mut session = AgentSession::new("m".into(), "k".into());
+    let mut session = AgentSession::new("m".into());
     assert!(session.enqueue_control(
         None,
         crate::interface::cli::uds_swarm_control::SWARM_WAKE,

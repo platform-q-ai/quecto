@@ -316,7 +316,9 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt: String::new(),

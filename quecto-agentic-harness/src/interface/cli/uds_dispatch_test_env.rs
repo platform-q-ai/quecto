@@ -148,7 +148,7 @@ impl DispatchTestEnv {
             latch,
             agent,
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".to_string(),
             store,
             sessions,
@@ -185,12 +185,27 @@ impl DispatchTestEnv {
         self.agent = agent;
     }
 
+    /// Move the env onto another session identity (D10 #1979): the active
+    /// session is recomposed over the same store and workflow, as the
+    /// transitions leave it; the tracker holds no key to set.
+    pub(super) fn set_session_key(&mut self, session_key: impl Into<String>) {
+        self.session_key = session_key.into();
+        let mut inputs =
+            super::dispatch_session_roster_tests::loop_inputs(self.tmp.path(), &self.session_key);
+        inputs.store = Some(self.store.clone());
+        inputs.durable_prefix = self.latch.clone();
+        inputs.workflow_state = Some(self.workflow.clone());
+        self.sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
+    }
+
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0, None);
+        let state = self
+            .session
+            .state_snapshot(&self.session_key, 0, None, 0, None);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),

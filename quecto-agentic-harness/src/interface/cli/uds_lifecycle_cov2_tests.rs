@@ -61,7 +61,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         retention: None,
         base_dir: base,
         workspace: base,
-        session_key: "cli:life".into(),
+        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:life"),
         model: "stub".into(),
         ephemeral: true,
         system_prompt: "system".into(),

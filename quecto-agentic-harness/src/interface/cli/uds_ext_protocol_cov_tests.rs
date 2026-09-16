@@ -419,15 +419,14 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = cov_agent();
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let registry = new_client_tool_registry();
     let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<String>(4);
     register_client_writer(&registry, 123, writer_tx);
     let tools = [tool_reg("cov_ext")];
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
@@ -523,12 +522,11 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     );
     agent.register_uds_tool_for_owner(existing_tool, "uds:client:123".into());
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("weather"), tool_reg("blocked_ext")];
     let save_session =

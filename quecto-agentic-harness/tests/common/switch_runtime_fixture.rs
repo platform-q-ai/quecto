@@ -130,7 +130,7 @@ pub fn runtime(session_key: &str) -> Runtime {
     .unwrap();
     Runtime {
         agent,
-        session: AgentSession::new("stub".into(), session_key.into()),
+        session: AgentSession::new("stub".into()),
         execution: Arc::new(Mutex::new(ExecutionState::default())),
         workflow: Arc::new(Mutex::new(workflow)),
         tool,

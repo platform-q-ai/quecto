@@ -65,7 +65,7 @@ impl EffortFx {
         Self {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             _tmp: tmp,
@@ -97,7 +97,7 @@ impl EffortFx {
                 &[],
             ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
