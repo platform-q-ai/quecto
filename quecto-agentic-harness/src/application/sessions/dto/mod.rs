@@ -8,6 +8,7 @@ use crate::domain::session_identity::SessionKeyPrefix;
 pub mod clear_conversation;
 pub mod history;
 pub mod message_recovery;
+pub mod resume_disposition;
 pub mod resume_saved_session;
 pub mod retained_context;
 pub mod rewind_conversation;
@@ -21,6 +22,10 @@ pub use clear_conversation::{ClearConversationError, ClearedConversation};
 pub use history::{HistoryError, HistoryPage, HistoryQuery};
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
+};
+pub use resume_disposition::{
+    plan_disposition, refuse_silent_cross_workspace_restore, CrossFolderResumeRequest,
+    DispositionError, DispositionPlan,
 };
 pub use resume_saved_session::{
     ResumeSavedSessionError, ResumeTarget, SavedSessionResumed, StartupSessionOpened,
