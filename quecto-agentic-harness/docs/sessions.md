@@ -11,7 +11,7 @@ more — see [Identity](#identity-and-the-workspace-seam)):
 
 | Kind | Key shape | Example | Created by |
 |------|-----------|---------|------------|
-| Named CLI session | `cli:<name>` | `cli:my-project`, `cli:default` | `quecto agent --mode uds -s my-project` (default name `default`) |
+| Named CLI session | `cli:<name>` | `cli:my-project`, `cli:default` | `quecto agent --mode uds -s my-project`; a one-shot `quecto agent -m …` without `-s` uses `default` |
 | User chat | `chat-<unix-secs>-<uniq>` | `chat-1765930000-1a2b3c` | an unnamed `quecto agent --mode uds` run, and every `new_session` |
 
 Sessions are stored as files in `<base_dir>/sessions/` by one flat layout
@@ -32,11 +32,14 @@ replay.
 ### Persistent (default)
 
 ```bash
-# Uses session "cli:default"
+# Unnamed UDS run: draws a fresh "chat-<unix-secs>-<uniq>" key
 quecto agent --mode uds
 
 # Uses session "cli:my-project"
 quecto agent --mode uds -s my-project
+
+# One-shot run without -s: uses session "cli:default"
+quecto agent -m "hello"
 ```
 
 When the agent starts, it claims and loads the session from disk (if it
@@ -82,7 +85,8 @@ Agent starts
   │     └── (same cycle, building on previous history)
   │
   ├── Client sends new_session / resume_session
-  │     └── Departing session saved, children settled, key released;
+  │     └── Children settled → departing session saved → (resume: target
+  │         claimed and loaded) → roster reset → departing key released →
   │         the loop stands for the new identity (see the protocol reference)
   │
   ├── Last client disconnects

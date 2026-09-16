@@ -734,16 +734,54 @@ fn no_singular_import_alias_or_re_export_survives() {
     let re_exports: BTreeSet<String> = production_files()
         .into_iter()
         .filter(|path| {
-            production_code(path).iter().any(|(_, line)| {
-                line.trim_start()
-                    .starts_with("pub use crate::application::sessions")
-            })
+            production_code(path)
+                .iter()
+                .any(|(_, line)| re_exports_sessions(line))
         })
         .collect();
     assert!(
         re_exports.is_empty(),
         "no module re-exports the sessions capability: {re_exports:?}"
     );
+}
+
+/// A `pub use crate::application::sessions…` line under any visibility
+/// (`pub`, `pub(crate)`, `pub(super)`, `pub(in …)`): a re-export of the
+/// capability, which no module may offer (F1 of the #1998 review widened
+/// this from the bare `pub use` spelling).
+fn re_exports_sessions(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let Some(rest) = trimmed.strip_prefix("pub") else {
+        return false;
+    };
+    let rest = match rest.strip_prefix('(') {
+        Some(vis) => match vis.split_once(')') {
+            Some((_, after)) => after,
+            None => return false,
+        },
+        None => rest,
+    };
+    rest.trim_start()
+        .starts_with("use crate::application::sessions")
+}
+
+#[test]
+fn re_export_needle_sees_every_visibility() {
+    for line in [
+        "pub use crate::application::sessions::use_cases::ListSessions;",
+        "pub(crate) use crate::application::sessions::use_cases::ResumeSavedSession as Hidden;",
+        "    pub(super) use crate::application::sessions::dto::HistoryPage;",
+        "pub(in crate::interface) use crate::application::sessions::ports::SessionStore;",
+    ] {
+        assert!(re_exports_sessions(line), "{line}");
+    }
+    for line in [
+        "use crate::application::sessions::use_cases::ListSessions;",
+        "pub use crate::application::agent_loop::UsageTotals;",
+        "pub(crate) use uds_session_message_range::recovered_content_json;",
+    ] {
+        assert!(!re_exports_sessions(line), "{line}");
+    }
 }
 
 #[test]

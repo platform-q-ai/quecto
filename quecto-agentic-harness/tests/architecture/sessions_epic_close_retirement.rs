@@ -144,6 +144,176 @@ fn reaches_a_persistence_method(line: &str) -> bool {
         || line.contains(".save_clean_delta(")
 }
 
+/// The persistence methods of the two store ports.
+const PERSISTENCE_METHODS: &[&str] = &[
+    "claim",
+    "release",
+    "load",
+    "save",
+    "save_delta",
+    "save_clean_delta",
+    "exists",
+    "list",
+    "append",
+    "recall",
+    "list_entries",
+    "has_entries",
+    "clear",
+    "scrub_sync",
+];
+
+/// The field names a store handle travels under.
+const STORE_FIELDS: &[&str] = &["store", "spill_store", "session_store"];
+
+/// Every persistence-method call of `source` whose receiver is a store —
+/// a field chain through `store` / `spill_store` / `session_store`, or a
+/// local bound from one (`let owner = handles.store.clone();`) — found on
+/// the syntax tree, so neither a `let target = &id;` argument nor a line
+/// break before the `&` hides it (F2 of the #1998 review). `cfg(test)`
+/// items are skipped; locals are collected file-wide, fail-closed.
+fn store_reaches_in_source(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        })
+    }
+    /// Does `expr` reach a store: a store field, a marked local, or an
+    /// expression built on one (method chain, call argument, reference,
+    /// await, `?`, parens, block tail)?
+    fn touches_store(expr: &syn::Expr, marked: &BTreeSet<String>) -> bool {
+        match expr {
+            syn::Expr::Field(field) => {
+                matches!(&field.member, syn::Member::Named(name) if STORE_FIELDS.contains(&name.to_string().as_str()))
+                    || touches_store(&field.base, marked)
+            }
+            syn::Expr::Path(path) => path
+                .path
+                .get_ident()
+                .is_some_and(|ident| marked.contains(&ident.to_string())),
+            syn::Expr::MethodCall(call) => {
+                touches_store(&call.receiver, marked)
+                    || call.args.iter().any(|arg| touches_store(arg, marked))
+            }
+            syn::Expr::Call(call) => call.args.iter().any(|arg| touches_store(arg, marked)),
+            syn::Expr::Reference(reference) => touches_store(&reference.expr, marked),
+            syn::Expr::Await(awaited) => touches_store(&awaited.base, marked),
+            syn::Expr::Try(tried) => touches_store(&tried.expr, marked),
+            syn::Expr::Paren(paren) => touches_store(&paren.expr, marked),
+            syn::Expr::Unary(unary) => touches_store(&unary.expr, marked),
+            syn::Expr::Cast(cast) => touches_store(&cast.expr, marked),
+            syn::Expr::Block(block) => block.block.stmts.last().is_some_and(
+                |stmt| matches!(stmt, syn::Stmt::Expr(expr, _) if touches_store(expr, marked)),
+            ),
+            _ => false,
+        }
+    }
+    fn pat_idents(pat: &syn::Pat, out: &mut Vec<String>) {
+        match pat {
+            syn::Pat::Ident(ident) => out.push(ident.ident.to_string()),
+            syn::Pat::Type(typed) => pat_idents(&typed.pat, out),
+            syn::Pat::Reference(reference) => pat_idents(&reference.pat, out),
+            syn::Pat::Tuple(tuple) => tuple.elems.iter().for_each(|p| pat_idents(p, out)),
+            _ => {}
+        }
+    }
+    struct Scan {
+        marked: BTreeSet<String>,
+        found: Vec<String>,
+        collecting: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let attrs = match item {
+                syn::Item::Mod(item) => &item.attrs,
+                syn::Item::Fn(item) => &item.attrs,
+                syn::Item::Impl(item) => &item.attrs,
+                _ => {
+                    syn::visit::visit_item(self, item);
+                    return;
+                }
+            };
+            if !is_cfg_test(attrs) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+        fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+            if !is_cfg_test(&method.attrs) {
+                syn::visit::visit_impl_item_fn(self, method);
+            }
+        }
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if self.collecting
+                && let Some(init) = &local.init
+                && touches_store(&init.expr, &self.marked)
+            {
+                let mut names = Vec::new();
+                pat_idents(&local.pat, &mut names);
+                self.marked.extend(names);
+            }
+            syn::visit::visit_local(self, local);
+        }
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let method = call.method.to_string();
+            if !self.collecting
+                && PERSISTENCE_METHODS.contains(&method.as_str())
+                && touches_store(&call.receiver, &self.marked)
+            {
+                self.found
+                    .push(format!("`.{method}(…)` on a store receiver"));
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut scan = Scan {
+        marked: BTreeSet::new(),
+        found: Vec::new(),
+        collecting: true,
+    };
+    // Two collecting passes so a local bound from another marked local
+    // resolves whatever the declaration order, then the reach pass.
+    scan.visit_file(&file);
+    scan.visit_file(&file);
+    scan.collecting = false;
+    scan.visit_file(&file);
+    scan.found
+}
+
+#[test]
+fn store_reach_scan_sees_renamed_receivers_and_arguments_without_an_ampersand() {
+    for rogue in [
+        // F2 plant 1: the argument carries no `&` at the call site.
+        "async fn f(handles: &SessionHandles, id: SessionIdentity) { let target = &id; handles.store.load(target).await; handles.store.release(target); }",
+        // F2 plant 2: the `&` sits on the next line, the receiver is a renamed local.
+        "fn f(handles: &SessionHandles, k: SessionIdentity) { let owner = handles.store.clone(); owner.load(\n&k); }",
+        "fn f(h: &SessionHandles) { let s = h.store.clone(); let t = s; t.claim(&id()); }",
+        "async fn f(r: &RetentionHandles, i: &SessionIdentity) { r.spill_store.recall(i, &SpillId::new(x)).await; }",
+        "async fn f(ctx: &Ctx) { Arc::clone(&ctx.sessions.store).save_delta(&session, 3).await; }",
+        "fn f(ctx: &Ctx) { ctx.session_store.exists(&id); }",
+        "async fn f(h: &SessionHandles) { let n = h.store.list(&SessionListQuery::All).await; }",
+    ] {
+        let found = store_reaches_in_source(rogue);
+        assert!(!found.is_empty(), "must catch:\n{rogue}");
+    }
+    for benign in [
+        "async fn f(ctx: &mut Ctx) { ctx.save_session.save(&mut messages, SaveTrigger::Routine).await; }",
+        "fn f(sessions: &SessionHandles) -> Inputs { Inputs { store: sessions.store.clone(), spill_store: retention.as_ref().map(|h| h.store.clone()) } }",
+        "fn f(flag: &AtomicBool) { flag.store(true, Ordering::SeqCst); let v = cell.load(Ordering::SeqCst); }",
+        "fn f(mut v: Vec<u8>, mut w: Vec<u8>) { v.append(&mut w); v.clear(); }",
+        "fn f(store: &CredentialStore) { store.store(Credential::default()); }",
+        "fn f(ctx: &Ctx) { let page = ctx.sessions.read_history.page(m, p, 5, None); }",
+        "#[cfg(test)] fn rig(h: &SessionHandles) { h.store.load(&id()); }",
+        "fn f(history: &History) { let x = history.recall(page_size); }",
+    ] {
+        let found = store_reaches_in_source(benign);
+        assert!(found.is_empty(), "must spare:\n{benign}\nfound {found:?}");
+    }
+}
+
 #[test]
 fn persistence_reach_predicate_catches_rogue_calls_and_spares_requests() {
     for rogue in [
@@ -209,6 +379,22 @@ fn interface_session_modules_parse_map_and_present_only() {
     assert!(
         reaches.is_empty(),
         "interface reaches a persistence method directly: {reaches:#?}"
+    );
+    // The syntax-tree scan: the same rule with the receiver resolved —
+    // a store field chain or a local bound from one — so no argument
+    // spelling or line break hides a reach.
+    let tree_reaches: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with("src/interface/"))
+        .flat_map(|path| {
+            store_reaches_in_source(&std::fs::read_to_string(&path).unwrap())
+                .into_iter()
+                .map(move |what| format!("{path}: {what}"))
+        })
+        .collect();
+    assert!(
+        tree_reaches.is_empty(),
+        "interface reaches a store on the syntax tree: {tree_reaches:#?}"
     );
     let whole_interface: Vec<String> = production_files()
         .into_iter()
