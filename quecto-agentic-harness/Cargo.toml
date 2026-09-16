@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.35"
+version = "0.107.36"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -68,7 +68,8 @@ test-support = []
 syn = { version = "2", features = ["full", "visit"] }
 cucumber = "0.21"
 futures = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# `test-util` enables the paused-clock tests (`#[tokio::test(start_paused = true)]`).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }
 tempfile = "3"
 wiremock = "0.6"
 regex = "1"

@@ -55,6 +55,17 @@ the `--lib` row above drops from ~26 s to ~20 s on 32 cpus:
 cargo nextest run --workspace --features quecto-agentic-harness/test-support --bins --profile ci --lib
 ```
 
+To find slow BDD scenarios, run a lane with per-scenario timings and one
+scenario at a time per shard (with the default 25-way co-scheduling a
+scenario's clock also runs while others hold the executor):
+
+```bash
+QUECTO_BDD_TIMING=1 QUECTO_BDD_CONCURRENCY=1 QUECTO_BDD_KEEP_SCRATCH=1 \
+  bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 32 --timeout 20m
+cat .git/non-real-bdd-shards.*/shard-*.log | grep '^BDD_TIMING' | sort -t$'\t' -k3 -rn | head
+# columns: wall seconds, CPU seconds (process + reaped children), feature, scenario
+```
+
 `run-bdd-shards.sh` builds the test binary once and runs it per shard; with
 `--coverage` the instrumented build lives in a persistent `target/llvm-cov-<suite>`
 directory, so a second coverage run only re-executes the scenarios (~70 s instead

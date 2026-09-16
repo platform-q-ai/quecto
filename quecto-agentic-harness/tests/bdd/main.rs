@@ -294,6 +294,12 @@ impl std::fmt::Debug for DebugSwarm {
 #[derive(Debug, Default, World)]
 #[world(init = Self::new)]
 pub struct QuectoWorld {
+    /// When this scenario's first step began; `QUECTO_BDD_TIMING=1` prints
+    /// each scenario's elapsed time to stderr for the slow-scenario census.
+    pub scenario_started: Option<std::time::Instant>,
+    /// Process + reaped-children CPU seconds when the scenario began; the
+    /// per-scenario CPU delta is meaningful only under QUECTO_BDD_CONCURRENCY=1.
+    pub scenario_cpu_started: f64,
     pub admission: inference_admission_steps::AdmissionState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
@@ -1502,6 +1508,23 @@ mod workflow_tool_steps;
 // Runner
 // ===========================================================================
 
+/// User + system CPU of this process and of the children it has reaped.
+fn cpu_seconds_self_and_children() -> f64 {
+    let mut total = 0.0;
+    for who in [libc::RUSAGE_SELF, libc::RUSAGE_CHILDREN] {
+        // SAFETY: rusage is plain old data, so the all-zero value is valid.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: `usage` is a valid, writable rusage; `who` is a documented selector.
+        if unsafe { libc::getrusage(who, &mut usage) } == 0 {
+            total += usage.ru_utime.tv_sec as f64
+                + usage.ru_utime.tv_usec as f64 / 1e6
+                + usage.ru_stime.tv_sec as f64
+                + usage.ru_stime.tv_usec as f64 / 1e6;
+        }
+    }
+    total
+}
+
 fn main() {
     // cucumber's debug-build scenario futures are stack-hungry (the runner
     // moves the World through several hundred-KB frames per nesting level),
@@ -1549,8 +1572,41 @@ fn run_cucumber() {
 
     futures::executor::block_on(
         QuectoWorld::cucumber()
-            .max_concurrent_scenarios(25)
+            // QUECTO_BDD_CONCURRENCY=1 makes each scenario's elapsed time its
+            // own cost (with the default, a scenario's clock also runs while
+            // the co-scheduled ones hold the executor).
+            .max_concurrent_scenarios(
+                std::env::var("QUECTO_BDD_CONCURRENCY")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or(25),
+            )
             .fail_on_skipped()
+            .before(|_, _, _, world| {
+                Box::pin(async move {
+                    world.scenario_started = Some(std::time::Instant::now());
+                    world.scenario_cpu_started = cpu_seconds_self_and_children();
+                })
+            })
+            .after(|feature, _, scenario, _, world| {
+                let line = std::env::var_os("QUECTO_BDD_TIMING").and_then(|_| {
+                    let world = world?;
+                    let started = world.scenario_started?;
+                    Some(format!(
+                        "BDD_TIMING\t{:.3}\t{:.3}\t{}\t{}",
+                        started.elapsed().as_secs_f64(),
+                        cpu_seconds_self_and_children() - world.scenario_cpu_started,
+                        feature.name,
+                        scenario.name
+                    ))
+                });
+                Box::pin(async move {
+                    if let Some(line) = line {
+                        eprintln!("{line}");
+                    }
+                })
+            })
             // `_and_exit` makes the process exit non-zero when any scenario
             // fails. Plain `filter_run` returns normally even on failure, so
             // the bdd test binary exited 0 with failing scenarios — meaning the

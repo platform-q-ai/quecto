@@ -815,6 +815,7 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 | --- | --- |
 | TERM/KILL of a directly launched, unreaped child | `infrastructure/processes/owned_child_supervisor.rs` |
 | `PR_SET_PDEATHSIG` armed on a spawned process | `infrastructure/processes/parent_death_signal.rs` |
+| `PR_SET_PDEATHSIG` a persistent swarm-board interpreter arms on itself (its own prelude; the harness sends it nothing) | `infrastructure/tools/swarm_board_worker.rs` |
 | Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
 | Python `ExecutionScope` job containment | `infrastructure/tools/swarm_process.rs`, `swarm_scope.rs`, the job cancel in `swarm.rs` |
 | Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |

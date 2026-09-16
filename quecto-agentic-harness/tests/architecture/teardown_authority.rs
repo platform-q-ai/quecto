@@ -347,6 +347,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          so the supervisor's handle covers it; no signal here",
     ),
     (
+        "src/infrastructure/tools/swarm_board_worker.rs",
+        &["prctl"],
+        "the persistent coordination interpreter binds its own life to the \
+         harness in its prelude (PR_SET_PDEATHSIG, the child's own syscall); \
+         the harness sends it nothing and closes stdin to end it",
+    ),
+    (
         "src/infrastructure/tools/swarm_bridge.rs",
         &["/proc/"],
         "signal-free liveness observation (`/proc/<pid>/stat` start time, \
