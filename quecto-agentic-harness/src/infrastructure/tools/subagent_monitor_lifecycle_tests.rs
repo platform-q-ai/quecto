@@ -15,14 +15,22 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
         .insert("child".to_string(), test_entry());
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
 
-    let handle = spawn_monitor_task_unbound(
-        "child".to_string(),
-        sock,
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
-        Some(tx),
         None,
-        None,
-    );
+        Some(tx.clone()),
+    )
+    .observe_exit;
+    let handle = spawn_monitor_task(MonitorSpec {
+        agent_id: "child".to_string(),
+        socket_path: sock,
+        registry: registry.clone(),
+        notify_tx: Some(tx),
+        broadcast_tx: None,
+        parent_id: None,
+        observer,
+        parent_control: None,
+    });
 
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {

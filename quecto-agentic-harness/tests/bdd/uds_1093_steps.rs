@@ -2,13 +2,16 @@
 
 use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use quecto::domain::agent::AgentLoop;
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
+use quecto::domain::session::Session;
+use quecto::domain::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -180,12 +183,12 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         .clone()
         .expect("no base dir — add 'Given a temp base directory'");
     let session_key = Session::build_key("cli", ISSUE_1093_SESSION);
-    let store = FileSessionStore::new(&base);
-    let spill_store = Arc::new(FileContextSpillStore::new(base.clone()));
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
+    let spill_store = Arc::new(FileContextSpillStore::new(FlatSessionLayout::new(&base)));
     let rt = tokio::runtime::Runtime::new().unwrap();
     let messages = rt.block_on(async {
         spill_store
-            .clear(&session_key)
+            .clear(&SessionIdentity::from_persisted_key(&session_key))
             .await
             .expect("clear prior spill");
 
@@ -198,7 +201,9 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
             model: "issue-1093-seed".into(),
             max_tokens: 100,
             temperature: 0.0,
-            spill_store: Some(spill_store.clone()),
+            retention: Some(quecto::composition::retention::context_retention_over(
+                spill_store.clone(),
+            )),
             session_key: session_key.clone(),
             context_collapse_after_tool_calls: u32::MAX,
             max_context_tokens: 190_000,
@@ -231,14 +236,14 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         assert!(collapsed.content.contains("recall("));
         if !include_spill {
             spill_store
-                .clear(&session_key)
+                .clear(&SessionIdentity::from_persisted_key(&session_key))
                 .await
                 .expect("remove seeded spills for fallback scenario");
         }
         messages
     });
     let session = Session {
-        key: session_key.clone(),
+        key: SessionIdentity::from_persisted_key(&session_key),
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -295,7 +300,9 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         &mut registry,
         &ext_registry,
     );
-    let spill_store = Arc::new(FileContextSpillStore::new(base.to_path_buf()));
+    let retention = quecto::composition::retention::retention_handles_over(Arc::new(
+        FileContextSpillStore::new(FlatSessionLayout::new(base)),
+    ));
     let session_key = Session::build_key("cli", ISSUE_1093_SESSION);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -304,7 +311,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: Some(spill_store),
+        retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -325,14 +332,18 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            retention: Some(retention),
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral: false,
             system_prompt: String::new(),
             socket_path: socket_for_thread,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_reg),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::Persistent,

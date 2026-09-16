@@ -184,13 +184,13 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     let (notify_tx, notify_rx) =
         quecto::infrastructure::tools::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
-    world.spawn_tool = Some(
+    world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(subagent_registry_for_spawn)
             .with_notify_tx(notify_tx)
             .with_event_forwarding(Some(broadcast_tx.clone()), None),
-    );
+    ));
     world.notify_rx = Some(notify_rx);
     world.spawn_broadcast_rx = Some(broadcast_rx);
 
@@ -212,25 +212,14 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     // claim ladder an operator kill walks.
     let owners =
         crate::agent_cmd_tool_steps::termination_owners(&subagent_registry, Some(broadcast_tx));
-    let list_environments = std::sync::Arc::new(
-        quecto::application::environments::use_cases::ListEnvironmentsQuery::new(
-            environment_registry.clone(),
-        ),
-    );
-    let kill_environment = std::sync::Arc::new(
-        quecto::application::environments::use_cases::KillEnvironment::new(
-            environment_registry,
-            owners.member_shutdown.clone(),
-            std::sync::Arc::new(
-                quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
-            ),
-        ),
+    let environment_control = quecto::composition::environments::build_environment_control(
+        environment_registry,
+        owners.member_shutdown.clone(),
     );
     world.agent_cmd_tool = Some(
         quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry.clone())
             .with_kill_tool(owners.kill_tool)
-            .with_list_environments(list_environments)
-            .with_environment_control(kill_environment),
+            .with_environment_control(environment_control),
     );
 }
 
@@ -998,6 +987,7 @@ fn delegated_agents(world: &QuectoWorld) -> RegistryDelegatedAgents {
             .clone(),
         None,
         None,
+        quecto::composition::environments::build_member_finalizer,
     )
 }
 
@@ -1048,6 +1038,61 @@ fn kill_result_json(world: &QuectoWorld) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("kill_container result is JSON: {e}: {}", r.content))
 }
 
+/// Any member, asked in any order, may truthfully have ended already when
+/// the delegated shutdown reaches it — under a loaded runner (24 CI shards)
+/// a member's own turn or lifetime ends in the seconds a settlement takes —
+/// so the kill reports it `already-exited` rather than `graceful`. Either is
+/// a settled end; the properties under test (every member settled exactly
+/// once before the retained kill runs exactly once — or is withheld — with
+/// no live member, and the final listing) are asserted by the steps that
+/// follow. An `already-exited` member must really be an exited row.
+#[then(expr = "the kill result should report member {string} settled gracefully or already gone")]
+fn then_kill_result_member_settled_or_gone(world: &mut QuectoWorld, agent_id: String) {
+    let parsed = kill_result_json(world);
+    let row = world.agent_cmd_registry.as_ref().and_then(|registry| {
+        let entries = registry.lock().unwrap();
+        entries
+            .values()
+            .find(|entry| entry.display_name == agent_id)
+            .map(|entry| {
+                (
+                    entry.agent_uuid.as_str().to_owned(),
+                    entry.status.clone(),
+                    entry
+                        .exit_signal_tx
+                        .as_ref()
+                        .and_then(|tx| tx.borrow().clone()),
+                )
+            })
+    });
+    let (uuid, status, exit) =
+        row.unwrap_or_else(|| panic!("member {agent_id} has no row: {parsed}"));
+    let settled = parsed["settled"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("kill result carries `settled`: {parsed}"));
+    let entry = settled
+        .iter()
+        .find(|entry| entry["agent"] == uuid)
+        .unwrap_or_else(|| panic!("member {agent_id} ({uuid}) is not listed as settled: {parsed}"));
+    match entry["result"].as_str() {
+        Some("graceful") => {}
+        Some("already-exited") => {
+            eprintln!(
+                "member {agent_id} had already ended when it was asked (status {status:?}, exit {exit:?})"
+            );
+            assert_eq!(
+                status,
+                quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited,
+                "an already-exited member is an exited row: {parsed}"
+            );
+        }
+        other => {
+            panic!("member {agent_id} settled {other:?}, not graceful/already-exited: {parsed}")
+        }
+    }
+}
+
 #[then(expr = "the kill result should report member {string} settled {string}")]
 fn then_kill_result_member_settled(world: &mut QuectoWorld, agent_id: String, result: String) {
     let parsed = kill_result_json(world);
@@ -1071,6 +1116,44 @@ fn then_kill_result_member_settled(world: &mut QuectoWorld, agent_id: String, re
         .find(|entry| entry["agent"] == uuid)
         .unwrap_or_else(|| panic!("member {agent_id} ({uuid}) is not listed as settled: {parsed}"));
     assert_eq!(entry["result"], result, "{parsed}");
+}
+
+/// The kill's `settled` list names exactly these members (comma separated
+/// display names), each exactly once: every member was asked once and
+/// nothing else was.
+#[then(expr = "the kill result should settle exactly the members {string} once each")]
+fn then_kill_result_settles_exactly(world: &mut QuectoWorld, members: String) {
+    let parsed = kill_result_json(world);
+    let expected: Vec<String> = members
+        .split(',')
+        .map(|name| {
+            let name = name.trim();
+            world
+                .agent_cmd_registry
+                .as_ref()
+                .and_then(|registry| {
+                    let entries = registry.lock().unwrap();
+                    entries
+                        .values()
+                        .find(|entry| entry.display_name == name)
+                        .map(|entry| entry.agent_uuid.as_str().to_owned())
+                })
+                .unwrap_or_else(|| panic!("member {name} has no registry row: {parsed}"))
+        })
+        .collect();
+    let mut settled: Vec<String> = parsed["settled"]
+        .as_array()
+        .unwrap_or_else(|| panic!("kill result carries `settled`: {parsed}"))
+        .iter()
+        .map(|entry| entry["agent"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    let mut wanted = expected.clone();
+    settled.sort();
+    wanted.sort();
+    assert_eq!(
+        settled, wanted,
+        "every member is settled exactly once and nothing else is: {parsed}"
+    );
 }
 
 #[then(expr = "the retained kill should have found {int} live member(s)")]

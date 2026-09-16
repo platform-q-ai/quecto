@@ -4,7 +4,7 @@
 use super::{AgentSession, SuspensionCause};
 
 fn session() -> AgentSession {
-    AgentSession::new("m".into(), "k".into())
+    AgentSession::new("m".into())
 }
 
 #[test]

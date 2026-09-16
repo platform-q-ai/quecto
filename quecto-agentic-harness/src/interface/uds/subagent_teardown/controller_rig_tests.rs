@@ -77,7 +77,7 @@ impl Rig {
         assert!(self.routing.calls().is_empty());
         assert_eq!(self.cancellation.calls.load(Ordering::SeqCst), 0);
         assert!(self.persistence.calls.lock().unwrap().is_empty());
-        assert!(self.exit.signalled.lock().unwrap().is_empty());
+        assert!(self.exit.readiness_signals.lock().unwrap().is_empty());
         assert_eq!(self.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
     }
 

@@ -71,7 +71,7 @@ impl App {
              \x20 Escape         Abort/cancel running agent or clear editor\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
-             \x20 Ctrl+D         Exit\n\
+             \x20 Ctrl+D         Exit (persists, then lets owned agents settle their subagents)\n\
              \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\
              \x20 Ctrl+T         Open tool policy selector\n\

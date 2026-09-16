@@ -8,13 +8,25 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
     m.turn = Some(turn);
     m
+}
+
+/// The narrow handles the policy consumes, composed over the test store
+/// exactly as the runtime composes them (D9 #1978).
+fn retention(store: &Arc<MemStore>) -> crate::application::context::ContextRetention {
+    crate::composition::retention::context_retention_over(store.clone())
 }
 
 /// Minimal in-memory spill store for exercising the real spill-to-store path.
@@ -26,7 +38,7 @@ struct MemStore {
 impl ContextSpillStore for MemStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -36,8 +48,8 @@ impl ContextSpillStore for MemStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -50,12 +62,15 @@ impl ContextSpillStore for MemStore {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &SessionIdentity,
+    ) -> crate::application::sessions::ports::SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()
@@ -73,7 +88,7 @@ impl ContextSpillStore for MemStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         self.entries.lock().unwrap().clear();
@@ -216,10 +231,10 @@ fn ceiling_ladder_never_demotes_system_prompt_or_manifest() {
 async fn manifest_text_stays_static_across_tool_and_message_spills() {
     // Exercise real tool/message spill IDs, then verify none of their dynamic
     // bytes enter the front-positioned cache prefix (#1118).
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     store
         .append(
-            "s",
+            &id("s"),
             &SpillEntry {
                 id: "turn1:bash:0".to_string(),
                 tool: "bash".to_string(),
@@ -232,8 +247,8 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
         .unwrap();
     let big = "x".repeat(600);
     let mut assistant = assistant_on_turn(&big, 1);
-    messages::spill_conversation_message(&mut assistant, &store, "s").await;
-    let entries = store.list_entries("s").await.unwrap();
+    messages::spill_conversation_message(&mut assistant, &retention(&store).retain, &id("s")).await;
+    let entries = store.list_entries(&id("s")).await.unwrap();
     assert_eq!(
         entries.len(),
         2,
@@ -241,7 +256,7 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
     );
 
     let mut messages = vec![Message::system("system prompt"), Message::user("prompt")];
-    assert!(update_spill_manifest(&mut messages, &store, "s").await);
+    assert!(update_spill_manifest(&mut messages, &retention(&store).list, &id("s")).await);
     let manifest = messages
         .iter()
         .find(|message| message.is_manifest)
@@ -259,12 +274,13 @@ async fn message_spill_ids_never_collide_across_prompts() {
     // Turn numbering restarts each prompt, so two different prompts can both
     // file a "turn 1" assistant reply into the same session-persistent store.
     // Every spill must stay individually recallable.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     for content in ["prompt A reply", "prompt B reply"] {
         let mut assistant = assistant_on_turn(&content.repeat(50), 1);
-        messages::spill_conversation_message(&mut assistant, &store, "s").await;
+        messages::spill_conversation_message(&mut assistant, &retention(&store).retain, &id("s"))
+            .await;
     }
-    let entries = store.list_entries("s").await.unwrap();
+    let entries = store.list_entries(&id("s")).await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids.len(), 2, "both replies must spill");
     assert_eq!(ids[0], "turn1:msg:assistant");
@@ -273,7 +289,7 @@ async fn message_spill_ids_never_collide_across_prompts() {
         "a colliding base id must be de-duplicated, got: {ids:?}"
     );
     let second = store
-        .recall("s", "turn1:msg:assistant:2")
+        .recall(&id("s"), &SpillId::new("turn1:msg:assistant:2"))
         .await
         .unwrap()
         .expect("the second prompt's spill must be recallable under its own id");
@@ -284,13 +300,13 @@ async fn message_spill_ids_never_collide_across_prompts() {
 async fn turnless_user_spills_get_distinct_ids() {
     // Production never turn-stamps user prompts; several spilled past prompts
     // must not all collide on `turn0:msg:user`.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let big = "z".repeat(600);
     for _ in 0..2 {
         let mut user = Message::user(&big);
-        messages::spill_conversation_message(&mut user, &store, "s").await;
+        messages::spill_conversation_message(&mut user, &retention(&store).retain, &id("s")).await;
     }
-    let entries = store.list_entries("s").await.unwrap();
+    let entries = store.list_entries(&id("s")).await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids.len(), 2);
     assert_ne!(ids[0], ids[1], "turn-less user spills must not collide");
@@ -367,7 +383,7 @@ fn stamped_trailing_user_feedback_does_not_usurp_prompt_boundary() {
 
 #[tokio::test]
 async fn mem_store_trait_surface_clear_empties_entries() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let entry = SpillEntry {
         id: "id1".into(),
         tool: "bash".into(),
@@ -375,8 +391,8 @@ async fn mem_store_trait_surface_clear_empties_entries() {
         tokens: 2,
         content: "out".into(),
     };
-    store.append("s", &entry).await.unwrap();
-    assert_eq!(store.list_entries("s").await.unwrap().len(), 1);
-    store.clear("s").await.unwrap();
-    assert!(store.list_entries("s").await.unwrap().is_empty());
+    store.append(&id("s"), &entry).await.unwrap();
+    assert_eq!(store.list_entries(&id("s")).await.unwrap().len(), 1);
+    store.clear(&id("s")).await.unwrap();
+    assert!(store.list_entries(&id("s")).await.unwrap().is_empty());
 }

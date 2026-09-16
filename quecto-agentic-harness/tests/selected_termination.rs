@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use quecto::domain::tool::Tool;
-use quecto::infrastructure::extensions::native::KillToolWiring;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::tools::subagent_registry::{SubagentRegistry, SubagentStatus};
+use quecto::interface::cli::KillToolWiring;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_BOUND: Duration = Duration::from_secs(30);
@@ -105,18 +105,45 @@ struct Row {
     pid: u32,
 }
 
+/// The pid of the `quecto` process serving the socket of registry row
+/// `key`: a test-side `/proc` scan for an argv naming
+/// `quecto-agent-<key>.sock`. A merged descendant row carries neither a
+/// pid nor a reachable socket (#1940), so the test observes the
+/// grandchild's process itself.
+fn pid_serving_row(key: &str) -> Option<u32> {
+    let needle = format!("quecto-agent-{key}.sock");
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let cmdline = std::fs::read(entry.path().join("cmdline")).ok()?;
+            cmdline
+                .split(|b| *b == 0)
+                .any(|arg| arg.ends_with(needle.as_bytes()))
+                .then_some(pid)
+        })
+}
+
 fn row(registry: &SubagentRegistry, display: &str) -> Option<Row> {
     let entries = registry.lock().unwrap();
     entries
         .iter()
         .find(|(key, entry)| {
-            entry.effective_display_name(key) == display
-                && entry.status != SubagentStatus::Exited
-                && entry.pid != 0
+            entry.effective_display_name(key) == display && entry.status != SubagentStatus::Exited
         })
-        .map(|(key, entry)| Row {
-            key: key.clone(),
-            pid: entry.pid,
+        .and_then(|(key, entry)| {
+            let pid = if entry.launch_generation.is_some() {
+                assert_ne!(entry.pid, 0, "a launched row carries its display pid");
+                entry.pid
+            } else {
+                assert_eq!(entry.pid, 0, "a merged row carries no pid (#1940)");
+                pid_serving_row(key)?
+            };
+            Some(Row {
+                key: key.clone(),
+                pid,
+            })
         })
 }
 
@@ -150,6 +177,9 @@ async fn wait_gone(pid: u32, what: &str) {
     }
 }
 
+// The hold gate travels through the process environment, which every test
+// in this binary shares: run them one at a time.
+#[serial_test::serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_ends_c() {
     let dir = tempfile::tempdir().unwrap();
@@ -165,12 +195,13 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
     }
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn =
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(sockets.clone())
             .with_registry(registry.clone())
             .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
         registry: registry.clone(),
@@ -178,6 +209,8 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        slots: Default::default(),
     });
 
     let args = serde_json::json!({
@@ -195,7 +228,9 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
     // their launch generations, so they are addressable from here.
     let rows = wait_for_rows(&registry, &["aye", "bee", "cee"]).await;
     let (a, b, c) = (&rows[0], &rows[1], &rows[2]);
-    assert!(alive(a.pid) && alive(b.pid) && alive(c.pid));
+    assert!(alive(a.pid), "A {} dead", a.pid);
+    assert!(alive(b.pid), "B {} dead", b.pid);
+    assert!(alive(c.pid), "C {} dead", c.pid);
     {
         let entries = registry.lock().unwrap();
         assert!(entries[&b.key].delegated_identity().is_some());
@@ -232,8 +267,8 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         .unwrap();
     assert!(again.is_error);
     assert!(
-        again.content.contains("already exited") || again.content.contains("not found"),
-        "{}",
+        again.content.contains("already exited"),
+        "a retained dead row is exited, not unknown: {}",
         again.content
     );
 
@@ -292,6 +327,9 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
 /// status 0 well inside the exit budget, its session persisted and its own
 /// children compensated. A busy intermediate still forwards a nested kill
 /// promptly.
+// The hold gate travels through the process environment, which every test
+// in this binary shares: run them one at a time.
+#[serial_test::serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn killing_a_busy_child_is_graceful_and_prompt() {
     let dir = tempfile::tempdir().unwrap();
@@ -309,12 +347,13 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
     }
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
-    let spawn =
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(sockets.clone())
             .with_registry(registry.clone())
             .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into()));
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
         registry: registry.clone(),
@@ -322,6 +361,8 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        slots: Default::default(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))
@@ -421,4 +462,137 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
     for key in [&a.key, &b.key, &c.key] {
         assert_eq!(entries[key].status, SubagentStatus::Exited, "{key}");
     }
+}
+
+/// The direct OWNER of a nested target applies the owned-handle fallback
+/// (#1936 review): root → A → B, B acknowledges the shutdown and then never
+/// exits (its exit readiness is held by the test gate). A — B's owner —
+/// runs the whole conclusion: protocol, the exit budget, TERM and KILL on
+/// its retained handle, then B's compensation; the root learns `fallback`
+/// through A's answer. A stays alive, and a later selected termination of
+/// B at A is answered "already exited", never refused as in flight.
+// The hold gate travels through the process environment, which every test
+// in this binary shares: run them one at a time.
+#[serial_test::serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let (server, _) = provider(Duration::ZERO).await;
+    let config = write_config(&base, &server.uri());
+    let sockets = base.join("sockets");
+    std::fs::create_dir_all(&sockets).unwrap();
+    // The hold gate makes every launched harness acknowledge its shutdown
+    // and then stay, so only an owned-handle fallback can end it.
+    // SAFETY: set before any child is launched; children inherit it.
+    unsafe {
+        std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto"));
+        std::env::set_var("QUECTO_BASE_DIR", &base);
+        std::env::set_var(
+            quecto::composition::subagent_teardown::HOLD_EXIT_AFTER_ACK_ENV,
+            "1",
+        );
+    }
+    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
+    let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
+        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
+            .with_socket_dir(sockets.clone())
+            .with_registry(registry.clone())
+            .with_parent_config_path(Some(config.clone()))
+            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+    );
+    let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
+        owner: quecto::domain::ids::AgentUuid::new("root"),
+        registry: registry.clone(),
+        broadcast_tx: Some(broadcast_tx),
+        notify_tx: None,
+        harness_lifecycle:
+            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        slots: Default::default(),
+    });
+    let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
+    let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))
+        .await
+        .expect("spawn bounded")
+        .expect("spawn tool ran");
+    assert!(!result.is_error, "spawn failed: {}", result.content);
+    let rows = wait_for_rows(&registry, &["aye", "bee", "cee"]).await;
+    let (a, b, c) = (&rows[0], &rows[1], &rows[2]);
+    // The hold gate is inherited by every launched child; unset it now so
+    // the root's own remaining teardown is unaffected.
+    // SAFETY: no further child is launched by this test after this point.
+    unsafe {
+        std::env::remove_var(quecto::composition::subagent_teardown::HOLD_EXIT_AFTER_ACK_ENV);
+    }
+
+    // Kill nested B: A acknowledges the route, B acknowledges the
+    // shutdown and stays; A's fallback ends it after the exit budget.
+    let started = Instant::now();
+    let killed = tokio::time::timeout(
+        Duration::from_secs(90),
+        kill.execute(&serde_json::json!({"agent_id": "bee", "command": "kill"}).to_string()),
+    )
+    .await
+    .expect("kill bounded")
+    .unwrap();
+    assert!(!killed.is_error, "kill of B failed: {}", killed.content);
+    let body: serde_json::Value = serde_json::from_str(&killed.content).unwrap();
+    assert_eq!(body["result"], "fallback", "{}", killed.content);
+    assert_eq!(body["target"], b.key);
+    assert!(
+        started.elapsed() >= Duration::from_secs(10),
+        "the acknowledged child had its exit budget first"
+    );
+    wait_gone(b.pid, "B").await;
+    assert!(alive(a.pid), "the owner survives its own fallback");
+    assert!(alive(c.pid), "the sibling survives");
+    {
+        let entries = registry.lock().unwrap();
+        assert_eq!(entries[&b.key].status, SubagentStatus::Exited);
+        assert_ne!(entries[&a.key].status, SubagentStatus::Exited);
+    }
+
+    // A later selected termination of B, sent to A directly, is answered
+    // "already exited" — never refused as a termination still in flight.
+    let routing =
+        quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting::new(
+            registry.clone(),
+        );
+    let (a_identity, b_identity) = {
+        let entries = registry.lock().unwrap();
+        (
+            entries[&a.key].delegated_identity().unwrap(),
+            entries[&b.key].delegated_identity().unwrap(),
+        )
+    };
+    use quecto::application::subagents::ports::{
+        ChildRoutingError, DirectChildRouting, DownstreamRejection,
+    };
+    let answer = tokio::time::timeout(
+        EXIT_BOUND,
+        routing.forward_termination(
+            &a_identity,
+            &b_identity,
+            quecto::domain::subagent_teardown::RoutingDepth::new(1).unwrap(),
+        ),
+    )
+    .await
+    .expect("bounded");
+    assert_eq!(
+        answer,
+        Err(ChildRoutingError::Downstream(
+            DownstreamRejection::AlreadyExited
+        )),
+        "A reports B's end truthfully"
+    );
+
+    // Cleanup: A and C also hold their exit; end them directly.
+    for pid in [a.pid, c.pid] {
+        // SAFETY: best-effort cleanup of pids this test launched and observed.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+    wait_gone(a.pid, "A").await;
+    wait_gone(c.pid, "C").await;
 }

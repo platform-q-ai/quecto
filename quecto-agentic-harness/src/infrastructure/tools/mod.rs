@@ -1,9 +1,10 @@
 pub mod agent_cmd;
-mod agent_cmd_containers;
+pub mod agent_cmd_containers;
 mod agent_cmd_parse;
 mod agent_cmd_report;
 pub mod bash;
 pub mod command_match;
+pub mod delegated_roster;
 pub mod docs;
 pub mod environment_commands;
 pub mod environment_member_shutdown;
@@ -16,7 +17,6 @@ pub(crate) mod inherited_tool_policy;
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
-mod process_ownership;
 mod process_tree;
 pub mod recall;
 pub mod registration;
@@ -36,8 +36,9 @@ mod spawn_inherited_policy;
 mod spawn_input;
 mod spawn_launch_args;
 mod spawn_launch_ports;
+mod spawn_lifecycle;
 mod spawn_proxy_bridge;
-mod spawn_reaper;
+pub mod spawn_reaper;
 mod spawn_registry;
 pub mod subagent_cascade;
 mod subagent_cleanup;
@@ -63,6 +64,7 @@ pub mod swarm;
 #[cfg(test)]
 mod swarm_ac_gap_tests;
 mod swarm_admission;
+mod swarm_board_worker;
 pub mod swarm_bridge;
 mod swarm_config;
 pub mod swarm_control;

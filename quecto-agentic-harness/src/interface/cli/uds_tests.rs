@@ -1,31 +1,33 @@
+use super::uds_dispatch_query::display_title;
+use super::*;
 /// Unit tests for the UDS agent loop — session state, stats, and dispatch helpers.
 ///
 /// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
 /// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
 /// re-exported from `uds` via `uds_session`.  Protocol types are imported from
 /// `cli::protocol`.
-use super::*;
+use crate::application::agent_loop::UsageTotals;
 use crate::interface::cli::protocol::*;
 
 // ─── AgentSession unit tests ───────────────────────────────────────────────────
 
 #[test]
 fn test_initial_state_not_streaming() {
-    let session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let session = AgentSession::new("gpt-5".to_string());
     assert!(!session.is_streaming());
 }
 
 #[test]
 fn test_set_model_changes_model() {
-    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let mut session = AgentSession::new("gpt-5".to_string());
     session.set_model("gpt-5-mini".to_string());
     assert_eq!(session.model(), "gpt-5-mini");
 }
 
 #[test]
 fn test_session_state_snapshot() {
-    let session = AgentSession::new("gpt-5".to_string(), "cli:my".to_string());
-    let state = session.state_snapshot(4, None, 200_000, None);
+    let session = AgentSession::new("gpt-5".to_string());
+    let state = session.state_snapshot("cli:my", 4, None, 200_000, None);
     assert_eq!(state.model, "gpt-5");
     assert!(!state.is_streaming);
     assert_eq!(state.session_key, "cli:my");
@@ -36,16 +38,16 @@ fn test_session_state_snapshot() {
 
 #[test]
 fn test_pending_message_count_after_enqueue() {
-    let mut session = AgentSession::new("m".to_string(), "k".to_string());
+    let mut session = AgentSession::new("m".to_string());
     session.enqueue_pending("first".to_string());
     session.enqueue_pending("second".to_string());
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     assert_eq!(state.pending_message_count, 2);
 }
 
 #[test]
 fn test_drain_pending_messages() {
-    let mut session = AgentSession::new("m".to_string(), "k".to_string());
+    let mut session = AgentSession::new("m".to_string());
     session.enqueue_pending("a".to_string());
     session.enqueue_pending("b".to_string());
     let drained = session.drain_pending();
@@ -56,7 +58,7 @@ fn test_drain_pending_messages() {
     assert_eq!(drained, vec!["a".to_string(), "b".to_string()]);
     assert_eq!(
         session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         0
     );
@@ -122,10 +124,10 @@ fn test_stats_counts_tool_calls_and_results() {
 
 #[test]
 fn test_session_records_cumulative_token_usage_and_cost() {
-    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let mut session = AgentSession::new("gpt-5".to_string());
 
-    session.record_usage(10, 2, 3, 4, 1_000);
-    session.record_usage(20, 5, 6, 7, 2_500);
+    session.record_usage("cli:test", UsageTotals::billed(10, 2, 3, 4, 1_000));
+    session.record_usage("cli:test", UsageTotals::billed(20, 5, 6, 7, 2_500));
 
     let usage = session.usage_snapshot();
     assert_eq!(usage.tokens.input, 30);
@@ -144,8 +146,8 @@ fn test_stats_include_session_usage_snapshot() {
         Message::user("hi".to_string()),
         Message::assistant("reply".to_string(), vec![]),
     ];
-    let mut session = AgentSession::new("gpt-5".to_string(), "k".to_string());
-    session.record_usage(100, 25, 10, 5, 12_300);
+    let mut session = AgentSession::new("gpt-5".to_string());
+    session.record_usage("cli:test", UsageTotals::billed(100, 25, 10, 5, 12_300));
 
     let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot(), 42, 0);
 
@@ -162,14 +164,14 @@ fn test_stats_include_session_usage_snapshot() {
 
 #[test]
 fn test_session_tracks_context_tokens() {
-    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let mut session = AgentSession::new("gpt-5".to_string());
     session.set_context_tokens(77);
     assert_eq!(session.context_tokens(), 77);
 
     let mut result = crate::domain::agent::AgentResult::text("ok");
     result.context_tokens = 88;
     result.billed_input_tokens = 10;
-    session.record_agent_result(&result);
+    session.record_agent_result("cli:test", &result);
     assert_eq!(session.context_tokens(), 88);
     assert_eq!(session.usage_snapshot().tokens.input, 10);
 
@@ -179,12 +181,12 @@ fn test_session_tracks_context_tokens() {
 }
 
 #[test]
-fn test_session_key_change_clears_usage() {
-    let mut session = AgentSession::new("gpt-5".to_string(), "cli:old".to_string());
-    session.record_usage(10, 2, 3, 4, 1_000);
+fn test_session_change_clears_usage() {
+    let mut session = AgentSession::new("gpt-5".to_string());
+    session.record_usage("cli:test", UsageTotals::billed(10, 2, 3, 4, 1_000));
     session.set_context_tokens(99);
 
-    session.set_session_key("cli:new".to_string());
+    session.session_changed();
 
     let usage = session.usage_snapshot();
     assert_eq!(usage.tokens.total, 0);
@@ -313,7 +315,7 @@ fn test_agent_event_parse_error_response_shape() {
 
 #[test]
 fn test_enqueue_pending_respects_cap() {
-    let mut session = AgentSession::new("model".into(), "key".into());
+    let mut session = AgentSession::new("model".into());
     for i in 0..AgentSession::MAX_PENDING + 10 {
         session.enqueue_pending(format!("msg-{i}"));
     }
@@ -344,10 +346,10 @@ fn test_resolve_set_model_target_from_provider_and_model_id() {
 
 #[test]
 fn test_set_model_is_reflected_in_state_snapshot() {
-    let mut session = AgentSession::new("gpt-4".into(), "cli:test".into());
-    let before = session.state_snapshot(0, None, 0, None);
+    let mut session = AgentSession::new("gpt-4".into());
+    let before = session.state_snapshot("cli:test", 0, None, 0, None);
     session.set_model("claude-opus-4-5".into());
-    let snap = session.state_snapshot(0, None, 0, None);
+    let snap = session.state_snapshot("cli:test", 0, None, 0, None);
     assert_eq!(snap.model, "claude-opus-4-5");
     assert!(
         snap.generation > before.generation,
@@ -380,7 +382,7 @@ fn test_deprecated_get_messages_tail_still_parses() {
 fn test_get_messages_with_count_returns_last_n_in_order() {
     // Build 5 user messages and request tail of 3 — should get last 3 in original order.
     let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg{i}"))).collect();
-    let data = messages_tail_json(&messages, 3);
+    let data = messages_page_json(&messages, 3, None);
     let arr = data["messages"].as_array().unwrap();
     assert_eq!(arr.len(), 3);
     assert_eq!(arr[0]["content"], "msg2");
@@ -391,14 +393,14 @@ fn test_get_messages_with_count_returns_last_n_in_order() {
 #[test]
 fn test_messages_tail_json_empty_history() {
     let messages: Vec<Message> = vec![];
-    let data = messages_tail_json(&messages, 5);
+    let data = messages_page_json(&messages, 5, None);
     assert!(data["messages"].as_array().unwrap().is_empty());
 }
 
 #[test]
 fn test_messages_tail_json_count_zero() {
     let messages: Vec<Message> = (0..3).map(|i| Message::user(format!("m{i}"))).collect();
-    let data = messages_tail_json(&messages, 0);
+    let data = messages_page_json(&messages, 0, None);
     assert!(data["messages"].as_array().unwrap().is_empty());
     // Documented count=0 contract (#1061): an empty window carries no cursor —
     // the cursor names the oldest INCLUDED message, which it lacks.
@@ -409,7 +411,7 @@ fn test_messages_tail_json_count_zero() {
 #[test]
 fn test_messages_tail_json_count_exceeds_page_size() {
     let messages: Vec<Message> = (0..100).map(|i| Message::user(format!("m{i}"))).collect();
-    let data = messages_tail_json(&messages, 80);
+    let data = messages_page_json(&messages, 80, None);
     let returned = data["messages"].as_array().unwrap();
     assert_eq!(
         returned.len(),

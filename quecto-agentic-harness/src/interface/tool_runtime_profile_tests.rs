@@ -29,6 +29,7 @@ fn runtime(
         sandbox,
         exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
         session_key: "profile-test".to_string(),
+        recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         spawned,
         parent_session_name: None,
         parent_config_path: None,
@@ -183,7 +184,8 @@ fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
 
 #[test]
 fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
-    use crate::domain::swarm::{CoordinationPort, ProcessIdentity};
+    use crate::application::swarm::ports::CoordinationPort;
+    use crate::domain::swarm::ProcessIdentity;
     let tmp = tempfile::tempdir().unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
         checkout: tmp.path().into(),
@@ -273,6 +275,7 @@ fn runtime_in_container(
         sandbox,
         exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
         session_key: "container-workflow-test".to_string(),
+        recall: crate::composition::sessions::build_retention_handles(tmp).recall,
         spawned: true,
         parent_session_name: None,
         parent_config_path: None,

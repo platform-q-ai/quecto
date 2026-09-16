@@ -1,0 +1,67 @@
+name: Cache Warm
+
+# Populate the rust-cache entries the merge CI restores. ci.yml only runs on
+# labelled PRs and GitHub scopes caches to the branch that saved them plus the
+# default branch, so nothing ever lands in master's scope: every PR's first
+# labelled run compiled everything cold (Coverage 343 s vs 180 s warm, Static
+# Quality 137 s vs 58 s). Each job here builds one shape into the target dir
+# and saves it under the same `shared-key` the CI jobs use; a PR then
+# restores the closest master entry (`restore-keys` prefix match) even when
+# its Cargo.lock differs. Nothing is tested here.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: cache-warm
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    name: Warm workspace
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+      - run: cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
+      - run: cargo clippy -p quecto-tui --lib --bins -- -D warnings
+      - run: cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings
+      - run: cargo test --workspace --features quecto-agentic-harness/test-support --all-targets --no-run
+
+  coverage-lib:
+    name: Warm coverage-lib
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-lib
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: bash scripts/run-lib-coverage.sh --build-only
+
+  coverage-bdd:
+    name: Warm coverage-bdd
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-bdd
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --coverage --build-only
+      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --coverage --build-only

@@ -1,6 +1,6 @@
 use super::tests::{MockProvider, MockRegistry, MockTool};
 use super::*;
-use crate::domain::agent::AgentLoop;
+use crate::application::agent_turn::ports::AgentLoop;
 use std::sync::Arc;
 
 #[test]
@@ -14,7 +14,7 @@ fn test_swap_registry_replaces_tool_registry() {
         model: "m".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
@@ -56,7 +56,7 @@ fn test_swap_registry_info_reflects_new_count() {
         model: "m".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
@@ -154,7 +154,7 @@ fn bare_agent() -> AgentLoopImpl {
         model: "m".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,

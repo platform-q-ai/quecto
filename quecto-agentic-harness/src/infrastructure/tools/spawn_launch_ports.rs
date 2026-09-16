@@ -373,9 +373,16 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             let Some(child) = child else {
                 return;
             };
-            let compensated = self
-                .tool
-                .lifecycle_use_cases()
+            let lifecycle = match self.tool.lifecycle_use_cases() {
+                Ok(lifecycle) => lifecycle,
+                Err(error) => {
+                    // A registration needs the lifecycle, so an uncommit
+                    // without one has nothing registered to conclude.
+                    tracing::warn!(agent = %registry_key, %error, "launch rollback without a lifecycle");
+                    return;
+                }
+            };
+            let compensated = lifecycle
                 .compensate_launch
                 .execute(
                     crate::application::subagents::dto::CompensateFailedLaunchRequest {
@@ -436,8 +443,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 process_owner: prepared.process_owner,
             });
             // Only a LOCAL launch holds a process, and only through the one
-            // supervisor's opaque handle (#1935): the registry row carries no
-            // signal lease and no authority over `runtime.pid`.
+            // supervisor's opaque handle (#1935): the registry row's pid is
+            // display-only and carries no authority.
             let parent_control = self.parent_control.take();
             // The generation the launch minted with its credential; a
             // registration driven without `build_cli_args` (test rigs) still
@@ -449,7 +456,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     crate::infrastructure::processes::parent_control::next_launch_generation,
                 );
             entry.launch_generation = Some(launch_generation);
-            let lifecycle = self.tool.lifecycle_use_cases();
+            let lifecycle = self.tool.lifecycle_use_cases()?;
             entry.owned_child = prepared.owned_child;
             entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));
             register_and_broadcast(
@@ -534,7 +541,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                             launch_generation,
                         ),
                         observer: lifecycle.observe_exit,
-                        swarm_context: self.tool.swarm_context.clone(),
+                        swarm_member: prepared
+                            .swarm_reservation
+                            .as_ref()
+                            .zip(self.tool.swarm_context.clone())
+                            .map(|(reservation, context)| {
+                                (context, reservation.member().to_owned())
+                            }),
                     },
                 );
             }

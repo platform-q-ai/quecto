@@ -1,5 +1,5 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
+use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task;
 use quecto::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
     new_registry,
@@ -33,13 +33,23 @@ fn drive_monitor_with_lines(
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind monitor socket");
-        let handle = spawn_monitor_task_unbound(
-            agent_id.to_string(),
-            socket_path.clone(),
-            registry,
-            Some(tx),
+        let observer = quecto::composition::subagent_lifecycle::build_lifecycle_use_cases(
+            registry.clone(),
             None,
-            None,
+            Some(tx.clone()),
+        )
+        .observe_exit;
+        let handle = spawn_monitor_task(
+            quecto::infrastructure::tools::subagent_monitor::MonitorSpec {
+                agent_id: agent_id.to_string(),
+                socket_path: socket_path.clone(),
+                registry,
+                notify_tx: Some(tx),
+                broadcast_tx: None,
+                parent_id: None,
+                observer,
+                parent_control: None,
+            },
         );
         let (mut stream, _) = listener.accept().await.expect("accept monitor connection");
         for line in lines {
@@ -270,10 +280,7 @@ fn next_sequence(world: &mut QuectoWorld, agent_id: &str) -> u64 {
 
 #[given("a parent session with no pending notes")]
 fn given_parent_session(world: &mut QuectoWorld) {
-    world.notify_parent_session = Some(AgentSession::new(
-        "model".to_string(),
-        "cli:parent".to_string(),
-    ));
+    world.notify_parent_session = Some(AgentSession::new("model".to_string()));
 }
 
 #[given("the parent is busy processing a turn")]
@@ -352,7 +359,7 @@ fn then_pending_note_count(world: &mut QuectoWorld, expected: usize) {
         .as_ref()
         .expect("no parent session");
     let count = session
-        .state_snapshot(0, None, 0, None)
+        .state_snapshot("cli:test", 0, None, 0, None)
         .pending_message_count;
     assert_eq!(count, expected, "unexpected pending note count");
 }
@@ -374,7 +381,7 @@ fn then_busy_not_consumed(world: &mut QuectoWorld) {
         .expect("no parent session");
     assert_eq!(
         session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         1,
         "while busy the note stays buffered and is not injected into the turn"

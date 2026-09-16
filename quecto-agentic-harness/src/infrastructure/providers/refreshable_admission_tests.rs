@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 struct PauseAfterUnauthorized(Arc<AtomicU32>);
-impl crate::domain::provider::RequestAdmission for PauseAfterUnauthorized {
+impl crate::application::providers::ports::RequestAdmission for PauseAfterUnauthorized {
     fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
             if self.0.load(Ordering::SeqCst) == 0 {

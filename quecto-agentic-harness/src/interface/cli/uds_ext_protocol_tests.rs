@@ -24,7 +24,7 @@ fn reg(
 ) -> (
     bool,
     AgentEvent,
-    Vec<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    Vec<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
 ) {
     handle_register_tools(RegisterToolsArgs {
         client_id: cid,
@@ -57,7 +57,7 @@ impl RegCtx {
     ) -> (
         bool,
         AgentEvent,
-        Vec<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+        Vec<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
     ) {
         handle_register_tools(RegisterToolsArgs {
             client_id: cid,
@@ -424,7 +424,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
 
 #[tokio::test]
 async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
-    use crate::domain::extension_tool::ToolInvocation;
+    use crate::application::extensions::ports::PendingToolInvocation;
     use std::time::Duration;
 
     let registry = new_client_tool_registry();
@@ -438,7 +438,7 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
     let (writer_tx, writer_rx) = tokio::sync::mpsc::channel::<String>(8);
     drop(writer_rx);
 
-    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
+    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<PendingToolInvocation>(4);
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
     let forwarder = tokio::spawn(super::forward_tool_requests(
         client_id,
@@ -451,12 +451,16 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
 
     let (reply_tx, result_rx) = tokio::sync::oneshot::channel();
     req_tx
-        .send(ToolInvocation {
-            tool_call_id: "uds-test-1".into(),
-            tool_name: "weather".into(),
-            arguments: "{}".into(),
-            reply: reply_tx,
-        })
+        .send(
+            crate::application::extensions::ports::PendingToolInvocation {
+                invocation: crate::domain::extension_tool::ToolInvocation {
+                    tool_call_id: "uds-test-1".into(),
+                    tool_name: "weather".into(),
+                    arguments: "{}".into(),
+                },
+                reply: reply_tx,
+            },
+        )
         .await
         .unwrap();
 
@@ -495,7 +499,7 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
 /// waiting out the 30-second UdsTool timeout.
 #[tokio::test]
 async fn forwarder_drains_buffered_requests_on_shutdown() {
-    use crate::domain::extension_tool::ToolInvocation;
+    use crate::application::extensions::ports::PendingToolInvocation;
     use std::time::Duration;
 
     let registry = new_client_tool_registry();
@@ -506,7 +510,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
     }
 
     let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<String>(8);
-    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(8);
+    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<PendingToolInvocation>(8);
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
 
     // Queue the requests AND fire shutdown BEFORE spawning the
@@ -516,21 +520,29 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
     let (r1_tx, r1_rx) = tokio::sync::oneshot::channel();
     let (r2_tx, r2_rx) = tokio::sync::oneshot::channel();
     req_tx
-        .send(ToolInvocation {
-            tool_call_id: "drain-1".into(),
-            tool_name: "weather".into(),
-            arguments: "{}".into(),
-            reply: r1_tx,
-        })
+        .send(
+            crate::application::extensions::ports::PendingToolInvocation {
+                invocation: crate::domain::extension_tool::ToolInvocation {
+                    tool_call_id: "drain-1".into(),
+                    tool_name: "weather".into(),
+                    arguments: "{}".into(),
+                },
+                reply: r1_tx,
+            },
+        )
         .await
         .unwrap();
     req_tx
-        .send(ToolInvocation {
-            tool_call_id: "drain-2".into(),
-            tool_name: "weather".into(),
-            arguments: "{}".into(),
-            reply: r2_tx,
-        })
+        .send(
+            crate::application::extensions::ports::PendingToolInvocation {
+                invocation: crate::domain::extension_tool::ToolInvocation {
+                    tool_call_id: "drain-2".into(),
+                    tool_name: "weather".into(),
+                    arguments: "{}".into(),
+                },
+                reply: r2_tx,
+            },
+        )
         .await
         .unwrap();
     shutdown_tx.send("Tool unregistered").unwrap();
@@ -571,7 +583,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
 /// (the reader task will clear it when `tool_result` comes back).
 #[tokio::test]
 async fn forwarder_leaves_pending_when_writer_delivered() {
-    use crate::domain::extension_tool::ToolInvocation;
+    use crate::application::extensions::ports::PendingToolInvocation;
     use std::time::Duration;
 
     let registry = new_client_tool_registry();
@@ -583,7 +595,7 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
 
     let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<String>(8);
 
-    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
+    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<PendingToolInvocation>(4);
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
     let forwarder = tokio::spawn(super::forward_tool_requests(
         client_id,
@@ -596,12 +608,16 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
 
     let (reply_tx, _result_rx) = tokio::sync::oneshot::channel();
     req_tx
-        .send(ToolInvocation {
-            tool_call_id: "uds-test-2".into(),
-            tool_name: "weather".into(),
-            arguments: "{}".into(),
-            reply: reply_tx,
-        })
+        .send(
+            crate::application::extensions::ports::PendingToolInvocation {
+                invocation: crate::domain::extension_tool::ToolInvocation {
+                    tool_call_id: "uds-test-2".into(),
+                    tool_name: "weather".into(),
+                    arguments: "{}".into(),
+                },
+                reply: reply_tx,
+            },
+        )
         .await
         .unwrap();
 

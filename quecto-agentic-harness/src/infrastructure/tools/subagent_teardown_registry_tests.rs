@@ -50,8 +50,13 @@ fn tree() -> SubagentRegistry {
 }
 
 fn agents(registry: &SubagentRegistry) -> RegistryDelegatedAgents {
-    RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_millis(200))
+    RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .with_compensation_wait(Duration::from_millis(200))
 }
 
 #[test]
@@ -75,10 +80,11 @@ fn resolution_accepts_uuids_and_live_labels_and_refuses_the_rest() {
         .send_replace(TeardownPhase::Compensated);
     assert_eq!(port.resolve("D"), Err(ResolutionError::Exited));
     assert_eq!(port.resolve("delta"), Err(ResolutionError::Exited));
-    // Once the row is also exited in the registry's status vocabulary the
-    // label no longer resolves at all.
+    // A retained dead row still answers to its label as exited, never as
+    // unknown: an operator retrying a kill learns the truth.
     registry.lock().unwrap().get_mut("D").unwrap().status = SubagentStatus::Exited;
-    assert_eq!(port.resolve("delta"), Err(ResolutionError::Unknown));
+    assert_eq!(port.resolve("delta"), Err(ResolutionError::Exited));
+    assert_eq!(port.resolve("D"), Err(ResolutionError::Exited));
 }
 
 #[test]
@@ -155,6 +161,29 @@ fn process_is_held_only_while_the_supervisor_retains_the_handle() {
     );
 }
 
+/// Review of #1953: a joiner's bound covers the whole owned-handle ladder
+/// (ACK + exit budget + TERM + KILL grace), never only the exit budget.
+#[test]
+fn the_compensation_wait_exceeds_the_full_owned_handle_ladder() {
+    use crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT;
+    use crate::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+    let ladder = PROTOCOL_ACK_TIMEOUT
+        + TerminationBudget::DEFAULT.exit_after_ack
+        + TerminationBudget::DEFAULT.term_grace
+        + TerminationBudget::DEFAULT.kill_grace;
+    assert_eq!(super::OWNED_HANDLE_LADDER, ladder);
+    assert!(
+        super::DEFAULT_COMPENSATION_WAIT > ladder,
+        "{:?} must exceed the ladder {ladder:?}",
+        super::DEFAULT_COMPENSATION_WAIT
+    );
+    assert!(
+        super::DEFAULT_COMPENSATION_WAIT
+            < crate::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND,
+        "a forwarded hop's bound covers the owner's compensation wait"
+    );
+}
+
 #[tokio::test]
 async fn waiting_for_compensation_observes_the_phase_or_times_out() {
     let registry = tree();
@@ -204,7 +233,12 @@ async fn compensation_removes_the_subtree_broadcasts_once_and_notifies_for_exits
         a.monitor_handle = Some(monitor.clone());
         entries.get_mut("B").unwrap().exit_signal_tx = Some(b_exit_tx.clone());
     }
-    let port = RegistryDelegatedAgents::new(registry.clone(), Some(broadcast_tx), Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        Some(broadcast_tx),
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let a = identity("A", 1);
     assert_eq!(port.claim_terminal(&a), TerminalClaim::Claimed);
     let compensated = port
@@ -267,7 +301,12 @@ async fn a_selected_termination_compensates_silently_and_an_unknown_row_removes_
     let registry = tree();
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
     let (notify_tx, mut notify_rx) = new_notification_channel();
-    let port = RegistryDelegatedAgents::new(registry.clone(), Some(broadcast_tx), Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        Some(broadcast_tx),
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let compensated = port
         .compensate(&identity("D", 2), TerminationCause::SelectedTermination)
         .await;
@@ -334,7 +373,12 @@ fn causes_map_to_the_cleanup_contract_and_exit_kind() {
 async fn an_exit_observed_for_a_claimed_kill_honours_the_kill_intent() {
     let registry = tree();
     let (notify_tx, mut notify_rx) = new_notification_channel();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, Some(notify_tx));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    );
     let d = identity("D", 2);
     port.claim_stopping(&d, TerminationCause::SelectedTermination)
         .unwrap();
@@ -369,7 +413,12 @@ async fn an_exit_observed_for_a_claimed_kill_honours_the_kill_intent() {
     );
     // A row nobody claimed keeps the observed cause.
     let registry = tree();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None);
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    );
     assert_eq!(
         port.claim_terminal(&identity("A", 1)),
         TerminalClaim::Claimed
@@ -397,7 +446,12 @@ async fn compensation_reports_only_the_rows_it_moved_out_of_live_membership() {
         let next = super::super::subagent_cascade::next_roster_sequence(&entries);
         super::super::subagent_cascade::mark_entry_dead(entries.get_mut("C").unwrap(), next);
     }
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None);
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    );
     let compensated = port
         .compensate(&identity("A", 1), TerminationCause::SelectedTermination)
         .await;
@@ -410,14 +464,23 @@ async fn compensation_reports_only_the_rows_it_moved_out_of_live_membership() {
     );
 }
 
-/// The reported-snapshot prune and the cascade both go through the ladder:
-/// a row they mark dead is `Compensated`, so a kill waiting on a nested
-/// target resolves at once instead of running out its bound.
+/// The reported-snapshot prune releases waiters at once (pruning is the
+/// whole of a reported row's compensation), while a cascade alone never
+/// does: only the compensation, after every terminal effect has run,
+/// moves the rows it removed to `Compensated` — so a joiner that wakes on
+/// the phase always finds the cleanup, exit signals and removal done.
 #[tokio::test]
-async fn prune_and_cascade_release_waiters_through_the_ladder() {
+async fn prune_releases_waiters_and_the_cascade_only_after_its_effects() {
     let registry = tree();
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_millis(50));
+    let port = Arc::new(
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5)),
+    );
     // A's next snapshot omits B: the merge prunes it.
     let line = serde_json::json!({"type": "subagent_state_changed", "subagents": [{
         "agentId": "charlie", "agentUuid": "C", "status": "idle", "pid": 4242,
@@ -441,16 +504,57 @@ async fn prune_and_cascade_release_waiters_through_the_ladder() {
         TeardownPhase::Live,
         "a listed descendant stays live"
     );
-    // A cascade of A marks C dead the same way.
-    super::super::subagent_cascade::cascade_remove(&registry, "A");
+    // A bare cascade marks C dead but releases nobody.
+    let (c_exit_tx, _c_exit_rx) = new_exit_signal_channel();
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("C")
+        .unwrap()
+        .exit_signal_tx = Some(c_exit_tx.clone());
+    let joiner = {
+        let port = port.clone();
+        let registry = registry.clone();
+        let c_exit_tx = c_exit_tx.clone();
+        tokio::spawn(async move {
+            let observed = port.await_compensated(&identity("C", 1)).await;
+            // Woken on `Compensated`: the terminal effects already ran.
+            let exit_signal_set = c_exit_tx.borrow().is_some();
+            let status = registry.lock().unwrap()["C"].status.clone();
+            (observed, exit_signal_set, status)
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    // A bare cascade (of the unrelated D) marks dead but releases nobody.
+    let removed = super::super::subagent_cascade::cascade_remove(&registry, "D");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(registry.lock().unwrap()["D"].status, SubagentStatus::Exited);
     assert_eq!(
-        registry.lock().unwrap()["C"].teardown_phase(),
-        TeardownPhase::Compensated
+        registry.lock().unwrap()["D"].teardown_phase(),
+        TeardownPhase::Live,
+        "a cascade alone never releases a waiter"
     );
+    assert!(!joiner.is_finished());
+    // The compensation runs the effects, then releases the joiner.
     assert_eq!(
-        port.await_compensated(&identity("C", 1)).await,
-        CompensationObservation::Compensated
+        port.claim_terminal(&identity("A", 1)),
+        TerminalClaim::Claimed
     );
+    port.compensate(&identity("A", 1), TerminationCause::SelectedTermination)
+        .await;
+    let (observed, exit_signal_set, status) = tokio::time::timeout(Duration::from_secs(5), joiner)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed, CompensationObservation::Compensated);
+    assert!(exit_signal_set, "the exit signal preceded the release");
+    assert_eq!(status, SubagentStatus::Exited);
+    for key in ["A", "C"] {
+        assert_eq!(
+            registry.lock().unwrap()[key].teardown_phase(),
+            TeardownPhase::Compensated
+        );
+    }
 }
 
 /// Review of #1938: a row is pruned only once its ladder reached
@@ -468,8 +572,13 @@ async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
         .lock()
         .unwrap()
         .insert("b".into(), launched("b", "b", 2));
-    let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-        .with_compensation_wait(Duration::from_secs(5));
+    let port = RegistryDelegatedAgents::new(
+        registry.clone(),
+        None,
+        None,
+        crate::composition::environments::build_member_finalizer,
+    )
+    .with_compensation_wait(Duration::from_secs(5));
     let a = DelegatedAgentIdentity::new("a", LaunchGeneration::new(1));
     let b = DelegatedAgentIdentity::new("b", LaunchGeneration::new(2));
     // A is mid-compensation: claimed, terminal-claimed and marked exited.
@@ -496,12 +605,104 @@ async fn prune_removes_only_compensated_rows_never_one_mid_compensation() {
 
     // The compensation in flight completes and a joiner sees it.
     let joiner = tokio::spawn({
-        let port = RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(5));
+        let port = RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5));
         let a = a.clone();
         async move { port.await_compensated(&a).await }
     });
     port.compensate(&a, TerminationCause::FleetTeardown).await;
     assert_eq!(joiner.await.unwrap(), CompensationObservation::Compensated);
     assert_eq!(port.prune_terminal_rows().await, [AgentUuid::new("a")]);
+}
+
+/// #1953 review (2), order-sensitive: on a multi-thread runtime a joiner
+/// woken on `Compensated` runs concurrently with whatever the compensation
+/// has left to do. The target's retained cleanup (the registered cleanup,
+/// the first effect) and its reported descendant's (run with the removed
+/// rows, the last cleanup) each take 300 ms and leave a marker; at wake
+/// time the joiner records whether both markers exist, whether the exit
+/// signal fired and whether the row is exited. Marking the row compensated
+/// before either cleanup, the signal or the status wakes the joiner with a
+/// marker missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_joiner_woken_on_compensated_finds_the_cleanup_and_exit_signal_already_done() {
+    let marker = std::env::temp_dir().join(format!("q-comp-{}", uuid::Uuid::new_v4().simple()));
+    let descendant_marker =
+        std::env::temp_dir().join(format!("q-comp-{}", uuid::Uuid::new_v4().simple()));
+    let registry = new_registry();
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    {
+        let mut entry = launched("A", "alpha", 1);
+        entry.cleanup_environment_id = Some("env-order".into());
+        entry.cleanup_argv = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("sleep 0.3; echo done > {}", marker.display()),
+        ];
+        entry.exit_signal_tx = Some(exit_tx.clone());
+        registry.lock().unwrap().insert("A".into(), entry);
+        let mut descendant = reported("B", "bravo", "A", 1);
+        descendant.cleanup_environment_id = Some("env-order-b".into());
+        descendant.cleanup_argv = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("sleep 0.3; echo done > {}", descendant_marker.display()),
+        ];
+        registry.lock().unwrap().insert("B".into(), descendant);
+    }
+    let port = Arc::new(
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            crate::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(10)),
+    );
+    let a = identity("A", 1);
+    port.claim_stopping(&a, TerminationCause::SelectedTermination)
+        .unwrap();
+    assert_eq!(port.claim_terminal(&a), TerminalClaim::Claimed);
+    let joiner = {
+        let port = port.clone();
+        let registry = registry.clone();
+        let marker = marker.clone();
+        let descendant_marker = descendant_marker.clone();
+        let a = a.clone();
+        tokio::spawn(async move {
+            let observed = port.await_compensated(&a).await;
+            // Recorded at wake time, before the compensation task can
+            // progress any further on its own worker.
+            let cleaned = marker.exists() && descendant_marker.exists();
+            let exit_signal_set = exit_tx.borrow().is_some();
+            let status = registry.lock().unwrap()["A"].status.clone();
+            (observed, cleaned, exit_signal_set, status)
+        })
+    };
+    // Let the joiner subscribe before the compensation starts.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!joiner.is_finished());
+    let started = std::time::Instant::now();
+    port.compensate(&a, TerminationCause::SelectedTermination)
+        .await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(550),
+        "the compensation waited for both retained cleanups"
+    );
+    let (observed, cleaned, exit_signal_set, status) =
+        tokio::time::timeout(Duration::from_secs(5), joiner)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(observed, CompensationObservation::Compensated);
+    assert!(cleaned, "both retained cleanups ran before the release");
+    assert!(exit_signal_set, "the exit signal fired before the release");
+    assert_eq!(status, SubagentStatus::Exited);
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(&descendant_marker);
 }

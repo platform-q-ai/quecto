@@ -152,6 +152,35 @@ async fn a_rollback_of_a_never_registered_child_does_nothing() {
     assert!(rig.compensation.calls().is_empty());
 }
 
+/// #1953 review (8): a registered launch whose child answers `shutdown`
+/// with an `already_exited` refusal (its harness already terminated) is
+/// rolled back as an acknowledged attempt: the owned handle waits for the
+/// exit, no signal is authorised by the refusal.
+#[tokio::test]
+async fn a_child_already_ending_is_rolled_back_as_an_acknowledged_attempt() {
+    let registry = FakeRegistry::new()
+        .with_row("A", 1, "alpha")
+        .holding_process("A");
+    let rig = rig(registry.clone(), TerminationConclusion::ExitedAfterProtocol);
+    rig.routing.downstream.lock().unwrap().push((
+        AgentUuid::new("A"),
+        crate::application::subagents::ports::DownstreamRejection::AlreadyExited,
+    ));
+    let outcome = rig.use_case.execute(request("A", false)).await;
+    assert_eq!(
+        outcome.conclusion,
+        TerminationConclusion::ExitedAfterProtocol
+    );
+    let attempts: Vec<_> = rig
+        .termination
+        .calls()
+        .into_iter()
+        .map(|(_, attempt, _)| attempt)
+        .collect();
+    assert_eq!(attempts, [ProtocolAttempt::Acknowledged]);
+    assert_eq!(registry.phase("A"), Phase::Compensated);
+}
+
 /// A rollback that finds another termination in flight joins it and never
 /// compensates a row whose process may still be alive (review: the kill
 /// owns the row; only its observed exit reaches the terminal effects).

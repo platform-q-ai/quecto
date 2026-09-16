@@ -5,10 +5,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use super::ToolRegistryImpl;
+use crate::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolExecutor,
+};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition,
-    ToolExecutor, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyReconciliation,
+    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyReconciliation,
     ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
@@ -121,7 +123,7 @@ impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
     }
 }
 
-impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
+impl crate::application::tools::ports::ToolPolicyMutator for ToolRegistryImpl {
     fn record_persisted_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
         use crate::domain::tool::ToolPolicyMutationStatus;
         for result in &reconciliation.results {
@@ -201,4 +203,4 @@ impl SessionAwareTools for ToolRegistryImpl {
     }
 }
 
-impl crate::domain::tool::ToolRegistry for ToolRegistryImpl {}
+impl crate::application::tools::ports::ToolRegistry for ToolRegistryImpl {}

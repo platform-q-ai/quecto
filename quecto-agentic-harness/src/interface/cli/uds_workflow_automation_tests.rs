@@ -1,5 +1,5 @@
 use super::dispatch_test_env::DispatchTestEnv;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 
 fn persisted_feature_run(done: Vec<bool>) -> crate::domain::workflow::WorkflowRunPersisted {
     crate::domain::workflow::WorkflowRunPersisted {
@@ -30,7 +30,7 @@ async fn resume_session_restores_target_workflow_run_state() {
     let key = Session::build_key("cli", "saved");
     env.store
         .save(&Session {
-            key: key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key.clone()),
             messages: vec![crate::domain::message::Message::user("restored")],
             workflow_run: Some(persisted_feature_run(vec![true, false, false])),
             subagent_roster: Vec::new(),
@@ -59,7 +59,9 @@ async fn resume_session_clears_workflow_when_target_has_none() {
     env.messages = vec![crate::domain::message::Message::user("current")];
     env.store
         .save(&Session {
-            key: Session::build_key("cli", "plain"),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                Session::build_key("cli", "plain"),
+            ),
             messages: vec![crate::domain::message::Message::user("plain")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -104,25 +106,25 @@ async fn set_workflow_automation_updates_config_and_engine() {
     assert!(!engine.completion_nudge_enabled());
 }
 
-#[test]
-fn workflow_nudge_message_waits_for_selected_template() {
+#[tokio::test]
+async fn workflow_nudge_message_waits_for_selected_template() {
     let mut env = DispatchTestEnv::with_unselected_workflow();
     let workflow = env.workflow.clone();
     let ctx = env.ctx();
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
     workflow
         .lock()
         .unwrap()
         .select_template("feature", None)
         .unwrap();
-    let nudge = super::workflow_nudge_message(&ctx).unwrap();
+    let nudge = super::workflow_nudge_message(&ctx).await.unwrap();
     assert!(nudge.is_auto_continue());
     assert!(nudge.into_message(false).contains("Workflow incomplete"));
 }
 
-#[test]
-fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
+#[tokio::test]
+async fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -136,20 +138,20 @@ fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
         guard.insert("child".to_string(), child);
     }
 
-    env.session_key = "chat-session-a".to_string();
+    env.set_session_key("chat-session-a".to_string());
     let mut ctx_a = env.ctx();
     ctx_a.subagent_registry = Some(reg.clone());
-    assert!(super::workflow_nudge_message(&ctx_a).is_none());
+    assert!(super::workflow_nudge_message(&ctx_a).await.is_none());
     drop(ctx_a);
 
-    env.session_key = "chat-session-b".to_string();
+    env.set_session_key("chat-session-b".to_string());
     let mut ctx_b = env.ctx();
     ctx_b.subagent_registry = Some(reg);
-    assert!(super::workflow_nudge_message(&ctx_b).is_some());
+    assert!(super::workflow_nudge_message(&ctx_b).await.is_some());
 }
 
-#[test]
-fn workflow_nudge_message_after_new_uses_new_generated_session_identity() {
+#[tokio::test]
+async fn workflow_nudge_message_after_new_uses_new_generated_session_identity() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -162,20 +164,20 @@ fn workflow_nudge_message_after_new_uses_new_generated_session_identity() {
         child.parent_id = Some("chat-after-new".to_string());
         guard.insert("child-after-new".to_string(), child);
     }
-    env.session_key = "chat-before-new".to_string();
+    env.set_session_key("chat-before-new".to_string());
     let mut old_ctx = env.ctx();
     old_ctx.subagent_registry = Some(reg.clone());
-    assert!(super::workflow_nudge_message(&old_ctx).is_some());
+    assert!(super::workflow_nudge_message(&old_ctx).await.is_some());
     drop(old_ctx);
 
-    env.session_key = "chat-after-new".to_string();
+    env.set_session_key("chat-after-new".to_string());
     let mut new_ctx = env.ctx();
     new_ctx.subagent_registry = Some(reg);
-    assert!(super::workflow_nudge_message(&new_ctx).is_none());
+    assert!(super::workflow_nudge_message(&new_ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
+#[tokio::test]
+async fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -188,20 +190,20 @@ fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
         child.parent_id = Some("chat-resumed".to_string());
         guard.insert("child-after-resume".to_string(), child);
     }
-    env.session_key = "chat-before-resume".to_string();
+    env.set_session_key("chat-before-resume".to_string());
     let mut old_ctx = env.ctx();
     old_ctx.subagent_registry = Some(reg.clone());
-    assert!(super::workflow_nudge_message(&old_ctx).is_some());
+    assert!(super::workflow_nudge_message(&old_ctx).await.is_some());
     drop(old_ctx);
 
-    env.session_key = "chat-resumed".to_string();
+    env.set_session_key("chat-resumed".to_string());
     let mut resumed_ctx = env.ctx();
     resumed_ctx.subagent_registry = Some(reg);
-    assert!(super::workflow_nudge_message(&resumed_ctx).is_none());
+    assert!(super::workflow_nudge_message(&resumed_ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
+#[tokio::test]
+async fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -214,15 +216,15 @@ fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
         child.parent_id = Some("chat-12345".to_string());
         guard.insert("child".to_string(), child);
     }
-    env.session_key = "chat-12345".to_string();
+    env.set_session_key("chat-12345".to_string());
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity() {
+#[tokio::test]
+async fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -235,15 +237,15 @@ fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity() {
         child.parent_id = Some("resumed-name".to_string());
         guard.insert("child-non-cli-colon".to_string(), child);
     }
-    env.session_key = "uds:resumed-name".to_string();
+    env.set_session_key("uds:resumed-name".to_string());
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_scopes_raw_session_without_prefix() {
+#[tokio::test]
+async fn workflow_nudge_message_scopes_raw_session_without_prefix() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -256,15 +258,15 @@ fn workflow_nudge_message_scopes_raw_session_without_prefix() {
         child.parent_id = Some("raw-session".to_string());
         guard.insert("child-raw-session".to_string(), child);
     }
-    env.session_key = "raw-session".to_string();
+    env.set_session_key("raw-session".to_string());
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
+#[tokio::test]
+async fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -280,11 +282,11 @@ fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_some());
+    assert!(super::workflow_nudge_message(&ctx).await.is_some());
 }
 
-#[test]
-fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
+#[tokio::test]
+async fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -300,11 +302,11 @@ fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active() {
+#[tokio::test]
+async fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -324,11 +326,11 @@ fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active() {
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_none());
+    assert!(super::workflow_nudge_message(&ctx).await.is_none());
 }
 
-#[test]
-fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
+#[tokio::test]
+async fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -348,7 +350,7 @@ fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
     let mut ctx = env.ctx();
     ctx.subagent_registry = Some(reg);
 
-    assert!(super::workflow_nudge_message(&ctx).is_some());
+    assert!(super::workflow_nudge_message(&ctx).await.is_some());
 }
 
 #[tokio::test]
@@ -392,9 +394,9 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
 
     // AC3: the conversation + session_stats snapshots refresh per turn too, not
     // just get_state — a regression dropping any of those refresh calls is caught.
-    let convo = ctx.conversation_snapshot.read().await;
+    let convo = ctx.sessions.active_session.read().await;
     assert_eq!(
-        convo.messages.len(),
+        convo.conversation().live_messages().len(),
         expected_count,
         "busy conversation snapshot must advance with the conversation, not stay empty"
     );

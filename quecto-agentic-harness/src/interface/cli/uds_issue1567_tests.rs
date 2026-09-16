@@ -37,7 +37,7 @@ fn record_agent_result_emits_normalized_session_usage_log() {
         .finish();
 
     tracing::subscriber::with_default(subscriber, || {
-        let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+        let mut session = AgentSession::new("gpt-5".to_string());
         let mut result = crate::domain::agent::AgentResult::text("ok");
         result.context_tokens = 105;
         result.billed_input_tokens = 70;
@@ -46,7 +46,7 @@ fn record_agent_result_emits_normalized_session_usage_log() {
         result.cache_write_tokens = 5;
         result.cost_micro_usd = 1_234;
 
-        session.record_agent_result(&result);
+        session.record_agent_result("cli:test", &result);
     });
 
     let output = sink.lock().unwrap().clone();
@@ -80,8 +80,8 @@ fn record_agent_result_without_usage_does_not_emit_session_usage_log() {
         .finish();
 
     tracing::subscriber::with_default(subscriber, || {
-        let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
-        session.record_agent_result(&crate::domain::agent::AgentResult::text("ok"));
+        let mut session = AgentSession::new("gpt-5".to_string());
+        session.record_agent_result("cli:test", &crate::domain::agent::AgentResult::text("ok"));
     });
 
     let output = sink.lock().unwrap().clone();

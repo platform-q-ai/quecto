@@ -1,7 +1,7 @@
 //! Real socket delivery into a workflow-free coordinator, followed by board action.
 use super::dispatch_test_env::{DispatchTestEnv, make_workflow};
+use crate::application::tools::ports::Tool;
 use crate::domain::message::{LlmResponse, ToolCall};
-use crate::domain::tool::Tool;
 use crate::infrastructure::tools::{
     swarm::{SwarmConfig, SwarmTool},
     swarm_bridge::SwarmContext,
@@ -12,13 +12,13 @@ use std::sync::Arc;
 struct ApprovalProvider {
     started: Arc<tokio::sync::Notify>,
 }
-impl crate::domain::provider::LlmProvider for ApprovalProvider {
+impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
     fn name(&self) -> &str {
         "approval-test"
     }
     fn chat(
         &self,
-        request: crate::domain::provider::ChatRequest<'_>,
+        request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
@@ -124,7 +124,7 @@ async fn approval_exchange(busy: bool) {
             turn_control: ctx.turn_control.clone(),
             live_clients: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             client_tool_registry: ctx.client_tool_registry.clone(),
-            conversation_snapshot: ctx.conversation_snapshot.clone(),
+            session: ctx.sessions.clone(),
             state_snapshot: ctx.state_snapshot.clone(),
             execution_state: ctx.execution_state.clone(),
             session_stats_snapshot: ctx.session_stats_snapshot.clone(),
@@ -227,7 +227,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
             turn_control: ctx.turn_control.clone(),
             live_clients: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             client_tool_registry: ctx.client_tool_registry.clone(),
-            conversation_snapshot: ctx.conversation_snapshot.clone(),
+            session: ctx.sessions.clone(),
             state_snapshot: ctx.state_snapshot.clone(),
             execution_state: ctx.execution_state.clone(),
             session_stats_snapshot: ctx.session_stats_snapshot.clone(),

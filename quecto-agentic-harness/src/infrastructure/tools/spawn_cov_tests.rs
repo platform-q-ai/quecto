@@ -669,8 +669,10 @@ time.sleep(0.2)
 
     // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
-    let tool = SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
-        .with_socket_dir(dir.path().to_path_buf());
+    let tool = crate::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
+            .with_socket_dir(dir.path().to_path_buf()),
+    );
     let mut cfg = tool.parse_args(r#"{"agent_id":"worker"}"#).unwrap();
     cfg.workflow_spec = Some(crate::domain::workflow::WorkflowSpec {
         template: crate::domain::workflow::WorkflowTemplate {

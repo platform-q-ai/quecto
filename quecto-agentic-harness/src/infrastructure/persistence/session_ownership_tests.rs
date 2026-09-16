@@ -6,15 +6,28 @@
 //! a stamp left by a dead process carries no lock and is reclaimed;
 //! dropping the guard releases the claim.
 
+use super::super::session_layout::FlatSessionLayout;
 use super::*;
+use crate::domain::session_identity::SessionIdentity;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
+
+/// The layout every test claims through: the stamp lands under
+/// `<tempdir>/sessions/<key>.owner`.
+fn layout(dir: &tempfile::TempDir) -> FlatSessionLayout {
+    FlatSessionLayout::new(dir.path())
+}
 
 /// Simulate another live process owning `key`: an independently opened file
 /// description holding the exclusive lock (flock semantics are per open
 /// description, exactly as another process would hold it), with `owner_pid`
 /// stamped for diagnostics.
-fn hold_as_foreign_owner(dir: &Path, key: &str, owner_pid: u32) -> std::fs::File {
+fn hold_as_foreign_owner(layout: &FlatSessionLayout, key: &str, owner_pid: u32) -> std::fs::File {
     use std::io::Write;
-    let file = open_stamp_file(dir, key).expect("open stamp file");
+    std::fs::create_dir_all(layout.sessions_dir()).expect("create sessions dir");
+    let file = open_stamp_file(layout, &id(key)).expect("open stamp file");
     file.try_lock().expect("foreign owner lock");
     let mut writer = &file;
     file.set_len(0).expect("truncate stamp");
@@ -27,7 +40,7 @@ fn hold_as_foreign_owner(dir: &Path, key: &str, owner_pid: u32) -> std::fs::File
 #[test]
 fn acquire_writes_owner_stamp_with_pid() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let guard = SessionOwnershipGuard::acquire(dir.path(), "stamped-key")
+    let guard = SessionOwnershipGuard::acquire(&layout(&dir), &id("stamped-key"))
         .expect("first acquire must succeed");
     assert!(
         guard.stamp_path().exists(),
@@ -48,9 +61,9 @@ fn second_acquire_of_live_owned_key_is_refused_with_clear_error() {
     // parent (test runner) is a live process that is never this one.
     let owner_pid = std::os::unix::process::parent_id();
     assert_ne!(owner_pid, std::process::id());
-    let _held = hold_as_foreign_owner(dir.path(), "shared-key", owner_pid);
+    let _held = hold_as_foreign_owner(&layout(&dir), "shared-key", owner_pid);
 
-    let second = SessionOwnershipGuard::acquire(dir.path(), "shared-key");
+    let second = SessionOwnershipGuard::acquire(&layout(&dir), &id("shared-key"));
     let err = match second {
         Err(e) => e.to_string(),
         Ok(_) => panic!("second acquire of a key owned by a live process must be refused"),
@@ -75,10 +88,11 @@ fn stamp_left_by_dead_process_is_reclaimed() {
         .expect("spawn true");
     let dead = child.id();
     child.wait().expect("wait true");
-    let stamp = ownership_stamp_path(dir.path(), "stale-key");
+    let stamp = layout(&dir).ownership_stamp(&id("stale-key"));
+    std::fs::create_dir_all(stamp.parent().unwrap()).expect("create sessions dir");
     std::fs::write(&stamp, dead.to_string()).expect("write stale stamp");
 
-    let guard = SessionOwnershipGuard::acquire(dir.path(), "stale-key")
+    let guard = SessionOwnershipGuard::acquire(&layout(&dir), &id("stale-key"))
         .expect("a stamp left by a dead process must be reclaimable");
     let contents = std::fs::read_to_string(guard.stamp_path()).expect("read stamp");
     assert!(
@@ -92,10 +106,11 @@ fn unparseable_stamp_is_reclaimed_not_permanently_stuck() {
     // A corrupt unlocked stamp must never strand a key forever: with no lock
     // held there is no live owner to protect, so the claim reclaims it.
     let dir = tempfile::tempdir().expect("tempdir");
-    let stamp = ownership_stamp_path(dir.path(), "corrupt-key");
+    let stamp = layout(&dir).ownership_stamp(&id("corrupt-key"));
+    std::fs::create_dir_all(stamp.parent().unwrap()).expect("create sessions dir");
     std::fs::write(&stamp, "not-a-pid").expect("write corrupt stamp");
 
-    let guard = SessionOwnershipGuard::acquire(dir.path(), "corrupt-key")
+    let guard = SessionOwnershipGuard::acquire(&layout(&dir), &id("corrupt-key"))
         .expect("an unreadable stamp must be reclaimable");
     let contents = std::fs::read_to_string(guard.stamp_path()).expect("read stamp");
     assert!(
@@ -107,12 +122,12 @@ fn unparseable_stamp_is_reclaimed_not_permanently_stuck() {
 #[test]
 fn dropping_the_guard_releases_ownership() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let guard = SessionOwnershipGuard::acquire(dir.path(), "released-key")
+    let guard = SessionOwnershipGuard::acquire(&layout(&dir), &id("released-key"))
         .expect("first acquire must succeed");
     drop(guard);
     // The stamp file may remain (never unlinked, to avoid the orphaned-inode
     // double-owner race), but the key must be reacquirable.
-    SessionOwnershipGuard::acquire(dir.path(), "released-key")
+    SessionOwnershipGuard::acquire(&layout(&dir), &id("released-key"))
         .expect("a released key must be reacquirable");
 }
 
@@ -121,9 +136,10 @@ fn acquire_reports_stamp_open_failure() {
     let dir = tempfile::tempdir().expect("tempdir");
     let blocked_dir = dir.path().join("blocked-dir");
     std::fs::create_dir(&blocked_dir).expect("create blocked dir");
-    let blocker = ownership_stamp_path(&blocked_dir, "blocked-key");
-    std::fs::create_dir(&blocker).expect("directory at stamp path makes stamp open fail");
-    let err = SessionOwnershipGuard::acquire(&blocked_dir, "blocked-key")
+    let blocked_layout = FlatSessionLayout::new(&blocked_dir);
+    let blocker = blocked_layout.ownership_stamp(&id("blocked-key"));
+    std::fs::create_dir_all(&blocker).expect("directory at stamp path makes stamp open fail");
+    let err = SessionOwnershipGuard::acquire(&blocked_layout, &id("blocked-key"))
         .expect_err("a directory at the stamp path must be reported");
     assert!(
         err.to_string()
@@ -137,18 +153,18 @@ fn registry_claim_is_idempotent_and_release_relinquishes_key() {
     let dir = tempfile::tempdir().expect("tempdir");
     let registry = SessionOwnershipRegistry::default();
     registry
-        .claim(dir.path(), "registry-key")
+        .claim(&layout(&dir), &id("registry-key"))
         .expect("first registry claim must acquire the key");
     registry
-        .claim(dir.path(), "registry-key")
+        .claim(&layout(&dir), &id("registry-key"))
         .expect("repeat claim by the same registry must be idempotent");
 
-    let blocked = SessionOwnershipGuard::acquire(dir.path(), "registry-key")
+    let blocked = SessionOwnershipGuard::acquire(&layout(&dir), &id("registry-key"))
         .expect_err("registry must hold the OS lock until explicit release");
     assert!(blocked.to_string().contains("registry-key"), "{blocked}");
 
-    registry.release("registry-key");
-    SessionOwnershipGuard::acquire(dir.path(), "registry-key")
+    registry.release(&id("registry-key"));
+    SessionOwnershipGuard::acquire(&layout(&dir), &id("registry-key"))
         .expect("release must relinquish the OS lock for the key");
 }
 
@@ -157,15 +173,16 @@ fn concurrent_acquires_yield_exactly_one_owner() {
     // The atomic try_lock means two simultaneous claimants can never both
     // win — the race the old read-remove-recreate reclaim allowed.
     let dir = tempfile::tempdir().expect("tempdir");
-    let dir_path = dir.path().to_path_buf();
+    let layout = layout(&dir);
+    std::fs::create_dir_all(layout.sessions_dir()).expect("create sessions dir");
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let handles: Vec<_> = (0..8)
         .map(|_| {
-            let dir_path = dir_path.clone();
+            let layout = layout.clone();
             let barrier = std::sync::Arc::clone(&barrier);
             std::thread::spawn(move || {
                 // Independent open file descriptions racing on one key.
-                let file = open_stamp_file(&dir_path, "raced-key").expect("open stamp");
+                let file = open_stamp_file(&layout, &id("raced-key")).expect("open stamp");
                 barrier.wait();
                 let won = file.try_lock().is_ok();
                 // Hold the lock until every claimant has attempted.
@@ -256,19 +273,19 @@ fn release_unlocks_even_when_a_descriptor_duplicate_survives() {
     let dir = tempfile::tempdir().expect("tempdir");
     let registry = SessionOwnershipRegistry::default();
     registry
-        .claim(dir.path(), "dup-key")
+        .claim(&layout(&dir), &id("dup-key"))
         .expect("claim must acquire the key");
 
     let duplicate = {
         let owned = registry.owned.lock().expect("registry mutex");
-        let guard = owned.get("dup-key").expect("claimed guard");
+        let guard = owned.get(&id("dup-key")).expect("claimed guard");
         // SAFETY: dup on a descriptor owned by the live guard.
         unsafe { libc::dup(guard._lock_file.as_raw_fd()) }
     };
     assert!(duplicate >= 0, "dup must succeed");
 
-    registry.release("dup-key");
-    let reclaimed = SessionOwnershipGuard::acquire(dir.path(), "dup-key");
+    registry.release(&id("dup-key"));
+    let reclaimed = SessionOwnershipGuard::acquire(&layout(&dir), &id("dup-key"));
 
     // SAFETY: closing the duplicate we created above.
     unsafe { libc::close(duplicate) };

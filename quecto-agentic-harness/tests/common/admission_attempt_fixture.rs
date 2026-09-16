@@ -21,6 +21,9 @@
 //! of a receiver, cancellation intent, or requesting JoinHandle::abort. Dropping
 //! an uncertain permit never frees capacity. No transport types leak inward.
 //! This fake is deliberately NOT an LlmProvider decorator or policy substitute.
+// Shared by several modules of the consolidated `integration` target, each
+// using a different subset of the fixture.
+#![allow(dead_code)]
 
 use std::future::Future;
 use std::pin::Pin;
@@ -28,9 +31,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::error::DomainError;
 use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::provider::{CancelFlag, ChatRequest, LlmProvider, StreamEvent};
+use quecto::domain::provider::{CancelFlag, StreamEvent};
 use quecto::infrastructure::providers::{
     anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };

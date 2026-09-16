@@ -2,13 +2,14 @@ pub mod agent;
 pub mod audit;
 pub mod catalogue;
 pub mod constants;
+pub mod conversation_edit;
+pub mod conversation_view;
 pub mod environment_registry;
 pub mod environment_retention;
 #[cfg(test)]
 #[path = "environment_retention_tests.rs"]
 mod environment_retention_tests;
 pub mod error;
-pub mod extension;
 pub mod extension_tool;
 pub mod harness_lifetime;
 pub mod ids;
@@ -20,6 +21,7 @@ pub mod provider_retry;
 pub mod redaction;
 pub mod request_observation;
 pub mod session;
+pub mod session_identity;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod subagent_teardown;
@@ -27,6 +29,7 @@ pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
+pub mod unread_report;
 pub mod usage_accounting;
 
 #[cfg(test)]

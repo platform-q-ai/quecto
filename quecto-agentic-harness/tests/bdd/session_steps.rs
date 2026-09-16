@@ -1,4 +1,12 @@
 use super::*;
+use quecto::application::sessions::dto::SessionListQuery;
+use quecto::domain::session_identity::SessionIdentity;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
+
+/// Session identity for a raw persisted key.
+fn sid(key: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
 
 // Session Steps
 // ===========================================================================
@@ -8,7 +16,7 @@ fn ensure_session_workspace(world: &mut QuectoWorld) {
     if world.session_workspace.is_none() {
         let td = TempDir::new().expect("failed to create temp dir");
         let ws = td.path().to_path_buf();
-        world.session_store = Some(FileSessionStore::new(&ws));
+        world.session_store = Some(FileSessionStore::new(FlatSessionLayout::new(&ws)));
         world.session_workspace = Some(ws);
         world._temp_dir = Some(td);
     }
@@ -24,7 +32,7 @@ fn given_no_session_exists(world: &mut QuectoWorld, key: String) {
     let store = world.session_store.as_ref().expect("session store not set");
     let exists = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.exists(&key))
+        .block_on(store.exists(&sid(&key)))
         .unwrap();
     assert!(!exists, "session '{}' should not exist yet", key);
 }
@@ -34,7 +42,7 @@ fn given_session_with_messages(world: &mut QuectoWorld, key: String, count: usiz
     ensure_session_workspace(world);
     let store = world.session_store.as_ref().expect("session store not set");
 
-    let mut session = Session::new(&key);
+    let mut session = Session::new(sid(&key));
     for i in 0..count {
         let content = format!("Message {}", i + 1);
         if i % 2 == 0 {
@@ -89,7 +97,7 @@ fn given_session_with_unrecognised_detail(world: &mut QuectoWorld, key: String) 
 fn given_session_with_distinct_conversation_content(world: &mut QuectoWorld, key: String) {
     ensure_session_workspace(world);
     let session = Session {
-        key,
+        key: sid(&key),
         messages: vec![
             Message::user("first durable request"),
             Message::assistant("first durable response", vec![]),
@@ -120,7 +128,7 @@ fn load_session(world: &QuectoWorld, key: &str) -> Session {
     let store = world.session_store.as_ref().expect("session store not set");
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.load(key))
+        .block_on(store.load(&sid(key)))
         .expect("session load should succeed")
         .unwrap_or_else(|| panic!("expected session {key:?} to exist"))
 }
@@ -137,7 +145,7 @@ fn session_list_entry(world: &QuectoWorld, key: &str) -> quecto::domain::session
     let store = world.session_store.as_ref().expect("session store not set");
     let summaries = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.list(None))
+        .block_on(store.list(&SessionListQuery::All))
         .expect("session list should succeed");
     summaries
         .into_iter()
@@ -174,7 +182,7 @@ fn given_workspace_file_contains(world: &mut QuectoWorld, filename: String, cont
 #[when(expr = "the session store creates a session for key {string}")]
 fn when_create_session(world: &mut QuectoWorld, key: String) {
     let store = world.session_store.as_ref().expect("session store not set");
-    let session = Session::new(&key);
+    let session = Session::new(sid(&key));
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(store.save(&session))
@@ -186,7 +194,7 @@ fn when_load_session(world: &mut QuectoWorld, key: String) {
     let store = world.session_store.as_ref().expect("session store not set");
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.load(&key))
+        .block_on(store.load(&sid(&key)))
         .unwrap();
     world.loaded_session = Some(result);
 }
@@ -263,7 +271,7 @@ fn when_session_store_recreated(world: &mut QuectoWorld) {
         .as_ref()
         .expect("session workspace not set")
         .clone();
-    world.session_store = Some(FileSessionStore::new(&ws));
+    world.session_store = Some(FileSessionStore::new(FlatSessionLayout::new(&ws)));
 }
 
 #[when(expr = "user {string} sends a message on channel {string}")]
@@ -274,10 +282,10 @@ fn when_user_sends_message_on_channel(world: &mut QuectoWorld, user_id: String, 
 
     let existing = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.load(&key))
+        .block_on(store.load(&sid(&key)))
         .unwrap();
 
-    let session = existing.unwrap_or_else(|| Session::new(&key));
+    let session = existing.unwrap_or_else(|| Session::new(sid(&key)));
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(store.save(&session))
@@ -291,7 +299,7 @@ fn then_session_exists(world: &mut QuectoWorld, key: String) {
     let store = world.session_store.as_ref().expect("session store not set");
     let exists = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.exists(&key))
+        .block_on(store.exists(&sid(&key)))
         .unwrap();
     assert!(exists, "session '{}' should exist", key);
 }
@@ -301,7 +309,7 @@ fn then_session_does_not_exist(world: &mut QuectoWorld, key: String) {
     let store = world.session_store.as_ref().expect("session store not set");
     let exists = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.exists(&key))
+        .block_on(store.exists(&sid(&key)))
         .unwrap();
     assert!(!exists, "session '{key}' should not exist");
 }
@@ -411,7 +419,7 @@ fn then_session_list_should_include(world: &mut QuectoWorld, expected_name: Stri
     let store = world.session_store.as_ref().expect("session store not set");
     let summaries = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.list(None))
+        .block_on(store.list(&SessionListQuery::All))
         .expect("session list should succeed");
     assert!(
         summaries.iter().any(|summary| summary.key == expected_name),

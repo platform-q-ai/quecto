@@ -54,7 +54,11 @@ fn outcomes_present_the_result_vocabulary_and_cap_the_list() {
     assert_eq!(body["target"], "A");
     assert_eq!(body["killed"], serde_json::json!(["r0", "r1"]));
     assert!(body.get("omitted_agents").is_none());
-    assert!(body.get("signalled").is_none(), "#1928 vocabulary is gone");
+    assert_eq!(
+        body.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["killed", "result", "target"],
+        "the vocabulary is exactly target/result/killed"
+    );
 
     let capped = present_outcome(&outcome(TerminationResult::Fallback, 23));
     let body: serde_json::Value = serde_json::from_str(&capped.content).unwrap();
@@ -72,6 +76,7 @@ fn errors_present_failed_as_a_result_and_refusals_as_agent_cmd_errors() {
         "w1",
         &KillDelegatedAgentError::Failed {
             detail: "no exit".into(),
+            effects_dispatched: true,
         },
     );
     assert!(failed.is_error);
@@ -115,22 +120,29 @@ async fn the_tool_parses_invokes_and_presents() {
         FakeLifecycle, FakeRouting, root_tree,
     };
     use crate::application::subagents::use_cases::{
-        KillDelegatedAgent, KillDelegatedAgentPorts, TerminateDelegatedAgent,
+        KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
     };
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let registry = FakeRegistry::new().with_row("A", 1, "alpha");
     let lifecycle = FakeLifecycle::new(root_tree());
     let routing = FakeRouting::new();
     let use_case = Arc::new(KillDelegatedAgent::new(
-        Arc::new(TerminateDelegatedAgent::new(lifecycle.clone(), routing)),
+        Arc::new(
+            TerminateDelegatedAgent::new(lifecycle.clone(), routing).with_owner_conclusion(
+                OwnerConclusionPorts {
+                    registry: registry.clone(),
+                    termination: FakeTermination::new(
+                        registry.clone(),
+                        TerminationConclusion::ExitedAfterProtocol,
+                    ),
+                    compensation: FakeCompensation::new(registry.clone()),
+                },
+            ),
+        ),
         KillDelegatedAgentPorts {
             registry: registry.clone(),
             lifecycle,
-            termination: FakeTermination::new(
-                registry.clone(),
-                TerminationConclusion::ExitedAfterProtocol,
-            ),
             compensation: FakeCompensation::new(registry),
         },
     ));

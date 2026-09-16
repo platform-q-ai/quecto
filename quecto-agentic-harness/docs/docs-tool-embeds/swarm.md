@@ -51,11 +51,11 @@ content in artifacts, not messages or evidence fields.
 
 | Call | Input and behavior |
 |---|---|
-| `summary(since=None)` | Current goal, members, counts, first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response |
+| `summary(since=None)` | Current goal, members, counts (task statuses plus `members_without_claim` and `members_dead`), first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response; an owner turning idle by clock alone since that cursor yields a full summary instead, and `next_liveness_check_at` says when the next one would |
 | `events(after=0, limit=25)` | Explicit chronological history; limit 1–100 |
 | `tasks(offset=0, limit=50)` / `file_owners(offset=0, limit=50)` | Integer offset ≥0; integer limit 1–100 |
 | `task_create(request, title, acceptance, dependencies=None)` | Stable request string, title string, **nonempty `list[str]` acceptance**, optional `list[int]` dependency IDs; returns a task |
-| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming |
+| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming. A claimed, blocked or submitted row (also from `tasks()` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown`. An active or idle owner is named in `contact` (`board.send(request, '<owner id>', body)`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
 | `claim(id)` | Returns owned task with a new claim `token`; unmet dependencies reject |
 | `block(id, token, reason)` | Nonempty string reason |
 | `unblock(id, token, reason)` | Resume your blocked claim, preserving token and reservations; submitted work cannot be reopened |
@@ -63,7 +63,7 @@ content in artifacts, not messages or evidence fields.
 | `submit(id, token, evidence)` | Submit `Evidence` for coordinator verification; submission is not completion |
 | `reserve(id, token, paths)` | `list[str]`, 1–100 checkout-contained paths, all-or-nothing; returns reservation token |
 | `release_files(id, token, reservation)` | Release that reservation token for this claim |
-| `send(request, recipient, body, revision=None, supersedes=None)` | Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
+| `send(request, recipient, body, revision=None, supersedes=None)` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
 | `withdraw(message_id)` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
 | `inbox(include_consumed=False)` / `ack(message_id)` | Read at most 100 own unread messages (`revision`, `supersedes`, `superseded_by` included); `include_consumed=True` adds consumed, superseded and withdrawn history; acknowledge after reading |
 | `evidence(criterion, artifact, revision, kind, passed)` | Strings plus `passed: bool`; workers record proposals with **accepted=0**. Only coordinator calls with `passed=True` accept evidence |
@@ -97,14 +97,32 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
   at that revision, with no outstanding work or file reservations.
 - `stop(status, reason)` accepts `blocked`, `failed`, `cancelled`, or
   `budget-exhausted`; use tool `op=cancel_run` for parent cancellation.
-- `recover(id)` requires proof the entire former owner's execution scope stopped.
-  The current adapter cannot establish that from harness death alone: it pauses
-  the run holding `failed` (a verdict already proposed is kept) and retains
-  ownership for the master to close. Do not reassign.
+- `revoke(id, reason)` takes a claim back from a member that will not finish
+  (suspended, hung, silent), alive or not: the task returns to `ready` with no
+  owner, token, blocker or evidence, its file reservations go, the audit records
+  the reason and previous owner, and the previous owner is messaged. Its stale
+  token then fails with `stale or unowned claim`. A repeat on an unowned task is
+  a no-op.
+- `recover(id, release_files=False)` reopens work whose owner's death the
+  harness confirmed: a member you launched that exited (on its own or by your
+  `agent_cmd kill`) is marked dead by your harness, its tasks block with
+  `worker death confirmed; coordinator recovery required`, and the run keeps
+  running. An orderly end (exit code, protocol shutdown, delegated kill)
+  releases its reservations; an abrupt one (a signal nobody here sent, an
+  unobservable exit) retains them because Bash tool children in their own
+  process groups may still be writing those paths — the tasks say
+  `reservations retained`, and only `revoke(id, reason)` or
+  `recover(id, release_files=True)` frees them; both need a running run
+  (resume first). A vanished harness seen by `op=reconcile` is not a confirmed
+  death: only the member's launcher (or anyone, once that launcher is dead)
+  records the loss, after a ten-second grace in which the launcher's reaper
+  normally confirms the death instead; a recorded loss pauses the run holding
+  `failed`, once per member, and ownership is retained until the master
+  resumes and you `revoke`. Other members' reconciles record nothing.
 
 Actually inspect command results and independent review before accepting them.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.
-Only the coordinator may amend, verify, revalidate, complete, stop or recover.
+Only the coordinator may amend, verify, revalidate, complete, stop, revoke or recover.
 Workers may call `evidence`; their proposals never authorize completion.
 
 ## Wakeups, terminal inspection and artifacts
@@ -248,5 +266,9 @@ Paused instructions remain queued; resume restores admission and the deadline.
 A resume also wakes every live member, and a member whose automatic turns were
 suspended by a provider failure re-arms on it and continues its work without a
 prompt or steer. Do not pause a run because one member failed: resume the run
-and, only if the member is still stuck, steer it.
+and, only if the member is still stuck, steer it. For a member that holds a
+claim it will not finish, no process is prescribed: an explicit `agent_cmd`
+`steer`/`follow_up` re-arms a provider-suspended member (#1712), `agent_cmd`
+`set_model` moves it off a failing provider, `revoke(id, reason)` reassigns its
+work, and `recover(id)` applies once its death is confirmed.
 Terminal completion notices do not trigger automatic report turns.

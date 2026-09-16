@@ -30,7 +30,9 @@ async fn tab_spawn_registers_owned_watch_before_readiness_wait_completes() {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\nprintf '{} {}\\n'\nprintf 'quecto-agent-socket: {}\\n'\nsleep 30\n",
+            // `exec` so the leader IS the sleeping process: the leader-only
+            // SIGTERM (#1956) ends it and closes the stderr the spawn reads.
+            "#!/bin/sh\nprintf '{} {}\\n'\nprintf 'quecto-agent-socket: {}\\n'\nexec sleep 30\n",
             quecto_line_io::PROTOCOL_ANNOUNCE_PREFIX,
             quecto_line_io::PROTOCOL_VERSION,
             sock.display()

@@ -9,7 +9,7 @@ use crate::application::subagents::ports::{
     ChildRoutingError, Compensated, CompensationObservation, ConclusionBudget,
     DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, PortFuture, ProtocolAttempt,
     ResolutionError, StoppingClaimError, TeardownCompensation, TerminalClaim, TerminationCause,
-    TerminationConclusion,
+    TerminationConclusion, TerminationResult,
 };
 use crate::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
 use crate::domain::ids::AgentUuid;
@@ -61,6 +61,7 @@ impl DelegatedAgentRegistry for Fakes {
         Ok(())
     }
     fn release_stopping(&self, _: &DelegatedAgentIdentity) {}
+    fn retain_stopping(&self, _: &DelegatedAgentIdentity) {}
     fn claim_terminal(&self, _: &DelegatedAgentIdentity) -> TerminalClaim {
         TerminalClaim::Claimed
     }
@@ -106,7 +107,7 @@ impl DirectChildRouting for Fakes {
         _: &'a DelegatedAgentIdentity,
         _: &'a DelegatedAgentIdentity,
         _: RoutingDepth,
-    ) -> PortFuture<'a, Result<(), ChildRoutingError>> {
+    ) -> PortFuture<'a, Result<Option<TerminationResult>, ChildRoutingError>> {
         Box::pin(async { panic!("an environment member is never forwarded") })
     }
 }

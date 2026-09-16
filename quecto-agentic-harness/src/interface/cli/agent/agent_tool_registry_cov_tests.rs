@@ -28,6 +28,7 @@ fn flags() -> AgentFlags {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     }
@@ -103,7 +104,10 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
     })
     .unwrap();
 
-    assert_eq!(built.session_key, Session::build_key("cli", "named"));
+    assert_eq!(
+        built.session_key,
+        crate::domain::session::Session::build_key("cli", "named")
+    );
     assert_eq!(built.model, "openai-api/gpt-5.6-sol");
     assert!(!built.extension_prompt_snippets.contains("failed"));
 }

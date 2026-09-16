@@ -5,8 +5,9 @@
 //! - `tools()` returns the same tools the extension was built with.
 //! - `system_prompt_snippet()` is a pure accessor (no hidden side effects).
 
-use quecto::domain::extension::Extension;
-use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
+use quecto::application::extensions::ports::Extension;
+use quecto::application::tools::ports::Tool;
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::extensions::native::NativeExtension;
 use std::borrow::Cow;
 use std::future::Future;

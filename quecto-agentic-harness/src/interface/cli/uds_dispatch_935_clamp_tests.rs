@@ -5,9 +5,9 @@
 
 use super::dispatch_command;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -31,7 +31,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -48,9 +48,8 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     assert_eq!(agent.effective_max_tokens(), 100);
 
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store = FileSessionStore::new(tmp.path());
+    let mut session = AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
@@ -62,26 +61,33 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
         model_id: None,
     };
     {
+        let save_session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+                &session_key,
+            );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &session_key,
+            );
         let mut ctx = DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: tmp.path(),
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &session_key,
+                None,
+                &[],
+            ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                session.state_snapshot(0, None, 0, None),
+                session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut session,
             stdout: Some(&mut writer),
-            session_key: &mut session_key,
-            session_store: &store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),
@@ -95,9 +101,13 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
+            rewrite,
+            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+                &session_key,
+            ),
             fleet_teardown: None,
+            list_sessions: list_handle(tmp.path()),
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
     }

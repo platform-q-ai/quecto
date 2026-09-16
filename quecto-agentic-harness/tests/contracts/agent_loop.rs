@@ -12,15 +12,16 @@
 //! or filesystem state.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use quecto::domain::agent::AgentLoop;
-use quecto::domain::audit::{AuditEvent, AuditSink};
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::audit::ports::AuditSink;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
+};
+use quecto::domain::audit::AuditEvent;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolResult,
-};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -72,9 +73,9 @@ impl RuntimeToolLifecycleRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
-impl quecto::domain::tool::ToolPolicyMutator for EmptyRegistry {}
+impl quecto::application::tools::ports::ToolPolicyMutator for EmptyRegistry {}
 
-impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
+impl quecto::application::tools::ports::ToolRegistry for EmptyRegistry {}
 
 fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
     Box::new(AgentLoopImpl::new(AgentLoopConfig {
@@ -85,7 +86,7 @@ fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
         model: "test-model".into(),
         max_tokens: 1000,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "contract".into(),
         context_collapse_after_tool_calls: 100,
         max_context_tokens: 100_000,
@@ -141,7 +142,7 @@ fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Box<dyn AgentLoop
         model: "test-model".into(),
         max_tokens: 1000,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "contract".into(),
         context_collapse_after_tool_calls: 100,
         max_context_tokens: 100_000,

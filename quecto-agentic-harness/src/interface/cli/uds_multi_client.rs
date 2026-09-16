@@ -14,8 +14,9 @@ use super::super::uds_cancel::CancelHandle;
 use super::super::uds_parent_control::{
     ConnectionRole, ConnectionTeardown, Intercept, LineContext,
 };
+use super::super::uds_session_handles::SessionReadHandles;
 use super::super::uds_teardown_adapters::SharedWriter;
-use super::{ClientGuard, ClientMessage, ConversationSnapshot};
+use super::{ClientGuard, ClientMessage};
 
 /// Arguments for [`handle_client`].
 pub(crate) struct ClientHandlerArgs {
@@ -35,9 +36,10 @@ pub(crate) struct ClientHandlerArgs {
     pub(crate) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
     pub(crate) client_tool_registry: super::super::uds_ext_protocol::ClientToolRegistry,
-    /// Live conversation ledger. Updated as messages are appended during a turn,
-    /// allowing read-only get_message lookups to bypass the blocked dispatcher.
-    pub(crate) conversation_snapshot: ConversationSnapshot,
+    /// The active session and its read use cases (#1971): published as
+    /// messages are appended during a turn, so read-only history and
+    /// recovery lookups bypass the blocked dispatcher.
+    pub(crate) session: SessionReadHandles,
     /// Sub-agent registry, read mid-turn to serve `get_subagents` and forward
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(crate) subagent_registry:
@@ -59,7 +61,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         turn_control,
         client_id,
         client_tool_registry,
-        conversation_snapshot,
+        session,
         subagent_registry,
         teardown,
         _guard,
@@ -156,7 +158,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         if !super::super::uds_reader_dispatch::dispatch(
             super::super::uds_reader_dispatch::ReaderDispatchCtx {
                 line,
-                snapshot: &conversation_snapshot,
+                session: &session,
                 registry: &client_tool_registry,
                 subagent_registry: &subagent_registry,
                 fleet: teardown.as_deref().map(|teardown| &teardown.fleet),

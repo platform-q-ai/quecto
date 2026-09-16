@@ -18,7 +18,7 @@ async fn adopt(supervisor: &Arc<OwnedChildSupervisor>, program: &str) -> ChildHa
 }
 
 fn observer(registry: &SubagentRegistry) -> Arc<ObserveOwnedChildExit> {
-    super::super::subagent_teardown_wiring::build_lifecycle_use_cases(registry.clone(), None, None)
+    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(registry.clone(), None, None)
         .observe_exit
 }
 
@@ -27,8 +27,8 @@ fn identity(uuid: &str) -> DelegatedAgentIdentity {
 }
 
 /// A reaped child's registry clones can never signal it: the supervisor
-/// refuses without a retained handle, and no reported lease exists for a
-/// locally launched child.
+/// retires the handle when it reaps, and a registry row carries no other
+/// process authority (#1940).
 #[tokio::test]
 async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
     use crate::infrastructure::tools::subagent_cascade;
@@ -53,7 +53,7 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
             exit_tx,
             child: identity("owned"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     tokio::time::timeout(std::time::Duration::from_secs(5), exit_rx.changed())
@@ -68,11 +68,11 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let removed = subagent_cascade::cascade_remove(&registry, "owned");
-    // A retained clone of the removed row asks the supervisor, which has
-    // nothing left to signal.
-    assert!(!removed[0].1.clone().request_owned_child_termination(
-        crate::domain::subagent_teardown::ShutdownReason::OperatorRequest
-    ));
+    // A retained clone of the removed row names the handle, but the
+    // supervisor no longer retains it: nothing is left to signal.
+    let clone = removed[0].1.clone();
+    assert_eq!(clone.owned_child, Some(handle));
+    assert!(!clone.holds_owned_child());
     assert!(supervisor.signals_sent(handle).is_empty());
     assert!(!supervisor.retains(handle));
 }
@@ -88,9 +88,9 @@ fn exit_signal_from_exit_maps_code_signal_and_unobservable() {
     let clean = exit_signal_from_exit(Some(ChildExit::Code(0)));
     assert_eq!(clean.exit_code, Some(0));
     assert_eq!(clean.signal, None);
-    let signalled = exit_signal_from_exit(Some(ChildExit::Signal(15)));
-    assert_eq!(signalled.exit_code, None);
-    assert_eq!(signalled.signal, Some(15));
+    let by_signal = exit_signal_from_exit(Some(ChildExit::Signal(15)));
+    assert_eq!(by_signal.exit_code, None);
+    assert_eq!(by_signal.signal, Some(15));
 }
 
 #[tokio::test]
@@ -107,7 +107,7 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
             exit_tx,
             child: identity("gone"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
 
@@ -138,7 +138,7 @@ async fn reaper_reports_the_supervisors_exit_status() {
             exit_tx,
             child: identity("code3"),
             observer: observer(&registry),
-            swarm_context: None,
+            swarm_member: None,
         },
     );
     exit_rx.changed().await.unwrap();
@@ -151,4 +151,41 @@ async fn reaper_reports_the_supervisors_exit_status() {
     }
     assert!(!supervisor.knows(handle), "the reaper retires the slot");
     assert!(supervisor.signals_sent(handle).is_empty());
+}
+
+/// #1961: an exit code or a signal this harness sent is an orderly end (the
+/// member's teardown ran, or its whole group was signalled); a signal nobody
+/// here sent or an unobservable end is abrupt.
+#[test]
+fn member_exit_kind_separates_orderly_ends_from_abrupt_ones() {
+    use crate::domain::swarm::MemberExit;
+    use crate::infrastructure::processes::owned_child_supervisor::SentSignal;
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Code(0)), &[]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Code(101)), &[]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Signal(15)), &[SentSignal::Term]),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(
+            Some(&ChildExit::Signal(9)),
+            &[SentSignal::Term, SentSignal::Kill]
+        ),
+        MemberExit::Orderly
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Signal(9)), &[]),
+        MemberExit::Abrupt
+    );
+    assert_eq!(
+        member_exit_kind(Some(&ChildExit::Unobservable("wait failed".into())), &[]),
+        MemberExit::Abrupt
+    );
+    assert_eq!(member_exit_kind(None, &[]), MemberExit::Abrupt);
 }

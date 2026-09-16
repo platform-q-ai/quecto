@@ -4,8 +4,8 @@
 // thinking block replay, signature_delta, Accept header, stop reasons.
 
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::message::{Message, StopReason, ThinkingBlock};
-use crate::domain::provider::ChatRequest;
 
 // #437: Anthropic provider API parity
 // ===========================================================================

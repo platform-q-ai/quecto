@@ -14,10 +14,12 @@ use std::sync::{Arc, Mutex};
 
 use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::provider::StreamEvent;
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::uds_session::AgentSession;
 
 /// Provider returning a scripted FIFO of responses.
@@ -199,7 +201,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 700,
@@ -218,7 +220,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     let mut messages: Vec<Message> = (1..=8).map(droppable_history_message).collect();
     let pre_turn_len = messages.len() + 1; // history + the incoming prompt
 
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -229,7 +231,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: None,
+            active_session: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("go"),
@@ -337,7 +339,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -355,7 +357,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         Message::assistant("prior", vec![]),
     ];
 
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -366,7 +368,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: None,
+            active_session: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("hi"),

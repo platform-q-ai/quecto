@@ -5,7 +5,8 @@
 //! the composition-root bundle still exposes the combined capability expected by
 //! `AgentLoopImpl`.
 
-use quecto::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use quecto::application::tools::ports::{Tool, ToolRegistry};
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

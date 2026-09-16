@@ -1,11 +1,8 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::agent::AgentLoop;
-use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -201,6 +198,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: None,
         admission_context,
         parent_control,
     };
@@ -265,12 +263,29 @@ pub(crate) fn cmd_agent(
         &build.extension_prompt_snippets,
     ));
     let mut out = AgentOutput { stdout, stderr };
-    let code = run_agent_session(&base_dir, build.agent, &flags, &mut out);
+    // The interface never constructs a session store (#1970): without
+    // composition's builder there is nothing to persist against.
+    let Some(sessions) = ctx.sessions else {
+        out.stderr
+            .push_str("agent: sessions capability not composed\n");
+        return 1;
+    };
+    let code = run_agent_session(
+        &base_dir,
+        sessions,
+        build.agent,
+        &build.retention,
+        &flags,
+        &mut out,
+    );
     admission_startup::shutdown();
     code
 }
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
+    /// The run's retained-context handles (D9 #1978): the store the loop's
+    /// session recovers through and the scrub the ephemeral exit reaches.
+    pub retention: crate::interface::cli::retention_handles::RetentionHandles,
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     pub extension_prompt_snippets: String,
     pub model: String,
@@ -347,7 +362,7 @@ pub(crate) fn build_agent_from_config(
     });
     let ToolRegistryBuild {
         registry,
-        spill_store,
+        retention,
         session_key,
         model,
         ext_registry,
@@ -412,7 +427,7 @@ pub(crate) fn build_agent_from_config(
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: Some(spill_store),
+        retention: Some(retention.context.clone()),
         session_key,
         context_collapse_after_tool_calls: config.agents.defaults.context_collapse_after_tool_calls,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -442,6 +457,7 @@ pub(crate) fn build_agent_from_config(
     );
     Some(AgentBuildResult {
         agent,
+        retention,
         workflow_config: wf_config,
         extension_prompt_snippets,
         model,
@@ -457,119 +473,39 @@ pub(crate) fn build_agent_from_config(
 }
 mod agent_tool_registry;
 use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
-pub(crate) fn run_agent_session(
-    base_dir: &std::path::Path,
-    mut agent: AgentLoopImpl,
+#[path = "agent/run_session.rs"]
+mod run_session;
+pub(crate) use run_session::run_agent_session;
+
+/// The identity a UDS loop opens on (#1976): ephemeral (never persisted),
+/// the named `cli:<name>` session, or a fresh user-chat identity drawn from
+/// composition's generator — the interface generates no key.
+fn resolve_startup_identity(
+    ctx: &CliContext,
     flags: &AgentFlags,
-    out: &mut AgentOutput<'_>,
-) -> i32 {
-    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = if ephemeral {
-        String::new()
-    } else {
-        let name = flags.session_name.as_deref().unwrap_or("default");
-        Session::build_key("cli", name)
-    };
-    let session_store = FileSessionStore::new(base_dir);
-    let rt = match super::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("failed to create runtime: {}\n", e));
-            return 1;
-        }
-    };
-
-    let mut messages: Vec<Message> = if !ephemeral {
-        // Refuse at open, not at first save (#1460): a key owned by another
-        // live process must fail before any turn runs against it.
-        if let Err(e) = SessionStore::claim(&session_store, &session_key) {
-            out.stderr.push_str(&format!("{}\n", e));
-            return 1;
-        }
-        match rt.block_on(session_store.load(&session_key)) {
-            Ok(Some(session)) => session.messages,
-            Ok(None) => Vec::new(),
+    ephemeral: bool,
+    stderr: &mut String,
+) -> Option<SessionIdentity> {
+    if ephemeral {
+        return Some(SessionIdentity::ephemeral());
+    }
+    if let Some(name) = flags.session_name.as_deref() {
+        // Admitted by the same allowlist at flag parse; a refusal here is
+        // defensive.
+        return match SessionIdentity::named_cli(name) {
+            Ok(identity) => Some(identity),
             Err(e) => {
-                out.stderr
-                    .push_str(&format!("failed to load session: {}\n", e));
-                return 1;
+                stderr.push_str(&format!("{e}\n"));
+                None
             }
-        }
-    } else {
-        Vec::new()
-    };
-
-    if !ephemeral && !messages.is_empty() {
-        rt.block_on(agent.prune_resumed_context(&mut messages));
+        };
     }
-
-    // System prompt is injected at call time, never persisted. Track its
-    // message ID, not its position: mid-run pruning can shift indices left,
-    // making a positional `remove(idx)` delete the wrong message (#1073).
-    let system_prompt_id = flags.system_prompt.as_deref().map(|sp| {
-        let msg = Message::system(sp.to_string());
-        let id = msg.id();
-        messages.push(msg);
-        id
-    });
-
-    let message = flags.message.as_deref().unwrap_or("");
-    messages.push(Message::user(message.to_string()));
-
-    let agent_result = if let Some(secs) = flags.max_time {
-        match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
-            DeadlineResult::Completed(inner) => inner,
-            DeadlineResult::TimedOut => {
-                out.stderr.push_str("max-time exceeded\n");
-                scrub_ephemeral_spill(base_dir, ephemeral);
-                return 2;
-            }
-        }
-    } else {
-        rt.block_on(agent.process(&mut messages))
+    let Some(fresh_identity) = ctx.fresh_session_identity else {
+        stderr.push_str("agent: fresh session identity generator not composed\n");
+        return None;
     };
-    // Nothing an ephemeral run spilled for in-run recall may outlive the run.
-    scrub_ephemeral_spill(base_dir, ephemeral);
-
-    match agent_result {
-        Ok(result) => {
-            if !ephemeral {
-                // Identity-based removal: immune to index shifts from
-                // mid-run pruning (a no-op if pruning dropped it).
-                if let Some(id) = system_prompt_id
-                    && let Some(idx) = messages.iter().position(|m| m.id() == id)
-                {
-                    messages.remove(idx);
-                }
-                let session = Session {
-                    key: session_key,
-                    messages: std::mem::take(&mut messages),
-                    workflow_run: None,
-                    subagent_roster: Vec::new(),
-                };
-                if let Err(e) = rt.block_on(session_store.save(&session)) {
-                    out.stderr
-                        .push_str(&format!("warning: failed to save session: {}\n", e));
-                }
-            }
-            out.stdout.push_str(&result.response);
-            out.stdout.push('\n');
-            0
-        }
-        Err(e) => {
-            out.stderr.push_str(&format!("Error: {}\n", e));
-            1
-        }
-    }
+    Some(fresh_identity().fresh_identity())
 }
-
-use crate::interface::shared::scrub_ephemeral_spill;
-
-/// Resolve the UDS session key (ephemeral → empty, no persistence).
-#[path = "agent_session_identity.rs"]
-mod session_identity;
-use session_identity::resolve_uds_session_key;
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
@@ -591,8 +527,18 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
+    // The interface never constructs a session store (#1970): the loop is
+    // composed over the builder `main` handed in.
+    let Some(sessions) = ctx.sessions else {
+        stderr.push_str("agent: sessions capability not composed\n");
+        return 1;
+    };
+
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
+    let Some(session_identity) = resolve_startup_identity(ctx, &flags, ephemeral, stderr) else {
+        return 1;
+    };
+    let session_key = session_identity.runtime_key().to_string();
     if flags.session_name.is_none() && !ephemeral && flags.parent_identity_override.is_none() {
         flags.parent_identity_override = Some(session_key.clone());
         flags.session_key_override = Some(session_key.clone());
@@ -631,7 +577,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
-    agent.set_session_key(session_key.clone());
+    agent.set_session_key(session_identity.clone());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
     // makes workflow available, but should not add audit I/O/privacy overhead before
@@ -643,7 +589,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         ) {
             Ok(log) => {
                 agent.set_audit_log(Some(
-                    Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>
+                    Arc::new(log) as Arc<dyn crate::application::audit::ports::AuditSink>
                 ));
             }
             Err(e) => {
@@ -675,17 +621,20 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     }
     let mut provider_reload = build.provider_reload;
+    let retention = build.retention;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
+        retention: Some(retention.clone()),
         base_dir: &base_dir,
         workspace: &build.workspace,
-        session_key,
+        identity: session_identity,
         model,
         ephemeral,
         system_prompt,
         socket_path,
         socket_override: None,
         session_store_override: None,
+        sessions,
         ext_registry: Some(build.ext_registry),
         lifetime,
         notification_rx: build.notification_rx,
@@ -701,7 +650,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
-    scrub_ephemeral_spill(&base_dir, ephemeral);
+    retention.recall.scrub_ephemeral(ephemeral);
     code
 }
 
@@ -739,6 +688,9 @@ mod no_session_tests;
 #[cfg(test)]
 #[path = "agent_provider_1066_tests.rs"]
 mod provider_1066_tests;
+#[cfg(test)]
+#[path = "agent_startup_identity_tests.rs"]
+mod startup_identity_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;

@@ -1,9 +1,10 @@
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;
 
-use super::cov_tests::Fixture;
+use super::fixture_tests::Fixture;
 
 #[tokio::test]
 async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
@@ -11,7 +12,9 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let persisted_key = crate::domain::session::Session::build_key("cli", "default");
     fx.store
         .save(&Session {
-            key: persisted_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                persisted_key.clone(),
+            ),
             messages: vec![Message::user("persisted message that /resume must offer")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -19,7 +22,11 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
         .await
         .unwrap();
 
-    let listed = fx.store.list(None).await.unwrap();
+    let listed = fx
+        .store
+        .list(&crate::application::sessions::dto::SessionListQuery::All)
+        .await
+        .unwrap();
     assert!(
         listed.iter().any(|summary| summary.key == persisted_key),
         "a TUI-owned persisted default session must be offered by bare /resume; listed={listed:?}"
@@ -44,7 +51,7 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
         )
         .await
     );
-    assert_eq!(*ctx.session_key, persisted_key);
+    assert_eq!(ctx.sessions.current_session_key().await, persisted_key);
     assert_eq!(ctx.messages.len(), 1);
 }
 
@@ -79,7 +86,11 @@ async fn write_legacy_session_file(
         .unwrap();
     // The store must actually see the legacy file where it looks.
     assert!(
-        fx.store.load(key).await.unwrap().is_some(),
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+            .await
+            .unwrap()
+            .is_some(),
         "legacy session file not found at {}",
         path.display()
     );
@@ -186,9 +197,9 @@ async fn e2e_resume_restores_history_without_readopting_children() {
     );
     let workflow_state: crate::interface::shared::WorkflowStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(feature_workflow_engine()));
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.workflow_state = Some(workflow_state.clone());
         assert!(
             !super::handle_resume_session(
@@ -201,7 +212,7 @@ async fn e2e_resume_restores_history_without_readopting_children() {
         );
     }
 
-    assert_eq!(fx.session_key, key);
+    assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 3, "transcript incl. past child message");
     assert_eq!(
         fx.messages[0].content,
@@ -246,9 +257,9 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     )
     .await;
     let registry = new_registry();
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(
             !super::handle_resume_session(
                 &mut ctx,
@@ -260,12 +271,17 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
         );
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_ne!(fx.session_key, key);
+    assert_ne!(fx.current_session_key(), key);
     assert!(fx.messages.is_empty());
     assert!(registry.lock().unwrap().is_empty());
     assert_never_probed(&listener, "live row");
     // The old session's history was saved on the way out, without pid/socket.
-    let saved = fx.store.load(key).await.unwrap().unwrap();
+    let saved = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(saved.messages.len(), 3);
     assert!(
         saved.subagent_roster.is_empty(),
@@ -275,7 +291,7 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
 
 // ── Session switches settle the departing session's children (#1938) ─────────
 
-use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound;
+use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use std::sync::{Arc, Mutex};
 
@@ -347,13 +363,23 @@ async fn acking_child(
     entry.display_name = name.to_string();
     entry.launch_generation =
         Some(crate::infrastructure::processes::parent_control::next_launch_generation());
-    let monitor = Arc::new(spawn_monitor_task_unbound(
-        entry.agent_uuid.as_str().to_string(),
-        socket_path,
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
         None,
         None,
-        None,
+    )
+    .observe_exit;
+    let monitor = Arc::new(spawn_monitor_task(
+        crate::infrastructure::tools::subagent_monitor::MonitorSpec {
+            agent_id: entry.agent_uuid.as_str().to_string(),
+            socket_path,
+            registry: registry.clone(),
+            notify_tx: None,
+            broadcast_tx: None,
+            parent_id: None,
+            observer,
+            parent_control: None,
+        },
     ));
     entry.monitor_handle = Some(monitor.clone());
     tokio::time::timeout(SWITCH_BOUND, accepted.notified())
@@ -396,9 +422,9 @@ async fn e2e_new_session_settles_the_departing_child_before_the_roster_is_replac
         child.entry.clone(),
     );
     let fleet = production_fleet(&registry);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet.clone());
         let switched = tokio::time::timeout(
             SWITCH_BOUND,
@@ -410,7 +436,7 @@ async fn e2e_new_session_settles_the_departing_child_before_the_roster_is_replac
         // A second switch finds nothing left to settle.
         assert!(!super::handle_new_session(&mut ctx, Some("new-2"), "new_session").await);
     }
-    assert_ne!(fx.session_key, "cli:test");
+    assert_ne!(fx.current_session_key(), "cli:test");
     let requests = child.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(requests[0]["type"], "shutdown");
@@ -451,9 +477,9 @@ async fn e2e_resume_away_settles_the_departing_child_and_probes_no_legacy_socket
         child.entry.clone(),
     );
     let fleet = production_fleet(&registry);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet);
         let switched = tokio::time::timeout(
             SWITCH_BOUND,
@@ -468,7 +494,7 @@ async fn e2e_resume_away_settles_the_departing_child_and_probes_no_legacy_socket
         .expect("bounded");
         assert!(!switched);
     }
-    assert_eq!(fx.session_key, "cli:elsewhere");
+    assert_eq!(fx.current_session_key(), "cli:elsewhere");
     assert_eq!(child.requests.lock().unwrap().len(), 1);
     assert!(registry.lock().unwrap().is_empty());
     assert_never_probed(&legacy_listener, "legacy row of the resumed session");
@@ -496,9 +522,9 @@ async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settl
         SubagentEntry::new(std::path::PathBuf::from("/tmp/a.sock"), 0),
     );
     fx.messages.push(Message::user("kept"));
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         ctx.fleet_teardown = Some(fleet.fleet.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
         assert!(
@@ -506,7 +532,11 @@ async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settl
                 .await
         );
     }
-    assert_eq!(fx.session_key, "cli:test", "the current session is kept");
+    assert_eq!(
+        fx.current_session_key(),
+        "cli:test",
+        "the current session is kept"
+    );
     assert_eq!(fx.messages.len(), 1, "nothing was cleared");
     assert_eq!(
         registry.lock().unwrap().len(),
@@ -531,12 +561,12 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
     live.launch_generation =
         Some(crate::infrastructure::processes::parent_control::next_launch_generation());
     registry.lock().unwrap().insert("live".into(), live);
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_eq!(fx.session_key, "cli:test");
+    assert_eq!(fx.current_session_key(), "cli:test");
     assert_eq!(registry.lock().unwrap().len(), 1);
     // A record-only row (no launch generation) is replaced.
     registry.lock().unwrap().clear();
@@ -544,11 +574,11 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
         "record".into(),
         SubagentEntry::new(std::path::PathBuf::from("/tmp/record.sock"), 0),
     );
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         assert!(!super::handle_new_session(&mut ctx, Some("new"), "new_session").await);
     }
-    assert_ne!(fx.session_key, "cli:test");
+    assert_ne!(fx.current_session_key(), "cli:test");
     assert!(registry.lock().unwrap().is_empty());
 }

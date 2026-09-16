@@ -1,8 +1,14 @@
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use crate::domain::session::{Session, SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool::ToolProfileContext;
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::cli::uds::dispatch_session_roster_tests::{
+    read_handles_for, resolve_message,
+};
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -46,7 +52,7 @@ impl MemSpillStore {
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
@@ -55,17 +61,15 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
-        self.entries
-            .lock()
-            .unwrap()
-            .insert((session_key.to_string(), entry.id.clone()), entry.clone());
+        let key = (session_key.runtime_key().to_string(), entry.id.clone());
+        self.entries.lock().unwrap().insert(key, entry.clone());
         Box::pin(async { Ok(()) })
     }
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -74,27 +78,23 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
-        self.recalls
-            .lock()
-            .unwrap()
-            .push((session_key.to_string(), id.to_string()));
+        let key = (
+            session_key.runtime_key().to_string(),
+            id.as_str().to_string(),
+        );
+        self.recalls.lock().unwrap().push(key.clone());
         if self.recall_error {
             return Box::pin(async {
                 Err(crate::domain::error::DomainError::Other("boom".into()))
             });
         }
-        let hit = self
-            .entries
-            .lock()
-            .unwrap()
-            .get(&(session_key.to_string(), id.to_string()))
-            .cloned();
+        let hit = self.entries.lock().unwrap().get(&key).cloned();
         Box::pin(async move { Ok(hit) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -108,7 +108,7 @@ impl ContextSpillStore for MemSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
@@ -126,7 +126,11 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
+    /// The file store of `_tmp`, shared with `handles` (the fixture's one
+    /// composed sessions graph), so the store the tests seed is the one the
+    /// transactions run against; `ctx()` publishes the messages into it.
+    store: Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    handles: crate::interface::cli::uds_session_handles::SessionHandles,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
 }
@@ -134,8 +138,17 @@ struct Fixture {
 impl Fixture {
     fn new(spill_store: Option<Arc<dyn ContextSpillStore>>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+        let store = Arc::new(
+            crate::infrastructure::persistence::session_store::FileSessionStore::new(
+                FlatSessionLayout::new(tmp.path()),
+            ),
+        );
+        let handles = crate::interface::cli::uds::dispatch_session_roster_tests::handles_over(
+            store.clone(),
+            "cli:test",
+            spill_store.clone(),
+            &[],
+        );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -145,7 +158,7 @@ impl Fixture {
                 model: "stub".into(),
                 max_tokens: 100,
                 temperature: 0.0,
-                spill_store,
+                retention: spill_store.map(crate::composition::retention::context_retention_over),
                 session_key: "cli:test".into(),
                 context_collapse_after_tool_calls: u32::MAX,
                 max_context_tokens: 190_000,
@@ -159,9 +172,10 @@ impl Fixture {
                 tool_profile_context: ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".into(),
             store,
+            handles,
             _tmp: tmp,
             cancel: Arc::new(Mutex::new(CancelSlot::Idle)),
         }
@@ -172,31 +186,27 @@ impl Fixture {
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     ) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
-        let snapshot_messages = self.messages.clone();
-        let spill_store = self.agent.spill_store().cloned();
-        let mut snapshot_data =
-            crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(
-                snapshot_messages,
-            );
-        snapshot_data.set_spill_store(spill_store, self.session_key.clone());
+        let handles = &self.handles;
+        let _ = handles
+            .active_session
+            .try_write()
+            .expect("fixture session is uncontended")
+            .publish(&self.messages);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(snapshot_data)),
+            sessions: handles.read_handles(),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: None,
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: self.cancel.clone(),
             turn_control: Arc::default(),
@@ -210,9 +220,11 @@ impl Fixture {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session: handles.save_session.clone(),
+            rewrite: handles.rewrite.clone(),
+            switch: handles.switch.clone(),
             fleet_teardown: None,
+            list_sessions: handles.list_sessions.clone(),
         }
     }
 }
@@ -355,9 +367,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
     let mut msg = Message::assistant(oversized.clone(), vec![]);
     let message_id = msg.id().to_string();
     msg.content = oversized.clone();
-    let snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![msg]);
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+    let snapshot = read_handles_for("cli:test", None, &[msg]);
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
@@ -533,13 +543,8 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     let full = "busy resolver full content from spill";
     let collapsed = collapsed_message(spill_id);
     let message_id = collapsed.id().to_string();
-    let mut snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            collapsed,
-        ]);
     let spill_store = Arc::new(MemSpillStore::with_entry(spill_entry(spill_id, full)));
-    snapshot_data.set_spill_store(Some(spill_store.clone()), "cli:test".into());
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+    let snapshot = read_handles_for("cli:test", Some(spill_store.clone()), &[collapsed]);
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
@@ -654,19 +659,15 @@ async fn get_message_uses_the_snapshot_session_key_for_spill_recall() {
     ));
     let collapsed = collapsed_message(spill_id);
     let message_id = collapsed.id().to_string();
-    let mut snapshot_data =
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::default();
-    snapshot_data.reset_to_with_spill_store(
-        std::slice::from_ref(&collapsed),
+    let snapshot = read_handles_for(
+        "cli:resumed",
         Some(store.clone()),
-        "cli:resumed".into(),
+        std::slice::from_ref(&collapsed),
     );
-    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
 
-    let resolved =
-        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
-            .await
-            .expect("collapsed message resolves");
+    let resolved = resolve_message(&snapshot, &message_id)
+        .await
+        .expect("collapsed message resolves");
 
     assert_eq!(resolved.content, "resumed session content");
     assert_eq!(
@@ -686,7 +687,7 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
     let collapsed = collapsed_message(spill_id);
     fx.store
         .save(&Session {
-            key: "cli:saved".into(),
+            key: SessionIdentity::from_persisted_key("cli:saved"),
             messages: vec![collapsed],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -694,13 +695,9 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         .await
         .unwrap();
     let snapshot = {
-        let ctx = fx.ctx(None);
-        ctx.conversation_snapshot.clone()
-    };
-    {
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let mut ctx = fx.ctx(Some(tx));
-        ctx.conversation_snapshot = snapshot.clone();
+        let snapshot = ctx.sessions.clone();
         assert!(
             !super::handle_resume_session(
                 &mut ctx,
@@ -710,20 +707,22 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             )
             .await
         );
-    }
+        snapshot
+    };
     let message_id = snapshot
+        .active_session
         .read()
         .await
-        .messages
+        .conversation()
+        .live_messages()
         .iter()
         .find(|message| message.is_collapsed)
         .expect("resumed snapshot contains collapsed message")
         .id()
         .to_string();
-    let resolved =
-        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
-            .await
-            .expect("resumed collapsed message resolves");
+    let resolved = resolve_message(&snapshot, &message_id)
+        .await
+        .expect("resumed collapsed message resolves");
     assert_eq!(resolved.content, "content from resumed session");
     assert_eq!(
         store.recalled(),
@@ -745,5 +744,6 @@ async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
 }
 #[tokio::test]
 async fn mem_spill_store_default_has_entries_is_false() {
-    assert!(!MemSpillStore::default().has_entries("s").await.unwrap());
+    let none = SessionIdentity::from_persisted_key("s");
+    assert!(!MemSpillStore::default().has_entries(&none).await.unwrap());
 }

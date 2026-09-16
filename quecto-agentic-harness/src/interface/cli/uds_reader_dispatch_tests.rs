@@ -25,7 +25,8 @@ async fn rejected_queue(closed: bool) {
     if closed {
         drop(_receiver);
     }
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -33,7 +34,7 @@ async fn rejected_queue(closed: bool) {
     let delivery = dispatch(ReaderDispatchCtx {
         line: r#"{"type":"prompt","streamingBehavior":"steer","message":"Approved: use schema v2","ack":"accept","id":"approval-1"}"#.into(),
         cancel_handle: &cancel, turn_control: &control,
-        snapshot: &snapshot, registry: &registry, subagent_registry: &None,
+        session: &session, registry: &registry, subagent_registry: &None,
         fleet: None, client_id: 1, cmd_tx: &commands,
     });
     let receive = async {
@@ -62,7 +63,8 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
     ] {
         let registry = super::super::uds_ext_protocol::new_client_tool_registry();
         let (commands, mut received) = tokio::sync::mpsc::channel(1);
-        let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+        let session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
         let cancel = std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Armed(cancel_tx),
@@ -73,7 +75,7 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
                 line: line.into(),
                 cancel_handle: &cancel,
                 turn_control: &control,
-                snapshot: &snapshot,
+                session: &session,
                 registry: &registry,
                 subagent_registry: &None,
                 fleet: None,
@@ -101,11 +103,11 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
 }
 
 struct TestSwarmControl;
-impl crate::domain::swarm::SwarmRunControl for TestSwarmControl {
+impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -137,7 +139,8 @@ async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt()
         }))
         .await
         .unwrap();
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -151,7 +154,7 @@ async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt()
             line: r#"{"type":"swarm_control","action":"pause","id":"pause-42"}"#.into(),
             cancel_handle: &cancel,
             turn_control: &control,
-            snapshot: &snapshot,
+            session: &session,
             registry: &registry,
             subagent_registry: &None,
             fleet: None,
@@ -183,7 +186,8 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
         }))
         .await
         .unwrap();
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -193,7 +197,7 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
     assert!(control.swarm_control.is_some());
     let completed = tokio::time::timeout(std::time::Duration::from_millis(250), dispatch(ReaderDispatchCtx {
         line: r#"{"type":"swarm_control","action":"pause","agent_id":"missing-descendant","id":"pause-42"}"#.into(),
-        cancel_handle: &cancel, turn_control: &control, snapshot: &snapshot,
+        cancel_handle: &cancel, turn_control: &control, session: &session,
         registry: &registry, subagent_registry: &None, fleet: None,
         client_id: 1, cmd_tx: &commands,
     })).await;
@@ -217,7 +221,8 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
     let (writer, mut replies) = tokio::sync::mpsc::channel(4);
     super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
     let (commands, _receiver) = tokio::sync::mpsc::channel(1);
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -247,7 +252,7 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
                 line: line.into(),
                 cancel_handle: &cancel,
                 turn_control: &control,
-                snapshot: &snapshot,
+                session: &session,
                 registry: &registry,
                 subagent_registry: &None,
                 fleet: None,
@@ -275,11 +280,11 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
 
 /// A control port whose receipt carries resume blockers (#1924).
 struct BlockedSwarmControl;
-impl crate::domain::swarm::SwarmRunControl for BlockedSwarmControl {
+impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
     fn apply(
         &self,
         _: crate::domain::swarm::RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -307,7 +312,8 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
     let (writer, mut replies) = tokio::sync::mpsc::channel(4);
     super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
     let (commands, _receiver) = tokio::sync::mpsc::channel(1);
-    let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
@@ -319,7 +325,7 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
             line: r#"{"type":"swarm_control","action":"status","id":"s1"}"#.into(),
             cancel_handle: &cancel,
             turn_control: &control,
-            snapshot: &snapshot,
+            session: &session,
             registry: &registry,
             subagent_registry: &None,
             fleet: None,
@@ -348,7 +354,7 @@ async fn swarm_control_status_reply_surfaces_resume_blockers() {
             line: r#"{"type":"swarm_control","action":"status","id":"s2"}"#.into(),
             cancel_handle: &cancel,
             turn_control: &control,
-            snapshot: &snapshot,
+            session: &session,
             registry: &registry,
             subagent_registry: &None,
             fleet: None,

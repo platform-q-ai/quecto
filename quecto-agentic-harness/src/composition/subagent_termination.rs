@@ -6,28 +6,71 @@
 //! environments capability's member-shutdown port over the same per-child
 //! settlement; a swarm settlement → the delegated-agent graph for members
 //! this harness launched. Built once per harness beside its agent-control
-//! tools and handed to `AgentCmdTool` as the owner of `kill`.
+//! tools and handed to `AgentCmdTool` as the owner of `kill`. The installer
+//! also fills the tools' other slots from the same wiring: the launch
+//! lifecycle the spawn tool hands its reaper and monitor
+//! (`subagent_lifecycle`) and the environment control `agent_cmd` serves
+//! (`environments`), so one composition call builds every use case the
+//! agent-control tools invoke.
 use std::sync::Arc;
 
 use crate::application::environments::ports::EnvironmentMemberShutdown;
 use crate::application::subagents::use_cases::{
-    KillDelegatedAgent, KillDelegatedAgentPorts, SettleDelegatedChild, SettleDelegatedChildPorts,
-    TerminateDelegatedAgent,
+    KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, SettleDelegatedChild,
+    SettleDelegatedChildPorts, TerminateDelegatedAgent,
 };
-use crate::domain::tool::Tool;
-use crate::infrastructure::extensions::native::{KillToolWiring, TerminationOwners};
+use crate::application::tools::ports::Tool;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;
 use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::infrastructure::tools::swarm_member_termination::DelegatedSwarmMemberTermination;
+use crate::interface::cli::KillToolWiring;
 use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 use crate::interface::tools::agent_cmd_kill::KillDelegatedAgentTool;
+
+/// The parent-hand termination owners of one harness over one shared
+/// delegated-agent graph (#1936, #1939): the `agent_cmd kill` tool, the
+/// environment member shutdown `kill_container` asks before its retained
+/// kill, and the swarm member termination a settling swarm run uses for
+/// members this harness launched.
+pub struct TerminationOwners {
+    pub kill_tool: Arc<dyn Tool>,
+    pub member_shutdown: Arc<dyn EnvironmentMemberShutdown>,
+    pub swarm_member_termination: Arc<DelegatedSwarmMemberTermination>,
+}
 
 /// The `agent_cmd kill` owner alone (tests and fixtures that need only the
 /// tool).
 pub fn build_kill_tool(inputs: KillToolWiring) -> Arc<dyn Tool> {
     build_termination_owners(inputs).kill_tool
+}
+
+/// Build the owners over the wiring and install them where the built
+/// agent-control tools read them: the kill slot, the spawn tool's
+/// lifecycle slot, the environment control slot (whose kill asks the
+/// member shutdown built here), and the swarm member termination bound
+/// once for the settling runs. `true` when
+/// every slot was empty and took its owner: one set per harness. The
+/// `KillToolBuilder` the CLI context carries.
+pub fn install_termination_owners(inputs: KillToolWiring) -> bool {
+    let slots = inputs.slots.clone();
+    let lifecycle = super::subagent_lifecycle::build_lifecycle_use_cases(
+        inputs.registry.clone(),
+        inputs.broadcast_tx.clone(),
+        inputs.notify_tx.clone(),
+    );
+    let environments = inputs.environment_registry.clone();
+    let owners = build_termination_owners(inputs);
+    let environment_control =
+        super::environments::build_environment_control(environments, owners.member_shutdown);
+    let kill_installed = slots.kill.install(owners.kill_tool);
+    let lifecycle_installed = slots.lifecycle.install(lifecycle);
+    let environments_installed = slots.environments.install(environment_control);
+    crate::infrastructure::tools::swarm_lifecycle::bind_member_termination(
+        owners.swarm_member_termination,
+    );
+    kill_installed && lifecycle_installed && environments_installed
 }
 
 /// Every parent-hand termination owner of one harness over one shared
@@ -38,6 +81,7 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
         inputs.registry.clone(),
         inputs.broadcast_tx,
         inputs.notify_tx,
+        super::environments::build_member_finalizer,
     ));
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(inputs.registry.clone()),
@@ -46,16 +90,24 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
     ));
     let routing = Arc::new(UdsDirectChildRouting::new(inputs.registry.clone()));
     let termination = Arc::new(SupervisedChildTermination::new(inputs.registry.clone()));
+    // A selected direct child is concluded by the route itself, as this
+    // harness's own: protocol, observed exit, owned-handle fallback only
+    // when the protocol did not suffice, compensation. The kill above it
+    // resolves, claims, routes and joins; it owns no termination port.
     let route = Arc::new(
-        TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone())
-            .with_registry(agents.clone()),
+        TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone()).with_owner_conclusion(
+            OwnerConclusionPorts {
+                registry: agents.clone(),
+                termination: termination.clone(),
+                compensation: agents.clone(),
+            },
+        ),
     );
     let kill = Arc::new(KillDelegatedAgent::new(
         route,
         KillDelegatedAgentPorts {
             registry: agents.clone(),
             lifecycle,
-            termination: termination.clone(),
             compensation: agents.clone(),
         },
     ));

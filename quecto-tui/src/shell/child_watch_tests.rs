@@ -6,7 +6,7 @@ fn spawn(script: &str) -> tokio::process::Child {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         // Match production: the child is its own process-group leader so
-        // group-targeted termination has a real group to signal.
+        // the post-exit canary can recognise a stray by pgid.
         .process_group(0);
     cmd.spawn().expect("spawn test child")
 }
@@ -30,19 +30,25 @@ async fn records_nonzero_exit_code() {
 }
 
 /// Termination goes through the watcher while it still owns the un-reaped
-/// child: the long-running child's group is terminated promptly.
+/// child: the long-running leader is SIGTERMed and exits promptly.
 #[tokio::test]
-async fn terminate_kills_a_running_child_group() {
-    let watch = watch_child(spawn("sleep 30"), StderrTail::default());
-    tokio::time::timeout(Duration::from_secs(5), watch.terminate())
+async fn terminate_ends_a_running_leader_after_sigterm() {
+    // `exec`: the leader is the one process, as the other single-process
+    // leaders below. Without it `sh` may fork `sleep`, which then outlives
+    // the SIGTERMed shell for a moment and is (correctly) reported a stray.
+    let watch = watch_child(spawn("exec sleep 30"), StderrTail::default());
+    let outcome = tokio::time::timeout(Duration::from_secs(5), watch.terminate())
         .await
-        .expect("terminate must complete well within the grace window");
+        .expect("terminate must complete well within the budget")
+        .expect("watcher reports");
+    assert_eq!(outcome.end, LeaderEnd::ExitedAfterTerm);
+    assert!(outcome.strays.is_empty());
 }
 
-/// An observed exit keeps the leader identity pinned until cleanup, even
-/// with no surviving group members. No recycled group can be targeted.
+/// A leader already observed exited is not signalled again: the watcher
+/// answers at once with the canary result.
 #[tokio::test]
-async fn terminate_after_observed_exit_with_empty_group_signals_nothing() {
+async fn terminate_after_observed_exit_signals_nothing() {
     let watch = watch_child(spawn("exit 0"), StderrTail::default());
     assert!(
         watch
@@ -51,29 +57,27 @@ async fn terminate_after_observed_exit_with_empty_group_signals_nothing() {
             .is_some(),
         "child exit must be observed first"
     );
-    tokio::time::timeout(Duration::from_secs(1), watch.terminate())
+    let outcome = tokio::time::timeout(Duration::from_secs(1), watch.terminate())
         .await
-        .expect("terminate on an empty group must return promptly");
+        .expect("terminate on an exited leader must return promptly")
+        .expect("watcher reports");
+    assert_eq!(outcome.end, LeaderEnd::AlreadyExited);
 }
 
-/// A group member that outlives the leader is still cleaned up; observing
-/// leader exit does not release the process-group ownership pin.
+/// #1956: a group member that outlives the leader is NOT signalled — the
+/// canary names it and the caller sees it in the report, nothing more.
 #[tokio::test]
-async fn terminate_after_observed_exit_kills_surviving_group_members() {
-    // The leader backgrounds a long sleep into its group and exits.
+async fn terminate_after_leader_exit_reports_a_surviving_group_member_without_signalling() {
     let pid_file = std::env::temp_dir().join(format!(
-        "quecto-child-watch-reaped-survivor-{}",
+        "quecto-child-watch-survivor-{}",
         std::process::id()
     ));
     let script = format!(
         "python3 -c 'import os, time; open(\"{}\", \"w\").write(str(os.getpid())); time.sleep(30)' & exit 0",
         pid_file.display()
     );
-    let child = spawn(&script);
-    let watch = watch_child(child, StderrTail::default());
+    let watch = watch_child(spawn(&script), StderrTail::default());
     let survivor = wait_for_pid_file(&pid_file).await;
-    #[cfg(target_os = "linux")]
-    let _cleanup = ExactTestCleanup::new(survivor);
     assert!(
         watch
             .wait_exit_detail(Duration::from_secs(5))
@@ -81,10 +85,19 @@ async fn terminate_after_observed_exit_kills_surviving_group_members() {
             .is_some(),
         "leader exit must be observed first"
     );
-    tokio::time::timeout(Duration::from_secs(5), watch.terminate())
+    let outcome = tokio::time::timeout(Duration::from_secs(5), watch.terminate())
         .await
-        .expect("terminate must complete within the grace window");
-    assert_process_gone(survivor).await;
+        .expect("terminate must complete")
+        .expect("watcher reports");
+    assert_eq!(outcome.strays, vec![survivor], "canary names the survivor");
+    assert!(
+        process_alive(survivor),
+        "the survivor must not be signalled"
+    );
+    // SAFETY: the test owns the survivor it spawned.
+    unsafe {
+        libc::kill(survivor, libc::SIGKILL);
+    }
     let _ = std::fs::remove_file(pid_file);
 }
 
@@ -92,7 +105,7 @@ async fn terminate_after_observed_exit_kills_surviving_group_members() {
 /// consuming the timeout; a child that never exits resolves `None` at it.
 #[tokio::test]
 async fn wait_times_out_to_none_while_child_lives() {
-    let watch = watch_child(spawn("sleep 30"), StderrTail::default());
+    let watch = watch_child(spawn("exec sleep 30"), StderrTail::default());
     let detail = watch.wait_exit_detail(Duration::from_millis(50)).await;
     assert_eq!(detail, None);
     watch.terminate().await;
@@ -147,30 +160,6 @@ fn unknown_signal_has_no_name_suffix() {
     assert_eq!(describe_exit(status), "agent process aborted: signal 34");
 }
 
-#[tokio::test]
-async fn terminate_waits_for_term_resistant_same_group_descendant_after_leader_exits() {
-    let pid_file = std::env::temp_dir().join(format!(
-        "quecto-child-watch-descendant-{}",
-        std::process::id()
-    ));
-    let script = format!(
-        "trap 'exit 0' TERM; python3 -c 'import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.signal(signal.SIGHUP, signal.SIG_IGN); signal.signal(signal.SIGINT, signal.SIG_IGN); open(\"{}\", \"w\").write(str(os.getpid())); time.sleep(30)' & while :; do sleep 1; done",
-        pid_file.display()
-    );
-    let child = spawn(&script);
-    let watch = watch_child(child, StderrTail::default());
-    let descendant = wait_for_pid_file(&pid_file).await;
-    #[cfg(target_os = "linux")]
-    let _cleanup = ExactTestCleanup::new(descendant);
-
-    tokio::time::timeout(Duration::from_secs(5), watch.terminate())
-        .await
-        .expect("terminate must not acknowledge until cleanup completes");
-
-    assert_process_gone(descendant).await;
-    let _ = std::fs::remove_file(pid_file);
-}
-
 async fn wait_for_pid_file(path: &std::path::Path) -> i32 {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
@@ -187,20 +176,10 @@ async fn wait_for_pid_file(path: &std::path::Path) -> i32 {
     }
 }
 
-async fn assert_process_gone(pid: i32) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        // SAFETY: pid was written by the test descendant; signal 0 only probes liveness.
-        let probe = unsafe { libc::kill(pid, 0) };
-        if probe == -1 || proc_state(pid).is_some_and(|state| state == 'Z' || state == 'X') {
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "descendant process {pid} still alive"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+fn process_alive(pid: i32) -> bool {
+    // SAFETY: pid was written by the test descendant; signal 0 only probes liveness.
+    let probe = unsafe { libc::kill(pid, 0) };
+    probe == 0 && proc_state(pid).is_some_and(|state| state != 'Z' && state != 'X')
 }
 
 fn proc_state(pid: i32) -> Option<char> {
@@ -209,61 +188,40 @@ fn proc_state(pid: i32) -> Option<char> {
     stat.get(close + 2..)?.chars().next()
 }
 
-/// The unrelated process is deliberately in its own group too. Cleanup must
-/// follow ancestry, not all groups owned by this Unix user or session.
-#[cfg(target_os = "linux")]
+/// #1956: a TERM-ignoring leader is SIGKILLed — only that pid — after both
+/// injected waits and is really dead; an unrelated process in its own group
+/// is untouched; the caller's wait is bounded.
 #[tokio::test]
-async fn owned_separate_group_is_killed_without_signalling_unrelated_group() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("owned.pid");
-    let script = format!(
-        "trap 'exit 0' TERM; python3 -c 'import os, signal, time; os.setsid(); signal.signal(signal.SIGTERM, signal.SIG_IGN); open(\"{}\", \"w\").write(str(os.getpid())); time.sleep(30)' & while :; do sleep 1; done",
-        file.display()
-    );
+async fn term_ignoring_leader_is_killed_after_budget_without_touching_unrelated_group() {
     let mut unrelated = spawn("exec sleep 30");
-    let watch = watch_child(spawn(&script), StderrTail::default());
-    let pid = wait_for_pid_file(&file).await;
-    let cleanup = ExactTestCleanup::new(pid);
-    let success = watch.terminate_with_timeout(Duration::from_secs(3)).await;
+    let leader = spawn("trap '' TERM; while :; do sleep 0.05; done");
+    let pid = leader.id().unwrap() as i32;
+    let watch = watch_child(leader, StderrTail::default());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let budget = LeaderBudget {
+        settle: Duration::from_millis(300),
+        force: Duration::from_millis(200),
+    };
+    let started = std::time::Instant::now();
+    let outcome = watch
+        .terminate_with_budget(budget)
+        .await
+        .expect("watcher reports");
+    let elapsed = started.elapsed();
     let unrelated_survived = unrelated.try_wait().unwrap().is_none();
     unrelated.kill().await.unwrap();
-    assert!(success, "ack requires verified descendant exit");
-    assert!(
-        unrelated_survived,
-        "unrelated group must not receive cleanup signals"
-    );
-    assert_process_gone(pid).await;
-    drop(cleanup);
-}
-
-#[cfg(target_os = "linux")]
-struct ExactTestCleanup(std::os::fd::OwnedFd);
-#[cfg(target_os = "linux")]
-impl ExactTestCleanup {
-    fn new(pid: i32) -> Self {
-        use std::os::fd::FromRawFd;
-        // SAFETY: test PID comes from the ready file; pin it before assertions.
-        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-        assert!(fd >= 0);
-        // SAFETY: pidfd_open returned a new descriptor owned by this guard.
-        Self(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) })
+    assert_eq!(outcome.end, LeaderEnd::Killed);
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+    assert!(elapsed < budget.total(), "bounded: {elapsed:?}");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while process_alive(pid) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "leader {pid} must be dead"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-}
-#[cfg(target_os = "linux")]
-impl Drop for ExactTestCleanup {
-    fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-        // SAFETY: guard owns the exact test-process handle, immune to PID reuse.
-        unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                self.0.as_raw_fd(),
-                libc::SIGKILL,
-                std::ptr::null::<libc::siginfo_t>(),
-                0,
-            );
-        }
-    }
+    assert!(unrelated_survived, "unrelated group must receive no signal");
 }
 
 #[tokio::test]

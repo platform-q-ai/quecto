@@ -21,23 +21,43 @@ use crate::domain::subagent::DisplayNameResolveError;
 use crate::domain::subagent_teardown::DelegatedAgentIdentity;
 
 use super::subagent_registry::{
-    ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification, SubagentEntry,
-    SubagentNotification, SubagentRegistry, SubagentStatus, TeardownIntent, TeardownPhase,
+    ClaimOwner, ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification,
+    StoppingClaim, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
+    TeardownIntent, TeardownPhase,
 };
 use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
+use crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT;
+use crate::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+
+/// The full owned-handle ladder a directly owned child's conclusion may
+/// take: the protocol ACK bound, the acknowledged child's exit budget, then
+/// TERM and KILL grace (`TerminationBudget::DEFAULT`).
+pub const OWNED_HANDLE_LADDER: Duration = PROTOCOL_ACK_TIMEOUT
+    .saturating_add(TerminationBudget::DEFAULT.exit_after_ack)
+    .saturating_add(TerminationBudget::DEFAULT.term_grace)
+    .saturating_add(TerminationBudget::DEFAULT.kill_grace);
+
+/// Slack a compensation observer allows past the ladder, for the reaper's
+/// own observation and compensation to run.
+const COMPENSATION_WAIT_SLACK: Duration = Duration::from_secs(6);
 
 /// How long a caller waits for a row's compensation before reporting that
-/// the exit was not observed. Sized above the owned-handle exit budget
-/// (`TerminationBudget::DEFAULT`, 10 s after an ACK) so a directly owned
-/// child's fallback always concludes first, and a nested target's exit,
-/// reported through its ancestor's snapshot, has room to arrive.
-pub const DEFAULT_COMPENSATION_WAIT: Duration = Duration::from_secs(15);
+/// the exit was not observed. Derived from the budgets, above the *whole*
+/// owned-handle ladder (not only the exit budget), so a directly owned
+/// child's fallback — including its KILL grace — always concludes before
+/// a joiner gives up, and a nested target's exit, reported through its
+/// ancestor's snapshot, has room to arrive.
+pub const DEFAULT_COMPENSATION_WAIT: Duration =
+    OWNED_HANDLE_LADDER.saturating_add(COMPENSATION_WAIT_SLACK);
 
 pub struct RegistryDelegatedAgents {
     registry: SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     notify_tx: Option<NotificationTx>,
     compensation_wait: Duration,
+    /// Composition's builder of the final-member environment cleanup
+    /// (#1939) a compensation runs for each membership it removes.
+    finalizer: super::subagent_cleanup::MemberFinalizer,
 }
 
 impl RegistryDelegatedAgents {
@@ -45,12 +65,14 @@ impl RegistryDelegatedAgents {
         registry: SubagentRegistry,
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
         notify_tx: Option<NotificationTx>,
+        finalizer: super::subagent_cleanup::MemberFinalizer,
     ) -> Self {
         Self {
             registry,
             broadcast_tx,
             notify_tx,
             compensation_wait: DEFAULT_COMPENSATION_WAIT,
+            finalizer,
         }
     }
 
@@ -94,12 +116,24 @@ impl RegistryDelegatedAgents {
 impl DelegatedAgentRegistry for RegistryDelegatedAgents {
     fn resolve(&self, reference: &str) -> Result<DelegatedAgentIdentity, ResolutionError> {
         let entries = self.lock();
-        let key = super::subagent_registry::resolve_registry_key(&entries, reference).map_err(
-            |error| match error {
-                DisplayNameResolveError::AmbiguousLiveMatch { .. } => ResolutionError::Ambiguous,
-                DisplayNameResolveError::NoLiveMatch { .. } => ResolutionError::Unknown,
-            },
-        )?;
+        let key = match super::subagent_registry::resolve_registry_key(&entries, reference) {
+            Ok(key) => key,
+            Err(DisplayNameResolveError::AmbiguousLiveMatch { .. }) => {
+                return Err(ResolutionError::Ambiguous);
+            }
+            // No live row answers to the label: a retained dead row that
+            // does is exited, not unknown.
+            Err(DisplayNameResolveError::NoLiveMatch { .. }) => {
+                let exited = entries
+                    .iter()
+                    .any(|(key, entry)| entry.effective_display_name(key) == reference);
+                return Err(if exited {
+                    ResolutionError::Exited
+                } else {
+                    ResolutionError::Unknown
+                });
+            }
+        };
         let entry = entries.get(&key).ok_or(ResolutionError::Unknown)?;
         if !Self::is_live(entry) {
             return Err(ResolutionError::Exited);
@@ -123,13 +157,52 @@ impl DelegatedAgentRegistry for RegistryDelegatedAgents {
             TeardownPhase::Live if Self::is_live(entry) => {
                 entry
                     .teardown
-                    .send_replace(TeardownPhase::Stopping(intent_of(cause)));
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim::first(intent_of(
+                        cause,
+                    ))));
                 Ok(())
             }
             TeardownPhase::Live => Err(StoppingClaimError::Exited),
-            TeardownPhase::Stopping(_) => Err(StoppingClaimError::AlreadyStopping),
+            // The earlier owner returned without observing the end: this
+            // trigger re-takes the claim under its own intent and
+            // re-attempts; the row was never released in between, so the
+            // exit is still compensated as a termination, never a
+            // post-mortem.
+            TeardownPhase::Stopping(StoppingClaim {
+                attempt,
+                owner: ClaimOwner::Returned,
+                ..
+            }) => {
+                entry
+                    .teardown
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim {
+                        intent: intent_of(cause),
+                        attempt: attempt.saturating_add(1),
+                        owner: ClaimOwner::Executing,
+                    }));
+                Ok(())
+            }
+            TeardownPhase::Stopping(StoppingClaim {
+                owner: ClaimOwner::Executing,
+                ..
+            }) => Err(StoppingClaimError::AlreadyStopping),
             TeardownPhase::Compensating(_) | TeardownPhase::Compensated => {
                 Err(StoppingClaimError::Exited)
+            }
+        }
+    }
+
+    fn retain_stopping(&self, target: &DelegatedAgentIdentity) {
+        let entries = self.lock();
+        if let Some(entry) = Self::key_for(&entries, &target.uuid).and_then(|key| entries.get(&key))
+        {
+            if let TeardownPhase::Stopping(claim) = entry.teardown_phase() {
+                entry
+                    .teardown
+                    .send_replace(TeardownPhase::Stopping(StoppingClaim {
+                        owner: ClaimOwner::Returned,
+                        ..claim
+                    }));
             }
         }
     }
@@ -157,10 +230,10 @@ impl DelegatedAgentRegistry for RegistryDelegatedAgents {
                     .send_replace(TeardownPhase::Compensating(TeardownIntent::Exit));
                 TerminalClaim::Claimed
             }
-            TeardownPhase::Stopping(intent) => {
+            TeardownPhase::Stopping(claim) => {
                 entry
                     .teardown
-                    .send_replace(TeardownPhase::Compensating(intent));
+                    .send_replace(TeardownPhase::Compensating(claim.intent));
                 TerminalClaim::Claimed
             }
             TeardownPhase::Compensating(_) | TeardownPhase::Compensated => {
@@ -322,7 +395,13 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             // the row is marked exited and before any signal fires: a woken
             // observer must see the authoritative environment aggregate
             // already updated.
-            super::subagent_cleanup::cleanup_registered_once(&self.registry, key, mode).await;
+            super::subagent_cleanup::cleanup_registered_once(
+                &self.registry,
+                key,
+                mode,
+                self.finalizer,
+            )
+            .await;
             let sequence = super::subagent_monitor::update_entry_next_sequence(
                 &self.registry,
                 key,
@@ -345,11 +424,19 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                 // One survivor-only roster per compensation.
                 let _ = tx.send(event);
             }
-            let mut removed: Vec<_> = removed
+            // Rows that were no longer live before this compensation ran
+            // (a descendant that already ended, or the target itself when
+            // its exit was recorded first) leave the registry with the
+            // subtree but are neither cleaned up nor signalled again.
+            let (mut removed, already_ended): (Vec<_>, Vec<_>) = removed
                 .into_iter()
-                .filter(|(id, _)| live_before.contains(id))
-                .collect();
-            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
+                .partition(|(id, _)| live_before.contains(id));
+            super::subagent_cleanup::cleanup_removed_entries_once(
+                &mut removed,
+                mode,
+                self.finalizer,
+            )
+            .await;
             let kind = exit_kind(cause);
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
@@ -391,6 +478,13 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                 removed.first().is_none_or(|(id, _)| id == key),
                 "the cascade lists the target first"
             );
+            // Every terminal effect has run: only now is the row (and each
+            // row that fell with it) compensated for whoever waits on it —
+            // the already-ended rows too, since nothing further will ever
+            // run for a row that has left the registry.
+            for (_, entry) in removed.iter().chain(&already_ended) {
+                super::subagent_cascade::mark_entry_compensated(entry);
+            }
             Compensated {
                 removed: removed
                     .iter()

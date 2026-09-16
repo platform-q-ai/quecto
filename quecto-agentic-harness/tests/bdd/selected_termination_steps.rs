@@ -21,7 +21,7 @@ use quecto::infrastructure::tools::subagent_registry::{
 use crate::QuectoWorld;
 
 #[path = "selected_termination_fixture.rs"]
-mod fixture;
+pub(crate) mod fixture;
 pub(crate) use fixture::SelectedTerminationState;
 use fixture::{
     Behaviour, Process, add_launched, add_reported, behaviour_of, body, broadcasts, label, listed,
@@ -130,7 +130,9 @@ fn given_in_flight(world: &mut QuectoWorld, uuid: String) {
     s.registry.as_ref().unwrap().lock().unwrap()[&uuid]
         .teardown
         .send_replace(TeardownPhase::Stopping(
-            quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            quecto::infrastructure::tools::subagent_registry::StoppingClaim::first(
+                quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            ),
         ));
 }
 
@@ -153,30 +155,19 @@ fn given_reaper(world: &mut QuectoWorld, uuid: String) {
         .exit_signal_tx
         .clone()
         .unwrap();
-    s.runtime.as_ref().unwrap().spawn(async move {
-        let exit = supervisor.wait_exit(handle).await;
-        exit_tx.send_replace(Some(
-            quecto::infrastructure::tools::subagent_registry::ExitSignal {
-                exit_code: match &exit {
-                    Some(
-                        quecto::infrastructure::processes::owned_child_supervisor::ChildExit::Code(
-                            c,
-                        ),
-                    ) => Some(*c),
-                    _ => None,
-                },
-                signal: None,
-                kind: Default::default(),
-            },
-        ));
-        let _ = observer
-            .execute(ObserveOwnedChildExitRequest {
-                child,
-                observation: ExitObservation::ProcessExited,
-            })
-            .await;
-        supervisor.retire(handle);
-    });
+    // The production reaper: it publishes the exit, hands it to the
+    // observation use case and retires the handle.
+    let _guard = s.runtime.as_ref().unwrap().enter();
+    quecto::infrastructure::tools::spawn_reaper::spawn_reaper_task(
+        handle,
+        supervisor,
+        quecto::infrastructure::tools::spawn_reaper::ReaperContext {
+            exit_tx,
+            child,
+            observer,
+            swarm_member: None,
+        },
+    );
 }
 
 #[given("an AgentCmdTool over the root registry with the composed kill owner")]
@@ -354,6 +345,70 @@ fn then_result(world: &mut QuectoWorld, result: String) {
     assert_eq!(is_error, result == "failed");
 }
 
+/// #1953 review (1): a claim kept after effects is not a dead end. The
+/// retry is not refused as in flight — nothing is executing — but re-takes
+/// the claim (attempt 2) and re-attempts the protocol. The retry's own
+/// wait is not awaited here (it would run the compensation bound again):
+/// the second `shutdown` reaching the child is the observation.
+#[then(expr = "a retry of the kill of {string} re-takes the claim and sends a second shutdown")]
+fn then_retry_re_attempts(world: &mut QuectoWorld, reference: String) {
+    use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
+    let s = state(world);
+    let requests = s
+        .endpoints
+        .iter()
+        .find(|(id, _)| id == &reference)
+        .map(|(_, endpoint)| endpoint.requests.clone())
+        .expect("the child's endpoint");
+    let shutdowns = |requests: &std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>| {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r["type"] == "shutdown")
+            .count()
+    };
+    assert_eq!(shutdowns(&requests), 1, "the failed kill sent one shutdown");
+    let kill = s.kill.clone().unwrap();
+    let arguments = serde_json::json!({"agent_id": reference, "command": "kill"}).to_string();
+    // Detached: the retry waits its own bound; the scenario observes the
+    // re-taken claim and the second command, not its eventual answer.
+    let _retry = s
+        .runtime
+        .as_ref()
+        .unwrap()
+        .spawn(async move { kill.execute(&arguments).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while shutdowns(&requests) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the retry never sent a second shutdown"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    match entries[&reference].teardown_phase() {
+        TeardownPhase::Stopping(claim) => {
+            assert_eq!(claim.attempt, 2, "re-taken, not refused");
+            assert_eq!(claim.owner, ClaimOwner::Executing);
+        }
+        other => panic!("the retry holds the claim: {other:?}"),
+    }
+}
+
+#[then(expr = "the kill of {string} is refused with {string}")]
+fn then_retry_refused(world: &mut QuectoWorld, reference: String, detail: String) {
+    run_kill(world, &reference);
+    let s = state(world);
+    let result = s.result.as_ref().unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains(&detail),
+        "{:?} lacks {detail:?}",
+        result.content
+    );
+}
+
 #[then(expr = "the kill is refused with {string}")]
 fn then_refused(world: &mut QuectoWorld, detail: String) {
     let s = state(world);
@@ -427,6 +482,26 @@ fn then_one_live(world: &mut QuectoWorld, a: String) {
     assert!(gone.is_empty(), "not live: {gone:?}");
 }
 
+#[then(expr = "{string} stays claimed stopping")]
+fn then_claimed_stopping(world: &mut QuectoWorld, a: String) {
+    let s = state(world);
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    assert_ne!(entries[&a].status, SubagentStatus::Exited);
+    // Kept for the exit that will follow, and recorded as returned so a
+    // later trigger may re-take it (#1936 review).
+    assert_eq!(
+        entries[&a].teardown_phase(),
+        TeardownPhase::Stopping(
+            quecto::infrastructure::tools::subagent_registry::StoppingClaim {
+                intent: quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+                attempt: 1,
+                owner: quecto::infrastructure::tools::subagent_registry::ClaimOwner::Returned,
+            }
+        ),
+        "effects reached the child: its eventual exit is this kill's"
+    );
+}
+
 #[then(expr = "{string} is not exited")]
 fn then_not_exited(world: &mut QuectoWorld, a: String) {
     let s = state(world);
@@ -493,6 +568,37 @@ fn then_compensated_once(world: &mut QuectoWorld, uuid: String) {
     wait_compensated(s, &uuid);
     let entries = s.registry.as_ref().unwrap().lock().unwrap();
     assert_eq!(entries[&uuid].status, SubagentStatus::Exited);
+}
+
+/// The kept claim is honoured: the exit the monitor observed later ran the
+/// row's compensation as the kill (its exit signal is `Terminated`, not
+/// the connection-level `ConnectionClosed` a natural EOF would carry), and
+/// the row is compensated exactly once.
+#[then(expr = "the observation compensated {string} as a selected termination, not a natural exit")]
+fn then_compensated_as_kill(world: &mut QuectoWorld, uuid: String) {
+    let s = state(world);
+    assert!(
+        matches!(s.observed, Some(ObservedExit::Compensated { .. })),
+        "the observation ran the compensation: {:?}",
+        s.observed
+    );
+    wait_compensated(s, &uuid);
+    let entries = s.registry.as_ref().unwrap().lock().unwrap();
+    let entry = &entries[&uuid];
+    assert_eq!(entry.status, SubagentStatus::Exited);
+    assert_eq!(entry.teardown_phase(), TeardownPhase::Compensated);
+    let signal = entry
+        .exit_signal_tx
+        .as_ref()
+        .expect("the launched row carries an exit signal")
+        .borrow()
+        .clone()
+        .expect("the compensation published the exit");
+    assert_eq!(
+        signal.kind,
+        quecto::infrastructure::tools::subagent_registry::ExitSignalKind::Terminated,
+        "a kept claim makes the later exit this kill's, never a post-mortem"
+    );
 }
 
 #[then(expr = "the observation is deferred to the process exit and {string} remains live")]
@@ -576,10 +682,9 @@ fn then_kill_forwarded(world: &mut QuectoWorld, child: String, via: String, gene
             let mut guard = entries.lock().unwrap();
             let next =
                 quecto::infrastructure::tools::subagent_cascade::next_roster_sequence(&guard);
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(
-                guard.get_mut(&child).unwrap(),
-                next,
-            );
+            let row = guard.get_mut(&child).unwrap();
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(row, next);
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_compensated(row);
         })
     };
     run_kill(world, &child);
@@ -625,7 +730,10 @@ fn then_vocabulary(_world: &mut QuectoWorld) {
             "route via A unreachable",
         ),
         (
-            KillDelegatedAgentError::Failed { detail: "x".into() },
+            KillDelegatedAgentError::Failed {
+                detail: "x".into(),
+                effects_dispatched: false,
+            },
             "termination failed",
         ),
     ] {

@@ -2,14 +2,26 @@
 //! and creation-time message spilling. Split from `context_pruning.rs` to
 //! respect the 750-line source cap.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::{future::Future, pin::Pin};
 
 use super::messages::*;
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
+use crate::application::sessions::ports::SpillIndexList;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
+
+/// The narrow handles the policy consumes, composed over the test store
+/// exactly as the runtime composes them (D9 #1978).
+fn retention(store: &Arc<MemStore>) -> crate::application::context::ContextRetention {
+    crate::composition::retention::context_retention_over(store.clone())
+}
 
 /// Minimal in-memory spill store for the creation-time spill path.
 #[derive(Debug, Default)]
@@ -20,7 +32,7 @@ struct MemStore {
 impl ContextSpillStore for MemStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -30,8 +42,8 @@ impl ContextSpillStore for MemStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -44,12 +56,12 @@ impl ContextSpillStore for MemStore {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(&self, _session_key: &SessionIdentity) -> SpillIndexList<'_> {
         let index: Vec<SpillIndex> = self
             .entries
             .lock()
@@ -67,7 +79,7 @@ impl ContextSpillStore for MemStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         self.entries.lock().unwrap().clear();
@@ -429,17 +441,17 @@ fn ladder_never_demotes_pinned_or_exempt_and_reports_unmet_budget() {
 
 #[tokio::test]
 async fn spill_conversation_message_appends_full_content_and_stamps_id() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut msg = Message::assistant("the full assistant reply text", vec![]);
     msg.turn = Some(3);
-    spill_conversation_message(&mut msg, &store, "s").await;
+    spill_conversation_message(&mut msg, &retention(&store).retain, &id("s")).await;
     assert_eq!(
         msg.spill_id.as_deref(),
         Some("turn3:msg:assistant"),
         "the message must be stamped with its spill id at creation"
     );
     let entry = store
-        .recall("s", "turn3:msg:assistant")
+        .recall(&id("s"), &SpillId::new("turn3:msg:assistant"))
         .await
         .unwrap()
         .expect("the message must be recallable immediately after creation");
@@ -455,16 +467,16 @@ async fn spill_conversation_message_appends_full_content_and_stamps_id() {
 async fn spill_conversation_message_dedups_ids_across_prompts() {
     // Turn numbering restarts each prompt: two turn-1 assistant replies in one
     // session must get distinct, individually recallable ids.
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut first = Message::assistant("prompt A reply", vec![]);
     first.turn = Some(1);
-    spill_conversation_message(&mut first, &store, "s").await;
+    spill_conversation_message(&mut first, &retention(&store).retain, &id("s")).await;
     let mut second = Message::assistant("prompt B reply", vec![]);
     second.turn = Some(1);
-    spill_conversation_message(&mut second, &store, "s").await;
+    spill_conversation_message(&mut second, &retention(&store).retain, &id("s")).await;
     assert_eq!(second.spill_id.as_deref(), Some("turn1:msg:assistant:2"));
     let entry = store
-        .recall("s", "turn1:msg:assistant:2")
+        .recall(&id("s"), &SpillId::new("turn1:msg:assistant:2"))
         .await
         .unwrap()
         .expect("the deduplicated id must be recallable");
@@ -568,10 +580,10 @@ fn current_run_recent_turns_are_exempt_from_message_collapse() {
 
 #[tokio::test]
 async fn spill_conversation_message_persists_for_ephemeral_sessions() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let mut msg = Message::assistant("ephemeral reply text", vec![]);
     msg.turn = Some(1);
-    let written = spill_conversation_message(&mut msg, &store, "").await;
+    let written = spill_conversation_message(&mut msg, &retention(&store).retain, &id("")).await;
     assert!(
         written,
         "an ephemeral (empty-key) session must still spill conversation \
@@ -583,7 +595,7 @@ async fn spill_conversation_message_persists_for_ephemeral_sessions() {
         "the spill id must be stamped for ephemeral sessions too"
     );
     let entry = store
-        .recall("", "turn1:msg:assistant")
+        .recall(&id(""), &SpillId::new("turn1:msg:assistant"))
         .await
         .unwrap()
         .expect("the ephemeral spill entry must be recallable");
@@ -669,14 +681,14 @@ fn ladder_second_rung_drops_the_oldest_stub_first() {
 
 #[tokio::test]
 async fn creation_spill_third_collision_mints_suffix_3() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     for (i, text) in ["prompt A reply", "prompt B reply", "prompt C reply"]
         .iter()
         .enumerate()
     {
         let mut msg = Message::assistant(*text, vec![]);
         msg.turn = Some(1);
-        spill_conversation_message(&mut msg, &store, "s").await;
+        spill_conversation_message(&mut msg, &retention(&store).retain, &id("s")).await;
         let expected = match i {
             0 => "turn1:msg:assistant".to_string(),
             n => format!("turn1:msg:assistant:{}", n + 1),
@@ -688,7 +700,7 @@ async fn creation_spill_third_collision_mints_suffix_3() {
         );
     }
     let entry = store
-        .recall("s", "turn1:msg:assistant:3")
+        .recall(&id("s"), &SpillId::new("turn1:msg:assistant:3"))
         .await
         .unwrap()
         .expect("the third-collision id must be recallable");
@@ -697,45 +709,14 @@ async fn creation_spill_third_collision_mints_suffix_3() {
         "turn1:msg:assistant:3 must recall the THIRD colliding message"
     );
 }
-
-// --- rewind stub stripping: rfind, not find (PR #1048 round-2 review) ---
-
-#[test]
-fn stub_without_recall_strips_only_the_trailing_clause() {
-    // The 60-char preview is arbitrary user text and can itself contain the
-    // " — recall(" marker (e.g. a user pasting a stub back into chat). Only
-    // the formatter-appended trailing clause may be stripped; a first-match
-    // implementation truncates inside the preview and corrupts the stub.
-    let pasted = r#"[user: "x" (5 tokens) — recall("id")] please explain"#;
-    let stub = message_collapse_stub("user", pasted, 13, "turn3:msg:user");
-    let stripped = message_stub_without_recall(&stub);
-    assert!(
-        !stripped.contains("turn3:msg:user"),
-        "the real trailing recall clause must be stripped, got: {stripped}"
-    );
-    assert!(
-        stripped.contains(r#"recall("id")"#),
-        "the preview text (including a quoted recall marker) must be intact, got: {stripped}"
-    );
-    assert!(
-        stripped.contains("(13 tokens)"),
-        "the token annotation must survive stripping, got: {stripped}"
-    );
-}
-
-#[test]
-fn stub_without_recall_is_identity_without_a_clause() {
-    assert_eq!(message_stub_without_recall("plain text"), "plain text");
-}
-
 #[tokio::test]
 async fn mem_store_default_has_entries_is_false() {
-    assert!(!MemStore::default().has_entries("s").await.unwrap());
+    assert!(!MemStore::default().has_entries(&id("s")).await.unwrap());
 }
 
 #[tokio::test]
 async fn mem_store_trait_surface_clear_empties_entries() {
-    let store = MemStore::default();
+    let store = Arc::new(MemStore::default());
     let entry = SpillEntry {
         id: "id1".into(),
         tool: "bash".into(),
@@ -743,8 +724,8 @@ async fn mem_store_trait_surface_clear_empties_entries() {
         tokens: 2,
         content: "out".into(),
     };
-    store.append("s", &entry).await.unwrap();
-    assert_eq!(store.list_entries("s").await.unwrap().len(), 1);
-    store.clear("s").await.unwrap();
-    assert!(store.list_entries("s").await.unwrap().is_empty());
+    store.append(&id("s"), &entry).await.unwrap();
+    assert_eq!(store.list_entries(&id("s")).await.unwrap().len(), 1);
+    store.clear(&id("s")).await.unwrap();
+    assert!(store.list_entries(&id("s")).await.unwrap().is_empty());
 }

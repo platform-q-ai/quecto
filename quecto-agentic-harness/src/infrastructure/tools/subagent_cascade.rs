@@ -58,13 +58,21 @@ pub fn next_roster_sequence(guard: &HashMap<String, SubagentEntry>) -> u64 {
         .saturating_add(1)
 }
 
-/// A dead row is a compensated row: whoever marks it dead (a cascade, a
-/// reported-snapshot prune) has run or joined its terminal effects, so a
-/// waiter on its teardown phase (#1936) is released here.
+/// Mark a row dead: exited, and out of live membership. This does NOT
+/// release waiters on the row's teardown phase — the path that ends the
+/// row calls [`mark_entry_compensated`] once its terminal effects have run
+/// (#1936), so a joiner never observes `Compensated` before the cleanup,
+/// exit signals and passive note it stands for.
 pub fn mark_entry_dead(entry: &mut SubagentEntry, sequence: u64) {
     entry.status = SubagentStatus::Exited;
     entry.persisted_liveness = SubagentLiveness::Dead;
     entry.notification_sequence = sequence;
+}
+
+/// The row's terminal effects have run: release every waiter on its
+/// teardown phase (#1936). Clones of the row share the phase channel, so a
+/// cascade-removed copy releases the retained tombstone's waiters too.
+pub fn mark_entry_compensated(entry: &SubagentEntry) {
     entry
         .teardown
         .send_replace(super::subagent_registry::TeardownPhase::Compensated);

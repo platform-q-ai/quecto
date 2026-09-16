@@ -161,11 +161,19 @@ pub struct TerminateDelegatedAgentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminationRouted {
     /// The target was a direct child and self shutdown was invoked on it.
-    ShutdownRequested { child: DelegatedAgentIdentity },
+    /// `result` is how its end was observed by this harness — the owner —
+    /// once the conclusion ports are composed; `None` when this harness
+    /// only routed the edge and observed nothing (a bare route).
+    ShutdownRequested {
+        child: DelegatedAgentIdentity,
+        result: Option<TerminationResult>,
+    },
     /// The command was forwarded one hop; this harness stays alive.
+    /// `result` is the outcome the downstream owner relayed, when any.
     Forwarded {
         via: DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
+        result: Option<TerminationResult>,
     },
 }
 
@@ -173,10 +181,25 @@ pub enum TerminationRouted {
 pub enum TerminateDelegatedAgentError {
     /// Routing policy refused: no edge was touched.
     Rejected(TerminationRouteError),
-    /// The routing port failed to reach the resolved direct child.
+    /// The routing port failed to reach the resolved direct child; nothing
+    /// was dispatched to it.
     ChildUnreachable { child: AgentUuid, detail: String },
     /// The receiving harness is itself frozen or terminated.
     NotAccepting,
+    /// The target is not routable because this harness already observed
+    /// its end (its terminal effects were claimed or ran).
+    TargetAlreadyExited(AgentUuid),
+    /// This harness dispatched effects toward its direct child (the
+    /// protocol was acknowledged, or the owned-handle fallback signalled
+    /// it) but did not observe the end within the bound. The stopping
+    /// claim is kept so the eventual exit is compensated as this kill.
+    TerminationFailed { child: AgentUuid, detail: String },
+    /// The direct child the route went through answered with a refusal of
+    /// its own, relayed distinctly.
+    Downstream {
+        via: AgentUuid,
+        rejection: super::ports::DownstreamRejection,
+    },
 }
 
 impl fmt::Display for TerminateDelegatedAgentError {
@@ -187,6 +210,11 @@ impl fmt::Display for TerminateDelegatedAgentError {
                 write!(f, "direct child {child} unreachable: {detail}")
             }
             Self::NotAccepting => f.write_str("harness is not accepting control commands"),
+            Self::TargetAlreadyExited(uuid) => write!(f, "target {uuid} already exited"),
+            Self::TerminationFailed { child, detail } => {
+                write!(f, "termination of {child} failed: {detail}")
+            }
+            Self::Downstream { via, rejection } => write!(f, "via {via}: {rejection}"),
         }
     }
 }
@@ -202,35 +230,7 @@ pub struct KillDelegatedAgentRequest {
     pub reference: String,
 }
 
-/// How the selected agent ended. `failed` is the error side
-/// ([`KillDelegatedAgentError::Failed`]), never a success.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminationResult {
-    /// The child acknowledged the protocol and its exit was observed; no
-    /// fallback signal was sent.
-    Graceful,
-    /// The protocol did not suffice and the directly owned handle's
-    /// fallback produced the exit.
-    Fallback,
-    /// The child had already exited when the termination reached it.
-    AlreadyExited,
-}
-
-impl TerminationResult {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Graceful => "graceful",
-            Self::Fallback => "fallback",
-            Self::AlreadyExited => "already-exited",
-        }
-    }
-}
-
-impl fmt::Display for TerminationResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+pub use super::ports::TerminationResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KillDelegatedAgentOutcome {
@@ -240,8 +240,9 @@ pub struct KillDelegatedAgentOutcome {
     pub removed: Vec<AgentUuid>,
 }
 
-/// Every error leaves the registry as it was: a refusal happens before any
-/// effect, and a failed termination lifts its stopping claim.
+/// Every refusal leaves the registry as it was: it happens before any
+/// effect, or lifts the stopping claim when nothing reached the child. Only
+/// a failure after effects were dispatched keeps the row claimed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KillDelegatedAgentError {
     /// The reference names no live delegated agent (unknown, ambiguous,
@@ -258,10 +259,19 @@ pub enum KillDelegatedAgentError {
     /// child it goes through did not accept the command. No fallback exists
     /// for a target this harness does not own.
     RouteUnreachable { via: AgentUuid, detail: String },
-    /// The termination ran but the agent's end was not observed: the
-    /// protocol failed with no retained handle to fall back on, the exit
-    /// was not observed within the bound, or the fallback did not end it.
-    Failed { detail: String },
+    /// A harness on the route refused the command for a reason of its own
+    /// (target unknown or stale there, its lifecycle, an edge it could not
+    /// reach); nothing was dispatched to the target.
+    DownstreamRejected { via: AgentUuid, detail: String },
+    /// The termination did not observe the agent's end. With
+    /// `effects_dispatched` the protocol was acknowledged or the fallback
+    /// signalled the child, so the row stays claimed stopping and its
+    /// eventual exit is compensated as this kill; without it nothing
+    /// reached the child and the claim is lifted.
+    Failed {
+        detail: String,
+        effects_dispatched: bool,
+    },
 }
 
 impl fmt::Display for KillDelegatedAgentError {
@@ -274,7 +284,10 @@ impl fmt::Display for KillDelegatedAgentError {
             Self::RouteUnreachable { via, detail } => {
                 write!(f, "route via {via} unreachable: {detail}")
             }
-            Self::Failed { detail } => write!(f, "termination failed: {detail}"),
+            Self::DownstreamRejected { via, detail } => {
+                write!(f, "refused via {via}: {detail}")
+            }
+            Self::Failed { detail, .. } => write!(f, "termination failed: {detail}"),
         }
     }
 }

@@ -79,7 +79,7 @@ async fn deferred_persistence_records_the_reason_and_succeeds() {
 async fn exit_readiness_wakes_the_loop_notify_and_records_the_readiness() {
     let notify = Arc::new(Notify::new());
     let adapter = LoopExitReadiness::new(notify.clone());
-    assert_eq!(adapter.signalled(), None);
+    assert_eq!(adapter.readiness_signalled(), None);
     adapter
         .signal_exit_ready(ExitReadiness::Completed(ShutdownReason::TerminationSignal))
         .await;
@@ -87,7 +87,7 @@ async fn exit_readiness_wakes_the_loop_notify_and_records_the_readiness() {
         .await
         .expect("the loop is woken");
     assert_eq!(
-        adapter.signalled(),
+        adapter.readiness_signalled(),
         Some(ExitReadiness::Completed(ShutdownReason::TerminationSignal))
     );
 }

@@ -35,7 +35,7 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         entries.insert("sibling".into(), sibling);
     }
 
-    let observer = super::super::subagent_teardown_wiring::build_lifecycle_use_cases(
+    let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
         Some(broadcast_tx),
         Some(notify_tx),

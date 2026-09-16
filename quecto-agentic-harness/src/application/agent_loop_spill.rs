@@ -32,8 +32,9 @@ impl AgentLoopImpl {
     // symmetric since PR #1048; both symmetry sides are pinned by
     // `ephemeral_session_spills_both_tool_output_and_conversation_messages`.
     // The privacy counterpart: ephemeral interface paths scrub the empty-key
-    // spill file at run end (`FileContextSpillStore::scrub_session_spill_sync`)
-    // so `--no-session` content does not outlive the run.
+    // namespace at run end through the sessions capability
+    // (`RecallContext::scrub_ephemeral`, D9 #1978) so `--no-session` content
+    // does not outlive the run.
     //
     // `spill_id` is stamped on the message ONLY after a successful append
     // (mirroring `spill_conversation_message`): a message whose content never

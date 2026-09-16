@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.77.12"
+version = "0.77.15"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
@@ -46,7 +46,12 @@ tempfile = "3"
 # so timer tests can drive a deterministic clock instead of wall time (#838).
 tokio = { version = "1", features = ["test-util"] }
 
+# Named `tui_bdd` (not `bdd`) so `cargo test --workspace --test bdd` selects
+# only the harness BDD runner: every test invocation shares one workspace
+# feature unification, and a `--workspace --test <name>` filter is
+# matched by target name across every member.
 [[test]]
-name = "bdd"
+name = "tui_bdd"
+path = "tests/bdd/main.rs"
 harness = false
 required-features = ["test-harness"]

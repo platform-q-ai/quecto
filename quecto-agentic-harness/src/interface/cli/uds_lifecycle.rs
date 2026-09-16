@@ -1,15 +1,17 @@
-use super::uds::uds_dispatch_session;
 use super::uds::{DispatchCtx, run_command_loop};
 use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_multi::MultiClientArgs;
-#[path = "uds/uds_session_load.rs"]
-mod uds_session_load;
 use super::uds_session::AgentSession;
+use super::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::message::{Message, Role};
-use crate::domain::session::{Session, SessionStore};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
-use uds_session_load::load_session;
+use crate::application::sessions::dto::SaveTrigger;
+use crate::application::sessions::ports::SessionStore;
+pub(crate) use crate::domain::conversation_view::inject_system_prompt;
+#[cfg(test)]
+pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
+use crate::domain::message::Message;
+#[cfg(test)]
+use crate::domain::message::Role;
 
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
@@ -24,16 +26,26 @@ type ExtRegistry = std::sync::Arc<
 
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
+    /// The run's retained-context handles (D9 #1978): the one store the
+    /// agent's pruning writer and the active session's recovery backstop
+    /// share, derived here so the two cannot diverge; `None` for unit rigs.
+    pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
-    pub session_key: String,
+    /// The typed identity the loop opens (D10 #1979).
+    pub identity: crate::domain::session_identity::SessionIdentity,
     pub model: String,
     pub ephemeral: bool,
     pub system_prompt: String,
     pub socket_path: std::path::PathBuf,
     /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
-    pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
+    /// A store the loop is handed instead of the composed file store
+    /// (tests); threaded into the sessions builder's inputs.
+    pub session_store_override: Option<std::sync::Arc<dyn SessionStore>>,
+    /// Composition's sessions handles builder (#1970): the loop hands over
+    /// its base directory (and any override) and holds the handles back.
+    pub sessions: super::SessionHandlesBuilder,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
@@ -52,10 +64,10 @@ pub struct UdsLoopArgs<'a> {
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
-    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
-    /// Composition's teardown graph builder; `None` runs the loop without
+    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
-    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
+    pub teardown_graph: Option<super::TeardownHandlesBuilder>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -72,15 +84,17 @@ use super::uds_socket::{SocketGuard, bind_secure_socket};
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
+        retention,
         base_dir,
         workspace,
-        session_key,
+        identity,
         model,
         ephemeral,
         system_prompt,
         socket_path,
         socket_override,
         session_store_override,
+        sessions,
         ext_registry,
         lifetime,
         notification_rx,
@@ -94,33 +108,30 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         parent_control,
         teardown_graph,
     } = args;
-    let file_store;
-    let session_store: &dyn SessionStore = match session_store_override {
-        Some(ref s) => s.as_ref(),
-        None => {
-            file_store = FileSessionStore::new(base_dir);
-            &file_store
-        }
-    };
-    // Refuse at open, not at first save (#1460): a key owned by another
-    // live process must fail before any turn runs against it.
-    if !ephemeral
-        && !session_key.is_empty()
-        && let Err(err) = session_store.claim(&session_key)
-    {
-        eprintln!("{err}");
-        return 1;
-    }
-    let loaded_session = match load_session(session_store, &session_key, ephemeral).await {
-        Ok(m) => m,
+    let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
+    let sessions = sessions(SessionLoopInputs {
+        base_dir: base_dir.to_path_buf(),
+        store: session_store_override,
+        identity,
+        ephemeral,
+        system_prompt: system_prompt.clone(),
+        spill_store: retention.as_ref().map(|handles| handles.store.clone()),
+        durable_prefix: agent.durable_prefix_latch(),
+        workflow_state: workflow_state.clone(),
+        subagent_registry: subagent_registry.clone(),
+    });
+    // Open the loop's session (#1863, D8 #1977): the transaction claims it
+    // (a key owned by another live process is refused at open, #1460),
+    // loads it and lets the watermark stand for what the store holds.
+    let opened = match sessions.switch.resume.open_at_startup().await {
+        Ok(opened) => opened,
         Err(err) => {
-            eprintln!("failed to load session: {err}");
+            eprintln!("{err}");
             return 1;
         }
     };
-    let loaded_message_count = loaded_session.messages.len();
-    let messages = loaded_session.messages;
-    if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
+    let messages = opened.messages;
+    if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
         }
@@ -136,17 +147,15 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 messages,
                 model,
                 session_key,
-                ephemeral,
                 system_prompt,
                 ext_registry,
                 subagent_registry,
                 workflow_state,
                 provider_reload,
                 provider_reload_inputs,
-                last_persisted_message_index: loaded_message_count,
             },
             std_stream,
-            session_store,
+            &sessions,
         )
         .await
     } else {
@@ -168,7 +177,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 messages,
                 model,
                 session_key,
-                ephemeral,
                 system_prompt,
                 ext_registry,
                 lifetime,
@@ -180,12 +188,11 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 broadcast_tx,
                 provider_reload,
                 provider_reload_inputs,
-                last_persisted_message_index: loaded_message_count,
                 parent_control,
                 teardown_graph,
             },
             listener,
-            session_store,
+            &sessions,
         )
         .await
     }
@@ -198,20 +205,18 @@ struct SingleClientArgs<'a> {
     messages: Vec<Message>,
     model: String,
     session_key: String,
-    ephemeral: bool,
     system_prompt: String,
     ext_registry: Option<ExtRegistry>,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-    last_persisted_message_index: usize,
 }
 
 async fn single_client_loop(
     args: SingleClientArgs<'_>,
     std_stream: std::os::unix::net::UnixStream,
-    session_store: &dyn SessionStore,
+    sessions: &SessionHandles,
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
@@ -219,15 +224,13 @@ async fn single_client_loop(
         workspace,
         mut messages,
         model,
-        mut session_key,
-        ephemeral,
+        session_key,
         system_prompt,
         ext_registry,
         subagent_registry,
         workflow_state,
         provider_reload,
         provider_reload_inputs,
-        last_persisted_message_index,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -246,14 +249,17 @@ async fn single_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut agent_session = AgentSession::new(model, session_key.clone());
-    let max_context_tokens = agent.max_context_tokens();
-    let initial_effort = agent.effort().map(|l| l.as_str().to_string());
+    let mut agent_session = AgentSession::new(model);
+    let effort = agent.effort().map(|l| l.as_str().to_string());
+    let initial_state =
+        agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
-    let mut initial_conversation_snapshot =
-        super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
-    initial_conversation_snapshot
-        .set_spill_store(agent.spill_store().cloned(), session_key.clone());
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
 
     run_command_loop(
         reader,
@@ -262,21 +268,14 @@ async fn single_client_loop(
             base_dir,
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                initial_conversation_snapshot,
-            )),
-            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
-            )),
+            sessions: session_reads.clone(),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: Some(&mut *writer),
-            session_key: &mut session_key,
-            session_store,
-            ephemeral,
             system_prompt: &system_prompt,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::<TurnControl>::default(),
@@ -290,57 +289,23 @@ async fn single_client_loop(
             workflow_config: None,
             provider_reload,
             provider_reload_inputs,
-            last_persisted_message_index,
-            durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: sessions.list_sessions.clone(),
+            save_session: sessions.save_session.clone(),
+            rewrite: sessions.rewrite.clone(),
+            switch: sessions.switch.clone(),
         },
     )
     .await;
 
-    if !ephemeral && !session_key.is_empty() {
-        remove_injected_system_prompt(&mut messages, &system_prompt);
-        let session = Session {
-            key: session_key,
-            messages: std::mem::take(&mut messages),
-            workflow_run: workflow_state
-                .as_ref()
-                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster: uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
-                &subagent_registry,
-                if agent_session.killing_exit {
-                    crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
-                } else {
-                    crate::domain::session::SubagentRestoreReason::LegacyUnspecified
-                },
-            ),
-        };
-        let _ = session_store.save(&session).await;
+    // The final save of an ordinary exit (#1860): the transaction decides
+    // whether there is anything to save.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
     }
     0
-}
-
-pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if prompt.is_empty() {
-        return;
-    }
-    let has_real_system = messages
-        .first()
-        .is_some_and(|m| m.role == Role::System && !m.is_manifest);
-    if !has_real_system {
-        messages.insert(0, Message::system(prompt.to_string()));
-    }
-}
-
-pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if prompt.is_empty() {
-        return;
-    }
-    let is_injected_prompt = messages.first().is_some_and(|m| {
-        m.role == Role::System
-            && !m.is_manifest
-            && (m.content == prompt || m.content.starts_with(prompt))
-    });
-    if is_injected_prompt {
-        messages.remove(0);
-    }
 }

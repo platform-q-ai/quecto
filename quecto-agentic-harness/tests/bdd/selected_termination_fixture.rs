@@ -10,19 +10,20 @@ use std::time::Duration;
 use quecto::application::subagents::dto::{
     CompensateFailedLaunchRequest, FailedLaunchCompensated, ObservedExit,
 };
+use quecto::application::tools::ports::Tool;
+use quecto::composition::subagent_lifecycle::{
+    SubagentLifecycleUseCases, build_lifecycle_use_cases,
+};
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::subagent_teardown::LaunchGeneration;
-use quecto::domain::tool::{Tool, ToolResult};
-use quecto::infrastructure::extensions::native::KillToolWiring;
+use quecto::domain::tool::ToolResult;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup,
 };
 use quecto::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentRegistry, TeardownPhase, new_exit_signal_channel, new_registry,
 };
-use quecto::infrastructure::tools::subagent_teardown_wiring::{
-    SubagentLifecycleUseCases, build_lifecycle_use_cases,
-};
+use quecto::interface::cli::KillToolWiring;
 
 use crate::QuectoWorld;
 
@@ -32,7 +33,17 @@ pub(crate) enum Behaviour {
     Refuse,
     Malformed,
     Unreachable,
+    /// Ends its own process on `shutdown`, lets the reaper observe the
+    /// exit, then answers with a refusal: the protocol comes back negative
+    /// for a child that is already gone.
+    EndsProcessThenRefuses,
+    /// Acknowledges after a pause: a child whose own teardown takes a
+    /// while, holding its parent's "shut down children" phase open.
+    AcknowledgeSlowly,
 }
+
+/// How long [`Behaviour::AcknowledgeSlowly`] pauses before answering.
+pub(crate) const SLOW_ACK: Duration = Duration::from_millis(1500);
 
 /// One fake direct-child endpoint: answers per `behaviour`, records every
 /// request, and — when `exit_pid` is set — ends the owned process itself
@@ -42,10 +53,25 @@ pub(crate) struct Endpoint {
     pub(crate) requests: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
+/// Something the endpoint does the moment a `shutdown` request reaches it,
+/// before any pause or answer: the scenario's chance to act while the
+/// owner's "shut down children" phase is provably open.
+pub(crate) type ShutdownHook = Arc<dyn Fn() + Send + Sync>;
+
 pub(crate) fn serve(
     runtime: &tokio::runtime::Runtime,
     behaviour: Behaviour,
     exit_pid: Arc<AtomicU64>,
+) -> Endpoint {
+    serve_with_shutdown_hook(runtime, behaviour, exit_pid, None)
+}
+
+/// [`serve`] with `on_shutdown` run on every `shutdown` request received.
+pub(crate) fn serve_with_shutdown_hook(
+    runtime: &tokio::runtime::Runtime,
+    behaviour: Behaviour,
+    exit_pid: Arc<AtomicU64>,
+    on_shutdown: Option<ShutdownHook>,
 ) -> Endpoint {
     let path = std::env::temp_dir().join(format!("q-st-{}.sock", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_file(&path);
@@ -65,6 +91,7 @@ pub(crate) fn serve(
             };
             let seen = seen.clone();
             let exit_pid = exit_pid.clone();
+            let on_shutdown = on_shutdown.clone();
             tokio::spawn(async move {
                 use tokio::io::AsyncWriteExt;
                 let (read, mut write) = tokio::io::split(stream);
@@ -80,13 +107,30 @@ pub(crate) fn serve(
                 };
                 let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 seen.lock().unwrap().push(request.clone());
+                if request["type"] == "shutdown"
+                    && let Some(hook) = on_shutdown.as_ref()
+                {
+                    hook();
+                }
+                if behaviour == Behaviour::EndsProcessThenRefuses && request["type"] == "shutdown" {
+                    let pid = exit_pid.load(Ordering::SeqCst);
+                    assert!(pid != 0, "the fixture holds a process to end");
+                    // SAFETY: the pid is the fixture's own sleeping process.
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                    // Long enough for the reaper to reap, compensate and
+                    // retire the handle before the refusal arrives.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                if behaviour == Behaviour::AcknowledgeSlowly {
+                    tokio::time::sleep(SLOW_ACK).await;
+                }
                 let reply = match behaviour {
-                    Behaviour::Acknowledge => serde_json::json!({
+                    Behaviour::Acknowledge | Behaviour::AcknowledgeSlowly => serde_json::json!({
                         "type": "response", "id": request["id"], "command": request["type"],
                         "success": true,
                     })
                     .to_string(),
-                    Behaviour::Refuse => serde_json::json!({
+                    Behaviour::Refuse | Behaviour::EndsProcessThenRefuses => serde_json::json!({
                         "type": "response", "id": request["id"], "command": request["type"],
                         "success": false, "error": "refused",
                     })
@@ -95,7 +139,11 @@ pub(crate) fn serve(
                     Behaviour::Unreachable => unreachable!(),
                 };
                 let _ = write.write_all(format!("{reply}\n").as_bytes()).await;
-                if behaviour == Behaviour::Acknowledge && request["type"] == "shutdown" {
+                if matches!(
+                    behaviour,
+                    Behaviour::Acknowledge | Behaviour::AcknowledgeSlowly
+                ) && request["type"] == "shutdown"
+                {
                     let pid = exit_pid.load(Ordering::SeqCst);
                     if pid != 0 {
                         // The child ends itself after acknowledging.
@@ -179,6 +227,9 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 notify_tx: None,
                 harness_lifecycle:
                     quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                environment_registry:
+                    quecto::domain::environment_registry::EnvironmentRegistry::new(),
+                slots: Default::default(),
             },
         ));
         s.lifecycle = Some(build_lifecycle_use_cases(
@@ -201,6 +252,8 @@ pub(crate) fn behaviour_of(text: &str) -> Behaviour {
         "refuses commands" => Behaviour::Refuse,
         "answers with a malformed acknowledgement" => Behaviour::Malformed,
         "is unreachable" => Behaviour::Unreachable,
+        "ends its process on shutdown and then refuses" => Behaviour::EndsProcessThenRefuses,
+        "acknowledges commands slowly" => Behaviour::AcknowledgeSlowly,
         other => panic!("unknown endpoint behaviour {other:?}"),
     }
 }
@@ -256,7 +309,8 @@ pub(crate) fn add_launched(
     entry.parent_id = Some("root".into());
     let (exit_tx, _rx) = new_exit_signal_channel();
     entry.exit_signal_tx = Some(exit_tx);
-    let told = matches!(process, Process::ExitsWhenTold);
+    let told =
+        matches!(process, Process::ExitsWhenTold) || behaviour == Behaviour::EndsProcessThenRefuses;
     let spawned = match process {
         Process::None => None,
         Process::Sleeping | Process::ExitsWhenTold => Some(spawn_process(s, &["sleep", "300"])),

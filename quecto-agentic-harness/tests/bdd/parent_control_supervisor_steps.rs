@@ -353,8 +353,12 @@ fn fixture_pid(world: &mut QuectoWorld) -> u32 {
 
 #[given("a live fixture process that is not owned by the supervisor")]
 fn given_fixture_process(world: &mut QuectoWorld) {
+    // A process that never ends on its own: the only way it can be gone
+    // at the end of the scenario is a signal, whatever the scheduling of
+    // the scenarios sharing this shard (a `sleep 30` expired under CI
+    // load and read as a signal).
     let child = std::process::Command::new("sleep")
-        .arg("30")
+        .arg("infinity")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -419,35 +423,75 @@ fn given_container_row(world: &mut QuectoWorld) {
         .insert("member".into(), entry);
 }
 
-#[when("every legacy teardown path runs against those rows")]
-fn when_legacy_paths(world: &mut QuectoWorld) {
+#[when("the fleet teardown and the operator kill run against those rows")]
+fn when_production_paths(world: &mut QuectoWorld) {
+    use quecto::application::subagents::dto::TerminateAllDelegatedAgentsRequest;
     let registry = world.agent_cmd_registry.as_ref().unwrap().clone();
-    let entries: Vec<SubagentEntry> = registry.lock().unwrap().values().cloned().collect();
-    let mut requests = Vec::new();
-    for entry in &entries {
-        requests.push(entry.request_owned_child_termination(ShutdownReason::OperatorRequest));
-        requests.push(entry.request_owned_child_termination(ShutdownReason::ParentShutdown));
-    }
-    state(world).legacy_requests = requests;
+    let keys: Vec<String> = registry.lock().unwrap().keys().cloned().collect();
+    let owners = crate::agent_cmd_tool_steps::termination_owners(&registry, None);
+    let fleet = quecto::composition::subagent_teardown::build_fleet_teardown(
+        quecto::composition::subagent_teardown::FleetTeardownWiring {
+            owner: quecto::domain::ids::AgentUuid::new("root"),
+            registry: registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle:
+                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        },
+    );
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut effects = Vec::new();
+    runtime.block_on(async {
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(30),
+            fleet.execute(TerminateAllDelegatedAgentsRequest {
+                reason: ShutdownReason::OperatorRequest,
+            }),
+        )
+        .await
+        .expect("the fleet teardown settles within the bound")
+        .expect("the fleet run completes");
+        effects.push(!outcome.settled.is_empty());
+        for key in &keys {
+            let arguments = serde_json::json!({"agent_id": key, "command": "kill"}).to_string();
+            let result = tokio::time::timeout(
+                Duration::from_secs(30),
+                owners.kill_tool.execute(&arguments),
+            )
+            .await
+            .expect("the kill answers within the bound")
+            .unwrap();
+            effects.push(!result.is_error);
+        }
+    });
+    state(world).teardown_effects = effects;
+    std::mem::forget(runtime);
     std::thread::sleep(Duration::from_millis(300));
 }
 
 #[then("the fixture process is still alive")]
 fn then_fixture_alive(world: &mut QuectoWorld) {
     let fixture = state(world).fixture.as_mut().unwrap();
+    let status = fixture.try_wait().unwrap();
     assert!(
-        fixture.try_wait().unwrap().is_none(),
-        "the fixture pid must never be signalled"
+        status.is_none(),
+        "the fixture pid must never be signalled: exited with {status:?} (signal {:?}, code {:?})",
+        status.and_then(|s| std::os::unix::process::ExitStatusExt::signal(&s)),
+        status.and_then(|s| s.code())
     );
     let _ = fixture.kill();
     let _ = fixture.wait();
 }
 
-#[then("no row requested an owned-child termination")]
-fn then_no_requests(world: &mut QuectoWorld) {
+#[then("no row was settled or killed")]
+fn then_no_effects(world: &mut QuectoWorld) {
     let s = state(world);
-    assert!(!s.legacy_requests.is_empty());
-    assert!(s.legacy_requests.iter().all(|requested| !requested));
+    assert!(!s.teardown_effects.is_empty());
+    assert!(
+        s.teardown_effects.iter().all(|effect| !effect),
+        "a row without a delegated identity or a retained handle has no effect: {:?}",
+        s.teardown_effects
+    );
 }
 
 #[then("terminating an unknown handle reports no retained handle")]
@@ -544,13 +588,24 @@ fn when_drop_control_connection(world: &mut QuectoWorld, agent_id: String) {
     entry.monitor_handle.as_ref().expect("monitor task").abort();
 }
 
-#[when(expr = "the owned child termination of {string} is requested")]
-fn when_request_owned_termination(world: &mut QuectoWorld, agent_id: String) {
+#[when(expr = "the operator kill of {string} is requested")]
+fn when_request_operator_kill(world: &mut QuectoWorld, agent_id: String) {
     let entry = live_entry(world, &agent_id);
+    assert!(
+        entry.holds_owned_child(),
+        "a locally launched child has an owned handle"
+    );
+    let registry = world.agent_cmd_registry.as_ref().unwrap().clone();
+    let kill = crate::agent_cmd_tool_steps::termination_owners(&registry, None).kill_tool;
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let requested = runtime
-        .block_on(async { entry.request_owned_child_termination(ShutdownReason::OperatorRequest) });
-    assert!(requested, "a locally launched child has an owned handle");
+    let arguments = serde_json::json!({"agent_id": agent_id, "command": "kill"}).to_string();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(30), kill.execute(&arguments))
+            .await
+            .expect("the kill settles within the bound")
+            .unwrap()
+    });
+    assert!(!result.is_error, "{}", result.content);
     std::mem::forget(runtime);
 }
 

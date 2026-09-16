@@ -34,6 +34,34 @@ use super::uds_multi::BusyFlag;
 use super::uds_teardown_adapters::{ConnectionAckWriter, SharedWriter};
 use super::uds_wire::ConnectionWireMode;
 
+/// Default time a launched harness waits for its parent to bind before it
+/// presumes the launcher gone (#1935 review: a parent that dies between
+/// spawning and presenting must not leave an unbound orphan: a launch-bound
+/// child ignores client churn, #1937).
+pub const DEFAULT_BIND_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Test-only override of the bind deadline, in milliseconds. Read once at
+/// startup by the child.
+pub const BIND_DEADLINE_ENV: &str = "QUECTO_PARENT_BIND_DEADLINE_MS";
+
+/// When an `Unbound` launched harness gives up waiting for its parent.
+#[derive(Debug, Clone)]
+pub enum BindDeadline {
+    /// After this much wall-clock time (production).
+    After(std::time::Duration),
+    /// When this notification fires (tests drive the deadline explicitly
+    /// instead of racing a timer).
+    Triggered(Arc<tokio::sync::Notify>),
+}
+
+/// How a launched harness was bound to its launcher.
+#[derive(Debug, Clone)]
+pub struct ParentControlLaunch {
+    pub binding: ParentControlBinding,
+    /// When the harness stops waiting for the presentation.
+    pub bind_deadline: BindDeadline,
+}
+
 /// Shared across every connection of one harness.
 pub struct ConnectionTeardown {
     pub binding: Arc<Mutex<ParentControlBinding>>,
@@ -230,14 +258,14 @@ pub(crate) async fn connection_closed(
 /// parent) in time is untouched. Returns the watcher's handle.
 pub(crate) fn arm_bind_deadline(
     teardown: Arc<ConnectionTeardown>,
-    deadline: super::uds_teardown_graph::BindDeadline,
+    deadline: BindDeadline,
 ) -> tokio::task::JoinHandle<Option<ControllerOutcome>> {
     tokio::spawn(async move {
         match deadline {
-            super::uds_teardown_graph::BindDeadline::After(duration) => {
+            BindDeadline::After(duration) => {
                 tokio::time::sleep(duration).await;
             }
-            super::uds_teardown_graph::BindDeadline::Triggered(trigger) => {
+            BindDeadline::Triggered(trigger) => {
                 trigger.notified().await;
             }
         }

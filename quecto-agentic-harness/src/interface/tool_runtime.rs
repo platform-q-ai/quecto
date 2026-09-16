@@ -128,11 +128,14 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub config: &'a crate::infrastructure::config::Config,
     pub http_client: &'a reqwest::Client,
     /// Completed web-fetch graph, assembled by the outer composition boundary.
-    pub web_fetch_tool: Option<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    pub web_fetch_tool: Option<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
     pub workspace: std::path::PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub session_key: String,
+    /// The recall use case the `recall` tool adapts (D9 #1978), composed
+    /// over the run's retention store.
+    pub recall: std::sync::Arc<crate::application::sessions::use_cases::RecallContext>,
     pub spawned: bool,
     pub parent_session_name: Option<String>,
     /// The parent agent's own config path, forwarded so container spawns can
@@ -140,7 +143,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub parent_config_path: Option<std::path::PathBuf>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
-    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -151,8 +154,6 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
 /// Result of the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuild {
     pub registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
-    pub spill_store:
-        std::sync::Arc<crate::infrastructure::persistence::context_spill::FileContextSpillStore>,
     pub session_key: String,
     pub ext_registry: crate::infrastructure::extensions::registry::ExtensionRegistry,
     pub extension_prompt_snippets: String,
@@ -185,7 +186,6 @@ pub(crate) fn build_tool_runtime(
         build_session_tool_extensions, register_bundled_native_tools,
         register_bundled_native_tools_with_scope,
     };
-    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 
     let ToolRuntimeBuildArgs {
         swarm_context,
@@ -200,6 +200,7 @@ pub(crate) fn build_tool_runtime(
         sandbox,
         exec_options,
         session_key,
+        recall,
         spawned,
         parent_session_name,
         parent_config_path,
@@ -275,11 +276,10 @@ pub(crate) fn build_tool_runtime(
         },
     );
 
-    let spill_store = std::sync::Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
     register_bundled_native_tools(
         &mut registry,
         build_session_tool_extensions(SessionToolDeps {
-            spill_store: spill_store.clone(),
+            recall,
             session_key: session_key.clone(),
         }),
     );
@@ -298,13 +298,31 @@ pub(crate) fn build_tool_runtime(
         parent_config_path,
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
-        owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
-            "harness".to_string()
-        } else {
-            session_key.clone()
-        }),
-        kill_tool,
     });
+    // The agent-control use cases — `kill`, the environment member
+    // shutdown, the swarm member termination, the spawn lifecycle and the
+    // environment control — are composed over the tools' own registry,
+    // channels, lifecycle cell, environment registry and slots (#1936,
+    // #1939).
+    if let Some(install_termination_owners) = kill_tool {
+        let installed = install_termination_owners(crate::interface::cli::KillToolWiring {
+            owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+                "harness".to_string()
+            } else {
+                session_key.clone()
+            }),
+            registry: agent_control.subagent_registry.clone(),
+            broadcast_tx: workflow.broadcast_tx.clone(),
+            notify_tx: Some(agent_control.notification_tx.clone()),
+            harness_lifecycle: agent_control.harness_lifecycle.clone(),
+            environment_registry: agent_control.environment_registry.clone(),
+            slots: agent_control.termination_slots.clone(),
+        });
+        debug_assert!(
+            installed,
+            "the termination owners are composed once per runtime"
+        );
+    }
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
@@ -387,7 +405,6 @@ pub(crate) fn build_tool_runtime(
 
     Ok(ToolRuntimeBuild {
         registry,
-        spill_store,
         session_key,
         ext_registry,
         extension_prompt_snippets,

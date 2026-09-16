@@ -12,6 +12,13 @@ use std::{
     time::Duration,
 };
 
+/// How long a real coordinator may take to bind its socket or answer its
+/// first turn before it is declared dead. Both waits are event-driven (the
+/// socket appearing, the report arriving); this is the ceiling against a
+/// hung process, not an estimate of a start-up on a runner executing 24
+/// shards on two vCPUs, where a 15 s guess was overrun.
+pub const STARTUP_CEILING: Duration = Duration::from_secs(60);
+
 pub struct Runtime {
     child: Child,
     socket: PathBuf,
@@ -28,15 +35,73 @@ impl Drop for Runtime {
 }
 /// What the fake provider answers for request `index` after the run was
 /// created: assistant text, or a terminal provider failure.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Reply {
     Text(&'static str),
     /// HTTP 401 with an invalid-key body: terminal, never retried, so the
     /// agent suspends its automatic turns.
     TerminalFailure,
+    /// One tool call; the next request (carrying its result) is answered by
+    /// the script again.
+    ToolCall {
+        name: &'static str,
+        arguments: Value,
+    },
 }
 
 pub type Script = fn(usize) -> Reply;
+
+/// A script answering by what the request carries rather than by request
+/// index, so a coordinator and the member it launched can share one fake
+/// provider (#1961). Request 0 still creates the run.
+pub type ContentScript = fn(&Turn) -> Reply;
+
+/// What a scripted request carries: the latest user text and whether the
+/// request follows a tool result (the model's second half of a tool turn).
+pub struct Turn {
+    pub user: String,
+    pub after_tool: bool,
+}
+
+impl Turn {
+    fn of(input: &Value) -> Self {
+        let after_tool = input["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .is_some_and(|message| message["role"] == "tool");
+        Self {
+            user: latest_user_text(input),
+            after_tool,
+        }
+    }
+}
+
+/// The text of the latest `user` message in a chat request (string or
+/// text-part content); empty when there is none.
+fn latest_user_text(input: &Value) -> String {
+    let Some(messages) = input["messages"].as_array() else {
+        return String::new();
+    };
+    messages
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")
+        .map(|message| match &message["content"] {
+            Value::String(text) => text.clone(),
+            Value::Array(parts) => parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        })
+        .unwrap_or_default()
+}
+
+enum Answering {
+    ByIndex(Script),
+    ByContent(ContentScript),
+}
 
 fn default_script(index: usize) -> Reply {
     if index == 1 {
@@ -53,6 +118,16 @@ impl Runtime {
 
     /// Request 0 always creates the run; `script` answers the rest.
     pub async fn start_with(workspace: &Path, script: Script) -> Self {
+        Self::start_answering(workspace, Answering::ByIndex(script)).await
+    }
+
+    /// Request 0 creates the run; `script` answers every later request by
+    /// its latest user text (#1961).
+    pub async fn start_scripted(workspace: &Path, script: ContentScript) -> Self {
+        Self::start_answering(workspace, Answering::ByContent(script)).await
+    }
+
+    async fn start_answering(workspace: &Path, answering: Answering) -> Self {
         let server = wiremock::MockServer::start().await;
         let requests = Arc::new(AtomicUsize::new(0));
         let seen = requests.clone();
@@ -65,27 +140,35 @@ impl Runtime {
             .and(wiremock::matchers::path("/chat/completions"))
             .respond_with(move |request: &wiremock::Request| {
                 let index = seen.fetch_add(1, Ordering::SeqCst);
-                if index > 0 && let Reply::TerminalFailure = script(index) {
-                    return wiremock::ResponseTemplate::new(401).set_body_json(json!({
-                        "error": {"message": "Incorrect API key provided", "type": "invalid_request_error", "code": "invalid_api_key"}
-                    }));
-                }
-                let message = if index == 0 {
-                    json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"create-run","type":"function","function":{"name":"swarm","arguments":json!({"op":"create","goal":"ship approved feature","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":2,"deadline":deadline}).to_string()}}]})
-                } else {
-                    let Reply::Text(text) = script(index) else { unreachable!("failures answered above") };
-                    json!({"role":"assistant","content":text})
-                };
-                let finish = if index == 0 {"tool_calls"} else {"stop"};
-                let usage = json!({"prompt_tokens":10,"completion_tokens":2,"total_tokens":12});
                 let input: Value = request.body_json().unwrap();
+                let reply = match &answering {
+                    _ if index == 0 => Reply::ToolCall {
+                        name: "swarm",
+                        arguments: json!({"op":"create","goal":"ship approved feature","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":3,"deadline":deadline}),
+                    },
+                    Answering::ByIndex(script) => script(index),
+                    Answering::ByContent(script) => script(&Turn::of(&input)),
+                };
+                let (message, finish) = match reply {
+                    Reply::TerminalFailure => {
+                        return wiremock::ResponseTemplate::new(401).set_body_json(json!({
+                            "error": {"message": "Incorrect API key provided", "type": "invalid_request_error", "code": "invalid_api_key"}
+                        }));
+                    }
+                    Reply::ToolCall { name, arguments } => (
+                        json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":format!("call-{index}"),"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),
+                        "tool_calls",
+                    ),
+                    Reply::Text(text) => (json!({"role":"assistant","content":text}), "stop"),
+                };
+                let usage = json!({"prompt_tokens":10,"completion_tokens":2,"total_tokens":12});
                 let response = if input["stream"] == true {
                     let chunk = json!({"choices":[{"index":0,"delta":message,"finish_reason":finish}],"usage":usage});
                     wiremock::ResponseTemplate::new(200).set_body_raw(format!("data: {chunk}\n\ndata: [DONE]\n\n"), "text/event-stream")
                 } else {
                     wiremock::ResponseTemplate::new(200).set_body_json(json!({"id":"swarm-bdd","object":"chat.completion","choices":[{"index":0,"message":message,"finish_reason":finish}],"usage":usage}))
                 };
-                if index == 2 { response.set_delay(Duration::from_secs(4)) } else {response}
+                if index == 2 && matches!(answering, Answering::ByIndex(_)) { response.set_delay(Duration::from_secs(4)) } else {response}
             }).mount(&server).await;
         let config = workspace.join("supervision-config.json");
         std::fs::write(&config, json!({"providers":{"openai":{"api_key":"sk-test","api_base":server.uri()}},"agents":{"defaults":{"model":"openai-api/gpt-4o-mini","workspace":workspace}}}).to_string()).unwrap();
@@ -116,8 +199,11 @@ impl Runtime {
             .arg("--socket")
             .arg(&socket)
             .arg("--config")
-            .arg(config)
+            .arg(&config)
+            // Members the coordinator launches inherit the same fake provider.
+            .env("QUECTO_RUNTIME_CONFIG_PATH", &config)
             .env("QUECTO_BASE_DIR", workspace.join("runtime"))
+            .env("RUST_LOG", "info")
             .env("QUECTO_SWARM_CHECKOUT", workspace)
             .env("QUECTO_SWARM_CONTAINER", "isolated-pid-v1")
             .env("QUECTO_SWARM_HOST_PID_NS", "pid:[0]")
@@ -134,7 +220,7 @@ impl Runtime {
             requests,
             _server: server,
         };
-        let until = tokio::time::Instant::now() + Duration::from_secs(15);
+        let until = tokio::time::Instant::now() + STARTUP_CEILING;
         while !runtime.socket.exists() {
             assert!(
                 runtime.child.try_wait().unwrap().is_none(),
@@ -155,13 +241,18 @@ impl Runtime {
             Duration::from_secs(10),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "{input} failed: {error}\n--- coordinator stderr ---\n{}",
+                self.stderr_tail()
+            )
+        });
         let reply: Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(reply["success"], true, "{reply}");
         reply
     }
     pub async fn wait_report(&self, expected: &str) -> Value {
-        let until = tokio::time::Instant::now() + Duration::from_secs(15);
+        let until = tokio::time::Instant::now() + STARTUP_CEILING;
         loop {
             let report = self.command(json!({"type":"get_report"})).await;
             if report["data"]["report"]["content"] == expected {
@@ -200,7 +291,7 @@ impl Runtime {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         text.lines()
             .rev()
-            .take(25)
+            .take(80)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()

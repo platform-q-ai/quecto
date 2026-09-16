@@ -11,6 +11,13 @@
 //! bound connection (or, on Linux, the parent-death signal as defence in
 //! depth — over the proxy transport the child is not even the launcher's
 //! process child, so only the connection can tell it).
+//!
+//! Standalone target on purpose: this proof SIGKILLs a launcher ~100 ms after
+//! its child binds. Run beside the other real-process modules (the
+//! consolidated `integration` target, see tests/integration/main.rs) it met a
+//! not-yet-bound child 3 times in 14 runs, which then exits at the 30 s
+//! `DEFAULT_BIND_DEADLINE` instead of on connection loss, past `EXIT_BOUND`.
+//! Alone it is stable; tests/architecture.rs asserts the file stays separate.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -128,11 +135,12 @@ fn persist_refused_launcher(base: &Path) {
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &wrapper) };
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
-    let tool =
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
         quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.to_path_buf())
             .with_socket_dir(sockets)
             .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone()));
+            .with_parent_config_path(Some(config.clone())),
+    );
     let args = serde_json::json!({
         "agent_id": "refused-child",
         "task": "wait",
@@ -141,10 +149,9 @@ fn persist_refused_launcher(base: &Path) {
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // A launch failure is the tool's `Err`; a refusal is never a success.
-    let (is_error, content) = match runtime.block_on(quecto::domain::tool::Tool::execute(
-        &tool,
-        &args.to_string(),
-    )) {
+    let (is_error, content) = match runtime.block_on(
+        quecto::application::tools::ports::Tool::execute(&tool, &args.to_string()),
+    ) {
         Ok(result) => (result.is_error, result.content),
         Err(error) => (true, error.to_string()),
     };
@@ -174,10 +181,12 @@ fn launcher_role() {
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto")) };
     let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
-    let tool = quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-        .with_socket_dir(sockets.clone())
-        .with_registry(registry.clone())
-        .with_parent_config_path(Some(config.clone()));
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
+        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
+            .with_socket_dir(sockets.clone())
+            .with_registry(registry.clone())
+            .with_parent_config_path(Some(config.clone())),
+    );
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let args = serde_json::json!({
         "agent_id": "bound-child",
@@ -187,7 +196,7 @@ fn launcher_role() {
         "container": transport == "proxy",
     });
     let result = runtime
-        .block_on(quecto::domain::tool::Tool::execute(
+        .block_on(quecto::application::tools::ports::Tool::execute(
             &tool,
             &args.to_string(),
         ))
@@ -328,7 +337,7 @@ fn spawn_launched_child(
         .args(extra_args)
         .env("QUECTO_BASE_DIR", base)
         .env(
-            quecto::interface::cli::uds_teardown_graph::BIND_DEADLINE_ENV,
+            quecto::interface::cli::uds_parent_control::BIND_DEADLINE_ENV,
             "1000",
         )
         .stdin(std::process::Stdio::null())

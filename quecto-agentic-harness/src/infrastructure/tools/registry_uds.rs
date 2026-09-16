@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 
 use super::registration::ToolRegistration;
 use super::registry::ToolRegistryImpl;

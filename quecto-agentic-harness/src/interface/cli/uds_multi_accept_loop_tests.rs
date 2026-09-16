@@ -45,11 +45,9 @@ fn make_args(
         turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),
         client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
-        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
-            crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-                Message::user("hello"),
-            ]),
-        )),
+        session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+            &[Message::user("hello")],
+        ),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             control_receipts: Vec::new(),
             automatic_turns_suspended: false,
@@ -328,7 +326,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     // The composed teardown graph is what carries the fleet teardown to
     // every connection (#1938).
     let graph = crate::composition::subagent_teardown::build_teardown_graph(
-        crate::interface::cli::uds_teardown_graph::TeardownGraphInputs {
+        crate::interface::cli::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new("root"),
             registry: Some(registry.clone()),
             harness_lifecycle: None,

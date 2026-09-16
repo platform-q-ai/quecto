@@ -7,19 +7,18 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
 
 use super::protocol::AgentEvent;
-use super::uds::uds_dispatch_session;
 use super::uds::{
     DispatchCtx, LineResult, dispatch_command, emit_event_to_broadcast_or_writer,
-    inject_system_prompt, parse_line, remove_injected_system_prompt,
+    inject_system_prompt, parse_line,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use super::uds_session::AgentSession;
-pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
+pub(crate) use super::uds_snapshots::StateSnapshot;
 #[cfg(test)]
 pub(crate) use super::uds_snapshots::{
     build_get_messages_line, build_get_state_line, build_get_subagents_line,
@@ -77,7 +76,6 @@ pub(super) struct MultiClientArgs<'a> {
     pub messages: Vec<Message>,
     pub model: String,
     pub session_key: String,
-    pub ephemeral: bool,
     pub system_prompt: String,
     /// Shared tool catalogue snapshot for get_tool_catalogue.
     pub ext_registry: Option<
@@ -105,13 +103,12 @@ pub(super) struct MultiClientArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
-    pub last_persisted_message_index: usize,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
-    pub parent_control: Option<super::uds_teardown_graph::ParentControlLaunch>,
-    /// Composition's teardown graph builder; without it the loop runs with
+    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
-    pub teardown_graph: Option<super::uds_teardown_graph::TeardownGraphBuilder>,
+    pub teardown_graph: Option<super::TeardownHandlesBuilder>,
 }
 
 /// A command line from a client.
@@ -167,7 +164,7 @@ impl Drop for ClientGuard {
 pub(super) async fn multi_client_loop(
     mut args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
-    session_store: &dyn SessionStore,
+    sessions: &super::uds_session_handles::SessionHandles,
 ) -> i32 {
     let ext_registry = args.ext_registry;
     let lifetime = args.lifetime;
@@ -179,7 +176,6 @@ pub(super) async fn multi_client_loop(
     let pre_broadcast_tx = args.broadcast_tx;
     let provider_reload = args.provider_reload;
     let provider_reload_inputs = args.provider_reload_inputs;
-    let last_persisted_message_index = args.last_persisted_message_index;
     let parent_control = args.parent_control.take();
     let teardown_graph = args.teardown_graph.take();
     let MultiClientArgs {
@@ -188,29 +184,28 @@ pub(super) async fn multi_client_loop(
         workspace,
         mut messages,
         model,
-        mut session_key,
-        ephemeral,
+        session_key,
         system_prompt,
         ..
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
 
-    // Shared pre-turn conversation snapshot (#828): initialized with the starting
-    // messages (same shape as a normal get_messages response, i.e. including the
-    // injected system prompt), refreshed by the dispatch loop at each turn
-    // boundary, and read by the accept loop to serve newly-connected clients
-    // immediately — even while the dispatch loop is busy mid-turn.
-    let mut initial_conversation_snapshot =
-        super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
-    initial_conversation_snapshot.export_root = Some(base_dir.join("artifacts/session-exports"));
-    initial_conversation_snapshot
-        .set_spill_store(agent.spill_store().cloned(), session_key.clone());
-    let conversation_snapshot: ConversationSnapshot =
-        std::sync::Arc::new(tokio::sync::RwLock::new(initial_conversation_snapshot));
+    // The active session's read model (#828, #1971): published with the
+    // starting messages (same shape as a normal get_messages response, i.e.
+    // including the injected system prompt), refreshed by the dispatch loop
+    // at each turn boundary, and read by the accept loop to serve newly
+    // connected clients immediately — even while the dispatch loop is busy.
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
 
-    let mut agent_session = AgentSession::new(model, session_key.clone());
+    let mut agent_session = AgentSession::new(model);
     let initial_state = agent_session.state_snapshot(
+        &session_key,
         messages.len(),
         None,
         agent.max_context_tokens(),
@@ -266,7 +261,8 @@ pub(super) async fn multi_client_loop(
     // has settled and the session is ready to persist.
     let exit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
-        std::sync::Arc::new(context) as std::sync::Arc<dyn crate::domain::swarm::SwarmRunControl>
+        std::sync::Arc::new(context)
+            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
     });
     let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control),
@@ -276,17 +272,17 @@ pub(super) async fn multi_client_loop(
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
 
-    // Subagent teardown graph (#1935, #1938): composition's builder wires
+    // Subagent teardown handles (#1935, #1938): composition's builder wires
     // the application use cases to this loop's cancel slot, exit
     // notification, registry and lifecycle cell, plus the parent control
-    // binding every connection is checked against. A launched child also
-    // arms its bind deadline: a launcher that never presents is presumed
-    // gone.
+    // binding every connection is checked against, and hands the handles
+    // back. A launched child also arms its bind deadline: a launcher that
+    // never presents is presumed gone.
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
     let teardown = teardown_graph.map(|build| {
-        build(super::uds_teardown_graph::TeardownGraphInputs {
+        build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {
@@ -328,7 +324,7 @@ pub(super) async fn multi_client_loop(
         turn_control: turn_control.clone(),
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
-        conversation_snapshot: conversation_snapshot.clone(),
+        session: session_reads.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
@@ -352,7 +348,7 @@ pub(super) async fn multi_client_loop(
         base_dir,
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: conversation_snapshot.clone(),
+        sessions: session_reads.clone(),
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
@@ -360,9 +356,6 @@ pub(super) async fn multi_client_loop(
         busy: busy.clone(),
         session: &mut agent_session,
         stdout: None,
-        session_key: &mut session_key,
-        session_store,
-        ephemeral,
         system_prompt: &system_prompt,
         cancel_handle,
         turn_control,
@@ -376,9 +369,11 @@ pub(super) async fn multi_client_loop(
         workflow_config: wf_config,
         provider_reload,
         provider_reload_inputs,
-        last_persisted_message_index,
-        durable_prefix_dirty: false,
         fleet_teardown,
+        list_sessions: sessions.list_sessions.clone(),
+        save_session: sessions.save_session.clone(),
+        rewrite: sessions.rewrite.clone(),
+        switch: sessions.switch.clone(),
     };
 
     run_dispatch_loop(
@@ -395,22 +390,15 @@ pub(super) async fn multi_client_loop(
 
     accept_task.abort();
 
-    if !ephemeral && !session_key.is_empty() {
-        remove_injected_system_prompt(&mut messages, &system_prompt);
-        let subagent_roster = if agent_session.killing_exit {
-            Vec::new()
-        } else {
-            uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
-        };
-        let session = Session {
-            key: session_key,
-            messages: std::mem::take(&mut messages),
-            workflow_run: wf_state
-                .as_ref()
-                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster,
-        };
-        let _ = session_store.save(&session).await;
+    // The final save of an ordinary exit (#1860, #1938): the fleet settled
+    // before the loop returned; the transaction records no operational
+    // child on a killing exit.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
     }
 
     0
@@ -452,7 +440,11 @@ async fn run_dispatch_loop(
                 // The common shutdown settled the fleet before signalling
                 // exit readiness; persist an empty roster rather than
                 // reviving torn-down rows on the next resume.
-                ctx.session.killing_exit = true;
+                ctx.sessions
+                    .active_session
+                    .write()
+                    .await
+                    .set_killing_exit(true);
                 break;
             }
             DispatchMsg::Client(client_msg) => {
@@ -464,7 +456,11 @@ async fn run_dispatch_loop(
                     // notification it fires has no waiter left, which is
                     // fine: this loop is already leaving.
                     shutdown.last_client_disconnected().await;
-                    ctx.session.killing_exit = true;
+                    ctx.sessions
+                        .active_session
+                        .write()
+                        .await
+                        .set_killing_exit(true);
                     break;
                 }
             }

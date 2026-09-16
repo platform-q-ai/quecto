@@ -2,7 +2,7 @@
 
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
-use quecto::domain::tool::Tool;
+use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::filesystem::LsTool;
 use std::path::PathBuf;

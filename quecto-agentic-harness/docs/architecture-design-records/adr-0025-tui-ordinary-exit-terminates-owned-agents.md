@@ -116,21 +116,21 @@ live child of the restoring harness, and restore no longer tries to find one:
 
 | Lifecycle | Operational roster policy |
 | --- | --- |
-| Session resume (`resume_session`) or a new harness loading a saved session | Restore the transcript, workflow run and past child messages. Reset the operational roster to empty. Persisted rows of every liveness/reason — live, detached, dead, killed, unknown, malformed — are history only: no socket probe, no pid compare, no monitor, no readoption. The master re-spawns needed workers with a fresh identity and launch generation. |
+| Session resume (`resume_session`) or a new harness loading a saved session | Restore the transcript, workflow run and past child messages. Reset the operational roster to empty. Persisted rows of every liveness/reason — live, detached, dead, killed, unknown, malformed — are history only: no socket probe, no pid compare, no monitor, no child row re-created. The master re-spawns needed workers with a fresh identity and launch generation. |
 | Reconnect to a still-running harness | Unchanged: the harness's in-memory registry. |
 | Top-level `quecto agent --persist` | Unchanged and still supported. |
 
 The session roster schema keeps identity, display, status, parent/read-only
 metadata and undelivered report bookkeeping as history; the child's
 `socketPath` and `pid` are no longer written and are ignored when read from a
-legacy record (migrated on the next save). The identity-verification path
-(`verify_persisted_live_subagent`), the restore-time pid confirmation and its
-signal lease are retired. Historical rows are never synthesised into the
-operational roster and nothing restarts automatically.
+legacy record (migrated on the next save). Restore performs no identity
+verification and no process check of any kind. Historical rows are never
+synthesised into the operational roster and nothing restarts automatically.
 
 ### Session transitions tear the departing session's children down — #1938
 
-Because a launched child cannot be readopted, a row merely dropped from the
+Because a launched child belongs to the harness that launched it and to no
+later session, a row merely dropped from the
 operational roster on `new_session` or `resume_session` would strand a live
 child no teardown path can reach until the master exits. The #1937 interim
 released each departing row through parent loss (aborting its monitor task
@@ -149,3 +149,55 @@ paths report it and exit anyway. A spawn racing an admitted shutdown is
 either registered before the fleet is claimed (and torn down with it) or
 refused, because registration reads the frozen lifecycle inside the
 registry's critical section.
+
+## Final model — #1940 (epic #1929 closed)
+
+The epic closes with one teardown model, ratcheted by
+`tests/architecture/teardown_authority.rs`:
+
+- A harness owns only the children it launched, as handles held by the
+  `OwnedChildSupervisor`; every other row — a merged grandchild, a restored
+  record, a script or container member, a swarm member — is ended over the
+  protocol (`shutdown`, `terminate_delegated_agent` routed one edge at a
+  time) and its end is observed, never forced. A merged descendant is stored
+  with its uuid, launch generation and parent, and **no pid**.
+- A launched child is lifetime-bound to its launcher: loss of the bound
+  parent control connection, or the bind deadline, runs its own common
+  shutdown, so a subtree falls with any ancestor without pid knowledge above.
+- Restore is history only plus explicit re-spawn; the retained swarm
+  environment on spontaneous coordinator loss (#1924) is the one exception
+  to "environments end with their members", and only `kill_container` ends it.
+- The process effects that remain are enumerated by file: the supervisor's
+  owned-handle TERM/KILL, bash invocation containment, the Python
+  `ExecutionScope` job containment, signal-0 observation, the
+  retained-environment command adapter and tool-child containment. Nothing
+  else in the harness crate may signal, and no `/proc` traversal grants
+  authority.
+- Kill latency: ACK 5 s, exit after ACK 10 s, TERM 2 s, KILL 2 s (≈ 19 s
+  worst case for an owned child); 25 s compensation wait for an unowned
+  child; 30 s per remaining hop for a nested target; 45 s before a repeated
+  OS signal forces the harness out.
+
+**TUI ordinary exit — #1956.** The TUI's ordinary exit (`Ctrl+D`, `/quit`,
+`/exit`) and its other owned-harness ends (tab close, `/new` workspace reset,
+startup-failure cleanup) signal the harness **leader only**: after the
+snapshots are persisted, SIGTERM to that one pid (`kill(pid)`, never
+`kill(-pgid)`, never a descendant); a wait for that process to exit within a
+*settle* budget derived from the fleet teardown above — `ceil(n / 8)` batches
+(`DEFAULT_SETTLEMENT_BOUND`) × 25 s (`DEFAULT_COMPENSATION_WAIT`) + 5 s
+persist slack for the `n` subagents the tab's roster last showed, capped at
+the 3-pass (`MAX_PASSES`) worst case of 80 s and used in full when the roster
+is unknown; then a **second** SIGTERM — a repeated signal is what arms the
+harness's own 45 s `FORCE_EXIT_AFTER`, a single one never does — and a wait of
+those 45 s; and only then SIGKILL of that one pid. A "waiting for the agent to
+settle its subagents…" notice appears past ~1 s. The former process-group
+SIGTERM, `/proc` descendant sweep, 1.5 s grace and "leader exit is not proof
+of cleanup" verifier are gone; in their place a read-only post-exit canary
+reads `/proc` once and reports — never signals — any process still naming the
+old leader as parent or process group, skipped when the pid's kernel start
+time shows it has been recycled. Under the lifetime binding that report is
+always empty; a non-empty one is the evidence. Swarm members and bash tool
+children in their own process group are outside its view by design. The
+harness's fleet teardown on SIGTERM is thus the only subagent-ending
+authority, with the TUI a plain SIGTERM sender whose waits are the harness's
+own numbers.

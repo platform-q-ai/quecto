@@ -6,8 +6,9 @@
 // the request.
 
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::message::Message;
-use crate::domain::provider::{ChatRequest, EffortLevel};
+use crate::domain::provider::EffortLevel;
 
 fn body_with_effort(effort: Option<EffortLevel>) -> serde_json::Value {
     let messages = vec![Message::user("Hi")];

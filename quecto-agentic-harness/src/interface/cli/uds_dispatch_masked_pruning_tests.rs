@@ -1,11 +1,9 @@
-use super::cov_tests::Fixture;
+use super::fixture_tests::{Fixture, latch_durable_prefix_dirty, persist_current_session};
 use super::*;
-use crate::domain::{
-    message::Message,
-    session::{Session, SessionStore},
-};
+use crate::application::sessions::ports::SessionStore;
+use crate::domain::{message::Message, session::Session};
 
-/// Unit test of `persist_current_session`'s CONSUMER branch only: the dirty
+/// Unit test of the save transaction's CONSUMER branch only: the dirty
 /// flag is hand-set here, so this cannot detect a deleted producer. The
 /// end-to-end dirty-propagation coverage (producer side) lives in the #1072
 /// tests below — they are the mandatory guard, not this one.
@@ -15,24 +13,33 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     fx.messages = vec![Message::user("old-a"), Message::assistant("old-b", vec![])];
     fx.store
         .save(&Session {
-            key: fx.session_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                fx.session_key.clone(),
+            ),
             messages: fx.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
-    fx.last_persisted_message_index = fx.messages.len();
+    fx.set_watermark(fx.messages.len());
 
     fx.messages = vec![
         Message::user("pruned-a"),
         Message::assistant("new-c", vec![]),
     ];
     let mut ctx = fx.ctx();
-    ctx.durable_prefix_dirty = true;
+    latch_durable_prefix_dirty(&ctx);
     persist_current_session(&mut ctx).await.unwrap();
 
-    let resumed = fx.store.load(&fx.session_key).await.unwrap().unwrap();
+    let resumed = fx
+        .store
+        .load(
+            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     let contents: Vec<_> = resumed
         .messages
         .iter()
@@ -47,14 +54,14 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
 // DURABLE OUTCOME: after a turn whose pruning mutated the pre-existing
 // history, the persisted session must exactly match the live conversation.
 // They fail whenever the dirty-prefix signal is lost anywhere between the
-// ladder and `persist_current_session` — in-place stub demotion invisible to
+// ladder and the save transaction — in-place stub demotion invisible to
 // an id snapshot, an Error/Cancelled outcome dropping the flag, or
 // `drain_and_run_pending` discarding the drained run's outcome.
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::interface::cli::uds_cancel::fire_cancel;
 use std::future::Future;
 use std::pin::Pin;
@@ -175,7 +182,7 @@ fn budgeted_agent(
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
@@ -214,18 +221,27 @@ fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
 async fn persist_baseline(fx: &mut Fixture) {
     fx.store
         .save(&Session {
-            key: fx.session_key.clone(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                fx.session_key.clone(),
+            ),
             messages: fx.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
-    fx.last_persisted_message_index = fx.messages.len();
+    fx.set_watermark(fx.messages.len());
 }
 
 async fn assert_durable_matches_live(fx: &Fixture) {
-    let resumed = fx.store.load(&fx.session_key).await.unwrap().unwrap();
+    let resumed = fx
+        .store
+        .load(
+            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     let durable: Vec<&str> = resumed
         .messages
         .iter()
@@ -257,7 +273,10 @@ fn prompt(message: &str) -> AgentCommand {
 #[tokio::test]
 async fn success_with_stub_only_demotion_reconciles_persistence() {
     let mut fx = Fixture::new();
-    fx.agent = budgeted_agent(crate::interface::test_support::make_stub_provider(), 300);
+    fx.set_agent(budgeted_agent(
+        crate::interface::test_support::make_stub_provider(),
+        300,
+    ));
     fx.messages = stub_demotable_history(2400);
     persist_baseline(&mut fx).await;
 
@@ -295,7 +314,7 @@ async fn success_with_stub_only_demotion_reconciles_persistence() {
 #[tokio::test]
 async fn error_outcome_still_reconciles_persistence_after_demotion() {
     let mut fx = Fixture::new();
-    fx.agent = budgeted_agent(std::sync::Arc::new(FailingProvider), 300);
+    fx.set_agent(budgeted_agent(std::sync::Arc::new(FailingProvider), 300));
     fx.messages = stub_demotable_history(2400);
     persist_baseline(&mut fx).await;
 
@@ -319,7 +338,7 @@ async fn error_outcome_still_reconciles_persistence_after_demotion() {
 #[tokio::test]
 async fn cancelled_outcome_still_reconciles_persistence_after_demotion() {
     let mut fx = Fixture::new();
-    fx.agent = budgeted_agent(std::sync::Arc::new(HangingProvider), 300);
+    fx.set_agent(budgeted_agent(std::sync::Arc::new(HangingProvider), 300));
     fx.messages = stub_demotable_history(2400);
     persist_baseline(&mut fx).await;
 
@@ -364,7 +383,7 @@ fn droppable_history_message(turn: u32, big_chars: usize) -> Message {
 #[tokio::test]
 async fn cancellation_after_physical_drops_preserves_prompt_only() {
     let mut fx = Fixture::new();
-    fx.agent = budgeted_agent(std::sync::Arc::new(HangingProvider), 700);
+    fx.set_agent(budgeted_agent(std::sync::Arc::new(HangingProvider), 700));
     // 8 droppable oversized turns: rung 2 removes most of them on the first
     // prune, before the provider hang — a pure physical shrink.
     fx.messages = (1..=8)
@@ -440,7 +459,10 @@ async fn drained_pending_run_propagates_prefix_dirty_to_persistence() {
     // the moderate drained follow-up (~450 tokens) pushes the total over the
     // budget, so rung 1 stubs turn 1 IN PLACE during the drained run only —
     // the final length stays at/above the old watermark (the masked shape).
-    fx.agent = budgeted_agent(crate::interface::test_support::make_stub_provider(), 800);
+    fx.set_agent(budgeted_agent(
+        crate::interface::test_support::make_stub_provider(),
+        800,
+    ));
     fx.messages = stub_demotable_history(1200);
     persist_baseline(&mut fx).await;
     fx.session.enqueue_pending("f".repeat(1800));

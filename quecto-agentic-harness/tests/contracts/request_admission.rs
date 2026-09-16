@@ -1,4 +1,4 @@
-use quecto::domain::provider::RequestAdmission;
+use quecto::application::providers::ports::RequestAdmission;
 #[tokio::test]
 async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     let (_directory, context) = super::swarm_control_fixture::context();

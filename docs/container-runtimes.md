@@ -76,17 +76,83 @@ commands expose it (use `agent_id: "*"`):
   same. Run `kill_container` again to retry: only the members still
   recorded are asked again, and the retained `kill` never runs twice under
   one claim. Latency: a member is asked over its edge with a 5 s
-  acknowledgement bound and, once acknowledged, given up to 15 s for its
-  exit to be observed before it is compensated `unobserved`, so a
-  `kill_container` whose members are unreachable or slow to exit can take
-  up to ~20 s per member before the retained `kill` runs; a member that
-  exits promptly settles in milliseconds.
+  acknowledgement bound and, once acknowledged, given up to 25 s (the
+  owned-handle ladder plus slack) for its exit to be observed before it is
+  compensated `unobserved`, so a `kill_container` whose members are
+  unreachable or slow to exit can take up to ~30 s per member before the
+  retained `kill` runs; a member that exits promptly settles in
+  milliseconds.
 
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot
 double-kill). Script sets without a configured `kill` fall back to the
 retained `cleanup` argv for final-member teardown; `kill_container` itself
 refuses such environments up front, leaving every member untouched.
+
+### No host signal ever enters a container
+
+A container member's harness — and everything it launches inside the box —
+is ended over the protocol only: the host asks it to `shutdown`, observes
+the exit through its snapshots, and lets the retained `kill` argv end the
+box. The host holds no process handle for anything inside a container and
+records no pid for a descendant reported from inside one (a merged row's pid
+is always `0`), so pids 1 and 2 inside a box — `podman-init` and the
+coordinator — can never be targeted from outside. This is ratcheted by
+`quecto-agentic-harness/tests/architecture/teardown_authority.rs` (the
+process-effect allowlist) and proven by running the harness's own full BDD
+suite inside a `quecto-box:local` container whose pid 2 blocks and logs every
+signal it receives (see the #1940 record below).
+
+#### In-container proof record (#1925 method, #1940 run)
+
+Method (issue #1925): the harness's own full BDD suite runs inside a
+`quecto-box:local` container as the child of a **signal-logging pid 2** — a
+Python wrapper that blocks `SIGTERM`/`SIGINT`/`SIGHUP`, runs the suite as its
+child (with the mask unblocked for the child), and logs every signal it
+receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
+Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
+descendant pid the suite ever targeted would receive the signal there.
+
+- **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
+- **Image:** `quecto-box:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
+- **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2
+  wrapper `scripts/bdd-in-box/pid2_signal_log.py`), which runs exactly:
+
+  ```bash
+  podman run --rm --init --name quecto-bdd-in-box \
+    --userns=keep-id --pids-limit 16384 --user 1000:1000 \
+    -v <repo>:/src -v quecto-bdd-in-box-target:/tmp/target \
+    -v <scratch>/home:/home/dev -v scripts/bdd-in-box/pid2_signal_log.py:/pid2_signal_log.py:ro \
+    -e CARGO_TARGET_DIR=/tmp/target -e HOME=/home/dev -e TMPDIR=/home/dev/tmp \
+    -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log -e RUST_LOG=warn -w /src \
+    quecto-box:local python3 /pid2_signal_log.py \
+    bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
+      QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
+      cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
+  ```
+
+  The suite runs as four sequential shards (one `bdd` process each) under
+  the same pid 2 because one process running all ~1600 scenarios exhausts the
+  container's 16384-pid cgroup: the BDD steps leak forgotten tokio runtimes
+  (`std::mem::forget(runtime)`, 128 sites), ~19 threads per scenario, and a
+  single-process run stalled at 16378 threads with `Cannot fork` — tracked
+  by #1959, whose close re-runs the proof as one process.
+- **Log:** `/var/tmp/q1940/proof/final-run.log` (10 700 lines) and
+  `/var/tmp/q1940/proof/final-pid2-signals.log` on the machine that ran it.
+- **Counts:** 4 shards, **1609 scenarios passed, 0 failed** (393 + 376 + 394
+  + 446), 8021 steps passed; child exit status 0; runtime 15:18:26 →
+  15:26:41 (+ a 4 min cold build).
+- **Signals to pid 2: 0** (`SIGNALS_TO_PID2 0`); the wrapper survived with
+  pid 2 for the whole run.
+
+Found by this proof and fixed in the same PR: a launched child whose launcher
+died and whose stderr pipe therefore had no reader hung on its first log line
+when `RUST_LOG` was set (`tracing-subscriber` reports a failed write with
+`eprintln!`, which panics on a broken stderr inside the task that was about
+to run the parent-loss shutdown). `RedactingWriter` now swallows sink errors
+and the subscriber's internal-error reporting is off; the
+`subagent_delegated_subtree.feature` SIGKILL scenario reproduces the
+configuration on the host and fails without the fix.
 
 ### Swarm environments are retained (#1924)
 
@@ -254,7 +320,7 @@ hold end to end through a proxy, the proxy argv must exit (closing its
 connection into the child) when its stdin reaches EOF — the parent's side of
 that pipe closes whenever the parent dies, SIGKILL included. Every proxy
 process is owned by the parent's child supervisor; when the bridged
-connection ends its stdin is closed first and it is only signalled if it
+connection ends its stdin is closed first and it receives a signal only if it
 does not exit by itself. On death, the environment's
 retained `inspect` runs exactly once for that member (repeated EOF/reset
 signals do not re-run it), the authoritative environment record is
@@ -621,7 +687,7 @@ A matching configuration:
 CI has no container runtime, so the Docker/Podman adapter is not exercised by
 the CI BDD lanes; it is verified manually against local rootless Podman, and its
 shape (existence, fail-fast mode, contract needles, cross-links) is pinned
-by `quecto-agentic-harness/tests/container_runtime_docs.rs`.
+by `quecto-agentic-harness/tests/docs/container_runtime_docs.rs`.
 
 ## How to author another runtime adapter
 
@@ -662,7 +728,7 @@ connects the parent to the child and is not proof of this reverse capability.
 Never expose the entire agent-control socket directory as an admission endpoint.
 
 The P0 prototype in
-`quecto-agentic-harness/tests/inference_admission_transport.rs` uses real local
+`quecto-agentic-harness/tests/integration/inference_admission_transport.rs` uses real local
 processes and a test-only stdio bridge, not Docker or production admission.
 Actual supported-runtime create/join/nested, cancellation and restart evidence is
 required in P3 before activation. Unsupported enabled transport must fail closed,

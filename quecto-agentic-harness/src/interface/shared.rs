@@ -3,39 +3,6 @@
 use crate::infrastructure::auth::credential_store::Credential;
 use std::collections::HashMap;
 
-/// Generate a fresh, collision-resistant user-chat session key.
-///
-/// The domain owns the key *shape* ([`crate::domain::session::user_chat_key`]);
-/// this interface helper owns the impure inputs — the wall clock plus a
-/// uniqueness token combining the process id with a per-process counter — so two
-/// launches started in the same second (or two chats within one process) never
-/// collide on a key.
-pub fn generate_chat_key() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    // PID disambiguates separate launches; the counter disambiguates within one.
-    let uniq = ((std::process::id() as u64) << 24) ^ seq;
-    crate::domain::session::user_chat_key(secs, uniq)
-}
-
-/// Scrub the ephemeral (empty-key) spill file at run end; no-op for named
-/// sessions. Shared by every ephemeral interface exit path (one-shot CLI,
-/// UDS server). See `FileContextSpillStore::scrub_session_spill_sync`:
-/// ephemeral runs persist spilled content only so the run's own recall()
-/// stubs resolve, and it must never survive the run (PR #1048 security
-/// review).
-pub fn scrub_ephemeral_spill(base_dir: &std::path::Path, ephemeral: bool) {
-    if ephemeral {
-        crate::infrastructure::persistence::context_spill::FileContextSpillStore::
-            scrub_session_spill_sync(base_dir, "");
-    }
-}
-
 /// Merge an optional user-provided system prompt.
 pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     match user_prompt {
@@ -543,7 +510,7 @@ pub fn make_provider_factory(
     let name = provider_name.to_string();
     let base = api_base;
     Arc::new(
-        move |new_token: &str| -> Arc<dyn crate::domain::provider::LlmProvider> {
+        move |new_token: &str| -> Arc<dyn crate::application::providers::ports::LlmProvider> {
             if name == "openai" {
                 let account_id =
                     crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
@@ -664,7 +631,7 @@ pub fn build_official_tool_registry(
 pub fn build_and_register_native_extensions(
     config: &crate::infrastructure::config::Config,
     http_client: &reqwest::Client,
-    web_fetch_tool: Option<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    web_fetch_tool: Option<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
 ) -> crate::infrastructure::extensions::registry::ExtensionRegistry {
     let mut ext_registry = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
     for ext in crate::infrastructure::extensions::native::build_native_extensions(

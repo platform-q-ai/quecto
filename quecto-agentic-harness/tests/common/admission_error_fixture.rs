@@ -9,11 +9,12 @@ use std::{
 
 use quecto::{
     application::inference_attempt::{AttemptAdmission, AttemptPermit},
+    application::providers::ports::{ChatRequest, LlmProvider},
     domain::{
         error::DomainError,
         inference_admission::{Feedback, ThrottleFeedback},
         message::LlmResponse,
-        provider::{ChatRequest, LlmProvider, StreamEvent},
+        provider::StreamEvent,
         provider_error::{ProviderErrorClass, classify_provider_error, provider_http_status},
     },
     infrastructure::providers::{

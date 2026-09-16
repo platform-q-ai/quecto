@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::extension_tool::ToolInvocation;
+use crate::application::extensions::ports::PendingToolInvocation;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
@@ -115,7 +115,7 @@ pub struct ClientToolState {
     /// takes ownership and spawns a forwarder task for each — at which
     /// point the rx is moved out and replaced by an entry in
     /// `tool_request_tasks`.
-    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<ToolInvocation>>,
+    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<PendingToolInvocation>>,
     /// Forwarder tasks that consume `ToolInvocation`s from the mpsc
     /// receiver created by `create_uds_tool`, register the oneshot
     /// result sender into `pending_results`, and emit an `execute_tool`
@@ -173,7 +173,11 @@ pub struct RegisterToolsArgs<'a> {
 /// On success, also returns a list of `Arc<dyn Tool>` to register.
 pub fn handle_register_tools(
     args: RegisterToolsArgs<'_>,
-) -> (bool, AgentEvent, Vec<Arc<dyn crate::domain::tool::Tool>>) {
+) -> (
+    bool,
+    AgentEvent,
+    Vec<Arc<dyn crate::application::tools::ports::Tool>>,
+) {
     let RegisterToolsArgs {
         client_id,
         id,
@@ -209,7 +213,7 @@ pub fn handle_register_tools(
     }
 
     let timeout = std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS);
-    let mut new_tools: Vec<Arc<dyn crate::domain::tool::Tool>> = Vec::new();
+    let mut new_tools: Vec<Arc<dyn crate::application::tools::ports::Tool>> = Vec::new();
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
 
     for tool in tools {

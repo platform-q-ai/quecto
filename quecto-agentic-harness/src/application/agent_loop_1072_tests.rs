@@ -9,12 +9,18 @@
 
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 #[derive(Debug, Default)]
 struct MemSpillStore {
@@ -24,7 +30,7 @@ struct MemSpillStore {
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().push(entry.clone());
@@ -33,20 +39,23 @@ impl ContextSpillStore for MemSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         let found = self
             .entries
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
-    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+    fn list_entries(
+        &self,
+        _session_key: &SessionIdentity,
+    ) -> crate::application::sessions::ports::SpillIndexList<'_> {
         let index: Vec<crate::domain::session::SpillIndex> = self
             .entries
             .lock()
@@ -64,7 +73,7 @@ impl ContextSpillStore for MemSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().clear();
         Box::pin(async { Ok(()) })
@@ -83,7 +92,7 @@ fn agent_with(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store,
+        retention: spill_store.map(crate::composition::retention::context_retention_over),
         session_key: "test-1072".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
@@ -432,7 +441,7 @@ async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
 /// `save_clean_delta` would be defeated on virtually every turn.
 #[tokio::test]
 async fn unchanged_static_manifest_does_not_latch_dirty() {
-    let store: Arc<dyn crate::domain::session::ContextSpillStore> =
+    let store: Arc<dyn crate::application::sessions::ports::ContextSpillStore> =
         Arc::new(MemSpillStore::default());
     let mut agent = agent_with(
         MockProvider::new(vec![text_response("first"), text_response("second")]),
@@ -461,7 +470,7 @@ async fn legacy_dynamic_manifest_migration_latches_dirty() {
     let store = Arc::new(MemSpillStore::default());
     store
         .append(
-            "",
+            &id(""),
             &SpillEntry {
                 id: "turn1:bash:0".into(),
                 tool: "bash".into(),
@@ -541,11 +550,22 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
         tokens: 2,
         content: "out".into(),
     };
-    store.append("s", &entry).await.unwrap();
+    store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(
-        store.recall("s", "id1").await.unwrap().unwrap().content,
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         "out"
     );
-    store.clear("s").await.unwrap();
-    assert!(store.recall("s", "id1").await.unwrap().is_none());
+    store.clear(&id("s")).await.unwrap();
+    assert!(
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

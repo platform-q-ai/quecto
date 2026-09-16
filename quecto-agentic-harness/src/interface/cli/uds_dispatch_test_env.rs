@@ -70,7 +70,7 @@ pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
 /// The canonical agent-loop config for dispatch tests, parameterised by
 /// provider so scripted providers slot in without copying the literal.
 pub(super) fn make_dispatch_test_agent(
-    provider: std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
+    provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> crate::application::agent_loop::AgentLoopImpl {
     crate::application::agent_loop::AgentLoopImpl::new(
         crate::application::agent_loop::AgentLoopConfig {
@@ -81,7 +81,7 @@ pub(super) fn make_dispatch_test_agent(
             model: "stub".into(),
             max_tokens: 100,
             temperature: 0.0,
-            spill_store: None,
+            retention: None,
             session_key: "cli:test".into(),
             context_collapse_after_tool_calls: u32::MAX,
             max_context_tokens: 190_000,
@@ -103,11 +103,18 @@ pub(super) fn make_dispatch_test_agent(
 /// control flags, session store) or swap the agent before borrowing a context.
 pub(super) struct DispatchTestEnv {
     pub(super) tmp: tempfile::TempDir,
+    /// The dirty latch shared between the agent and the save transaction;
+    /// a swapped agent adopts it (`set_agent`).
+    latch: std::sync::Arc<crate::application::durable_prefix::DurablePrefixLatch>,
     pub(super) agent: crate::application::agent_loop::AgentLoopImpl,
     pub(super) messages: Vec<crate::domain::message::Message>,
     pub(super) session: AgentSession,
     pub(super) session_key: String,
-    pub(super) store: crate::infrastructure::persistence::session_store::FileSessionStore,
+    /// The file store of `tmp`, shared with `sessions` so the context's
+    /// `session_store` and its `list_sessions` handle see the same files.
+    pub(super) store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    /// The composed sessions handles built over `store` (#1970).
+    pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
     pub(super) writer: tokio::io::Sink,
     pub(super) workflow: WorkflowStateHandle,
     pub(super) turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
@@ -123,18 +130,28 @@ impl DispatchTestEnv {
     /// Build an env around the given workflow handle and provider.
     pub(super) fn new(
         workflow: WorkflowStateHandle,
-        provider: std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
+        provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
     ) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+        let agent = make_dispatch_test_agent(provider);
+        let latch = agent.durable_prefix_latch();
+        // The file store of `tmp`, the `list_sessions` handle, the active
+        // session and the save transaction are one composed graph, so they
+        // all see the same session files and the same state.
+        let mut inputs = super::dispatch_session_roster_tests::loop_inputs(tmp.path(), "cli:test");
+        inputs.durable_prefix = latch.clone();
+        inputs.workflow_state = Some(workflow.clone());
+        let sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
+        let store = sessions.store.clone();
         Self {
             tmp,
-            agent: make_dispatch_test_agent(provider),
+            latch,
+            agent,
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".to_string(),
             store,
+            sessions,
             writer: tokio::io::sink(),
             workflow,
             turn_control: std::sync::Arc::default(),
@@ -161,30 +178,47 @@ impl DispatchTestEnv {
         )
     }
 
+    /// Replace the agent; it adopts the env's shared dirty latch so the
+    /// save transaction still drains what its pruning latched.
+    pub(super) fn set_agent(&mut self, mut agent: crate::application::agent_loop::AgentLoopImpl) {
+        agent.adopt_durable_prefix_latch(self.latch.clone());
+        self.agent = agent;
+    }
+
+    /// Move the env onto another session identity (D10 #1979): the active
+    /// session is recomposed over the same store and workflow, as the
+    /// transitions leave it; the tracker holds no key to set.
+    pub(super) fn set_session_key(&mut self, session_key: impl Into<String>) {
+        self.session_key = session_key.into();
+        let mut inputs =
+            super::dispatch_session_roster_tests::loop_inputs(self.tmp.path(), &self.session_key);
+        inputs.store = Some(self.store.clone());
+        inputs.durable_prefix = self.latch.clone();
+        inputs.workflow_state = Some(self.workflow.clone());
+        self.sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
+    }
+
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0, None);
+        let state = self
+            .session
+            .state_snapshot(&self.session_key, 0, None, 0, None);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: self.sessions.read_handles(),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: self.turn_control.clone(),
@@ -199,9 +233,11 @@ impl DispatchTestEnv {
             workflow_config: Some(workflow_test_config()),
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
             fleet_teardown: None,
+            list_sessions: self.sessions.list_sessions.clone(),
+            save_session: self.sessions.save_session.clone(),
+            rewrite: self.sessions.rewrite.clone(),
+            switch: self.sessions.switch.clone(),
         }
     }
 }

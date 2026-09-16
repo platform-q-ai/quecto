@@ -95,9 +95,50 @@ Important invariants before Phase 4:
 
 ## Persistence and session recovery
 
-**Primary code:** session ports in `src/domain`/`src/application`, persistence
-adapters in `src/infrastructure`, and UDS/session recovery paths in
-`src/interface/cli`.
+**Primary code:** session vocabulary in `src/domain/session.rs`,
+`src/domain/session_identity.rs`, `src/domain/conversation_view.rs` and
+`src/domain/conversation_edit.rs`; the sessions capability in
+`src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
+`active_session.rs`, `conversation_ledger.rs`); persistence adapters in
+`src/infrastructure/persistence/` and `src/infrastructure/session_export.rs`;
+the graph in `src/composition/{sessions,active_session,session_report,
+retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
+and the session modules of `src/interface/cli/`.
+
+Sessions capability, final shape (epic #1968, closed by #1979): fourteen use
+cases own every session transaction and query — `ListSessions` (#1861),
+`ReadHistory` (#1856), `RecoverMessage` (#1858), `SynchronizeTranscript`
+(#1857), `ExportSessionReport` (#1859), `SaveSession` (#1860),
+`ClearConversation` (#1864), `RewindConversation` (#1865),
+`StartFreshConversation` and its `DepartingChildren` collaborator (#1862),
+`ResumeSavedSession` (#1863, also the startup open), and the retained-context
+owners `RecallContext`, `RetainContext` and `ListRetainedContext` (#1866).
+Twelve ports are declared under the capability's `ports` files and contracted
+under `tests/contracts/`; DTOs are domain values. Every port operation is keyed
+by the typed `SessionIdentity` (the existing raw key only); the flat
+`<base>/sessions/` projection (`.json`, `.owner`, `spill.jsonl`) is owned by
+`FlatSessionLayout` in `src/infrastructure/persistence/session_layout.rs`
+alone. Composition is the only constructor of a use case, a controller, a
+store or the one application-owned `ActiveSessionState` (typed identity plus
+the `ConversationLedger` read model — published transcript, bounded full-copy
+ledger, sync frontier, retention backstop — and the persistence state), and
+hands the interface plain handles through `CliComposition`. The interface
+parses, maps and presents: the idle dispatch loop, the busy reader task and
+the connect-time snapshot read through the same owners, the `sessionKey` every
+presenter reports is the active session's identity, and no interface module
+reaches a store method, names an adapter or converts a raw key. Sessions alone
+owns durable retained context; the context-pruning policy (`src/application/
+context*.rs`, the agent loop) alone decides what to retain and consumes the
+narrow `RetainContext`/`ListRetainedContext` handles. `tests/architecture/
+sessions_capability.rs`, `sessions_epic_close.rs` and
+`sessions_epic_close_retirement.rs` pin these rules as exact, decrease-only
+inventories, and `docs/sessions.md` names every use case and port.
+
+The wire protocol is unchanged by the epic. The seam for folder/workspace
+scoping is the existing-key-only `SessionIdentity` plus the one
+repository-layout adapter (`FlatSessionLayout`): a scoped store changes the
+identity and that one projection, not the callers. The epic adds no scope
+field or variant and no workspace behaviour; #1966 is untouched.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a
@@ -121,13 +162,13 @@ remains authoritative before a PR is handed off.
 
 | Subsystem | Focused check |
 |---|---|
-| Repo docs / Phase 0 links | `cargo test -p quecto-agentic-harness --test repo_docs` |
-| Architecture boundaries | `cargo test -p quecto-agentic-harness --test architecture` |
-| Context management | `cargo test -p quecto-agentic-harness --lib context_pruning` |
-| Agent loop | `cargo test -p quecto-agentic-harness --lib agent_loop` |
-| UDS protocol/dispatch | `cargo test -p quecto-agentic-harness --lib uds` |
-| Subagent lifecycle | `cargo test -p quecto-agentic-harness --lib subagent` |
-| Workflow/session recovery | `cargo test -p quecto-agentic-harness --lib workflow` |
+| Repo docs / Phase 0 links | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test docs repo_docs::` |
+| Architecture boundaries | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture` |
+| Context management | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib context_pruning` |
+| Agent loop | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib agent_loop` |
+| UDS protocol/dispatch | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib uds` |
+| Subagent lifecycle | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib subagent` |
+| Workflow/session recovery | `cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib workflow` |
 
 ## Baseline longest files
 
@@ -146,7 +187,7 @@ cap.
 | 1468 | `tests/bdd/main.rs` |
 | 1380 | `tests/bdd/auth_steps.rs` |
 | 1227 | `tests/bdd/tui_architecture_steps.rs` |
-| 1099 | `tests/workflow_config_template.rs` |
+| 1099 | `tests/docs/workflow_config_template.rs` |
 | 1032 | `tests/bdd/uds_paged_history_steps.rs` |
 | 894 | `tests/architecture.rs` |
 | 859 | `tests/bdd/subagent_monitor_steps.rs` |

@@ -1,8 +1,8 @@
 //! Captures one logical request, including cancellation when its future is dropped.
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::{
     error::DomainError,
     message::{LlmResponse, Role},
-    provider::ChatRequest,
     provider_error::classify_provider_error,
     request_observation::{RequestDiagnostics, RequestObservation, RequestTrace},
 };

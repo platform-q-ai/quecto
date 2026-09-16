@@ -9,8 +9,9 @@
 //   - fine-grained-tool-streaming beta header removed (now GA, no header needed)
 
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::message::Message;
-use crate::domain::provider::{ChatRequest, EffortLevel};
+use crate::domain::provider::EffortLevel;
 
 #[test]
 fn test_build_request_body_with_thinking_adds_thinking_param() {

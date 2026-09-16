@@ -103,10 +103,18 @@ async fn send_subagent_uds_command_times_out_when_child_never_replies() {
         drop(stream);
     });
 
-    let err = send_subagent_uds_command_with_timeout(
+    // The public entry point wraps connect+write+read in one operation
+    // deadline equal to the response timeout, so which message a silent
+    // child produces depends on whether connect+write crossed a timer tick
+    // (it did under nextest's process-per-test start-up). Exercise the
+    // read-phase deadline itself, on an already connected stream; the
+    // outer deadline has its own test
+    // (`pending_connect_is_cancelled_by_the_shared_operation_deadline`).
+    let err = super::send_subagent_uds_command_connected(
         &sock,
         r#"{"type":"get_state"}"#,
         std::time::Duration::from_millis(200),
+        tokio::net::UnixStream::connect(&sock),
     )
     .await
     .unwrap_err();

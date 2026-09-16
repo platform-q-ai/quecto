@@ -10,9 +10,10 @@ mod usage;
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::StreamEvent;
 use crate::domain::visible_thinking::append_visible_thinking;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 

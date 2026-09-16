@@ -1,4 +1,4 @@
-use quecto::domain::tool::ToolExecutionAdmission;
+use quecto::application::tools::ports::ToolExecutionAdmission;
 #[tokio::test]
 async fn terminal_tools_are_explicitly_allowlisted_and_pause_denies_every_tool() {
     let (_directory, context) = super::swarm_control_fixture::context();

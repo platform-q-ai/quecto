@@ -1,6 +1,7 @@
 use crate::{DebugSwarm, QuectoWorld};
 use cucumber::{given, then, when};
-use quecto::domain::tool::{Tool, ToolResult};
+use quecto::application::tools::ports::Tool;
+use quecto::domain::tool::ToolResult;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
 use std::path::PathBuf;
@@ -486,5 +487,7 @@ fn then_job_output_contains(world: &mut QuectoWorld, needle: String) {
 #[path = "swarm_coordination_steps.rs"]
 mod coordination;
 
+#[path = "swarm_recovery_steps.rs"]
+mod recovery_steps;
 #[path = "swarm_supervision_steps.rs"]
 mod supervision_steps;

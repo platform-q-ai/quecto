@@ -151,13 +151,16 @@ impl DirectChildRouting for Routing {
         via: &'a DelegatedAgentIdentity,
         target: &'a DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
-    ) -> PortFuture<'a, Result<(), ChildRoutingError>> {
+    ) -> PortFuture<
+        'a,
+        Result<Option<quecto::application::subagents::dto::TerminationResult>, ChildRoutingError>,
+    > {
         self.calls.lock().unwrap().push(Call::Forward {
             via: via.clone(),
             target: target.clone(),
             remaining_depth,
         });
-        let outcome = self.outcome(&via.uuid);
+        let outcome = self.outcome(&via.uuid).map(|()| None);
         Box::pin(async move { outcome })
     }
 }
@@ -290,6 +293,8 @@ impl ShutdownRunSpawner for Spawner {
 pub enum RowPhase {
     Live,
     Stopping(TerminationCause),
+    /// The claim's owner returned after effects; a later claim re-takes it.
+    StoppingReturned(TerminationCause),
     Compensating,
     Compensated,
 }
@@ -358,7 +363,7 @@ impl DelegatedAgentRegistry for Rows {
             .filter(|(identity, _)| identity == target)
             .ok_or(StoppingClaimError::Unknown)?;
         match row.1 {
-            RowPhase::Live => {
+            RowPhase::Live | RowPhase::StoppingReturned(_) => {
                 row.1 = RowPhase::Stopping(cause);
                 Ok(())
             }
@@ -370,9 +375,15 @@ impl DelegatedAgentRegistry for Rows {
     fn release_stopping(&self, target: &DelegatedAgentIdentity) {
         if matches!(
             self.phase(target.uuid.as_str()),
-            Some(RowPhase::Stopping(_))
+            Some(RowPhase::Stopping(_) | RowPhase::StoppingReturned(_))
         ) {
             self.set(target.uuid.as_str(), RowPhase::Live);
+        }
+    }
+
+    fn retain_stopping(&self, target: &DelegatedAgentIdentity) {
+        if let Some(RowPhase::Stopping(cause)) = self.phase(target.uuid.as_str()) {
+            self.set(target.uuid.as_str(), RowPhase::StoppingReturned(cause));
         }
     }
 
@@ -382,7 +393,7 @@ impl DelegatedAgentRegistry for Rows {
             return TerminalClaim::AlreadyClaimed;
         };
         match row.1 {
-            RowPhase::Live | RowPhase::Stopping(_) => {
+            RowPhase::Live | RowPhase::Stopping(_) | RowPhase::StoppingReturned(_) => {
                 row.1 = RowPhase::Compensating;
                 TerminalClaim::Claimed
             }

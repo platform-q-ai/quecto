@@ -1,6 +1,6 @@
 use crate::{
     application::agent_turn::use_cases::web_fetch::{FetchWebContent, WebFetchUseCase},
-    domain::tool::Tool,
+    application::tools::ports::Tool,
     infrastructure::http::web_fetch::ReqwestFetchWebContent,
     interface::tools::web_fetch::WebFetchTool,
 };

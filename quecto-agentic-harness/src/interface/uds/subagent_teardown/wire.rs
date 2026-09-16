@@ -148,6 +148,11 @@ pub struct TeardownResponse {
     pub data: Option<TeardownResponseData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Closed vocabulary naming why a termination was refused, so the hop
+    /// above relays it distinctly (#1936). Absent on success and on
+    /// refusals raised before a use case ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,12 +160,21 @@ pub struct TeardownResponse {
 pub enum TeardownResponseData {
     /// Shutdown admitted; the harness will now tear down and exit.
     ShuttingDown { reason: String },
-    /// The direct child that is the target was asked to shut down.
-    ShutdownRequested { child_uuid: String },
+    /// The direct child that is the target was ended by this harness, its
+    /// owner; `result` says how (`graceful`, `fallback`, `already-exited`)
+    /// when the owner observed the end.
+    ShutdownRequested {
+        child_uuid: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<String>,
+    },
     /// The command was forwarded one hop; this harness stays alive.
+    /// `result` is what the owner relayed back, when any.
     Forwarded {
         via_uuid: String,
         remaining_depth: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<String>,
     },
 }
 
@@ -173,6 +187,7 @@ impl TeardownResponse {
             success: true,
             data: Some(data),
             error: None,
+            error_kind: None,
         }
     }
 
@@ -184,6 +199,20 @@ impl TeardownResponse {
             success: false,
             data: None,
             error: Some(error.into()),
+            error_kind: None,
+        }
+    }
+
+    /// A refusal that names its kind for the hop above.
+    pub fn err_of_kind(
+        id: Option<&str>,
+        command: &'static str,
+        kind: &'static str,
+        error: impl Into<String>,
+    ) -> Self {
+        Self {
+            error_kind: Some(kind.to_owned()),
+            ..Self::err(id, command, error)
         }
     }
 

@@ -4,11 +4,12 @@
 //! race-free: whether the cancel signal arrives before or during a prompt run,
 //! the correct outcome (skipped or interrupted) is guaranteed.
 
-use super::uds_snapshots::user_visible_messages;
+use crate::domain::conversation_view::user_visible_messages;
 use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::{AgentLoop, AgentProgressEvent};
+use crate::application::agent_turn::ports::AgentLoop;
+use crate::domain::agent::AgentProgressEvent;
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
@@ -48,7 +49,7 @@ pub struct TurnControl {
     pending_swarm_wake: std::sync::Mutex<Option<u64>>,
     /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
     deferred_swarm_wake: std::sync::atomic::AtomicU64,
-    pub(crate) swarm_control: Option<Arc<dyn crate::domain::swarm::SwarmRunControl>>,
+    pub(crate) swarm_control: Option<Arc<dyn crate::application::swarm::ports::SwarmRunControl>>,
     abort_requested: std::sync::atomic::AtomicBool,
     pending_steers: std::sync::atomic::AtomicUsize,
     /// Latest swarm control generation this process has seen from any
@@ -211,7 +212,7 @@ impl<'a> EventSink<'a> {
     /// variant.
     pub(crate) async fn emit_ledger_advanced(
         &mut self,
-        advance: super::uds_snapshots::LedgerAdvance,
+        advance: crate::application::sessions::conversation_ledger::LedgerAdvance,
     ) {
         if advance.changed {
             self.emit_serialized(
@@ -241,8 +242,8 @@ pub enum PromptOutcome {
     /// Agent completed successfully.
     ///
     /// Deliberately carries NO durable-prefix-dirty payload (#1073 review):
-    /// the agent-level latch (`AgentLoopImpl::take_durable_prefix_dirty`,
-    /// drained centrally by `persist_current_session`) is the single
+    /// the agent-level latch (`DurablePrefixLatch`, drained centrally by the
+    /// sessions capability's `SaveSession` transaction, #1972) is the single
     /// authoritative channel. A result-carried flag existed briefly but was
     /// success-only — dirtiness from an Error/Cancelled turn would be lost by
     /// any consumer that trusted it — and no production code ever read it.
@@ -258,8 +259,9 @@ pub enum PromptOutcome {
 pub(crate) struct PromptRun<'a, 's> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
-    /// Shared live ledger used by busy-path get_message readers.
-    pub conversation_snapshot: Option<super::uds_multi::ConversationSnapshot>,
+    /// The active session's read model, published as the turn appends
+    /// (#1971); `None` on rigs without a busy reader.
+    pub active_session: Option<crate::application::sessions::active_session::ActiveSessionHandle>,
     pub execution_state: Option<super::uds_execution_state::ExecutionStateHandle>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
@@ -290,7 +292,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let PromptRun {
         agent,
         messages,
-        conversation_snapshot,
+        active_session,
         execution_state,
         session: agent_session,
         sink,
@@ -321,9 +323,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
         state.set_message_count(visible_count);
     });
-    if let Some(snapshot) = &conversation_snapshot {
-        let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
-        let advance = snapshot.write().await.publish(&visible);
+    if let Some(session) = &active_session {
+        let visible = user_visible_messages(messages, system_prompt);
+        let advance = session.write().await.publish(&visible);
         sink.emit_ledger_advanced(advance).await;
     }
 
@@ -342,7 +344,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         cancel_rx,
         notification_rx,
         subagent_registry,
-        conversation_snapshot: conversation_snapshot.as_ref(),
+        active_session: active_session.as_ref(),
     })
     .await;
 
@@ -355,13 +357,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     };
     agent_session.record_request_diagnostics(agent.take_request_diagnostics());
     let recorded_usage = agent.take_unreported_usage();
-    agent_session.record_usage(
-        recorded_usage.billed_input_tokens,
-        recorded_usage.billed_output_tokens,
-        recorded_usage.cache_read_tokens,
-        recorded_usage.cache_write_tokens,
-        recorded_usage.cost_micro_usd,
-    );
+    agent_session.record_usage(agent.session_key(), recorded_usage);
 
     // The CLI UDS boundary owns a mutable agent and is therefore the real
     // production boundary where queued AtNextTurnBoundary policy mutations can
@@ -390,12 +386,12 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         None => {
             let finalized =
                 super::uds_cancel_history::finalize_interrupted_turn(messages, prompt_id);
-            if let Some(snapshot) = &conversation_snapshot {
-                let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
-                let mut snap = snapshot.write().await;
-                let publish = snap.publish(&visible);
-                let full = snap.record_full(&finalized.recordable_messages());
-                drop(snap);
+            if let Some(session) = &active_session {
+                let visible = user_visible_messages(messages, system_prompt);
+                let mut state = session.write().await;
+                let publish = state.publish(&visible);
+                let full = state.record_full(&finalized.recordable_messages());
+                drop(state);
                 sink.emit_ledger_advanced(publish).await;
                 sink.emit_ledger_advanced(full).await;
             }
@@ -441,12 +437,12 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             // id-addressable ledger so the refs emitted below resolve via
             // get_message even after the ladder later prunes/collapses them
             // (#1060 review 1a; 1b: full publish, not a length-based extend).
-            if let Some(snapshot) = &conversation_snapshot {
-                let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
-                let mut snap = snapshot.write().await;
-                let publish = snap.publish(&visible);
-                let full = snap.record_full(&agent_result.appended_messages);
-                drop(snap);
+            if let Some(session) = &active_session {
+                let visible = user_visible_messages(messages, system_prompt);
+                let mut state = session.write().await;
+                let publish = state.publish(&visible);
+                let full = state.record_full(&agent_result.appended_messages);
+                drop(state);
                 sink.emit_ledger_advanced(publish).await;
                 sink.emit_ledger_advanced(full).await;
             }
@@ -498,7 +494,7 @@ struct TokenDrainArgs<'a, 's> {
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
     notification_rx: &'a mut Option<NotificationRx>,
     subagent_registry: &'a Option<SubagentRegistry>,
-    conversation_snapshot: Option<&'a super::uds_multi::ConversationSnapshot>,
+    active_session: Option<&'a crate::application::sessions::active_session::ActiveSessionHandle>,
 }
 
 /// Run `agent.process()` while draining progress events (especially tokens)
@@ -522,7 +518,7 @@ async fn run_with_token_drain(
         cancel_rx,
         notification_rx,
         subagent_registry,
-        conversation_snapshot,
+        active_session,
     } = args;
     // We can't run process() and drain the channel truly concurrently because
     // process() takes &mut messages (exclusive borrow).  Instead we poll
@@ -551,7 +547,7 @@ async fn run_with_token_drain(
                 if matches!(ev, AgentProgressEvent::Token(_)) {
                     tokens_emitted = true;
                 }
-                publish_turn_progress(&ev, conversation_snapshot, sink).await;
+                publish_turn_progress(&ev, active_session, sink).await;
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -564,7 +560,7 @@ async fn run_with_token_drain(
                     if matches!(ev, AgentProgressEvent::Token(_)) {
                         tokens_emitted = true;
                     }
-                    publish_turn_progress(&ev, conversation_snapshot, sink).await;
+                    publish_turn_progress(&ev, active_session, sink).await;
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {

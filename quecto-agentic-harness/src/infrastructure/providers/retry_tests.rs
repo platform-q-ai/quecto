@@ -7,9 +7,9 @@
 //! retried.
 
 use super::*;
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -414,7 +414,7 @@ fn wave3_debug_and_jitter_zero_path() {
 
 #[derive(Debug)]
 struct PauseAfterFirstAttempt(Arc<AtomicU32>);
-impl crate::domain::provider::RequestAdmission for PauseAfterFirstAttempt {
+impl crate::application::providers::ports::RequestAdmission for PauseAfterFirstAttempt {
     fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
             if self.0.load(Ordering::SeqCst) == 0 {
@@ -448,7 +448,7 @@ async fn pause_during_backoff_prevents_the_next_provider_attempt() {
 
 #[tokio::test]
 async fn admission_is_rechecked_only_on_retry_attempts() {
-    use crate::domain::provider::RequestAdmission;
+    use crate::application::providers::ports::RequestAdmission;
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[derive(Debug)]
     struct Counting(Arc<AtomicUsize>);

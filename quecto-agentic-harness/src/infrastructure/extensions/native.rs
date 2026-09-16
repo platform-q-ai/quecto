@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::extension::Extension;
-use crate::domain::tool::Tool;
+use crate::application::extensions::ports::Extension;
+use crate::application::tools::ports::Tool;
 
 /// A compiled-in extension that wraps a `Tool` implementation.
 ///
@@ -92,7 +92,7 @@ impl Extension for NativeExtension {
 /// consume `Extension` objects and register their tools through the same
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
-    pub find_tool: Arc<dyn crate::domain::tool::Tool>,
+    pub find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
     pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
@@ -163,7 +163,8 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
 }
 
 pub struct SessionToolDeps {
-    pub spill_store: Arc<dyn crate::domain::session::ContextSpillStore>,
+    /// The recall use case the `recall` tool adapts (D9 #1978).
+    pub recall: Arc<crate::application::sessions::use_cases::RecallContext>,
     pub session_key: String,
 }
 
@@ -172,7 +173,7 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
         "quecto:session-tools",
         "Bundled Quecto session memory tools",
         Arc::new(crate::infrastructure::tools::recall::RecallTool::new(
-            deps.spill_store,
+            deps.recall,
             deps.session_key,
         )),
     ))]
@@ -194,71 +195,6 @@ pub struct AgentControlToolDeps {
     /// The one owner of every process this composition spawns (#1935).
     pub owned_child_supervisor:
         Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
-    /// This harness's own identity, the owner of its delegation lineage
-    /// (#1936); the session key, or `harness` before one exists.
-    pub owner: crate::domain::ids::AgentUuid,
-    /// Composition's builder of the `agent_cmd kill` owner (#1936). `None`
-    /// leaves `kill` unavailable: this layer never composes a lifecycle.
-    pub kill_tool: Option<KillToolBuilder>,
-}
-
-/// What the `agent_cmd kill` owner is built over: the registry the spawn
-/// tool populates, the event stream its compensation broadcasts on, the
-/// notification channel it posts passive notes to, and the lineage owner.
-pub struct KillToolWiring {
-    pub owner: crate::domain::ids::AgentUuid,
-    pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
-    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
-    /// The harness lifecycle cell (#1938): a frozen harness refuses new
-    /// control commands; shared with the spawn tool and the teardown graph.
-    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
-}
-
-/// The parent-hand termination owners composition builds over one shared
-/// delegated-agent graph (#1936, #1939): the `agent_cmd kill` tool, the
-/// environment member shutdown `kill_container` asks before its retained
-/// kill, and the swarm member termination a settling swarm run uses for
-/// members this harness launched.
-pub struct TerminationOwners {
-    pub kill_tool: Arc<dyn Tool>,
-    pub member_shutdown:
-        Arc<dyn crate::application::environments::ports::EnvironmentMemberShutdown>,
-    pub swarm_member_termination: Arc<
-        crate::infrastructure::tools::swarm_member_termination::DelegatedSwarmMemberTermination,
-    >,
-}
-
-pub type KillToolBuilder = fn(KillToolWiring) -> TerminationOwners;
-
-/// Without composition's graph no member can be asked to shut down: the
-/// explicit kill reports every member unsettled and leaves the environment
-/// retryable rather than running the retained kill under live members.
-struct NoMemberShutdown;
-
-impl crate::application::environments::ports::EnvironmentMemberShutdown for NoMemberShutdown {
-    fn shutdown_members<'a>(
-        &'a self,
-        members: &'a [String],
-    ) -> crate::application::environments::ports::PortFuture<
-        'a,
-        crate::application::environments::ports::MemberShutdownReport,
-    > {
-        Box::pin(async move {
-            crate::application::environments::ports::MemberShutdownReport {
-                settled: Vec::new(),
-                unsettled: members
-                    .iter()
-                    .map(
-                        |member| crate::application::environments::ports::UnsettledMember {
-                            member: member.clone(),
-                            detail: "no member shutdown is composed in this session".into(),
-                        },
-                    )
-                    .collect(),
-            }
-        })
-    }
 }
 
 pub struct AgentControlToolBuild {
@@ -268,6 +204,16 @@ pub struct AgentControlToolBuild {
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
     pub notification_tx: crate::infrastructure::tools::subagent_registry::NotificationTx,
     pub notification_rx: crate::infrastructure::tools::subagent_registry::NotificationRx,
+    /// The slots the built tools read their composed use cases from
+    /// (#1936, #1939): `agent_cmd kill`, the launch lifecycle the spawn
+    /// tool hands its reaper and monitor, and the environment control
+    /// `agent_cmd` serves. Composition fills them; this layer never
+    /// composes a use case.
+    pub termination_slots:
+        crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+    /// The session-scoped environment registry the spawn tool commits
+    /// members to; composition builds the environment control over it.
+    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
@@ -293,50 +239,20 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_registry(registry.clone())
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
-    // The parent-hand termination owners (#1936, #1939) share one graph:
-    // `kill_container` asks the environment's members through it before the
-    // retained kill, and a settling swarm run ends the members this harness
-    // launched through it.
-    let owners = deps.kill_tool.map(|build| {
-        build(KillToolWiring {
-            owner: deps.owner,
-            registry: registry.clone(),
-            broadcast_tx: deps.broadcast_tx,
-            notify_tx: Some(notification_tx.clone()),
-            harness_lifecycle: harness_lifecycle.clone(),
-        })
-    });
-    let member_shutdown: Arc<
-        dyn crate::application::environments::ports::EnvironmentMemberShutdown,
-    > = match &owners {
-        Some(owners) => owners.member_shutdown.clone(),
-        None => Arc::new(NoMemberShutdown),
-    };
-    if let Some(owners) = &owners {
-        crate::infrastructure::tools::swarm_lifecycle::bind_member_termination(
-            owners.swarm_member_termination.clone(),
-        );
-    }
-    let kill_environment = std::sync::Arc::new(
-        crate::application::environments::use_cases::KillEnvironment::new(
-            environment_registry.clone(),
-            member_shutdown,
-            std::sync::Arc::new(
-                crate::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default(),
-            ),
-        ),
-    );
-    let mut agent_cmd =
-        crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
-            .with_list_environments(std::sync::Arc::new(
-                crate::application::environments::use_cases::ListEnvironmentsQuery::new(
-                    environment_registry,
-                ),
-            ))
-            .with_environment_control(kill_environment);
-    if let Some(owners) = owners {
-        agent_cmd = agent_cmd.with_kill_tool(owners.kill_tool);
-    }
+    // The parent-hand termination owners (#1936, #1939), the launch
+    // lifecycle and the environment control share one graph composition
+    // builds and installs later: `kill` reads its own slot; `agent_cmd`
+    // reads its environment control, whose kill asks the environment's
+    // members to shut down before the retained kill; the spawn tool reads
+    // its lifecycle; a settling swarm run ends the members this harness
+    // launched through the termination composition binds. Empty slots
+    // refuse, never compose.
+    let termination_slots =
+        crate::infrastructure::tools::environment_member_shutdown::TerminationSlots::default();
+    let spawn = spawn.with_lifecycle_slot(termination_slots.lifecycle.clone());
+    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
+        .with_kill_slot(termination_slots.kill.clone())
+        .with_environment_control_slot(termination_slots.environments.clone());
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(
@@ -348,6 +264,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         harness_lifecycle,
         notification_tx,
         notification_rx,
+        termination_slots,
+        environment_registry,
     }
 }
 
@@ -402,7 +320,7 @@ pub fn register_bundled_native_tools_with_scope(
 }
 
 pub fn build_official_tool_registry(
-    find_tool: Arc<dyn crate::domain::tool::Tool>,
+    find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -411,7 +329,7 @@ pub fn build_official_tool_registry(
 }
 
 pub fn build_official_tool_registry_with_context(
-    find_tool: Arc<dyn crate::domain::tool::Tool>,
+    find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,

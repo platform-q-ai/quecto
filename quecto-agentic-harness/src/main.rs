@@ -7,7 +7,10 @@ fn main() {
         cli::CliComposition {
             web_fetch_tool_factory: quecto::composition::web_fetch::build,
             teardown_graph: quecto::composition::subagent_teardown::build_teardown_graph,
-            kill_tool: quecto::composition::subagent_termination::build_termination_owners,
+            kill_tool: quecto::composition::subagent_termination::install_termination_owners,
+            sessions: quecto::composition::sessions::build_session_handles,
+            retention: quecto::composition::sessions::build_retention_handles,
+            fresh_session_identity: quecto::composition::sessions::build_fresh_session_identity,
         },
     ));
 }

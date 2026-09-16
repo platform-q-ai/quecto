@@ -552,7 +552,7 @@ async fn mutating_actions_emit_workflow_events_but_status_does_not() {
 /// #1715: inside a swarm the tool stays registered but refuses every action.
 #[tokio::test]
 async fn workflow_tool_refuses_inside_a_swarm() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
     let engine = std::sync::Arc::new(std::sync::Mutex::new(
         WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),

@@ -6,13 +6,13 @@
 //! event stream, and message snapshots keep the canonical response envelope and
 //! public message shape.
 
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use super::{ClientCommand, ClientMessage, DispatchCtx, handle_client_msg};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
@@ -24,7 +24,7 @@ fn make_agent() -> AgentLoopImpl {
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -45,7 +45,6 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     cancel: CancelHandle,
@@ -55,15 +54,13 @@ struct Fixture {
 impl Fixture {
     fn new() -> (Self, tokio::sync::broadcast::Receiver<String>) {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
         (
             Self {
                 agent: make_agent(),
                 messages: Vec::new(),
-                session: AgentSession::new("stub".into(), "cli:test".into()),
+                session: AgentSession::new("stub".into()),
                 session_key: "cli:test".to_string(),
-                store,
                 _tmp: tmp,
                 writer: tokio::io::sink(),
                 cancel: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
@@ -75,26 +72,33 @@ impl Fixture {
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
+        let save_session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &self.session_key,
+                None,
+                &[],
+            ),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: self.cancel.clone(),
             turn_control: Arc::default(),
@@ -108,9 +112,13 @@ impl Fixture {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
+            rewrite,
+            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
@@ -241,7 +249,16 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
         Message::tool("tc-9", "output"),
     ];
 
-    let line = build_get_messages_line(&messages);
+    let line = build_get_messages_line(
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .read_history
+            .tail(
+                &messages,
+                "",
+                crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
+            )
+            .expect("cursorless"),
+    );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
     let assistant = got["data"]["messages"]
         .as_array()
@@ -282,7 +299,16 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
     use crate::interface::cli::uds_snapshots::build_get_messages_line;
 
     let messages = vec![Message::user("snapshot content")];
-    let line = build_get_messages_line(&messages);
+    let line = build_get_messages_line(
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+            .read_history
+            .tail(
+                &messages,
+                "",
+                crate::interface::cli::uds_session::HISTORY_PAGE_SIZE,
+            )
+            .expect("cursorless"),
+    );
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
     assert!(
@@ -373,7 +399,7 @@ async fn run_stub_turn_event_types_with_sink(
 
     let mut agent = make_agent();
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -382,7 +408,7 @@ async fn run_stub_turn_event_types_with_sink(
         execution_state: None,
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: None,
+        active_session: None,
         session: &mut session,
         sink,
         message: Message::user("hello"),

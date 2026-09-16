@@ -7,7 +7,8 @@ import unittest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src'
 sys.path[:0] = [str(SRC / 'domain'), str(SRC / 'application')]
-from swarm_policy import SwarmError, authorize, completion, admission, notification_targets
+from swarm_policy import (SwarmError, ADDRESSABLE_OWNER_STATES, OWNER_IDLE_AFTER, OWNER_STATES, admission, authorize,
+                          completion, idle_transition, notification_targets, owner_recovery, owner_state)
 from swarm_use_cases import Coordination
 
 
@@ -129,6 +130,38 @@ class PolicyContract(unittest.TestCase):
         self.assertEqual(len(repo.state['events']), 1)
         with self.assertRaisesRegex(SwarmError, 'no new admission'):
             admission(repo.run(), first, 'token', 2, 100)
+
+
+class OwnerStateBehavior(unittest.TestCase):
+    def test_owner_state_is_affirmative_over_every_member_status(self):
+        now = 1000.0
+        recent, stale = now - OWNER_IDLE_AFTER + 1, now - OWNER_IDLE_AFTER
+        self.assertEqual(owner_state('live', False, recent, now), 'active')
+        self.assertEqual(owner_state('live', False, stale, now), 'idle')
+        self.assertEqual(owner_state('live', False, None, now), 'unknown')
+        self.assertEqual(owner_state('live', True, recent, now), 'lost')
+        self.assertEqual(owner_state('reserved', False, recent, now), 'reserved')
+        self.assertEqual(owner_state('reserved', True, recent, now), 'lost')
+        self.assertEqual(owner_state('dead', False, recent, now), 'dead')
+        self.assertEqual(owner_state('dead', True, None, now), 'dead')
+        for status in (None, '', 'lost', 'suspended', 'LIVE', 'future-status', 7):
+            self.assertEqual(owner_state(status, False, recent, now), 'unknown', status)
+            self.assertEqual(owner_state(status, True, recent, now), 'unknown', status)
+        self.assertEqual(owner_state('live', False, 0.0, 20.0, idle_after=30.0), 'active')
+        self.assertNotIn('suspended', OWNER_STATES)
+        self.assertEqual(ADDRESSABLE_OWNER_STATES, ('active', 'idle'))
+
+    def test_owner_recovery_names_the_coordinator_move_per_state(self):
+        self.assertEqual(owner_recovery('dead'), 'recover(task) or revoke(task, reason)')
+        self.assertIn('resume the run', owner_recovery('lost'))
+        for state in ('reserved', 'unknown'):
+            self.assertEqual(owner_recovery(state), 'revoke(task, reason)')
+
+    def test_idle_transition_is_the_future_instant_or_none(self):
+        self.assertEqual(idle_transition(100.0, 150.0), 100.0 + OWNER_IDLE_AFTER)
+        self.assertIsNone(idle_transition(100.0, 100.0 + OWNER_IDLE_AFTER))
+        self.assertIsNone(idle_transition(None, 150.0))
+        self.assertEqual(idle_transition(100.0, 105.0, idle_after=10.0), 110.0)
 
 
 if __name__ == '__main__':

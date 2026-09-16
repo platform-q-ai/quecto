@@ -1,9 +1,9 @@
 //! Typed coordination adapter. Python wire details stop at this boundary.
 use super::SwarmContext;
+use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{
-    CoordinationPort, Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot,
-};
+use crate::domain::swarm::MemberExit;
+use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -110,6 +110,10 @@ impl CoordinationPort for SwarmContext {
     }
     fn quarantine(&self, member: &str) -> Result<(), DomainError> {
         self.rpc("_quarantine", json!([member])).map(|_| ())
+    }
+    fn confirm_dead(&self, member: &str, exit: MemberExit) -> Result<(), DomainError> {
+        self.rpc("_confirmed_dead", json!([member, exit.as_str()]))
+            .map(|_| ())
     }
 }
 impl SwarmContext {
@@ -231,11 +235,12 @@ impl SwarmContext {
 #[path = "swarm_coordination_tests.rs"]
 mod tests;
 
-impl crate::domain::request_observation::RequestAccounting for SwarmContext {
+impl crate::application::providers::ports::RequestAccounting for SwarmContext {
     fn record<'a>(
         &'a self,
         observation: &'a crate::domain::request_observation::RequestObservation,
-    ) -> crate::domain::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>>
+    {
         let context = self.clone();
         let observation = observation.clone();
         Box::pin(async move {

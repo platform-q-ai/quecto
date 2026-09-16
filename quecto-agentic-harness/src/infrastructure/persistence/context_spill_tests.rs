@@ -1,5 +1,11 @@
 use super::*;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 fn test_entry() -> SpillEntry {
     SpillEntry {
@@ -14,7 +20,7 @@ fn test_entry() -> SpillEntry {
 #[test]
 fn debug_names_base_dir_without_dumping_cache_contents() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().join("spill-base"));
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path().join("spill-base")));
     let debug = format!("{store:?}");
     assert!(
         debug.contains("spill-base"),
@@ -29,13 +35,13 @@ fn debug_names_base_dir_without_dumping_cache_contents() {
 #[tokio::test]
 async fn list_entries_seeds_empty_cache_and_append_extends_it() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
-    let initial = store.list_entries("new-session").await.unwrap();
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
+    let initial = store.list_entries(&id("new-session")).await.unwrap();
     assert!(initial.is_empty());
     let mut entry = test_entry();
     entry.id = "turn9:read:0".into();
-    store.append("new-session", &entry).await.unwrap();
-    let entries = store.list_entries("new-session").await.unwrap();
+    store.append(&id("new-session"), &entry).await.unwrap();
+    let entries = store.list_entries(&id("new-session")).await.unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id, "turn9:read:0");
     assert_eq!(entries[0].tool, "bash");
@@ -45,12 +51,12 @@ async fn list_entries_seeds_empty_cache_and_append_extends_it() {
 #[tokio::test]
 async fn recall_cache_miss_short_circuits_even_if_disk_contains_id() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
-    store.append("session", &test_entry()).await.unwrap();
-    assert_eq!(store.list_entries("session").await.unwrap().len(), 1);
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
+    store.append(&id("session"), &test_entry()).await.unwrap();
+    assert_eq!(store.list_entries(&id("session")).await.unwrap().len(), 1);
     let mut hidden = test_entry();
     hidden.id = "turn-hidden:bash:0".into();
-    let path = store.spill_path("session");
+    let path = store.spill_path(&id("session"));
     let mut line = serde_json::to_string(&SpillRecord::from(&hidden)).unwrap();
     line.push('\n');
     use tokio::io::AsyncWriteExt;
@@ -61,7 +67,10 @@ async fn recall_cache_miss_short_circuits_even_if_disk_contains_id() {
         .unwrap();
     file.write_all(line.as_bytes()).await.unwrap();
     file.flush().await.unwrap();
-    let recalled = store.recall("session", "turn-hidden:bash:0").await.unwrap();
+    let recalled = store
+        .recall(&id("session"), &SpillId::new("turn-hidden:bash:0"))
+        .await
+        .unwrap();
     assert!(
         recalled.is_none(),
         "populated index cache should avoid scanning IDs not present in it"
@@ -71,12 +80,15 @@ async fn recall_cache_miss_short_circuits_even_if_disk_contains_id() {
 #[tokio::test]
 async fn test_append_and_recall() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let entry = test_entry();
 
-    store.append("test-session", &entry).await.unwrap();
+    store.append(&id("test-session"), &entry).await.unwrap();
 
-    let recalled = store.recall("test-session", "turn1:bash:0").await.unwrap();
+    let recalled = store
+        .recall(&id("test-session"), &SpillId::new("turn1:bash:0"))
+        .await
+        .unwrap();
     assert!(recalled.is_some());
     let recalled = recalled.unwrap();
     assert_eq!(recalled.id, "turn1:bash:0");
@@ -86,16 +98,19 @@ async fn test_append_and_recall() {
 #[tokio::test]
 async fn test_recall_not_found() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
-    let recalled = store.recall("test-session", "nonexistent").await.unwrap();
+    let recalled = store
+        .recall(&id("test-session"), &SpillId::new("nonexistent"))
+        .await
+        .unwrap();
     assert!(recalled.is_none());
 }
 
 #[tokio::test]
 async fn test_list_entries() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     let entry1 = SpillEntry {
         id: "turn1:bash:0".to_string(),
@@ -112,10 +127,10 @@ async fn test_list_entries() {
         content: "total 0\n".to_string(),
     };
 
-    store.append("test-session", &entry1).await.unwrap();
-    store.append("test-session", &entry2).await.unwrap();
+    store.append(&id("test-session"), &entry1).await.unwrap();
+    store.append(&id("test-session"), &entry2).await.unwrap();
 
-    let entries = store.list_entries("test-session").await.unwrap();
+    let entries = store.list_entries(&id("test-session")).await.unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].id, "turn1:bash:0");
     assert_eq!(entries[1].id, "turn2:bash:0");
@@ -125,14 +140,14 @@ async fn test_list_entries() {
 #[tokio::test]
 async fn test_sanitize_session_key() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let entry = test_entry();
 
     // Session keys with special characters should work (colon is sanitized to _)
-    store.append("telegram:12345", &entry).await.unwrap();
+    store.append(&id("telegram:12345"), &entry).await.unwrap();
 
     let recalled = store
-        .recall("telegram:12345", "turn1:bash:0")
+        .recall(&id("telegram:12345"), &SpillId::new("turn1:bash:0"))
         .await
         .unwrap();
     assert!(recalled.is_some());
@@ -141,28 +156,28 @@ async fn test_sanitize_session_key() {
 #[tokio::test]
 async fn test_clear_truncates_spill_file() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     let entry = test_entry();
 
-    store.append("test-session", &entry).await.unwrap();
+    store.append(&id("test-session"), &entry).await.unwrap();
 
     // Verify entry is present before clearing
-    let entries = store.list_entries("test-session").await.unwrap();
+    let entries = store.list_entries(&id("test-session")).await.unwrap();
     assert_eq!(entries.len(), 1);
 
     // Clear the spill
-    store.clear("test-session").await.unwrap();
+    store.clear(&id("test-session")).await.unwrap();
 
     // Verify the file is now empty
-    let entries_after = store.list_entries("test-session").await.unwrap();
+    let entries_after = store.list_entries(&id("test-session")).await.unwrap();
     assert!(entries_after.is_empty());
 }
 
 #[tokio::test]
 async fn test_has_entries_ignores_a_torn_write_with_no_parseable_entries() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FileContextSpillStore::new(dir.path().to_path_buf());
-    let path = store.spill_path("session");
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(dir.path()));
+    let path = store.spill_path(&id("session"));
     tokio::fs::create_dir_all(path.parent().unwrap())
         .await
         .unwrap();
@@ -170,9 +185,9 @@ async fn test_has_entries_ignores_a_torn_write_with_no_parseable_entries() {
         .await
         .unwrap();
 
-    assert!(store.list_entries("session").await.unwrap().is_empty());
+    assert!(store.list_entries(&id("session")).await.unwrap().is_empty());
     assert!(
-        !store.has_entries("session").await.unwrap(),
+        !store.has_entries(&id("session")).await.unwrap(),
         "presence must agree with the parse-based index"
     );
 }
@@ -180,11 +195,11 @@ async fn test_has_entries_ignores_a_torn_write_with_no_parseable_entries() {
 #[tokio::test]
 async fn test_has_entries_tracks_append_and_clear_without_loading_index() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FileContextSpillStore::new(dir.path().to_path_buf());
-    assert!(!store.has_entries("session").await.unwrap());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(dir.path()));
+    assert!(!store.has_entries(&id("session")).await.unwrap());
     store
         .append(
-            "session",
+            &id("session"),
             &SpillEntry {
                 id: "turn1:bash:0".into(),
                 tool: "bash".into(),
@@ -195,31 +210,31 @@ async fn test_has_entries_tracks_append_and_clear_without_loading_index() {
         )
         .await
         .unwrap();
-    assert!(store.has_entries("session").await.unwrap());
-    store.clear("session").await.unwrap();
-    assert!(!store.has_entries("session").await.unwrap());
+    assert!(store.has_entries(&id("session")).await.unwrap());
+    store.clear(&id("session")).await.unwrap();
+    assert!(!store.has_entries(&id("session")).await.unwrap());
 }
 
 #[tokio::test]
 async fn test_clear_nonexistent_file_is_noop() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     // Clearing a non-existent session's spill file should not error
-    let result = store.clear("ghost-session").await;
+    let result = store.clear(&id("ghost-session")).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_list_entries_uses_cache_after_append() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     let entry = test_entry();
-    store.append("cached-session", &entry).await.unwrap();
+    store.append(&id("cached-session"), &entry).await.unwrap();
 
     // Seed the cache via list_entries (simulates agent loop startup)
-    let initial = store.list_entries("cached-session").await.unwrap();
+    let initial = store.list_entries(&id("cached-session")).await.unwrap();
     assert_eq!(initial.len(), 1);
 
     // Append a second entry (updates cache)
@@ -230,14 +245,14 @@ async fn test_list_entries_uses_cache_after_append() {
         tokens: 50,
         content: "file.txt\n".to_string(),
     };
-    store.append("cached-session", &entry2).await.unwrap();
+    store.append(&id("cached-session"), &entry2).await.unwrap();
 
     // Delete the spill file behind the store's back
-    let spill_path = store.spill_path("cached-session");
+    let spill_path = store.spill_path(&id("cached-session"));
     tokio::fs::remove_file(&spill_path).await.unwrap();
 
     // list_entries should still return both entries from cache
-    let entries = store.list_entries("cached-session").await.unwrap();
+    let entries = store.list_entries(&id("cached-session")).await.unwrap();
     assert_eq!(
         entries.len(),
         2,
@@ -250,26 +265,26 @@ async fn test_list_entries_uses_cache_after_append() {
 #[tokio::test]
 async fn test_clear_invalidates_cache() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     let entry = test_entry();
-    store.append("clear-test", &entry).await.unwrap();
+    store.append(&id("clear-test"), &entry).await.unwrap();
 
     // Verify cached
-    let entries = store.list_entries("clear-test").await.unwrap();
+    let entries = store.list_entries(&id("clear-test")).await.unwrap();
     assert_eq!(entries.len(), 1);
 
     // Clear should invalidate cache
-    store.clear("clear-test").await.unwrap();
+    store.clear(&id("clear-test")).await.unwrap();
 
-    let entries = store.list_entries("clear-test").await.unwrap();
+    let entries = store.list_entries(&id("clear-test")).await.unwrap();
     assert!(entries.is_empty(), "cache should be cleared after clear()");
 }
 
 #[tokio::test]
 async fn test_recall_finds_entry_among_many() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     // Append 10 entries with distinct content
     for i in 0..10 {
@@ -280,11 +295,14 @@ async fn test_recall_finds_entry_among_many() {
             tokens: 100,
             content: format!("output-{}-{}", i + 1, "x".repeat(1000)),
         };
-        store.append("recall-test", &entry).await.unwrap();
+        store.append(&id("recall-test"), &entry).await.unwrap();
     }
 
     // Recall the 5th entry
-    let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
+    let recalled = store
+        .recall(&id("recall-test"), &SpillId::new("turn5:bash:0"))
+        .await
+        .unwrap();
     assert!(recalled.is_some(), "should find turn5:bash:0");
     let entry = recalled.unwrap();
     assert_eq!(entry.id, "turn5:bash:0");
@@ -294,20 +312,23 @@ async fn test_recall_finds_entry_among_many() {
     );
 
     // Recall nonexistent
-    let missing = store.recall("recall-test", "turn99:bash:0").await.unwrap();
+    let missing = store
+        .recall(&id("recall-test"), &SpillId::new("turn99:bash:0"))
+        .await
+        .unwrap();
     assert!(missing.is_none());
 }
 
 #[tokio::test]
-async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
+async fn scrub_sync_removes_ephemeral_spill_file_and_dir() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
     // Ephemeral runs spill under the sanitized empty key.
-    store.append("", &test_entry()).await.unwrap();
-    let path = store.spill_path("");
+    store.append(&id(""), &test_entry()).await.unwrap();
+    let path = store.spill_path(&id(""));
     assert!(path.exists(), "positive control: the spill file must exist");
 
-    FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "");
+    store.scrub_sync(&id(""));
 
     assert!(
         !path.exists(),
@@ -320,17 +341,17 @@ async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
 }
 
 #[test]
-fn scrub_session_spill_sync_is_a_noop_when_nothing_was_spilled() {
+fn scrub_sync_is_a_noop_when_nothing_was_spilled() {
     let tmp = TempDir::new().unwrap();
     // Must not panic or create anything when no spill file exists.
-    FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "");
+    FileContextSpillStore::new(FlatSessionLayout::new(tmp.path())).scrub_sync(&id(""));
     assert!(!tmp.path().join("sessions").exists());
 }
 
 #[tokio::test]
 async fn test_recall_handles_id_substring_in_content() {
     let tmp = TempDir::new().unwrap();
-    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let store = FileContextSpillStore::new(FlatSessionLayout::new(tmp.path()));
 
     // Entry whose content contains another entry's ID as a substring
     let entry1 = SpillEntry {
@@ -347,12 +368,15 @@ async fn test_recall_handles_id_substring_in_content() {
         tokens: 50,
         content: "actual output".to_string(),
     };
-    store.append("substr-test", &entry1).await.unwrap();
-    store.append("substr-test", &entry2).await.unwrap();
+    store.append(&id("substr-test"), &entry1).await.unwrap();
+    store.append(&id("substr-test"), &entry2).await.unwrap();
 
     // Recalling turn2 should return entry2, not entry1 (even though
     // entry1's content contains "turn2:bash:0" as a substring)
-    let recalled = store.recall("substr-test", "turn2:bash:0").await.unwrap();
+    let recalled = store
+        .recall(&id("substr-test"), &SpillId::new("turn2:bash:0"))
+        .await
+        .unwrap();
     assert!(recalled.is_some());
     let entry = recalled.unwrap();
     assert_eq!(entry.id, "turn2:bash:0");

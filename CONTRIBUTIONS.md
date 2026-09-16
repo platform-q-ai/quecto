@@ -36,14 +36,41 @@ cargo fmt --all -- --check
 Run package or workspace tests relevant to your change:
 
 ```bash
-cargo test --workspace --lib --bins
-cargo test -p quecto-agentic-harness
-cargo test -p quecto-tui
-cargo test -p quecto-api
-cargo test -p quecto-mcp
-cargo test -p quecto-runtime-manager
-cargo test -p quecto-line-io
+# One workspace shape for every invocation (see README "Common checks"):
+# `-p <crate>` resolves a different dependency feature set and forces rebuilds.
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture --test contracts
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test integration --test docs --test parent_loss --test selected_termination
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test api_bdd --test mcp_bdd
+bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
+bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 12m
 ```
+
+CI runs the libtest targets (everything but the cucumber `*_bdd` targets) under
+`cargo nextest run … --profile ci`, one process per test scheduled across
+binaries; with `cargo-nextest` installed the pre-push gate does the same and
+the `--lib` row above drops from ~26 s to ~20 s on 32 cpus:
+
+```bash
+cargo nextest run --workspace --features quecto-agentic-harness/test-support --bins --profile ci --lib
+```
+
+To find slow BDD scenarios, run a lane with per-scenario timings and one
+scenario at a time per shard (with the default 25-way co-scheduling a
+scenario's clock also runs while others hold the executor):
+
+```bash
+QUECTO_BDD_TIMING=1 QUECTO_BDD_CONCURRENCY=1 QUECTO_BDD_KEEP_SCRATCH=1 \
+  bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 32 --timeout 20m
+cat .git/non-real-bdd-shards.*/shard-*.log | grep '^BDD_TIMING' | sort -t$'\t' -k3 -rn | head
+# columns: wall seconds, CPU seconds (process + reaped children), feature, scenario
+```
+
+`run-bdd-shards.sh` builds the test binary once and runs it per shard; with
+`--coverage` the instrumented build lives in a persistent `target/llvm-cov-<suite>`
+directory, so a second coverage run only re-executes the scenarios (~70 s instead
+of ~200 s for the non-real lane). CI uses 8 shards on its 4-vcpu runners; 24 is
+still the fastest local setting on a large box.
 
 Run clippy for touched packages, or the strict workspace command when practical:
 

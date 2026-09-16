@@ -4,16 +4,23 @@
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use super::cov_tests::Fixture;
-use super::{dispatch_command, handle_resume_session, persist_current_session};
+use super::fixture_tests::{Fixture, persist_current_session, persisted_watermark};
+use super::{dispatch_command, handle_resume_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::sessions::ports::SessionStore;
+use crate::domain::session_identity::SessionIdentity;
+
+fn id(key: impl Into<String>) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::domain::session::{Session, SessionStore, SubagentLiveness};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::session::{Session, SubagentLiveness};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
@@ -50,16 +57,16 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
         entry.persisted_liveness = SubagentLiveness::Detached;
         entries.insert("child-a".to_string(), entry);
     }
+    fx.set_subagent_registry(registry);
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry);
         let mut prompt = crate::domain::message::Message::user("run after spawn");
         super::persist_user_prompt_before_run(&mut ctx, &mut prompt)
             .await
             .unwrap();
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "run after spawn");
     assert_eq!(loaded.subagent_roster.len(), 1);
@@ -85,14 +92,14 @@ async fn prompt_persists_user_message_before_assistant_reply() {
         ctx.messages.push(prompt);
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].role, crate::domain::message::Role::User);
     assert_eq!(loaded.messages[0].content, "first only");
 
     fx.store
         .save(&Session {
-            key: Session::build_key("cli", "saved-one"),
+            key: id(Session::build_key("cli", "saved-one")),
             messages: loaded.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -148,13 +155,13 @@ async fn refresh_conversation_snapshot_clones_current_messages() {
         crate::domain::message::Message::assistant("hi", vec![]),
     ];
     let ctx = fx.ctx();
-    assert!(
-        ctx.conversation_snapshot.read().await.messages.is_empty(),
-        "starts empty"
-    );
+    let live_len = |ctx: &crate::interface::cli::uds::DispatchCtx<'_>| {
+        let session = ctx.sessions.active_session.clone();
+        async move { session.read().await.conversation().live_messages().len() }
+    };
+    assert_eq!(live_len(&ctx).await, 0, "starts empty");
     crate::interface::cli::uds_snapshots::refresh_conversation_snapshot(&ctx).await;
-    let snap = ctx.conversation_snapshot.read().await;
-    assert_eq!(snap.messages.len(), 2, "snapshot mirrors current messages");
+    assert_eq!(live_len(&ctx).await, 2, "snapshot mirrors current messages");
     crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
     assert_eq!(ctx.state_snapshot.read().await.message_count, 2);
 }
@@ -171,6 +178,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
         // One long-lived ctx so the durable watermark survives across turns
         // (Fixture copies the watermark by value into each `ctx()`).
         {
+            let store = fx.store.clone();
             let mut ctx = fx.ctx();
             inject_system_prompt(ctx.messages, ctx.system_prompt);
             for user in &users {
@@ -180,9 +188,8 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
                 );
             }
 
-            let loaded = ctx
-                .session_store
-                .load(ctx.session_key)
+            let loaded = store
+                .load(&id(&ctx.sessions.current_session_key().await))
                 .await
                 .unwrap()
                 .expect("session must be on disk after multi-turn prompts");
@@ -213,9 +220,9 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
             } else {
                 "saved-with-sys"
             };
-            ctx.session_store
+            store
                 .save(&Session {
-                    key: Session::build_key("cli", resume_name),
+                    key: id(Session::build_key("cli", resume_name)),
                     messages: loaded.messages.clone(),
                     workflow_run: None,
                     subagent_roster: Vec::new(),
@@ -255,7 +262,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
     }
 }
 
-/// #1322: `last_persisted_message_index` is a durable (system-stripped) coordinate.
+/// #1322: the persisted watermark is a durable (system-stripped) coordinate.
 /// After pre-persist it must equal durable len, never live_len+1 while system is
 /// injected and the user is not yet pushed into live history.
 #[tokio::test]
@@ -263,6 +270,7 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
     let system = "be helpful";
     let mut fx = Fixture::new().with_system_prompt(system);
     {
+        let store = fx.store.clone();
         let mut ctx = fx.ctx();
         inject_system_prompt(ctx.messages, ctx.system_prompt);
         // Seed one completed turn so live includes system and durable is non-empty.
@@ -273,7 +281,8 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
             stripped.len()
         };
         assert_eq!(
-            ctx.last_persisted_message_index, durable_after_turn,
+            persisted_watermark(&ctx),
+            durable_after_turn,
             "end-of-turn watermark must match stripped durable len"
         );
 
@@ -289,11 +298,12 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
             .unwrap();
         let expected_durable_wm = durable_after_turn + 1; // prior durable + new user
         assert_eq!(
-            ctx.last_persisted_message_index, expected_durable_wm,
-            "persist_user_prompt_before_run must set durable watermark"
+            persisted_watermark(&ctx),
+            expected_durable_wm,
+            "the pending-prompt save must set the durable watermark"
         );
         assert_ne!(
-            ctx.last_persisted_message_index,
+            persisted_watermark(&ctx),
             live_len_before_push + 1,
             "watermark must not use live_len+1 while system is injected and user \
              is not yet pushed into live history"
@@ -303,21 +313,20 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         // watermark assign under test) and require the durable invariant holds
         // after the full turn — wm == load len == stripped live len.
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
-        let loaded = ctx
-            .session_store
-            .load(ctx.session_key)
+        let loaded = store
+            .load(&id(&ctx.sessions.current_session_key().await))
             .await
             .unwrap()
             .expect("session on disk");
         let mut stripped_live = ctx.messages.clone();
         remove_injected_system_prompt(&mut stripped_live, ctx.system_prompt);
         assert_eq!(
-            ctx.last_persisted_message_index,
+            persisted_watermark(&ctx),
             stripped_live.len(),
             "after handle_prompt, watermark must equal stripped durable len"
         );
         assert_eq!(
-            ctx.last_persisted_message_index,
+            persisted_watermark(&ctx),
             loaded.messages.len(),
             "watermark must agree with what load() reconstructs (no doomed append freeze)"
         );
@@ -330,9 +339,9 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         // End-of-turn persist is idempotent and keeps the durable coordinate.
         persist_current_session(&mut ctx).await.unwrap();
         assert_eq!(
-            ctx.last_persisted_message_index,
+            persisted_watermark(&ctx),
             stripped_live.len(),
-            "persist_current_session must keep durable watermark"
+            "a routine save must keep the durable watermark"
         );
     }
 
@@ -340,16 +349,16 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
     // dangerous — still require watermark == load len after two turns.
     let mut fx = Fixture::new();
     {
+        let store = fx.store.clone();
         let mut ctx = fx.ctx();
         assert!(!dispatch_command(prompt("user-0"), &mut ctx).await);
         assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
-        let loaded = ctx
-            .session_store
-            .load(ctx.session_key)
+        let loaded = store
+            .load(&id(&ctx.sessions.current_session_key().await))
             .await
             .unwrap()
             .expect("session on disk");
-        assert_eq!(ctx.last_persisted_message_index, loaded.messages.len());
+        assert_eq!(persisted_watermark(&ctx), loaded.messages.len());
         assert_eq!(
             durable_contents(&loaded.messages),
             ["user-0", "stub response", "user-1", "stub response"]
@@ -545,13 +554,13 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     });
 
     let mut fx = Fixture::new().with_system_prompt("be helpful");
-    fx.agent = AgentLoopImpl::new(AgentLoopConfig {
+    fx.set_agent(AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -563,7 +572,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
-    });
+    }));
 
     // Durable index 0: non-stripped spill manifest (survives inject/strip).
     let mut manifest = Message::system(build_manifest_text());
@@ -620,12 +629,8 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     // End-state: load agrees with raw chain; tool turn landed; tip matches.
     let raw = std::fs::read_to_string(&session_path).expect("final session JSONL");
     let chain = assert_jsonl_start_index_chain(&raw, 1);
-    let loaded = fx
-        .store
-        .load("cli:test")
-        .await
-        .unwrap()
-        .expect("session must be on disk after multi-turn prompts");
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap();
+    let loaded = loaded.expect("session must be on disk after multi-turn prompts");
     assert_eq!(
         loaded.messages.len(),
         chain.len(),
@@ -663,7 +668,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     // Optional resume path (mirrors #1324): full chain survives resume.
     fx.store
         .save(&Session {
-            key: Session::build_key("cli", "saved-jsonl-chain"),
+            key: id(Session::build_key("cli", "saved-jsonl-chain")),
             messages: loaded.messages.clone(),
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -704,14 +709,13 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
 
 #[tokio::test]
 async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
-    use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-    };
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentLiveness};
 
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
-            key: "cli:test".into(),
+            key: id("cli:test"),
             messages: vec![Message::user("old")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -730,15 +734,14 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
         .await
         .unwrap();
     fx.messages = vec![Message::user("old"), Message::assistant("new", Vec::new())];
-    fx.last_persisted_message_index = 1;
+    fx.set_watermark(1);
+    fx.set_subagent_registry(crate::infrastructure::tools::subagent_registry::new_registry());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry =
-            Some(crate::infrastructure::tools::subagent_registry::new_registry());
         persist_current_session(&mut ctx).await.unwrap();
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert!(
         loaded.subagent_roster.is_empty(),
         "stale roster was not cleared: {:?}",

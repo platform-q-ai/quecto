@@ -95,3 +95,61 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
   Scenario: Paged history framing survives a socket timeout
     Given a paged history response is split across a socket timeout
     Then the paged history client receives both complete response frames
+
+  # ─── Read history / recover content owners (#1856, #1858; D2 #1971) ────────
+
+  @done @issue-1971 @issue-1856 @persist
+  Scenario: A stale or unknown history cursor is refused instead of restarting at the newest page
+    Given a persisted UDS session with enough history to require paging
+    When a client requests history before an unknown cursor
+    Then the request should be refused with error "history cursor not found"
+
+  @done @issue-1971 @issue-1856 @persist
+  Scenario: The get_messages_tail alias serves the newest messages in the history page shape
+    Given a persisted UDS session with enough history to require paging
+    When a client requests the newest 3 messages through the tail alias
+    Then the tail alias response should carry 3 messages with the history page shape
+
+  @done @issue-1971 @issue-1858 @persist
+  Scenario: An unknown message reference is refused
+    Given a persisted UDS session containing a small message with a tool call
+    When a client requests an unknown message by reference
+    Then the request should be refused with error "message not found"
+
+  @done @issue-1971 @issue-1858 @persist
+  Scenario: An unknown tool-call reference of a known message is refused
+    Given a persisted UDS session containing a small message with a tool call
+    When a client requests an unknown tool call of the tool-call message
+    Then the request should be refused with error "message not found"
+
+  @done @issue-1971 @issue-1858 @persist
+  Scenario: A content offset past the end yields an empty range at the end
+    Given a persisted UDS session containing a small message with a tool call
+    When a client requests the tool-call message content from an offset past its end
+    Then the ranged response should be an empty range at the end of the content
+
+  @done @issue-1971 @issue-1858 @persist
+  Scenario: A collapsed message whose spill entry is missing is served as its stub
+    Given a persisted UDS session containing a collapsed message whose spill entry is missing
+    When a client requests the collapsed message by its stable reference
+    Then the collapsed message should be served as its stub
+
+  # ─── Export a retained session report owner (#1859; D4 #1974) ─────────────
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: The latest substantive assistant report is previewed with recovery metadata
+    Given a persisted UDS session whose latest assistant report is longer than the report preview
+    When a client requests the latest report
+    Then the report should be the latest substantive assistant message bounded to the preview with a recovery reference
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: A session without a substantive assistant message reports null
+    Given a persisted UDS session containing a small message with a tool call
+    When a client requests the latest report
+    Then the report should be null
+
+  @done @issue-1974 @issue-1859 @persist
+  Scenario: A raw export writes the retained records and a checksum manifest under the artifacts directory
+    Given a persisted UDS session whose latest assistant report is longer than the report preview
+    When a client requests the latest report with a raw export
+    Then the raw export should record the retained messages under the artifacts directory with a checksum manifest

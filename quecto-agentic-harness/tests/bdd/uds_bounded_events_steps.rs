@@ -717,13 +717,23 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(socket.clone(), 0),
         );
         let (tx, mut rx) = tokio::sync::broadcast::channel(8);
-        let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task_unbound(
-            "worker".into(),
-            socket,
-            registry,
+        let observer = quecto::composition::subagent_lifecycle::build_lifecycle_use_cases(
+            registry.clone(),
+            Some(tx.clone()),
             None,
-            Some(tx),
-            None,
+        )
+        .observe_exit;
+        let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
+            quecto::infrastructure::tools::subagent_monitor::MonitorSpec {
+                agent_id: "worker".into(),
+                socket_path: socket,
+                registry,
+                notify_tx: None,
+                broadcast_tx: Some(tx),
+                parent_id: None,
+                observer,
+                parent_control: None,
+            },
         );
         let (child, _) = listener.accept().await.expect("monitor connected");
         let (read_half, mut write_half) = child.into_split();
@@ -1559,7 +1569,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
-        spill_store: None,
+        retention: None,
         session_key: session_key.clone(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
@@ -1584,14 +1594,18 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
+            retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt: String::new(),
             socket_path: sp,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_reg),
             lifetime: if persist {

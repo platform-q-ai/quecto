@@ -1,38 +1,47 @@
-//! Latest published assistant report, independent of unread-history delivery cursors.
-use crate::domain::message::{Message, Role};
+//! `get_report` presentation (#1859, #1974): the wire shape of a session
+//! report and its raw-export receipt, and the busy reader task's parse of
+//! the parent-local command. Selection, preview, export and admission are
+//! the composed report owner's (`SessionReadHandles::export_report`).
+use super::protocol::AgentEvent;
+use crate::application::sessions::dto::{ReportError, SessionReport};
 use serde_json::{Value, json};
 
-pub(super) fn latest_report(messages: &[Message]) -> Value {
-    latest_report_resolving(messages, |_| None)
-}
-
-/// The latest assistant report, with the chosen message resolved through
-/// `full_copy` (the id-addressable ledger) so a context-collapsed stub is never
-/// reported as the full text.
-pub(super) fn latest_report_resolving<'a>(
-    messages: &'a [Message],
-    full_copy: impl Fn(&str) -> Option<&'a Message>,
-) -> Value {
-    let Some(candidate) = messages.iter().rev().find(|message| {
-        message.role == Role::Assistant
-            && message.tool_calls.is_empty()
-            && !message.content.trim().is_empty()
-    }) else {
-        return json!({"report":null,"snapshot":true});
+/// The `get_report` response data: the report (or `null`), its recovery
+/// ref when the preview is truncated, the snapshot marker, and the raw
+/// export receipt when one was written.
+pub(super) fn report_json(report: &SessionReport) -> Value {
+    let mut data = match &report.report {
+        Some(preview) => {
+            json!({"report":{"messageId":preview.message_id.as_str(),"content":preview.content,
+            "contentTruncated":preview.content_truncated,"fullLengthBytes":preview.full_length_bytes},
+            "recovery": preview.recovery().map(|recovery| json!({"command":"get_message",
+                "messageId":recovery.message_id.as_str(),"offset":recovery.offset})),
+            "snapshot":true})
+        }
+        None => json!({"report":null,"snapshot":true}),
     };
-    let id = candidate.id().to_string();
-    let message = full_copy(&id).unwrap_or(candidate);
-    let mut end = message.content.len().min(8192);
-    while !message.content.is_char_boundary(end) {
-        end -= 1;
+    if let Some(receipt) = &report.raw_export {
+        data["rawExport"] = json!({"path":receipt.records_path,"manifest":receipt.manifest_path,
+            "sha256":receipt.sha256,"bytes":receipt.bytes,"scope":"retained_snapshot"});
     }
-    let truncated = end < message.content.len();
-    json!({"report":{"messageId":message.id().to_string(),"content": &message.content[..end],
-        "contentTruncated":truncated,"fullLengthBytes":message.content.len()},
-        "recovery": truncated.then(|| json!({"command":"get_message","messageId":message.id().to_string(),"offset":end})),
-        "snapshot":true})
+    data
 }
 
+/// The `get_report` response event for `id`.
+pub(super) fn report_event(
+    id: Option<&str>,
+    result: Result<SessionReport, ReportError>,
+) -> AgentEvent {
+    match result {
+        Ok(report) => AgentEvent::ok(id, "get_report", Some(report_json(&report))),
+        Err(error) => AgentEvent::err(id, "get_report", error.to_string()),
+    }
+}
+
+/// Serve a parent-local `get_report` from the busy reader task: a
+/// report-only request is answered inline; a raw export is admitted (or
+/// refused) by the report owner and answered from a detached task when it
+/// completes, so the reader stays available for pause/abort meanwhile.
 pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<'_>) -> bool {
     let Ok(super::protocol::AgentCommand::GetReport {
         id,
@@ -42,116 +51,30 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
     else {
         return false;
     };
-    if export_raw {
-        static EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-        match EXPORTS.try_acquire() {
-            Ok(permit) => {
-                let snapshot = ctx.snapshot.clone();
+    let event = if export_raw {
+        match ctx.session.export_report.admit_raw_export() {
+            Ok(admitted) => {
                 let registry = ctx.registry.clone();
                 let client_id = ctx.client_id;
                 tokio::spawn(async move {
-                    let event = match report(&snapshot, true).await {
-                        Ok(data) => {
-                            super::protocol::AgentEvent::ok(id.as_deref(), "get_report", Some(data))
-                        }
-                        Err(error) => {
-                            super::protocol::AgentEvent::err(id.as_deref(), "get_report", error)
-                        }
-                    };
+                    let event = report_event(id.as_deref(), admitted.await);
                     if let Some(writer) =
                         super::uds_ext_protocol::client_writer_tx(&registry, client_id)
                     {
                         let _ = writer.send(event.to_json_line() + "\n").await;
                     }
-                    drop(permit);
                 });
                 return true;
             }
-            Err(_) => {
-                let event = super::protocol::AgentEvent::err(
-                    id.as_deref(),
-                    "get_report",
-                    "two raw exports are already running; retry after completion",
-                );
-                if let Some(writer) =
-                    super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id)
-                {
-                    let _ = writer.send(event.to_json_line() + "\n").await;
-                }
-                return true;
-            }
+            Err(refused) => report_event(id.as_deref(), Err(refused)),
         }
-    }
-    let event = match report(ctx.snapshot, false).await {
-        Ok(data) => super::protocol::AgentEvent::ok(id.as_deref(), "get_report", Some(data)),
-        Err(error) => super::protocol::AgentEvent::err(id.as_deref(), "get_report", error),
+    } else {
+        report_event(id.as_deref(), ctx.session.export_report.report(false).await)
     };
     if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id) {
         let _ = writer.send(event.to_json_line() + "\n").await;
     }
     true
-}
-
-pub(super) async fn report(
-    snapshot: &super::uds_multi::ConversationSnapshot,
-    export_raw: bool,
-) -> Result<Value, String> {
-    let (mut data, export) = {
-        let state = snapshot.read().await;
-        let export = if export_raw {
-            let root = state
-                .export_root
-                .clone()
-                .ok_or("session export directory unavailable")?;
-            Some((
-                root,
-                state.epoch,
-                state.rev,
-                state.export_messages(),
-                state.export_spill_source(),
-            ))
-        } else {
-            None
-        };
-        (
-            latest_report_resolving(&state.messages, |id| state.full_copy(id)),
-            export,
-        )
-    };
-    if let Some((root, epoch, revision, messages, (spill_store, session_key))) = export {
-        let mut records: Vec<Value> = messages.into_iter().map(|message| json!({"kind":"message","message":super::uds_session::message_to_json(&message)})).collect();
-        let mut spill_count = 0;
-        if let Some(store) = spill_store {
-            for entry in store
-                .list_entries(&session_key)
-                .await
-                .map_err(|error| error.to_string())?
-                .iter()
-            {
-                let spill = store
-                    .recall(&session_key, &entry.id)
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| format!("spill disappeared during export: {}", entry.id))?;
-                records.push(json!({"kind":"spill","id":spill.id,"tool":spill.tool,"input_preview":spill.input_preview,"tokens":spill.tokens,"content":spill.content}));
-                spill_count += 1;
-            }
-        }
-        if snapshot.read().await.epoch == epoch {
-            let metadata = json!({"format":1,"epoch":epoch,"revision":revision,"recordCount":records.len(),"spillCount":spill_count,
-                "scope":"retained live and full-message ledger plus available spill entries; previously evicted or cleared data is not reconstructed",
-                "spillConsistency":"entries read after the message snapshot; concurrent appends may be absent"});
-            data["rawExport"] = tokio::task::spawn_blocking(move || {
-                crate::infrastructure::session_export::write(&root, records, metadata)
-            })
-            .await
-            .map_err(|error| error.to_string())?
-            .map_err(|error| error.to_string())?;
-        } else {
-            return Err("session changed during export; retry against the new epoch".into());
-        }
-    }
-    Ok(data)
 }
 
 #[cfg(test)]

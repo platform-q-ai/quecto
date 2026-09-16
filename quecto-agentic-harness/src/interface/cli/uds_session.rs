@@ -1,16 +1,18 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
+use crate::application::agent_loop::UsageTotals;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
-use crate::application::context_pruning::messages::message_stub_without_recall;
 use crate::domain::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
 mod uds_session_notify;
 pub use uds_session_notify::NotificationEnqueueOutcome;
+/// The tracker holds no session key (D10 #1979): the active session's typed
+/// identity is the one owner of `sessionKey`, and every presenter that
+/// reports it is handed the key by its caller from that identity.
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
-    session_key: String,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
     /// Why automatic turns are off and at which swarm control generation
@@ -22,8 +24,6 @@ pub struct AgentSession {
     /// A resume re-armed this session: it owes the run one turn to continue
     /// its interrupted work, taken by the next runnable wake.
     pending_resume_turn: bool,
-    /// Session-local killing barrier; routine/final saves must not undo it.
-    pub(crate) killing_exit: bool,
     generation: u64,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
@@ -207,16 +207,14 @@ fn escape_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 impl AgentSession {
-    pub fn new(model: String, session_key: String) -> Self {
+    pub fn new(model: String) -> Self {
         Self {
             model,
-            session_key,
             streaming: false,
             automatic_turns_allowed: true,
             suspension: None,
             last_control_generation: None,
             pending_resume_turn: false,
-            killing_exit: false,
             generation: 1,
             usage: SessionUsage::default(),
             context_tokens: 0,
@@ -243,13 +241,14 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
-    pub fn set_session_key(&mut self, session_key: String) {
-        if self.session_key != session_key {
-            self.clear_usage();
-            self.session_key = session_key;
-            self.killing_exit = false;
-            self.bump_visible_generation();
-        }
+    /// The loop moved to another session (D7 #1976, D10 #1979): the usage
+    /// accumulated for the departed session is cleared and the visible
+    /// generation bumps once, exactly as the tracker's own key change did
+    /// while it still held a copy. The propagation adapter calls this only
+    /// when the identity actually changed.
+    pub fn session_changed(&mut self) {
+        self.clear_usage();
+        self.bump_visible_generation();
     }
     pub fn set_streaming(&mut self, v: bool) {
         if self.streaming != v {
@@ -260,14 +259,21 @@ impl AgentSession {
     /// Whole-result accumulator kept for tests; production records usage
     /// through `record_usage` on the UDS run path.
     #[cfg(test)]
-    pub fn record_agent_result(&mut self, result: &crate::domain::agent::AgentResult) {
+    pub fn record_agent_result(
+        &mut self,
+        session_key: &str,
+        result: &crate::domain::agent::AgentResult,
+    ) {
         self.context_tokens = result.context_tokens;
         self.record_usage(
-            result.billed_input_tokens,
-            result.billed_output_tokens,
-            result.cache_read_tokens,
-            result.cache_write_tokens,
-            result.cost_micro_usd,
+            session_key,
+            UsageTotals::billed(
+                result.billed_input_tokens,
+                result.billed_output_tokens,
+                result.cache_read_tokens,
+                result.cache_write_tokens,
+                result.cost_micro_usd,
+            ),
         );
     }
     pub fn context_tokens(&self) -> usize {
@@ -276,14 +282,17 @@ impl AgentSession {
     pub fn set_context_tokens(&mut self, context_tokens: usize) {
         self.context_tokens = context_tokens;
     }
-    pub fn record_usage(
-        &mut self,
-        input_tokens: u64,
-        output_tokens: u64,
-        cache_read_tokens: u64,
-        cache_write_tokens: u64,
-        cost_micro_usd: u64,
-    ) {
+    /// Accumulate the billed usage of one turn; `session_key` is the active
+    /// session's key, named by the normalized usage log (#1567).
+    pub fn record_usage(&mut self, session_key: &str, usage: UsageTotals) {
+        let UsageTotals {
+            billed_input_tokens: input_tokens,
+            billed_output_tokens: output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cost_micro_usd,
+            ..
+        } = usage;
         self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens);
         self.usage.tokens.output = self.usage.tokens.output.saturating_add(output_tokens);
         self.usage.tokens.cache_read = self
@@ -313,7 +322,7 @@ impl AgentSession {
             let ratio = self.usage.cache_hit_ratio();
             tracing::info!(
                 target: "session_usage",
-                session_key = %self.session_key,
+                session_key = %session_key,
                 input = self.usage.tokens.input,
                 output = self.usage.tokens.output,
                 cacheRead = self.usage.tokens.cache_read,
@@ -400,8 +409,11 @@ impl AgentSession {
     /// default); it lives on the agent, not this tracker, so callers pass it
     /// in (#1067). The valid vocabulary is derived here from the active
     /// model so every `get_state` shape (live or snapshot) carries it.
+    /// `session_key` is the active session's key (D10 #1979): the tracker
+    /// holds no copy.
     pub fn state_snapshot(
         &self,
+        session_key: &str,
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
@@ -412,7 +424,7 @@ impl AgentSession {
             model: self.model.clone(),
             generation: self.generation,
             is_streaming: self.streaming,
-            session_key: self.session_key.clone(),
+            session_key: session_key.to_owned(),
             message_count,
             pending_message_count: self.pending.len(),
             max_context_tokens,
@@ -434,11 +446,12 @@ mod usage_projection;
 pub use usage_projection::{SessionUsage, compute_session_stats, compute_session_stats_with_usage};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
+#[cfg(test)]
+pub(crate) use uds_session_history::messages_page_json;
 pub(crate) use uds_session_history::{
-    HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, message_to_json_for_history_page,
-    messages_page_json_for_id, position_by_message_id, position_by_wire_id,
+    HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, history_page_json,
+    message_to_json_for_history_page,
 };
-pub use uds_session_history::{messages_page_json, messages_tail_json};
 
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
@@ -516,99 +529,27 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
 mod uds_session_message_range;
 #[path = "uds_visible_thinking_wire.rs"]
 mod uds_visible_thinking_wire;
-pub use uds_session_message_range::{
-    message_to_json_range, message_to_json_range_for_response,
-    tool_call_arguments_to_json_range_for_response,
-};
-/// Clear conversation history, preserving only the injected system prompt (non-manifest).
-/// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
-pub fn clear_conversation(messages: &mut Vec<Message>) {
-    let keep = messages
-        .first()
-        .is_some_and(|m| m.role == Role::System && !m.is_manifest);
-    if keep {
-        messages.truncate(1);
-    } else {
-        messages.clear();
-    }
-}
-/// Resolve a rewind target to a full-vector index. A stable `message_id` is
-/// resolved against the full conversation. The legacy `message_index` (#1059)
-/// is honoured only while the conversation fits in ONE history page: beyond
-/// that a pre-paging client's index is page-local and applying it absolutely
-/// would destructively truncate a much older turn (#1061 review follow-up).
-pub fn resolve_rewind_target(
-    messages: &[Message],
-    message_id: Option<&str>,
-    message_index: Option<usize>,
-) -> Result<usize, &'static str> {
-    match (message_id, message_index) {
-        (Some(mid), _) => position_by_wire_id(messages, mid).ok_or("rewind target not found"),
-        (None, Some(_)) if messages.len() > HISTORY_PAGE_SIZE => {
-            Err("messageIndex is ambiguous beyond one history page; rewind requires messageId")
-        }
-        (None, Some(idx)) => Ok(idx),
-        (None, None) => Err("rewind requires messageId or messageIndex"),
-    }
-}
-/// Rewind conversation history to a selected user-message boundary.
-///
-/// The target index must point at an existing user message. The selected user
-/// message and everything after it are removed, preserving earlier system
-/// prompts and completed turns.
-pub fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize) -> bool {
-    let Some(message) = messages.get(message_index) else {
-        return false;
-    };
-    if message.role != Role::User {
-        return false;
-    }
-    messages.truncate(message_index);
-    remove_spill_references(messages);
-    true
-}
-/// Strip spill residue after a rewind wiped the spill store. Role-aware
-/// (#1046: `is_collapsed` no longer implies a tool stub): collapsed tool
-/// results are blanked as before, but collapsed user/assistant messages must
-/// stay non-empty provider turns — their stub is reduced to its annotation
-/// with the now-dangling `recall("…")` clause stripped, honouring the same
-/// no-dangling-recall invariant the tool side pins.
-fn remove_spill_references(messages: &mut Vec<Message>) {
-    messages.retain(|message| !message.is_manifest);
-    for message in messages {
-        if message.is_collapsed {
-            match message.role {
-                Role::User | Role::Assistant => {
-                    message.content = message_stub_without_recall(&message.content);
-                    message.invalidate_token_cache();
-                }
-                _ => message.content.clear(),
-            }
-            message.is_collapsed = false;
-        }
-        message.spill_id = None;
-    }
-}
+pub(crate) use uds_session_message_range::recovered_content_json;
 #[cfg(test)]
 mod subagent_notification_dedupe_tests {
     use super::*;
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(!session.record_subagent_notification("worker".into(), 1));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn later_monotonic_subagent_notification_is_recorded() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(session.record_subagent_notification("worker".into(), 2));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn full_queue_does_not_block_recording_notification_seen() {
-        let mut session = AgentSession::new("m".into(), "s".into());
+        let mut session = AgentSession::new("m".into());
         for i in 0..AgentSession::MAX_PENDING {
             session.enqueue_pending(format!("filler-{i}"));
         }
@@ -657,11 +598,11 @@ mod passive_subagent_notification_tests {
     use super::*;
     #[test]
     fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
-        let mut session = AgentSession::new("m".into(), "k".into());
+        let mut session = AgentSession::new("m".into());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert_eq!(
             session
-                .state_snapshot(0, None, 0, None)
+                .state_snapshot("k", 0, None, 0, None)
                 .pending_message_count,
             0
         );
@@ -673,71 +614,11 @@ mod passive_subagent_notification_tests {
 #[path = "uds_session_coalesce_tests.rs"]
 mod coalesce_pending_tests;
 #[cfg(test)]
-#[path = "uds_session_1060_tests.rs"]
-mod uds_session_1060_tests;
-#[cfg(test)]
-mod rewind_collapsed_message_tests {
-    use super::*;
-    /// PR #1048 follow-up (#1046 hint: "is_collapsed currently implies
-    /// role == Tool in places"): rewinding past count-collapsed/ladder-stubbed
-    /// conversation messages must not blank them into empty user/assistant
-    /// turns — some providers reject empty text blocks, and the spill store
-    /// is cleared by the rewind so there is no recall path left.
-    #[test]
-    fn rewind_keeps_collapsed_conversation_messages_as_non_empty_turns() {
-        let mut collapsed_user =
-            Message::user("[user: \"old question\" (120 tokens) — recall(\"turn1:msg:user\")]");
-        collapsed_user.is_collapsed = true;
-        collapsed_user.spill_id = Some("turn1:msg:user".into());
-        collapsed_user.turn = Some(1);
-        let mut collapsed_assistant = Message::assistant(
-            "[assistant: \"old answer\" (300 tokens) — recall(\"turn1:msg:assistant\")]",
-            vec![],
-        );
-        collapsed_assistant.is_collapsed = true;
-        collapsed_assistant.spill_id = Some("turn1:msg:assistant".into());
-        collapsed_assistant.turn = Some(1);
-        let mut messages = vec![
-            Message::system("system prompt"),
-            collapsed_user,
-            collapsed_assistant,
-            Message::user("rewind target"),
-            Message::assistant("later answer", vec![]),
-        ];
-        assert!(rewind_to_message_index(&mut messages, 3));
-        assert_eq!(messages.len(), 3, "rewind truncates at the target");
-        // Exact post-rewind contract for conversation stubs: the annotation
-        // survives with the dangling recall("…") clause stripped (the store
-        // was just wiped), matching the tool-side no-dangling-recall
-        // invariant (`test_rewind_to_removes_retained_spill_references`).
-        assert_eq!(
-            messages[1].content, "[user: \"old question\" (120 tokens)]",
-            "collapsed user turn must keep its annotation minus recall()"
-        );
-        assert_eq!(
-            messages[2].content, "[assistant: \"old answer\" (300 tokens)]",
-            "collapsed assistant turn must keep its annotation minus recall()"
-        );
-        for m in &messages {
-            assert!(
-                !m.is_collapsed,
-                "retained messages are no longer recall stubs after rewind"
-            );
-            assert!(
-                m.spill_id.is_none(),
-                "spill references must be cleared (the store was wiped)"
-            );
-            assert!(
-                !m.content.contains("recall("),
-                "no dangling recall pointers may survive the rewind"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
 #[path = "uds_session_failure_tests.rs"]
 mod failure_tests;
+#[cfg(test)]
+#[path = "uds_session_1060_tests.rs"]
+mod uds_session_1060_tests;
 
 #[path = "uds_session_controls.rs"]
 mod controls;

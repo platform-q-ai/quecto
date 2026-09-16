@@ -1,6 +1,7 @@
-//! Swarm lifecycle vocabulary and effect ports, independent of adapter protocols.
+//! Swarm lifecycle vocabulary, independent of adapter protocols. The effect
+//! ports (`CoordinationPort`, `SwarmRunControl`, `ProcessControl`, …) are the
+//! application's (`application::swarm::ports`, #1940, #1960).
 use super::error::DomainError;
-use super::subagent_launch::LaunchFuture;
 
 /// A swarm owns its coordination lifecycle; workflow engines cannot run alongside it.
 pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), DomainError> {
@@ -139,60 +140,26 @@ impl Snapshot {
     }
 }
 
-/// Implementations atomically enforce membership policy before reserving slots.
-/// Wire names, positional arguments and persistence schemas are private details.
-pub trait CoordinationPort {
-    fn snapshot(&self) -> Result<Snapshot, DomainError>;
-    fn register_endpoint(&self, endpoint: &str) -> Result<(), DomainError>;
-    fn reserve_member(&self, member: &str, token: &str) -> Result<(), DomainError>;
-    fn record_launch(
-        &self,
-        member: &str,
-        token: &str,
-        process: &ProcessIdentity,
-    ) -> Result<(), DomainError>;
-    fn confirm_unlaunched(&self, member: &str) -> Result<(), DomainError>;
-    fn quarantine(&self, member: &str) -> Result<(), DomainError>;
+/// How a launched member's process ended, as its launcher observed it
+/// (#1961). Bash tool children run in their own process groups and can
+/// outlive an abruptly ended harness, so only an orderly end (the member's
+/// own teardown ran: a delegated kill, a protocol shutdown, an exit it
+/// chose, or a fallback signal this harness sent to its whole group) frees
+/// its file reservations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemberExit {
+    Orderly,
+    /// Killed by a signal this harness did not send, or an unobservable end.
+    Abrupt,
 }
 
-pub trait ProcessObservation {
-    fn harness_dead(&self, process: &ProcessIdentity) -> bool;
-}
-
-pub trait ProcessControl: Sync {
-    /// Cancel this member's detached execution registry independently of turn abort.
-    fn cancel_local_executions(&self);
-    /// Cancel current jobs while retaining admission for a later resume.
-    fn suspend_local_executions(&self, snapshot: &Snapshot);
-    /// Suspend only this process; never signal a future turn or another member.
-    fn suspend_local_inference(&self, snapshot: &Snapshot);
-    fn abort<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, bool>;
-    /// End the member's harness by delegation (#1939): the shutdown protocol
-    /// over the endpoint it registered, the locally owned handle only when
-    /// this harness launched it. The member's `ProcessIdentity` is an
-    /// observation for liveness, never an authority to signal; a member
-    /// reachable neither way is reported failed, not signalled.
-    fn terminate<'a>(&'a self, member: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>>;
-}
-
-pub trait Clock {
-    fn now_seconds(&self) -> f64;
-}
-
-/// Application lifecycle entrypoint, injected by the composition root.
-pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
-    fn reconcile(
-        &self,
-        coordination: &dyn CoordinationPort,
-        processes: &dyn ProcessObservation,
-    ) -> Result<Snapshot, DomainError>;
-    fn settle<'a>(
-        &'a self,
-        snapshot: &'a Snapshot,
-        actor: &'a str,
-        processes: &'a dyn ProcessControl,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>;
-    fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
+impl MemberExit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Orderly => "orderly",
+            Self::Abrupt => "abrupt",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -232,14 +199,6 @@ pub struct RunControlReceipt {
     /// Why a resume would refuse right now (#1924): a passed deadline, an
     /// exhausted budget or a lost coordinator. Empty for a live run.
     pub resume_blockers: Vec<String>,
-}
-
-/// Supervisor operations remain available without model execution or turn-queue admission.
-pub trait SwarmRunControl: Send + Sync {
-    fn apply(
-        &self,
-        action: RunControlAction,
-    ) -> LaunchFuture<'_, Result<RunControlReceipt, DomainError>>;
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

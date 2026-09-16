@@ -3,7 +3,7 @@ use super::*;
 #[cfg(test)]
 #[test]
 fn identical_failure_notifications_do_not_reopen_an_idle_turn() {
-    let mut session = AgentSession::new("test".into(), "test".into());
+    let mut session = AgentSession::new("test".into());
     assert!(
         session
             .enqueue_subagent_notification("worker".into(), 1, "quota exhausted".into(), false)

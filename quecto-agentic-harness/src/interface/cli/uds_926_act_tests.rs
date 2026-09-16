@@ -13,6 +13,7 @@
 //! anti-flood design and is left as an open design question.
 use super::*;
 use crate::domain::message::Role;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 /// Owns every value a [`DispatchCtx`] borrows so the helper can build the
 /// context inline (each field borrow is a disjoint field of this struct).
@@ -22,15 +23,12 @@ struct ActEnv {
     messages: Vec<crate::domain::message::Message>,
     session: AgentSession,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
     writer: tokio::io::Sink,
 }
 
 impl ActEnv {
     fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
         Self {
             tmp,
             agent: crate::application::agent_loop::AgentLoopImpl::new(
@@ -42,7 +40,7 @@ impl ActEnv {
                     model: "stub".into(),
                     max_tokens: 100,
                     temperature: 0.0,
-                    spill_store: None,
+                    retention: None,
                     session_key: "cli:test".into(),
                     context_collapse_after_tool_calls: u32::MAX,
                     max_context_tokens: 190_000,
@@ -57,9 +55,8 @@ impl ActEnv {
                 },
             ),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".to_string(),
-            store,
             writer: tokio::io::sink(),
         }
     }
@@ -69,25 +66,32 @@ impl ActEnv {
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0, None);
+        let state = self.session.state_snapshot("cli:test", 0, None, 0, None);
+        let save_session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &self.session_key,
+                None,
+                &[],
+            ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),
@@ -102,9 +106,13 @@ impl ActEnv {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
+            rewrite,
+            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
             fleet_teardown: None,
+            list_sessions: list_handle(self.tmp.path()),
         }
     }
 }
@@ -140,7 +148,7 @@ async fn test_926_single_completion_drives_a_parent_turn() {
 
     assert_eq!(
         ctx.session
-            .state_snapshot(0, None, 0, None)
+            .state_snapshot("cli:test", 0, None, 0, None)
             .pending_message_count,
         0,
         "the buffered completion note must be consumed by the idle drain"

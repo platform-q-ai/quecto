@@ -1,10 +1,11 @@
-use super::uds_multi::{ClientCommand, ClientMessage, ConversationSnapshot};
+use super::uds_multi::{ClientCommand, ClientMessage};
+use super::uds_session_handles::SessionReadHandles;
 
 pub(super) struct ReaderDispatchCtx<'a> {
     pub line: String,
     pub cancel_handle: &'a super::uds_cancel::CancelHandle,
     pub turn_control: &'a super::uds_cancel::TurnControl,
-    pub snapshot: &'a ConversationSnapshot,
+    pub session: &'a SessionReadHandles,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub subagent_registry:
         &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -27,7 +28,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         ctx.turn_control.mark_abort();
         super::uds_cancel::fire_cancel(ctx.cancel_handle);
     }
-    if super::uds_busy_sync::intercept(&ctx.line, ctx.snapshot, ctx.registry, ctx.client_id).await {
+    if super::uds_sync::intercept(&ctx.line, ctx.session, ctx.registry, ctx.client_id).await {
         return true;
     }
     if super::uds_busy_subagents::intercept(super::uds_busy_subagents::BusySubagentCtx {
@@ -43,7 +44,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     }
     if super::uds_busy_get_message::intercept(super::uds_busy_get_message::BusyCommandCtx {
         line: &ctx.line,
-        snapshot: ctx.snapshot,
+        session: ctx.session,
         registry: ctx.registry,
         client_id: ctx.client_id,
     })

@@ -1,7 +1,7 @@
 //! Ordinary descendants belong to an invocation even when its interpreter exits.
 use super::swarm::{SwarmConfig, SwarmTool};
 use super::swarm_bridge::SwarmContext;
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 use serde_json::json;
 use std::sync::Arc;
@@ -48,7 +48,7 @@ async fn settled_descendants(background: bool, success: bool) {
         },
     )
     .with_context(Some(context.clone()));
-    let child = "import pathlib,time,os\npathlib.Path('child-ready').write_text(str(os.getpid()))\nend=time.monotonic()+10\nwhile not pathlib.Path('release-child').exists() and time.monotonic()<end: time.sleep(0.01)\nif pathlib.Path('release-child').exists(): pathlib.Path('late-write').write_text('escaped')";
+    let child = "import pathlib,time,os\npathlib.Path('child-ready.tmp').write_text(str(os.getpid()))\nos.replace('child-ready.tmp','child-ready')\nend=time.monotonic()+10\nwhile not pathlib.Path('release-child').exists() and time.monotonic()<end: time.sleep(0.01)\nif pathlib.Path('release-child').exists(): pathlib.Path('late-write').write_text('escaped')";
     let code = format!(
         "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
         json!(child)
@@ -93,10 +93,7 @@ async fn settled_descendants(background: bool, success: bool) {
         if success { "paused" } else { "cancelled" },
         "completion ends the run as a resumable pause (#1729)"
     );
-    let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let pid = wait_for_child_pid(&workspace).await;
     std::fs::write(workspace.join("release-child"), "go").unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         while process_running(pid) {
@@ -109,6 +106,26 @@ async fn settled_descendants(background: bool, success: bool) {
         !workspace.join("late-write").exists(),
         "completed invocation left a writer after run settlement"
     );
+}
+
+/// The pid the Python child publishes as `child-ready`. The child writes
+/// `child-ready.tmp` and renames it into place, so the file is either absent
+/// or complete; the reader still only trusts a value that parses, and the
+/// ceiling merely bounds a hang so it is generous to loaded CI runners.
+async fn wait_for_child_pid(workspace: &std::path::Path) -> u32 {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(workspace.join("child-ready"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("python child never published its pid")
 }
 
 fn process_running(pid: u32) -> bool {
@@ -142,7 +159,7 @@ async fn interrupted_descendants(drop_invocation: bool) {
             ..Default::default()
         },
     );
-    let child = "import pathlib,time,os; pathlib.Path('child-ready').write_text(str(os.getpid())); time.sleep(10)";
+    let child = "import pathlib,time,os; pathlib.Path('child-ready.tmp').write_text(str(os.getpid())); os.replace('child-ready.tmp','child-ready'); time.sleep(10)";
     let code = format!(
         "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); time.sleep(10)",
         json!(child)
@@ -155,17 +172,7 @@ async fn interrupted_descendants(drop_invocation: bool) {
         .await
         .unwrap()
     });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !workspace.join("child-ready").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let pid = wait_for_child_pid(&workspace).await;
     if drop_invocation {
         invocation.abort();
         assert!(invocation.await.unwrap_err().is_cancelled());

@@ -1,23 +1,24 @@
+use super::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
+use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
+use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
-use crate::domain::agent::{
-    AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::tools::ports::{
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
-use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
+use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
+use crate::domain::provider::{EffortLevel, StreamEvent};
 use crate::domain::provider_error::classify_provider_error;
-use crate::domain::session::ContextSpillStore;
-use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolProfileContext,
-    ToolRegistry,
-};
+use crate::domain::tool::ToolProfileContext;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -64,7 +65,9 @@ pub struct AgentLoopConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
-    pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// The loop's retention handles (D9 #1978), composed over the one
+    /// retention store; `None` retains nothing.
+    pub retention: Option<crate::application::context::ContextRetention>,
     pub session_key: String,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
@@ -95,9 +98,9 @@ pub struct AgentLoopImpl {
     accounting_outbox:
         std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
     request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
-    request_admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
-    request_accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
-    tool_admission: Option<Arc<dyn crate::domain::tool::ToolExecutionAdmission>>,
+    request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
+    request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
+    tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     request_prefix: std::sync::Mutex<Option<String>>,
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
@@ -107,7 +110,9 @@ pub struct AgentLoopImpl {
     model_max_tokens: Option<u32>,
     temperature: f32,
     max_tool_iterations: u32,
-    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// Whether the loop retains context (D9 #1978): the spill manifest is
+    /// refreshed after a tool turn only when it does.
+    retains_context: bool,
     session_key: String,
     /// #1044: the active model's known context window (None when unknown).
     pub(super) model_context_window: Option<usize>,
@@ -122,11 +127,8 @@ pub struct AgentLoopImpl {
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
-    /// existing history (in-place stub demotion, tool-result collapse, or a
-    /// physical drop). Outcome-independent: it stays set across an Error or
-    /// Cancelled turn so persistence can still reconcile. Consumed via
-    /// [`Self::take_durable_prefix_dirty`].
-    durable_prefix_dirty: std::sync::atomic::AtomicBool,
+    /// existing history; the session save transaction consumes it.
+    durable_prefix_dirty: Arc<DurablePrefixLatch>,
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
@@ -149,8 +151,10 @@ impl std::fmt::Debug for AgentLoopImpl {
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
-            spill_store: config.spill_store.clone(),
-            session_key: config.session_key.clone(),
+            retention: config.retention.clone(),
+            session_key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                config.session_key.as_str(),
+            ),
             context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
@@ -172,7 +176,7 @@ impl AgentLoopImpl {
             model_max_tokens: None,
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
-            spill_store: config.spill_store,
+            retains_context: config.retention.is_some(),
             session_key: config.session_key,
             model_context_window: config.model_context_window,
             progress_callback: config.progress_callback,
@@ -180,7 +184,7 @@ impl AgentLoopImpl {
             effort: config.effort,
             default_effort: config.effort,
             audit_log: config.audit_log,
-            durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
+            durable_prefix_dirty: DurablePrefixLatch::shared(),
             context_manager,
             pending_tool_policy_requests: std::sync::Mutex::new(Vec::new()),
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
@@ -189,21 +193,23 @@ impl AgentLoopImpl {
             tool_policy_persistence: None,
         }
     }
-    /// Read-and-clear the durable-prefix dirty latch (#1072).
-    ///
-    /// True when any pruning pass since the last take mutated already-existing
-    /// history — including in-place stub demotion, which changes message
-    /// CONTENT while every message id stays the same. Callers on the UDS
-    /// dispatch path read this after EVERY prompt outcome (Success, Error,
-    /// Cancelled) so persistence reconciles regardless of how the run ended.
+    /// Read-and-clear the durable-prefix dirty latch (#1072): true when a
+    /// pruning pass since the last take mutated existing history (stubs too).
     pub fn take_durable_prefix_dirty(&self) -> bool {
-        self.durable_prefix_dirty
-            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        self.durable_prefix_dirty.take()
     }
     /// Latch the durable-prefix dirty flag (called from the pruning pass).
     pub(super) fn latch_durable_prefix_dirty(&self) {
-        self.durable_prefix_dirty
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.durable_prefix_dirty.latch();
+    }
+    /// The latch the session save transaction drains (D5 #1972).
+    pub fn durable_prefix_latch(&self) -> Arc<DurablePrefixLatch> {
+        self.durable_prefix_dirty.clone()
+    }
+    /// Share a latch created elsewhere (a rig that swaps its agent).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn adopt_durable_prefix_latch(&mut self, latch: Arc<DurablePrefixLatch>) {
+        self.durable_prefix_dirty = latch;
     }
     /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
@@ -305,7 +311,7 @@ impl AgentLoopImpl {
 
     pub fn register_runtime_tool(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
     ) -> bool {
         self.extension_tool_registry_mut()
             .register_runtime_tool(tool)
@@ -313,7 +319,7 @@ impl AgentLoopImpl {
     /// Register a single UDS-delivered extension tool.
     pub fn register_uds_tool(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
     ) -> bool {
         self.extension_tool_registry_mut().register_uds_tool(tool)
     }
@@ -326,7 +332,7 @@ impl AgentLoopImpl {
 
     pub fn register_uds_tool_for_owner(
         &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        tool: std::sync::Arc<dyn crate::application::tools::ports::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
         self.extension_tool_registry_mut()
@@ -413,11 +419,6 @@ impl AgentLoopImpl {
                 tracing::warn!(target: "audit", error = %e, "audit log write failed");
             }
         }
-    }
-
-    /// Access the context spill store (if configured).
-    pub fn spill_store(&self) -> Option<&Arc<dyn ContextSpillStore>> {
-        self.spill_store.as_ref()
     }
 
     fn build_chat_request<'a>(
@@ -693,7 +694,7 @@ impl AgentLoopImpl {
                 messages: appended_messages[ledger_from..].into(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
-            spills_dirty = self.spill_store.is_some();
+            spills_dirty = self.retains_context;
             iterations += 1;
             current_turn += 1;
 

@@ -1,10 +1,10 @@
 use quecto::application::swarm::LifecycleService;
-use quecto::domain::error::DomainError;
-use quecto::domain::subagent_launch::LaunchFuture;
-use quecto::domain::swarm::{
-    Clock, CoordinationPort, Member, MemberStatus, ProcessControl, ProcessIdentity,
-    ProcessObservation, RunStatus, Snapshot, SwarmLifecycle,
+use quecto::application::swarm::ports::{
+    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SwarmLifecycle,
 };
+use quecto::domain::error::DomainError;
+use quecto::domain::swarm::MemberExit;
+use quecto::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot};
 use std::sync::Mutex;
 
 pub(super) fn snapshot() -> Snapshot {
@@ -34,13 +34,13 @@ impl ProcessControl for Effects {
     fn cancel_local_executions(&self) {
         self.0.lock().unwrap().push("cancel");
     }
-    fn abort<'a>(&'a self, _: &'a Member) -> LaunchFuture<'a, bool> {
+    fn abort<'a>(&'a self, _: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async {
             self.0.lock().unwrap().push("abort");
             false
         })
     }
-    fn terminate<'a>(&'a self, _: &'a Member) -> LaunchFuture<'a, Result<(), DomainError>> {
+    fn terminate<'a>(&'a self, _: &'a Member) -> PortFuture<'a, Result<(), DomainError>> {
         Box::pin(async {
             self.0.lock().unwrap().push("terminate");
             Ok(())
@@ -78,6 +78,10 @@ impl CoordinationPort for Board {
     }
     fn quarantine(&self, member: &str) -> Result<(), DomainError> {
         self.0.lock().unwrap().push(member.into());
+        Ok(())
+    }
+    fn confirm_dead(&self, member: &str, _: MemberExit) -> Result<(), DomainError> {
+        self.0.lock().unwrap().push(format!("dead:{member}"));
         Ok(())
     }
 }

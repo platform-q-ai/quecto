@@ -84,6 +84,10 @@ struct Rig {
 }
 
 fn rig(rows: Vec<(&str, SubagentEntry)>) -> Rig {
+    rig_with_kill(rows, vec!["true".into()])
+}
+
+fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<String>) -> Rig {
     let registry: SubagentRegistry = Arc::new(Mutex::new(Default::default()));
     let environments = EnvironmentRegistry::new();
     let env_ref = environments.mint_ref();
@@ -96,7 +100,7 @@ fn rig(rows: Vec<(&str, SubagentEntry)>) -> Rig {
         repository: String::new(),
         script_name: "default".into(),
         retained_exec_argv: vec![],
-        retained_kill_argv: vec!["true".into()],
+        retained_kill_argv,
         retained_cleanup_argv: vec![],
         retained_inspect_argv: vec![],
         members: vec![],
@@ -114,8 +118,13 @@ fn rig(rows: Vec<(&str, SubagentEntry)>) -> Rig {
         }
     }
     let agents = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_millis(300)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_millis(300)),
     );
     let settle = Arc::new(SettleDelegatedChild::new(SettleDelegatedChildPorts {
         registry: agents.clone(),
@@ -208,6 +217,88 @@ async fn a_member_whose_end_another_path_owns_and_never_settles_is_unsettled() {
     // The member is still recorded: a retry can ask again once the owner
     // settles.
     assert_eq!(rig.environments.get(&rig.env_ref).unwrap().members, ["A"]);
+    let _ = std::fs::remove_file(&a_socket);
+}
+
+/// #1953 review (1): a member whose `agent_cmd kill` failed after effects
+/// (the claim kept, its owner returned) is not a dead end for
+/// `kill_container`: the member shutdown re-takes the claim, asks again,
+/// compensates the acknowledged handle-less member `unobserved` once its
+/// exit does not arrive within the bound, and the retained kill — the
+/// box's real authority — runs exactly once; the environment is stopped.
+#[tokio::test]
+async fn kill_container_after_a_failed_member_kill_re_attempts_and_runs_the_retained_kill_once() {
+    use quecto::application::environments::use_cases::KillEnvironment;
+    use quecto::domain::environment_registry::EnvironmentTarget;
+    use quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands;
+    use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
+
+    let marker = std::env::temp_dir().join(format!("q-ems-kill-{}", uuid::Uuid::new_v4().simple()));
+    let (a_socket, a_requests) = fake_child();
+    let rig = rig_with_kill(
+        vec![("A", launched("A", &a_socket, 1))],
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("echo killed >> {}", marker.display()),
+        ],
+    );
+    let a = DelegatedAgentIdentity::new("A", LaunchGeneration::new(1));
+    // What a kill that failed after effects leaves behind: the claim kept
+    // for the exit, its owner returned.
+    rig.agents
+        .claim_stopping(&a, TerminationCause::SelectedTermination)
+        .unwrap();
+    rig.agents.retain_stopping(&a);
+    assert!(matches!(
+        rig.registry.lock().unwrap()["A"].teardown_phase(),
+        TeardownPhase::Stopping(claim) if claim.owner == ClaimOwner::Returned
+    ));
+
+    let kill = KillEnvironment::new(
+        rig.environments.clone(),
+        rig.port.clone(),
+        Arc::new(ScriptEnvironmentCommands::inline()),
+    );
+    let killed = kill
+        .kill_container(&EnvironmentTarget::Ref(rig.env_ref.clone()))
+        .await
+        .expect("the retained kill ran after the member settled");
+    assert_eq!(killed.members.settled.len(), 1, "{killed:?}");
+    assert_eq!(killed.members.settled[0].member, "A");
+    assert_eq!(
+        killed.members.settled[0].result,
+        MemberShutdownResult::Unobserved,
+        "asked again, exit not observed within the bound, compensated truthfully"
+    );
+    assert!(killed.members.unsettled.is_empty());
+    assert_eq!(
+        a_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r["type"] == "shutdown")
+            .count(),
+        1,
+        "the retry sent its own shutdown"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .count(),
+        1,
+        "the retained kill ran exactly once"
+    );
+    assert_eq!(
+        rig.environments.get(&rig.env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+    assert_eq!(
+        rig.registry.lock().unwrap()["A"].teardown_phase(),
+        TeardownPhase::Compensated
+    );
+    let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_file(&a_socket);
 }
 

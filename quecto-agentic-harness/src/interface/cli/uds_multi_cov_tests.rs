@@ -225,9 +225,8 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
     let cancel_handle: super::super::uds_cancel::CancelHandle = Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
-    let snapshot = Arc::new(tokio::sync::RwLock::new(
-        super::super::uds_snapshots::ConversationSnapshotData::default(),
-    ));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -238,7 +237,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         turn_control: turn_control.clone(),
         client_id: 77,
         client_tool_registry: registry,
-        conversation_snapshot: snapshot,
+        session,
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {
@@ -307,9 +306,8 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
-    let snapshot = Arc::new(tokio::sync::RwLock::new(
-        super::super::uds_snapshots::ConversationSnapshotData::default(),
-    ));
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -322,7 +320,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         turn_control: Arc::default(),
         client_id: 88,
         client_tool_registry: registry,
-        conversation_snapshot: snapshot,
+        session,
         subagent_registry: None,
         teardown: None,
         _guard: ClientGuard {
@@ -341,10 +339,10 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
 
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
     use crate::infrastructure::tools::subagent_registry::new_registry;
@@ -368,7 +366,9 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     }
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     let previous_roster = vec![
         row(
             "live-at-barrier",
@@ -381,7 +381,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     ];
     store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: previous_roster.clone(),
@@ -390,12 +390,17 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
+    let roster =
+        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
 
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -407,19 +412,21 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
     use crate::infrastructure::tools::subagent_registry::new_registry;
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+    );
     store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -439,12 +446,17 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
+    let roster =
+        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
 
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()

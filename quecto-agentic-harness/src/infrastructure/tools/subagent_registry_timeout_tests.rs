@@ -72,7 +72,9 @@ async fn invalid_responses_do_not_extend_read_deadline() {
     );
 }
 
-#[tokio::test]
+// Paused clock: the peer never replies, so only timers are in play and the
+// runtime advances to the outer deadline instead of sleeping 5 s.
+#[tokio::test(start_paused = true)]
 async fn long_sender_keeps_waiting_beyond_inspection_deadline() {
     let tmp = tempfile::tempdir().unwrap();
     let socket = tmp.path().join("long.sock");

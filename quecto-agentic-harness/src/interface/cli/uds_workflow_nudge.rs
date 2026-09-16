@@ -36,25 +36,27 @@ impl WorkflowNudge {
     }
 }
 
-/// The next workflow nudge, if auto-continue or completion nudging is
-/// enabled and the engine still has something to say.
-pub(super) fn has_active_workflow_descendant(ctx: &DispatchCtx<'_>) -> bool {
-    crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
-        ctx.session_key.as_str(),
-    )
-    .is_some_and(|current_identity| {
-        crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
-            &ctx.subagent_registry,
-            current_identity,
-        )
-    })
+/// Whether a delegated child of the active session is still starting or
+/// running; the parent identity is derived from the active session's key
+/// (D10 #1979), never from a tracker copy.
+pub(super) async fn has_active_workflow_descendant(ctx: &DispatchCtx<'_>) -> bool {
+    let session_key = ctx.sessions.current_session_key().await;
+    crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(&session_key)
+        .is_some_and(|current_identity| {
+            crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
+                &ctx.subagent_registry,
+                current_identity,
+            )
+        })
 }
 
-pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
+/// The next workflow nudge, if auto-continue or completion nudging is
+/// enabled and the engine still has something to say.
+pub(super) async fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
     let (Some(ws), Some(_)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
-    if has_active_workflow_descendant(ctx) {
+    if has_active_workflow_descendant(ctx).await {
         return None;
     }
     let Ok(engine) = ws.lock() else { return None };

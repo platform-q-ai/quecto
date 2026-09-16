@@ -1,10 +1,8 @@
 //! #843: an agent-targeted `get_messages` with NO `count` must forward to the
 //! named child and return ITS full history — it must never fall through to the
 //! local fast path, which ignores `agent_id` and would silently answer from the
-//! connected/parent agent's own conversation.
-//!
-//! Self-contained (own minimal `DispatchCtx`) so it stays independent of the
-//! larger `cov_tests` fixture and keeps each file within the size budget.
+//! connected/parent agent's own conversation. Self-contained (own minimal
+//! `DispatchCtx`), independent of the larger `cov_tests` fixture.
 use super::{
     ForwardGetMessage, dispatch_command, forward_subagent_get_message,
     forward_subagent_get_messages,
@@ -17,6 +15,9 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
+use crate::interface::cli::uds::dispatch_session_roster_tests::{
+    list_handle, read_handles_over, rewrite_handles_for, save_handle_for, switch_handles_for,
+};
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
@@ -26,7 +27,7 @@ pub(super) struct Fx {
     pub(super) messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    pub(super) store: FileSessionStore,
+    pub(super) store: std::sync::Arc<FileSessionStore>,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }
@@ -34,7 +35,9 @@ pub(super) struct Fx {
 impl Fx {
     pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
+        let store = FileSessionStore::new(
+            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -44,7 +47,7 @@ impl Fx {
                 model: "stub".into(),
                 max_tokens: 100,
                 temperature: 0.0,
-                spill_store: None,
+                retention: None,
                 session_key: "cli:test".into(),
                 context_collapse_after_tool_calls: u32::MAX,
                 max_context_tokens: 190_000,
@@ -58,9 +61,9 @@ impl Fx {
                 tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             session_key: "cli:test".into(),
-            store,
+            store: std::sync::Arc::new(store),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -71,26 +74,23 @@ impl Fx {
             &self.session_key,
             &self.messages,
         );
+        let save_session = save_handle_for(&self.session_key);
+        let rewrite = rewrite_handles_for(&self.session_key);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: read_handles_over(self.store.clone(), &self.session_key, None, &[]),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),
@@ -104,9 +104,11 @@ impl Fx {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
+            rewrite,
+            switch: switch_handles_for(&self.session_key),
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }
@@ -614,7 +616,8 @@ async fn forward_get_message_unknown_agent_is_error_event() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
-    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::{Session, SubagentLiveness};
 
     let registry = new_registry();
     {
@@ -630,7 +633,7 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
     let mut fx = Fx::new();
     fx.store
         .save(&Session {
-            key: "dead-child".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -657,7 +660,8 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
 
 #[tokio::test]
 async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_omitted() {
-    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::{Session, SubagentLiveness};
     use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
 
     let registry = new_registry();
@@ -678,7 +682,7 @@ async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_o
         .collect();
     fx.store
         .save(&Session {
-            key: "dead-child".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
             messages,
             workflow_run: None,
             subagent_roster: Vec::new(),

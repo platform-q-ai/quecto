@@ -1,5 +1,6 @@
-use super::cov_tests::{Fixture, tool_reg};
+use super::cov_tests::tool_reg;
 use super::dispatch_command;
+use super::fixture_tests::Fixture;
 use crate::interface::cli::uds::AgentCommand;
 
 #[tokio::test]

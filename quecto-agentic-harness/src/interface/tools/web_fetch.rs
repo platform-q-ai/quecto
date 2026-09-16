@@ -2,9 +2,10 @@ use crate::{
     application::agent_turn::use_cases::web_fetch::{
         FetchFailure, WebFetchError, WebFetchResult, WebFetchUseCase,
     },
+    application::tools::ports::Tool,
     domain::{
         error::DomainError,
-        tool::{Tool, ToolDefinition, ToolResult},
+        tool::{ToolDefinition, ToolResult},
     },
 };
 use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};

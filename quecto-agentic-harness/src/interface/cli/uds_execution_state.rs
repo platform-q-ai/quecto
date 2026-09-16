@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-pub(crate) type ExecutionStateHandle = Arc<Mutex<ExecutionState>>;
+pub type ExecutionStateHandle = Arc<Mutex<ExecutionState>>;
 const WINDOW: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -55,7 +55,7 @@ pub struct ProgressSummary {
     pub tool_calls_failed: u64,
 }
 
-pub(crate) struct ExecutionState {
+pub struct ExecutionState {
     phase: &'static str,
     /// Read port of this process's admission activity, when admission is on.
     admission: Option<Arc<dyn AdmissionObservation>>,
@@ -180,7 +180,7 @@ impl ExecutionState {
         self.touch();
     }
 
-    pub(crate) fn message_count(&self) -> usize {
+    pub fn message_count(&self) -> usize {
         self.message_count
     }
 

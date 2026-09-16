@@ -1,6 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use crate::{application::agent_loop::AgentLoopImpl, domain::tool::Tool};
+use crate::application::{agent_loop::AgentLoopImpl, tools::ports::Tool};
 
 impl AgentLoopImpl {
     pub fn tool_registry_extension_names(&self) -> Vec<String> {

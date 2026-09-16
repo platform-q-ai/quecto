@@ -4,8 +4,9 @@
 // no bash intermediary.  Uses the framed JSON protocol from
 // `src/interface/cli/protocol.rs`.
 
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -25,20 +26,37 @@ pub struct AgentCmdTool {
     /// Shared registry populated by [`super::spawn::SpawnTool`].
     registry: SubagentRegistry,
     /// The owner of the `kill` command (#1936): the composed selected
-    /// termination tool. Without one, `kill` is refused: this tool never
-    /// decides a lifecycle itself.
-    kill: Option<std::sync::Arc<dyn Tool>>,
-    /// Side-effect-free environment inventory query and kill owner.
-    list_environments:
-        Option<std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>>,
-    environment_control:
-        Option<std::sync::Arc<crate::application::environments::use_cases::KillEnvironment>>,
+    /// termination tool, installed by the interface after this tool is
+    /// built. Empty, `kill` is refused: this tool never decides a
+    /// lifecycle itself.
+    kill: KillToolSlot,
+    /// The environment inventory query and kill owner (#1369, #1939),
+    /// installed by composition after this tool is built. Empty, the
+    /// container commands are refused: this tool composes no use case.
+    environments: super::agent_cmd_containers::EnvironmentControlSlot,
+}
+
+/// Where the composed `agent_cmd kill` owner lives (#1936): filled once by
+/// the interface after the agent-control tools are built, read by every
+/// `kill` command. A second install is ignored: one owner per harness.
+#[derive(Clone, Default)]
+pub struct KillToolSlot(std::sync::Arc<std::sync::OnceLock<std::sync::Arc<dyn Tool>>>);
+
+impl KillToolSlot {
+    /// Install the owner; `true` when this call filled the slot.
+    pub fn install(&self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.0.set(tool).is_ok()
+    }
+
+    pub fn get(&self) -> Option<std::sync::Arc<dyn Tool>> {
+        self.0.get().cloned()
+    }
 }
 
 impl std::fmt::Debug for AgentCmdTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentCmdTool")
-            .field("kill", &self.kill.is_some())
+            .field("kill", &self.kill.get().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -48,37 +66,51 @@ impl AgentCmdTool {
     pub fn new(registry: SubagentRegistry) -> Self {
         Self {
             registry,
-            kill: None,
-            list_environments: None,
-            environment_control: None,
+            kill: KillToolSlot::default(),
+            environments: super::agent_cmd_containers::EnvironmentControlSlot::default(),
         }
     }
 
-    /// Attach the session's side-effect-free inventory query.
-    pub fn with_list_environments(
-        mut self,
-        query: std::sync::Arc<crate::application::environments::use_cases::ListEnvironmentsQuery>,
-    ) -> Self {
-        self.list_environments = Some(query);
-        self
-    }
-
-    /// Attach the existing kill owner; listing does not depend on this effectful use case.
+    /// Attach the composed environment control (inventory query and kill
+    /// owner) directly: fixtures that compose their own.
     pub fn with_environment_control(
-        mut self,
-        environment_control: std::sync::Arc<
-            crate::application::environments::use_cases::KillEnvironment,
-        >,
+        self,
+        control: super::agent_cmd_containers::EnvironmentControl,
     ) -> Self {
-        self.environment_control = Some(environment_control);
+        let installed = self.environments.install(control);
+        debug_assert!(
+            installed,
+            "the environment control is composed once per tool"
+        );
         self
     }
 
-    /// Attach the composed selected-termination tool that owns `kill`
-    /// (built by composition, injected through the agent-control deps).
-    pub fn with_kill_tool(mut self, kill: std::sync::Arc<dyn Tool>) -> Self {
-        self.kill = Some(kill);
+    /// Read the environment control from a slot shared with whoever fills
+    /// it later (composition, once the tool is already registered).
+    pub fn with_environment_control_slot(
+        mut self,
+        slot: super::agent_cmd_containers::EnvironmentControlSlot,
+    ) -> Self {
+        self.environments = slot;
         self
+    }
+
+    /// Attach the composed selected-termination tool that owns `kill`.
+    pub fn with_kill_tool(self, kill: std::sync::Arc<dyn Tool>) -> Self {
+        self.kill.install(kill);
+        self
+    }
+
+    /// Read `kill` from a slot shared with whoever fills it later
+    /// (composition, once the tool is already registered).
+    pub fn with_kill_slot(mut self, slot: KillToolSlot) -> Self {
+        self.kill = slot;
+        self
+    }
+
+    /// The slot the composed `kill` owner is installed into.
+    pub fn kill_slot(&self) -> KillToolSlot {
+        self.kill.clone()
     }
 
     /// Create a new empty registry (convenience for tests and wiring).
@@ -127,7 +159,7 @@ impl AgentCmdTool {
         if command != "kill" {
             return None;
         }
-        let Some(kill) = self.kill.as_ref() else {
+        let Some(kill) = self.kill.get() else {
             return Some(ToolResult {
                 content: "agent_cmd error: kill is not available in this composition".into(),
                 is_error: true,
@@ -396,9 +428,10 @@ impl Tool for AgentCmdTool {
                 // Session-level container commands decode/delegate/encode via
                 // the environment control use case (#1369 slice 2).
                 if super::agent_cmd_containers::is_container_command(value) {
+                    let control = self.environments.get();
                     return Ok(super::agent_cmd_containers::execute_container_command(
-                        self.list_environments.as_ref(),
-                        self.environment_control.as_ref(),
+                        control.as_ref().map(|control| &control.list),
+                        control.as_ref().map(|control| &control.kill),
                         value,
                     )
                     .await);

@@ -101,6 +101,20 @@ impl EnvironmentMemberShutdown for DelegatedMemberShutdown {
     }
 }
 
+/// The slots the agent-control tools read their composed use cases from
+/// (#1936 review, #1939): the `agent_cmd kill` owner, the launch
+/// lifecycle the spawn tool hands its reaper and monitor, and the
+/// environment control `agent_cmd` serves (whose kill asks the composed
+/// member shutdown directly). Built empty with the tools,
+/// handed to composition inside the interface's wiring, filled once by
+/// composition's graph. Cloning shares the slots.
+#[derive(Clone, Default)]
+pub struct TerminationSlots {
+    pub kill: super::agent_cmd::KillToolSlot,
+    pub lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot,
+    pub environments: super::agent_cmd_containers::EnvironmentControlSlot,
+}
+
 #[cfg(test)]
 #[path = "environment_member_shutdown_tests.rs"]
 mod tests;

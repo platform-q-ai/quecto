@@ -9,31 +9,34 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use super::session_layout::FlatSessionLayout;
+use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
 use crate::domain::error::DomainError;
-use crate::domain::session::{
-    ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList, SpillPresence,
-};
+use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 
 /// JSONL-based spill store for context pruning.
 ///
-/// Stores spilled tool outputs as one JSON object per line, append-only.
-/// Maintains an in-memory index cache keyed by session to avoid re-reading
-/// and re-parsing the JSONL file on every `list_entries()` call (#375).
+/// Stores spilled tool outputs as one JSON object per line, append-only, in
+/// the file the flat layout projects for the session's identity
+/// ([`FlatSessionLayout::spill_file`]). Maintains an in-memory index cache
+/// keyed by session to avoid re-reading and re-parsing the JSONL file on
+/// every `list_entries()` call (#375).
 ///
 /// The cache uses `Arc<Vec<SpillIndex>>` so that `list_entries()` returns
 /// a cheap `Arc::clone()` instead of deep-cloning every `SpillIndex`.
 pub struct FileContextSpillStore {
-    base_dir: PathBuf,
-    /// In-memory index cache: session_key → cached SpillIndex entries.
+    layout: FlatSessionLayout,
+    /// In-memory index cache: session identity → cached SpillIndex entries.
     /// Populated incrementally on `append()` and seeded from disk on
     /// cold-start `list_entries()`. Invalidated on `clear()`.
-    index_cache: RwLock<HashMap<String, Arc<Vec<SpillIndex>>>>,
+    index_cache: RwLock<HashMap<SessionIdentity, Arc<Vec<SpillIndex>>>>,
 }
 
 impl std::fmt::Debug for FileContextSpillStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContextSpillStore")
-            .field("base_dir", &self.base_dir)
+            .field("layout", &self.layout)
             .finish()
     }
 }
@@ -84,45 +87,17 @@ impl From<&SpillRecord> for SpillIndex {
 }
 
 impl FileContextSpillStore {
-    pub fn new(base_dir: PathBuf) -> Self {
+    /// A spill store writing where `layout` projects each identity.
+    pub fn new(layout: FlatSessionLayout) -> Self {
         Self {
-            base_dir,
+            layout,
             index_cache: RwLock::new(HashMap::new()),
         }
     }
 
-    fn spill_path(&self, session_key: &str) -> PathBuf {
-        spill_path_for(&self.base_dir, session_key)
+    fn spill_path(&self, identity: &SessionIdentity) -> PathBuf {
+        self.layout.spill_file(identity)
     }
-
-    /// Best-effort synchronous removal of a session's on-disk spill file
-    /// (plus its parent directory when that leaves it empty).
-    ///
-    /// Privacy scrub for ephemeral runs (PR #1048 security review): the spill
-    /// writers deliberately persist `--no-session` content under the sanitized
-    /// empty-key path so in-run `recall()` stubs stay resolvable, so ephemeral
-    /// interface paths (one-shot CLI, UDS, REPL) call this at run end to
-    /// guarantee that content does not outlive the run. Synchronous and
-    /// instance-free so exit paths without a live runtime or store handle can
-    /// scrub. Best-effort only: all ephemeral runs share the empty-key path,
-    /// so a concurrent ephemeral run's entries may be scrubbed early (the same
-    /// pre-existing shared-file caveat as the writers themselves).
-    pub fn scrub_session_spill_sync(base_dir: &Path, session_key: &str) {
-        let path = spill_path_for(base_dir, session_key);
-        let _ = std::fs::remove_file(&path);
-        if let Some(dir) = path.parent() {
-            // Only succeeds when the directory is now empty — never removes
-            // unrelated session files.
-            let _ = std::fs::remove_dir(dir);
-        }
-    }
-}
-
-fn spill_path_for(base_dir: &Path, session_key: &str) -> PathBuf {
-    base_dir
-        .join("sessions")
-        .join(super::filename::sanitize_session_key(session_key))
-        .join("spill.jsonl")
 }
 
 /// Lightweight index record for list_entries — avoids deserializing content.
@@ -178,12 +153,12 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(content: &str) -> Vec<T> {
 impl ContextSpillStore for FileContextSpillStore {
     fn append(
         &self,
-        session_key: &str,
+        identity: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let path = self.spill_path(session_key);
+        let path = self.spill_path(identity);
         let record = SpillRecord::from(entry);
-        let session_key = session_key.to_string();
+        let session_key = identity.clone();
         Box::pin(async move {
             // Ensure parent directory exists
             if let Some(parent) = path.parent() {
@@ -235,12 +210,12 @@ impl ContextSpillStore for FileContextSpillStore {
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        identity: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
-        let path = self.spill_path(session_key);
-        let session_key_owned = session_key.to_string();
-        let id = id.to_string();
+        let path = self.spill_path(identity);
+        let session_key_owned = identity.clone();
+        let id = id.as_str().to_string();
         Box::pin(async move {
             // Quick check: if index cache is populated and doesn't contain
             // this ID, skip disk I/O entirely.
@@ -280,9 +255,9 @@ impl ContextSpillStore for FileContextSpillStore {
         })
     }
 
-    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_> {
-        let path = self.spill_path(session_key);
-        let session_key = session_key.to_string();
+    fn list_entries(&self, identity: &SessionIdentity) -> SpillIndexList<'_> {
+        let path = self.spill_path(identity);
+        let session_key = identity.clone();
         Box::pin(async move {
             // Fast path: return cached index if available (cheap Arc clone)
             {
@@ -317,8 +292,8 @@ impl ContextSpillStore for FileContextSpillStore {
         })
     }
 
-    fn has_entries(&self, session_key: &str) -> SpillPresence<'_> {
-        let path = self.spill_path(session_key);
+    fn has_entries(&self, identity: &SessionIdentity) -> SpillPresence<'_> {
+        let path = self.spill_path(identity);
         Box::pin(async move {
             // Presence must use the same corrupt-line-skipping semantics as
             // list_entries(), otherwise a torn append can advertise memory
@@ -329,10 +304,10 @@ impl ContextSpillStore for FileContextSpillStore {
 
     fn clear(
         &self,
-        session_key: &str,
+        identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let path = self.spill_path(session_key);
-        let session_key = session_key.to_string();
+        let path = self.spill_path(identity);
+        let session_key = identity.clone();
         Box::pin(async move {
             // Invalidate cache regardless of disk state
             self.index_cache.write().await.remove(&session_key);
@@ -367,6 +342,29 @@ impl ContextSpillStore for FileContextSpillStore {
                 DomainError::Session(format!("failed to atomically clear spill file: {}", e))
             })
         })
+    }
+
+    /// Best-effort synchronous removal of a session's on-disk spill file
+    /// (plus its parent directory when that leaves it empty).
+    ///
+    /// Privacy scrub for ephemeral runs (PR #1048 security review): the spill
+    /// writers deliberately persist `--no-session` content under the sanitized
+    /// empty-key path so in-run `recall()` stubs stay resolvable, so the
+    /// sessions capability scrubs it at run end (D9 #1978:
+    /// `RecallContext::scrub_ephemeral`) to guarantee that content does not
+    /// outlive the run. Synchronous so exit paths without a live runtime can
+    /// scrub. Best-effort only: all ephemeral runs share the empty-key path,
+    /// so a concurrent ephemeral run's entries may be scrubbed early (the same
+    /// pre-existing shared-file caveat as the writers themselves). The cache
+    /// is not touched: no runtime outlives the scrub.
+    fn scrub_sync(&self, identity: &SessionIdentity) {
+        let path = self.spill_path(identity);
+        let _ = std::fs::remove_file(&path);
+        if let Some(dir) = path.parent() {
+            // Only succeeds when the directory is now empty — never removes
+            // unrelated session files.
+            let _ = std::fs::remove_dir(dir);
+        }
     }
 }
 

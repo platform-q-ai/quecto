@@ -16,6 +16,9 @@ awk '
 in_failures                { print; next }
 /^error:/                  { print; next }
 
+# Per-scenario timings emitted under QUECTO_BDD_TIMING=1 (slow-scenario census)
+/^BDD_TIMING\t/             { print; next }
+
 # ── Cucumber-rs BDD harness ──────────────────────────────────────
 # Track current Feature and Scenario so we can print context on failure
 /^Feature:/                { feature=$0; scenario="" }

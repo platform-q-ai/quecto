@@ -140,7 +140,7 @@ fn apply_approval(world: &mut QuectoWorld) {
 
 #[when("a swarm participant requests a workflow-enabled worker")]
 async fn reject_workflow(world: &mut QuectoWorld) {
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
         .with_swarm_context(Some(
             quecto::infrastructure::tools::swarm_bridge::SwarmContext {
@@ -161,7 +161,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
 
 #[when("a workflow-enabled ordinary container is requested")]
 async fn ordinary_container_workflow(world: &mut QuectoWorld) {
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     // No container runtime is configured here, so the launch fails later on
     // configuration; the point is that validation no longer refuses workflow.
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
@@ -245,7 +245,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     };
     let socket = workspace.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    use quecto::domain::swarm::CoordinationPort;
+    use quecto::application::swarm::ports::CoordinationPort;
     context.reserve_member("worker", "reservation").unwrap();
     let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
         member: "worker".into(),
@@ -307,7 +307,7 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
         member: "worker".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
     };
-    use quecto::domain::tool::Tool;
+    use quecto::application::tools::ports::Tool;
     let workspace = std::sync::Arc::new(context.checkout.clone());
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
         workspace.clone(),
@@ -385,7 +385,11 @@ fn permit_subprocesses(world: &mut QuectoWorld) {
 #[when(expr = "a {string} swarm interpreter returns before its ordinary child")]
 fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
     assert!(matches!(mode.as_str(), "foreground" | "background"));
-    let child = "import pathlib,time,os; pathlib.Path('child-ready').write_text(str(os.getpid())); time.sleep(10)";
+    // The pid file is published atomically (write to a temp name, then
+    // rename): the interpreter polls for the file's existence and returns
+    // as soon as it appears, so a non-atomic `write_text` let the step
+    // read an empty file under load (CI shard 12 on #1958).
+    let child = "import pathlib,time,os; pathlib.Path('child-ready.tmp').write_text(str(os.getpid())); os.rename('child-ready.tmp','child-ready'); time.sleep(10)";
     let code = format!(
         "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
         json!(child)
@@ -413,10 +417,11 @@ fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
 #[then("the completed swarm invocation has stopped its child")]
 fn invocation_child_stopped(world: &mut QuectoWorld) {
     let workspace = super::ensure_workspace(world);
-    let pid: u32 = std::fs::read_to_string(workspace.join("child-ready"))
-        .unwrap()
+    let published = std::fs::read_to_string(workspace.join("child-ready")).unwrap();
+    let pid: u32 = published
+        .trim()
         .parse()
-        .unwrap();
+        .unwrap_or_else(|e| panic!("child-ready holds {published:?}: {e}"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let running = std::fs::read_to_string(format!("/proc/{pid}/stat"))
@@ -439,7 +444,8 @@ fn invocation_child_stopped(world: &mut QuectoWorld) {
 
 #[given("an idle swarm peer with an unavailable endpoint")]
 fn idle_peer(world: &mut QuectoWorld) {
-    use quecto::domain::swarm::{CoordinationPort, ProcessIdentity};
+    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::domain::swarm::ProcessIdentity;
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
@@ -546,7 +552,7 @@ fn supervisor_context(
 /// Apply a supervisor control through the same port the parent's
 /// `swarm_control` command uses, recording the receipt or error as the result.
 fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlAction) {
-    use quecto::domain::swarm::SwarmRunControl;
+    use quecto::application::swarm::ports::SwarmRunControl;
     let context = supervisor_context(world);
     let outcome = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()

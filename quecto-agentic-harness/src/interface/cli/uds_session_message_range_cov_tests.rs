@@ -18,7 +18,7 @@ fn clear_thinking_page_removes_all_thinking_metadata() {
 #[test]
 fn message_to_json_range_returns_full_message_without_range_args() {
     let msg = Message::assistant("hello", vec![]);
-    let json = message_to_json_range(&msg, None, None);
+    let json = message_to_json_range_for_response(&msg, None, None, None, None);
 
     assert_eq!(json["id"], msg.id().to_string());
     assert_eq!(json["content"], "hello");

@@ -17,6 +17,27 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Sessions capability (#1968, D1 #1970): plural capability, one
+/// construction site, one layout owner, retirement of the singular path.
+#[path = "architecture/sessions_capability.rs"]
+mod sessions_capability;
+/// Sessions epic close (#1968, D10 #1979): exact use-case/port/DTO
+/// inventories, one owner per transaction, signature vocabulary, the
+/// interface's parse/map/present rule, admitted raw-key sites, retirement
+/// and disposition inventories, documentation lockstep.
+#[path = "architecture/sessions_epic_close.rs"]
+mod sessions_epic_close;
+#[path = "architecture/sessions_epic_close_retirement.rs"]
+mod sessions_epic_close_retirement;
+/// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
+/// retired-name sweep, single owners and whole-crate layer baselines.
+#[path = "architecture/teardown_authority.rs"]
+mod teardown_authority;
+#[path = "architecture/teardown_layers.rs"]
+mod teardown_layers;
+#[path = "architecture/use_case_construction.rs"]
+mod use_case_construction;
+
 /// Recursively collect all .rs files under a directory.
 fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     if !dir.exists() {
@@ -246,7 +267,7 @@ fn domain_layer_has_no_runtime_io_calls() {
 }
 
 #[test]
-fn environment_control_orchestration_stays_out_of_interface_handlers() {
+fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // Environment listing and kill transactions are separate application owners.
     // UDS handlers and the agent_cmd adapter may only decode arguments, delegate
     // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
@@ -320,9 +341,41 @@ fn application_dependencies_allowed(content: &str) -> bool {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
                 ["crate", "application", "ports", ..] => true,
-                // Subagent teardown ports are capability-local (#1934); the
-                // process adapters implement them (#1935).
-                ["crate", "application", "subagents", "ports", ..] => true,
+                // Ports are capability-local (#1934, #1960): every
+                // `application/<capability>/ports.rs` is a contract this
+                // layer implements. Subagent teardown (#1935) was the first.
+                ["crate", "application", _, "ports", ..] => true,
+                // The sessions list port takes the capability's own query
+                // DTO (#1970); the file store names it to implement `list`.
+                // The export port (#1974) takes the records and manifest the
+                // use case assembled and returns the artifact receipt.
+                [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "dto",
+                    "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
+                ] => true,
+                // Retained context (D9 #1978): the `recall` tool adapts the
+                // sessions capability's recall use case — it holds the
+                // composed handle, parses its schema and formats the
+                // outcomes; the selection is the use case's.
+                [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "use_cases",
+                    "RecallContext",
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "sessions",
+                    "dto",
+                    "retained_context",
+                    "RecallError" | "RecallOutcome" | "RecallQuery",
+                    ..,
+                ] => true,
                 // The launch-side lifecycle use cases (#1936) are invoked by
                 // the reaper, the monitor and the launch rollback — the
                 // adapters that observe a direct child's end — over the
@@ -382,8 +435,7 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // agent-control tools (the precedent of the retired
                 // `EnvironmentControlUseCase`) and by the cleanup path that
                 // finalizes a member.
-                ["crate", "application", "environments", "ports", ..]
-                | [
+                [
                     "crate",
                     "application",
                     "environments",
@@ -395,6 +447,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "FinalizeEnvironmentMember",
                     ..,
                 ] => true,
+                // The launch port moved out of the domain into its capability
+                // (#1940); the spawn adapter implements it. The swarm ports
+                // live in `application::swarm::ports` (#1960), covered above.
+                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"] => true,
                 ["crate", "application", ..] => false,
                 _ => true,
             }
@@ -1274,7 +1330,12 @@ fn runtime_manager_domain_is_pure() {
     let src = fs::read_to_string("../quecto-runtime-manager/src/domain.rs")
         .expect("read quecto-runtime-manager/src/domain.rs");
     // Scan production code only — stop at the test module.
-    let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    let prod = teardown_authority::strip_test_items(&src)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prod = prod.as_str();
     for pattern in [
         "crate::infrastructure",
         "crate::application",
@@ -2488,6 +2549,8 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
                     "find",
                     ..,
                 ]
+                // The adapter implements the tool port (#1960).
+                | ["crate", "application", "tools", "ports", ..]
                 | ["crate", "domain", ..] => true,
                 ["crate", ..] => false,
                 _ => true,
@@ -2726,7 +2789,53 @@ fn subagent_teardown_domain_is_pure() {
 
 #[test]
 fn subagent_teardown_interface_only_parses_maps_and_presents() {
-    assert_dependencies("src/interface/uds", teardown_interface_dependency_allowed);
+    assert_dependencies(
+        "src/interface/uds/subagent_teardown",
+        teardown_interface_dependency_allowed,
+    );
+    assert_dependencies(
+        "src/interface/uds/parent_control",
+        teardown_interface_dependency_allowed,
+    );
+}
+
+/// The UDS sessions edge (#1970) maps the wire command onto the sessions
+/// capability's DTOs and use cases and presents domain summaries. It never
+/// reaches infrastructure, the legacy CLI socket code, the runtime or
+/// another application capability.
+fn sessions_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "sessions", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "sessions", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn sessions_interface_only_parses_maps_and_presents() {
+    assert_dependencies(
+        "src/interface/uds/sessions",
+        sessions_interface_dependency_allowed,
+    );
+    // Every UDS edge directory is covered by exactly one of the edge rules.
+    let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    edges.sort();
+    assert_eq!(edges, ["parent_control", "sessions", "subagent_teardown"]);
 }
 
 /// `pub trait` names declared in a source file, in declaration order.
@@ -3081,25 +3190,23 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/interface/cli/uds_multi_client.rs",
     "src/interface/cli/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
-    "src/interface/cli/uds_teardown_graph.rs",
+    "src/interface/cli/uds_teardown_handles.rs",
     "src/interface/cli/uds_shutdown.rs",
     "src/interface/cli/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
     "src/interface/cli/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
+    "src/composition/subagent_lifecycle.rs",
+    "src/composition/environments.rs",
 ];
 
-/// Only the part of a source file before its `#[cfg(test)]` modules.
+/// A source file with every `#[cfg(test)]`-gated item removed (see
+/// `teardown_authority::strip_test_items`).
 fn production_source(path: &str) -> String {
-    let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    source
-        .split("#[cfg(test)]")
-        .next()
-        .unwrap_or_default()
-        .to_string()
+    teardown_authority::production_source(path)
 }
 
-/// The interface receives composition's teardown graph builder through
+/// The interface receives composition's teardown handles builder through
 /// `CliContext` (`run`, via `CliComposition`) and the process-wide supervisor from
 /// infrastructure: no subagent module of the interface names the
 /// composition layer (the find capability's delegation predates this and
@@ -3180,25 +3287,11 @@ fn owned_child_supervisor_is_the_one_child_owner_and_signaller() {
     }
 }
 
-/// The retained #1925 scaffolding may still signal *reported* pids until
-/// #1940, but no production path publishes a launched lease any more: the
-/// launched-child authority lives exclusively in the supervisor's handle.
+/// A local launch records the supervisor's opaque handle and a launch
+/// generation: the launched-child authority lives exclusively in the
+/// supervisor's handle (#1935); no lease of any kind exists since #1940.
 #[test]
-fn local_launch_publishes_no_signal_lease() {
-    let mut files = Vec::new();
-    collect_rs_files(Path::new("src"), &mut files);
-    for file in &files {
-        let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/infrastructure/tools/process_ownership.rs" {
-            continue;
-        }
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
-        assert!(
-            !production.contains("ProcessOwnership::launched"),
-            "{path} publishes a launched signal lease; launched children are \
-             owned through the supervisor (#1935)"
-        );
-    }
+fn local_launch_records_the_owned_handle_and_generation() {
     let launch = production_source("src/infrastructure/tools/spawn_launch_ports.rs");
     assert!(launch.contains("entry.owned_child = prepared.owned_child;"));
     assert!(launch.contains("entry.launch_generation ="));
@@ -3270,7 +3363,11 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
     let mut touched = 0;
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if !production.contains("parent_control_path") {
             continue;
         }
@@ -3292,7 +3389,11 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
     // where the bound connection presents it.
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains(".expose()") {
             assert!(
                 matches!(
@@ -3309,12 +3410,10 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
 // ─── Selected termination and lifecycle compensation (#1936) ─────────────────
 
 /// Every termination path converges on the application's claims and the
-/// owned-handle fallback: none of them reads the #1925 reported lease,
-/// signals a pid, or removes a row before the exit was observed. Since
-/// #1938 no termination path reads the lease at all; only the merge
-/// scaffolding writes it until #1940 deletes the module.
+/// owned-handle fallback: none of them names a lease (deleted by #1940),
+/// signals a pid, or removes a row before the exit was observed.
 #[test]
-fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
+fn termination_paths_never_consult_a_lease_or_a_pid() {
     for path in [
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
@@ -3339,6 +3438,8 @@ fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
         "src/infrastructure/processes/owned_child_termination.rs",
         "src/interface/tools/agent_cmd_kill.rs",
         "src/composition/subagent_termination.rs",
+        "src/composition/subagent_lifecycle.rs",
+        "src/composition/environments.rs",
         // Environment and swarm member termination (#1939).
         "src/application/environments/use_cases/kill_environment.rs",
         "src/application/environments/use_cases/finalize_environment_member.rs",
@@ -3348,7 +3449,8 @@ fn termination_paths_never_consult_the_reported_lease_or_a_pid() {
         "src/infrastructure/tools/subagent_cleanup.rs",
         "src/infrastructure/tools/swarm_member_termination.rs",
         "src/infrastructure/tools/swarm_lifecycle.rs",
-        "src/application/swarm.rs",
+        "src/application/swarm/mod.rs",
+        "src/application/swarm/ports.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -3397,11 +3499,151 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
             "agent_cmd.rs still orchestrates a kill ({forbidden})"
         );
     }
+    // The builder alias and its wiring live with the interface's other
+    // composition entry points, never in infrastructure (#1936 review).
+    let cli = fs::read_to_string("src/interface/cli/mod.rs").unwrap();
+    assert!(cli.contains("pub type KillToolBuilder =") && cli.contains("fn(KillToolWiring)"));
+    assert!(cli.contains("pub struct KillToolWiring {"));
+    let native = production_source("src/infrastructure/extensions/native.rs");
+    for forbidden in [
+        "KillToolBuilder",
+        "KillToolWiring",
+        "TerminationOwners",
+        "install_termination_owners",
+        "bind_member_termination",
+        "KillDelegatedAgent",
+    ] {
+        assert!(
+            !native.contains(forbidden),
+            "native.rs names `{forbidden}`: it builds the tools over empty slots and composes no owner"
+        );
+    }
+    assert!(
+        native.contains("pub termination_slots:")
+            && native.contains("environment_member_shutdown::TerminationSlots,")
+            && native.contains(".with_kill_slot(termination_slots.kill.clone())"),
+        "native.rs hands the tools' slots out for composition to fill"
+    );
+    // The interface names nothing of the native module beyond its build
+    // entry points and their deps: never an owner, a slot install or a
+    // builder of its own.
+    let allowed_native_names = [
+        "AgentControlToolDeps",
+        "AgentControlToolBuild",
+        "OfficialToolDeps",
+        "SessionToolDeps",
+        "WorkflowToolDeps",
+        "build_agent_control_tool_extensions",
+        "build_official_tool_extensions",
+        "build_official_tool_registry",
+        "build_official_tool_registry_with_context",
+        "build_session_tool_extensions",
+        "build_workflow_tool_extension",
+        "build_native_extensions",
+        "register_bundled_native_tools",
+        "register_bundled_native_tools_with_scope",
+    ];
+    let mut interface_files = Vec::new();
+    collect_rs_files(Path::new("src/interface"), &mut interface_files);
+    let mut named = std::collections::BTreeSet::new();
+    for file in &interface_files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        for (index, _) in source.match_indices("extensions::native::") {
+            let rest = &source[index + "extensions::native::".len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                // A `{ ... }` import list: every listed name is checked.
+                let list = rest
+                    .trim_start()
+                    .strip_prefix('{')
+                    .and_then(|list| list.split('}').next())
+                    .unwrap_or_default();
+                for item in list.split(',') {
+                    let item = item.trim();
+                    if !item.is_empty() {
+                        named.insert((path.to_owned(), item.to_owned()));
+                    }
+                }
+            } else {
+                named.insert((path.to_owned(), name));
+            }
+        }
+    }
+    assert!(!named.is_empty(), "the interface builds the native tools");
+    for (path, name) in &named {
+        assert!(
+            allowed_native_names.contains(&name.as_str()),
+            "{path} names `infrastructure::extensions::native::{name}`, which is not a build entry point"
+        );
+    }
+    // Both routes are composed with the owner conclusion: the direct
+    // owner of a target concludes it (protocol, exit, fallback,
+    // compensation), whether the kill started here or arrived by
+    // forwarding.
+    for path in [
+        "src/composition/subagent_termination.rs",
+        "src/composition/subagent_teardown.rs",
+    ] {
+        assert!(
+            production_source(path).contains(".with_owner_conclusion("),
+            "{path} composes the route without the owner conclusion"
+        );
+    }
+    // A row is `Compensated` only once its terminal effects ran.
+    let cascade = production_source("src/infrastructure/tools/subagent_cascade.rs");
+    let dead = cascade
+        .split("pub fn mark_entry_dead(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("mark_entry_dead");
+    assert!(
+        !dead.contains("Compensated"),
+        "mark_entry_dead must not release waiters before the effects ran"
+    );
+    // ...and the one compensation marks rows compensated last: after the
+    // registered cleanup, the exit-status mark, the cascade, the removed
+    // rows' cleanup and the exit signals, in source order.
+    let registry = production_source("src/infrastructure/tools/subagent_teardown_registry.rs");
+    let compensate = registry
+        .split("fn compensate<'a>(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("the compensation function");
+    let position = |needle: &str| {
+        compensate
+            .find(needle)
+            .unwrap_or_else(|| panic!("compensate names `{needle}`"))
+    };
+    let release = position("mark_entry_compensated(");
+    for effect in [
+        "cleanup_registered_once(",
+        "mark_exited",
+        "cascade_remove_and_state_changed(",
+        "cleanup_removed_entries_once(",
+        "send_replace(Some(ExitSignal {",
+        "SubagentNotification::Exited",
+    ] {
+        assert!(
+            position(effect) < release,
+            "`{effect}` must precede mark_entry_compensated in the compensation"
+        );
+    }
+    assert_eq!(
+        compensate.matches("mark_entry_compensated(").count(),
+        1,
+        "one release point, after every effect"
+    );
     let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
     for dep in dependency_paths(&adapter).expect("parse the kill adapter") {
         let parts: Vec<_> = dep.split("::").collect();
         let allowed = match parts.as_slice() {
-            ["crate", "domain", ..] | ["crate", "application", "subagents", ..] => true,
+            ["crate", "domain", ..]
+            | ["crate", "application", "subagents", ..]
+            // The adapter implements the tool port (#1960).
+            | ["crate", "application", "tools", "ports", ..] => true,
             ["crate", ..] => false,
             ["tokio" | "libc" | "quecto_line_io", ..] => false,
             _ => true,
@@ -3419,7 +3661,11 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains("KillDelegatedAgent::new(") {
             assert_eq!(
                 path, "src/composition/subagent_termination.rs",
@@ -3445,9 +3691,9 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
 /// graceful / fallback / already-exited / failed.
 #[test]
 fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
-    let dto = fs::read_to_string("src/application/subagents/dto.rs").unwrap();
+    let ports = fs::read_to_string("src/application/subagents/ports.rs").unwrap();
     for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
-        assert!(dto.contains(word), "dto lacks {word}");
+        assert!(ports.contains(word), "ports lack {word}");
     }
     let adapter = production_source("src/interface/tools/agent_cmd_kill.rs");
     assert!(adapter.contains("\"failed\""));
@@ -3455,7 +3701,11 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("\"unsignalled\"") && !production.contains("\"signalled\""),
             "{path} still presents the #1928 signalled/unsignalled vocabulary"
@@ -3512,7 +3762,11 @@ fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("shutdown_all(")
                 && !production.contains("shutdown_all_with_count("),
@@ -3539,7 +3793,11 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         if production.contains("TerminateAllDelegatedAgents::new(") {
             assert_eq!(
                 path, "src/composition/subagent_teardown.rs",
@@ -3547,28 +3805,55 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
             );
         }
     }
-    let graph = production_source("src/interface/cli/uds_teardown_graph.rs");
-    assert!(graph.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
-    assert!(graph.contains("pub controller: Arc<SubagentTeardownController>"));
+    let handles = production_source("src/interface/cli/uds_teardown_handles.rs");
+    assert!(handles.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
+    assert!(handles.contains("pub controller: Arc<SubagentTeardownController>"));
     let composition = production_source("src/composition/subagent_teardown.rs");
     assert!(composition.contains("children: fleet.clone()"));
     // The signal watcher and the last client deliver to the controller.
     let shutdown = production_source("src/interface/cli/uds_shutdown.rs");
     assert!(shutdown.contains(".termination_signal("));
     assert!(shutdown.contains(".last_client_disconnected("));
-    // Session transitions settle the fleet before anything is replaced.
-    let session = production_source("src/interface/cli/uds_dispatch_session.rs");
-    for transition in ["\"new_session\"", "\"resume_session\""] {
-        let settle = session
-            .find(&format!("settle_departing_children(ctx, {transition})"))
-            .unwrap_or_else(|| panic!("{transition} settles the departing children"));
-        let reset = session
-            .find(&format!(
-                "reset_subagent_roster(&ctx.subagent_registry, {transition})"
-            ))
-            .unwrap_or_else(|| panic!("{transition} replaces the roster"));
-        assert!(settle < reset, "{transition} settles before it replaces");
+    // Session transitions settle the fleet before anything is replaced
+    // (#1976, #1977): the fresh-session and resume transactions order it in
+    // the application through the departing-children collaborator, over
+    // the fleet the composition adapts; the resume also claims and loads
+    // its target only after the settlement, and replaces the roster before
+    // the key moves (#1938).
+    for (file, command) in [
+        (
+            "src/application/sessions/use_cases/start_fresh_conversation.rs",
+            "new_session",
+        ),
+        (
+            "src/application/sessions/use_cases/resume_saved_session.rs",
+            "resume_session",
+        ),
+    ] {
+        let source = production_source(file);
+        let settle = source
+            .find(".settle(fleet, transition)")
+            .unwrap_or_else(|| panic!("{command} settles the departing children"));
+        let reset = source
+            .find(".reset_roster(transition)")
+            .unwrap_or_else(|| panic!("{command} replaces the roster"));
+        assert!(settle < reset, "{command} settles before it replaces");
     }
+    let resume = production_source("src/application/sessions/use_cases/resume_saved_session.rs");
+    let settle = resume.find(".settle(fleet, transition)").unwrap();
+    let claim = resume.find(".claim(&target.identity)").unwrap();
+    let reset = resume.find(".reset_roster(transition)").unwrap();
+    let propagate = resume
+        .find(".session_key_changed(&target.identity)")
+        .unwrap();
+    assert!(settle < claim && claim < reset && reset < propagate);
+    let session = production_source("src/interface/cli/uds_dispatch_session.rs");
+    assert!(
+        !session.contains(".settle(") && !session.contains(".reset_roster("),
+        "the interface orders no settlement or roster replacement"
+    );
+    let adapters = production_source("src/composition/fleet_settlement.rs");
+    assert!(adapters.contains("impl FleetSettlement for TerminateAllDelegatedAgents"));
     // The spawn tool admits against the shared lifecycle cell.
     // `spawn.rs` leads with its test-module includes, so read it whole.
     let spawn = fs::read_to_string("src/infrastructure/tools/spawn.rs").unwrap();
@@ -3807,25 +4092,25 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
     assert!(registry.contains("TeardownIntent::EnvironmentKill"));
 }
 
-/// Swarm member termination is delegated (#1939): the domain port hands the
+/// Swarm member termination is delegated (#1939): the port hands the
 /// adapter the member, never a process identity; the adapter reaches the
 /// member's harness by protocol or through the delegated-agent graph; no
 /// termination path reads a pid, and the numeric member termination is gone.
 #[test]
 fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
-    let domain = production_source("src/domain/swarm.rs");
+    let ports = production_source("src/application/swarm/ports.rs");
     assert!(
-        domain.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
+        ports.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
         "ProcessControl::terminate takes the member"
     );
     assert!(
-        !domain.contains(
+        !ports.contains(
             "process: &'a ProcessIdentity,
-    ) -> LaunchFuture<'a, Result<(), DomainError>>"
+    ) -> PortFuture<'a, Result<(), DomainError>>"
         ),
         "ProcessControl::terminate no longer takes a process identity"
     );
-    let application = production_source("src/application/swarm.rs");
+    let application = production_source("src/application/swarm/mod.rs");
     assert!(application.contains("processes.terminate(member)"));
     assert!(
         !application.contains("processes.terminate(process)"),
@@ -3882,16 +4167,93 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let production = teardown_authority::strip_test_items(source)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !production.contains("fn terminate_member("),
             "{path} still defines the numeric terminate_member"
         );
     }
-    // Composition binds the delegated termination once, beside the kill tool.
-    let native = production_source("src/infrastructure/extensions/native.rs");
-    assert!(native.contains("bind_member_termination("));
+    // Composition binds the delegated termination once, beside the kill tool
+    // it installs into the tools' slot and the member shutdown it hands the
+    // environment kill.
     let composition = production_source("src/composition/subagent_termination.rs");
+    assert!(composition.contains("bind_member_termination("));
+    assert!(composition.contains("slots.kill.install("));
+    assert!(
+        composition.contains("build_environment_control(environments, owners.member_shutdown)")
+    );
     assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
     assert!(composition.contains("DelegatedMemberShutdown::new("));
+}
+
+/// The consolidated `integration` and `docs` targets run every former per-file
+/// target in one process, so no module may mutate process-wide state: a
+/// `set_var` leaks into every `quecto` child a concurrently running test
+/// spawns. The two real-process proofs that depend on running alone stay their
+/// own targets: `selected_termination` sets process environment, and
+/// `parent_loss` kills a launcher ~100 ms after its child binds, which under
+/// the load of the other modules met a not-yet-bound child (see
+/// tests/integration/main.rs).
+#[test]
+fn consolidated_integration_target_has_no_process_wide_mutation() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("tests/integration"), &mut files);
+    assert!(files.len() > 20, "the integration modules must be scanned");
+    collect_rs_files(Path::new("tests/docs"), &mut files);
+    assert!(files.len() > 26, "the docs modules must be scanned");
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        for forbidden in ["set_var(", "remove_var(", "set_current_dir("] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} mutates process-wide state ({forbidden}) inside a shared test process"
+            );
+        }
+    }
+    for standalone in ["tests/selected_termination.rs", "tests/parent_loss.rs"] {
+        assert!(
+            Path::new(standalone).exists(),
+            "{standalone} depends on running alone and stays its own test target"
+        );
+    }
+    // CI names the targets explicitly (no `find` discovery): every harness test
+    // target on disk except the sharded cucumber `bdd` runner must be invoked
+    // as a whole `--test <name>` token inside the `workspace-tests` job.
+    let ci = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
+    let mut lines = ci.lines().skip_while(|line| *line != "  workspace-tests:");
+    assert!(lines.next().is_some(), "ci.yml has a workspace-tests job");
+    let job = lines
+        .take_while(|line| !(line.starts_with("  ") && !line.starts_with("   ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let invoked: std::collections::HashSet<&str> = job
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|pair| pair[0] == "--test")
+        .map(|pair| pair[1])
+        .collect();
+    let mut targets = Vec::new();
+    for entry in fs::read_dir("tests").expect("read tests dir") {
+        let path = entry.expect("dir entry").path();
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        if path.extension().is_some_and(|ext| ext == "rs") || path.join("main.rs").exists() {
+            targets.push(name);
+        }
+    }
+    targets.sort();
+    assert!(targets.len() >= 6, "test targets found: {targets:?}");
+    for target in targets {
+        if target == "bdd" {
+            continue;
+        }
+        assert!(
+            invoked.contains(target.as_str()),
+            "the CI workspace-tests job must invoke the harness test target `{target}` as a whole `--test {target}` token"
+        );
+    }
 }

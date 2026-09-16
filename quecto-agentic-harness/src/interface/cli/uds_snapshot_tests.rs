@@ -6,264 +6,25 @@
 //! pre-turn history by the accept loop even while the dispatch loop holds
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
-use crate::domain::message::{Message, ThinkingBlock};
+use crate::domain::message::Message;
 use crate::interface::cli::protocol::SessionState;
+use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use crate::interface::cli::uds_multi::{
-    BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
+    BusyFlag, BusyGuard, build_get_messages_line, build_get_state_line,
 };
 use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
-use crate::interface::cli::uds_snapshots::{ConversationSnapshotData, resolve_get_message};
-use std::time::Duration;
 
-/// #1060 review 1a: the id-addressable ledger keeps a ref resolvable after the
-/// live conversation drops or collapses the referenced message.
-#[test]
-fn ledger_resolves_refs_after_prune_and_collapse() {
-    let a = Message::assistant("full answer A", vec![]);
-    let b = Message::assistant("full answer B", vec![]);
-    let (a_id, b_id) = (a.id().to_string(), b.id().to_string());
-
-    let mut snap = ConversationSnapshotData::default();
-    snap.publish(&[a.clone(), b.clone()]);
-    assert!(snap.resolve(&a_id).is_some() && snap.resolve(&b_id).is_some());
-
-    // The ladder DROPS A from the live conversation (publish without it).
-    snap.publish(std::slice::from_ref(&b));
-    assert!(
-        snap.resolve(&a_id).is_some(),
-        "a dropped ref must still resolve via the ledger"
-    );
-
-    // The ladder COLLAPSES B in place (same id, stub content). publish must not
-    // clobber the full copy already in the ledger.
-    let mut b_stub = b.clone();
-    b_stub.content = "recall(spilled)".to_string();
-    snap.publish(&[b_stub.clone()]);
-    assert_eq!(
-        snap.resolve(&b_id).map(|m| m.content.as_str()),
-        Some("full answer B"),
-        "the ledger's full copy must win over a collapsed live stub"
-    );
-
-    // record_full overwrites with an authoritative full copy (un-demoted).
-    let mut snap2 = ConversationSnapshotData::default();
-    snap2.publish(std::slice::from_ref(&b_stub));
-    snap2.record_full(std::slice::from_ref(&b));
-    assert_eq!(
-        snap2.resolve(&b_id).map(|m| m.content.as_str()),
-        Some("full answer B")
-    );
-}
-
-/// #1060 review r4 finding 2: the ledger is byte-bounded and evicts oldest-first,
-/// so a weeks-long session cannot grow it without limit. The oldest refs stop
-/// resolving once the budget is exceeded; the most recent still resolve.
-#[test]
-fn ledger_is_byte_bounded_and_evicts_oldest() {
-    // Each message ~6 MiB of content; the 16 MiB budget holds ~2. Recording 4
-    // in order must evict the two oldest.
-    let big = || Message::assistant("X".repeat(6 * 1024 * 1024), vec![]);
-    let msgs: Vec<Message> = (0..4).map(|_| big()).collect();
-    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
-
-    let mut snap = ConversationSnapshotData::default();
-    snap.record_full(&msgs);
-
-    assert!(
-        snap.resolve(&ids[0]).is_none() && snap.resolve(&ids[1]).is_none(),
-        "the oldest refs must be evicted once the ledger byte budget is exceeded"
-    );
-    assert!(
-        snap.resolve(&ids[3]).is_some(),
-        "the most recent ref must still resolve"
-    );
-}
-
-/// #1060 review r4 finding 2 (follow-up): the ledger must ALSO cap entry count,
-/// so a flood of tiny/empty/tool-metadata messages — which add little content
-/// but real per-entry cost (id copies + struct clones) — cannot grow it without
-/// bound even though the byte budget is far from full.
-#[test]
-fn ledger_counts_thinking_blocks_against_byte_budget() {
-    let make_msg = || {
-        let mut msg = Message::assistant("ok", vec![]);
-        msg.thinking_blocks.push(ThinkingBlock::Normal {
-            thinking: "r".repeat(6 * 1024 * 1024),
-            signature: "sig".into(),
-        });
-        msg
-    };
-    let msgs: Vec<Message> = (0..4).map(|_| make_msg()).collect();
-    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
-
-    let mut snap = ConversationSnapshotData::default();
-    snap.record_full(&msgs);
-
-    assert!(snap.resolve(&ids[0]).is_none());
-    assert!(snap.resolve(ids.last().unwrap()).is_some());
-}
-
-#[test]
-fn ledger_is_entry_bounded_for_tiny_messages() {
-    use crate::interface::cli::uds_snapshots::LEDGER_MAX_ENTRIES;
-    let mut snap = ConversationSnapshotData::default();
-    // Zero-content messages, more than the entry cap.
-    let msgs: Vec<Message> = (0..LEDGER_MAX_ENTRIES + 100)
-        .map(|_| Message::assistant("", vec![]))
-        .collect();
-    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
-    snap.record_full(&msgs);
-
-    assert!(
-        snap.resolve(&ids[0]).is_none(),
-        "the oldest tiny messages must be evicted by the entry-count cap"
-    );
-    assert!(
-        snap.resolve(ids.last().unwrap()).is_some(),
-        "the most recent message must still resolve"
-    );
-}
-
-#[derive(Debug)]
-pub(super) struct BlockingSpillStore {
-    pub(super) entry: crate::domain::session::SpillEntry,
-    pub(super) started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    pub(super) release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
-}
-
-impl crate::domain::session::ContextSpillStore for BlockingSpillStore {
-    fn append(
-        &self,
-        _session_key: &str,
-        _entry: &crate::domain::session::SpillEntry,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn recall(
-        &self,
-        _session_key: &str,
-        _id: &str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        Option<crate::domain::session::SpillEntry>,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        let started = self.started.lock().unwrap().take();
-        let release = self.release.lock().unwrap().take();
-        let entry = self.entry.clone();
-        Box::pin(async move {
-            if let Some(started) = started {
-                let _ = started.send(());
-            }
-            if let Some(release) = release {
-                let _ = release.await;
-            }
-            Ok(Some(entry))
-        })
-    }
-
-    fn list_entries(
-        &self,
-        _session_key: &str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        std::sync::Arc<Vec<crate::domain::session::SpillIndex>>,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Ok(std::sync::Arc::new(Vec::new())) })
-    }
-
-    fn clear(
-        &self,
-        _session_key: &str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Ok(()) })
-    }
-}
-
-fn collapsed_snapshot_message(spill_id: &str) -> Message {
-    let mut message = Message::assistant(format!("recall(\"{spill_id}\")"), vec![]);
-    message.is_collapsed = true;
-    message.spill_id = Some(spill_id.into());
-    message
-}
-
-/// Deferred recall must not hold the snapshot read lock, and a result captured
-/// before lifecycle replacement must be discarded rather than leaking old
-/// session content into the response.
-#[tokio::test]
-async fn spill_recall_retries_after_concurrent_snapshot_replacement() {
-    use crate::domain::session::SpillEntry;
-    use std::sync::Arc;
-
-    let old = collapsed_snapshot_message("same-spill");
-    let message_id = old.id().to_string();
-    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-    let old_store = Arc::new(BlockingSpillStore {
-        entry: SpillEntry {
-            id: "same-spill".into(),
-            tool: "message".into(),
-            input_preview: String::new(),
-            tokens: 1,
-            content: "old secret".into(),
-        },
-        started: std::sync::Mutex::new(Some(started_tx)),
-        release: std::sync::Mutex::new(Some(release_rx)),
-    });
-    let mut data = ConversationSnapshotData::from_messages(vec![old]);
-    data.set_spill_store(Some(old_store), "cli:old".into());
-    let snapshot: ConversationSnapshot = Arc::new(tokio::sync::RwLock::new(data));
-
-    let resolving = tokio::spawn({
-        let snapshot = snapshot.clone();
-        let message_id = message_id.clone();
-        async move { resolve_get_message(&snapshot, &message_id).await }
-    });
-    started_rx.await.expect("old spill recall starts");
-
-    // A write lock is obtainable while recall is blocked: no snapshot guard is
-    // held across store I/O. Replace the complete history + namespace.
-    tokio::time::timeout(Duration::from_millis(250), async {
-        snapshot
-            .write()
-            .await
-            .reset_to_with_spill_store(&[], None, "cli:new".into());
-    })
-    .await
-    .expect("snapshot replacement must not wait for spill I/O");
-    release_tx.send(()).expect("release old spill read");
-
-    assert!(
-        resolving.await.unwrap().is_none(),
-        "old-session recall must be discarded and retried against new history"
-    );
+/// The connect-time `get_messages` line for `messages` as the newest page
+/// of the published transcript.
+fn messages_line(messages: &[Message]) -> String {
+    let handles = ephemeral_read_handles(&[]);
+    build_get_messages_line(
+        handles
+            .read_history
+            .tail(messages, "", HISTORY_PAGE_SIZE)
+            .expect("cursorless"),
+    )
 }
 
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
@@ -275,7 +36,7 @@ fn build_get_messages_line_serializes_prior_history() {
         Message::user("prior question"),
         Message::assistant("prior answer", vec![]),
     ];
-    let line = build_get_messages_line(&messages);
+    let line = messages_line(&messages);
     assert!(
         line.ends_with('\n'),
         "line must be newline-terminated: {line}"
@@ -298,7 +59,7 @@ fn build_get_messages_line_serializes_prior_history() {
 /// data may lag the in-flight turn — unlike a live dispatch-loop reply (#842).
 #[test]
 fn build_get_messages_line_marks_snapshot() {
-    let line = build_get_messages_line(&[Message::user("q")]);
+    let line = messages_line(&[Message::user("q")]);
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(
         v["data"]["snapshot"], true,
@@ -312,7 +73,7 @@ fn build_get_messages_line_pages_history_without_trimming() {
     let messages: Vec<Message> = (0..count)
         .map(|i| Message::assistant(format!("message-{i}"), vec![]))
         .collect();
-    let line = build_get_messages_line(&messages);
+    let line = messages_line(&messages);
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     let page = v["data"]["messages"].as_array().unwrap();
 
@@ -340,7 +101,7 @@ fn build_get_messages_line_summarises_oversized_busy_history() {
         .map(|i| Message::assistant(format!("{i}-{body}"), vec![]))
         .collect();
 
-    let line = build_get_messages_line(&messages);
+    let line = messages_line(&messages);
     assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(v["success"], true);
@@ -367,7 +128,7 @@ fn build_get_messages_line_summarises_oversized_busy_history() {
 #[test]
 fn build_get_messages_line_summarises_a_lone_unframeable_message() {
     let huge = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024 * 1024);
-    let line = build_get_messages_line(&[Message::assistant(huge.clone(), vec![])]);
+    let line = messages_line(&[Message::assistant(huge.clone(), vec![])]);
     assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(response["type"], "response");
@@ -392,12 +153,7 @@ fn build_get_messages_line_summarises_a_lone_unframeable_message() {
 /// once rather than mid-sentence-only.
 #[tokio::test]
 async fn snapshot_readable_while_turn_holds_messages_mut() {
-    let snapshot: ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            Message::user("q1"),
-            Message::assistant("a1", vec![]),
-        ]),
-    ));
+    let snapshot = ephemeral_read_handles(&[Message::user("q1"), Message::assistant("a1", vec![])]);
 
     // Own a separate `messages` buffer mutably for the whole "turn", mirroring
     // `agent.process(messages)` holding `&mut messages` across the turn.
@@ -415,10 +171,12 @@ async fn snapshot_readable_while_turn_holds_messages_mut() {
     started_rx.await.unwrap();
 
     // Mid-turn: the accept-loop read path still serves prior history.
-    let line = {
-        let snap = snapshot.read().await;
-        build_get_messages_line(&snap.messages)
-    };
+    let line = build_get_messages_line(
+        snapshot
+            .read_history
+            .newest_live_page(HISTORY_PAGE_SIZE)
+            .await,
+    );
     assert!(line.contains("q1"), "prior history served mid-turn: {line}");
     assert!(line.contains("a1"), "prior history served mid-turn: {line}");
 

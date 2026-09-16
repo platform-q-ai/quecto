@@ -1,12 +1,13 @@
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
-use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus, SwarmRunControl};
+use crate::application::swarm::ports::SwarmRunControl;
+use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -151,7 +152,7 @@ impl SwarmRunControl for RunningAt {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -240,7 +241,7 @@ impl SwarmRunControl for Answer {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {
@@ -380,7 +381,7 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
 /// A provider that always fails terminally.
 #[derive(Debug)]
 struct FailingProvider;
-impl crate::domain::provider::LlmProvider for FailingProvider {
+impl crate::application::providers::ports::LlmProvider for FailingProvider {
     fn name(&self) -> &str {
         "failing"
     }
@@ -389,7 +390,7 @@ impl crate::domain::provider::LlmProvider for FailingProvider {
     }
     fn chat(
         &self,
-        _: crate::domain::provider::ChatRequest<'_>,
+        _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn Future<
@@ -607,7 +608,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
 /// A provider that succeeds and counts its requests.
 #[derive(Debug)]
 struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-impl crate::domain::provider::LlmProvider for CountingProvider {
+impl crate::application::providers::ports::LlmProvider for CountingProvider {
     fn name(&self) -> &str {
         "counting"
     }
@@ -616,7 +617,7 @@ impl crate::domain::provider::LlmProvider for CountingProvider {
     }
     fn chat(
         &self,
-        _: crate::domain::provider::ChatRequest<'_>,
+        _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn Future<
@@ -646,7 +647,7 @@ impl crate::domain::provider::LlmProvider for CountingProvider {
 #[test]
 fn wake_nudges_queue_as_automatic_messages() {
     use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
-    let mut session = AgentSession::new("m".into(), "k".into());
+    let mut session = AgentSession::new("m".into());
     assert!(session.enqueue_control(
         None,
         crate::interface::cli::uds_swarm_control::SWARM_WAKE,
@@ -715,7 +716,7 @@ impl SwarmRunControl for Rising {
     fn apply(
         &self,
         _: RunControlAction,
-    ) -> crate::domain::subagent_launch::LaunchFuture<
+    ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
         Result<RunControlReceipt, crate::domain::error::DomainError>,
     > {

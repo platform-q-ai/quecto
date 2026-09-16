@@ -1,9 +1,10 @@
 //! #1060 lifecycle regressions split out to keep dispatch coverage under file cap.
 
-use super::cov_tests::Fixture;
+use super::fixture_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::Session;
 
 #[tokio::test]
 async fn clear_history_clears_message_ref_lookup_ledger() {
@@ -14,23 +15,34 @@ async fn clear_history_clears_message_ref_lookup_ledger() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[msg]);
-        assert!(snapshot.read().await.resolve(&msg_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[msg]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&msg_id)
+                .is_some()
+        );
         snapshot
     };
 
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_clear_history(&mut ctx, None, "clear_history").await);
     }
 
     assert!(fx.messages.is_empty());
-    let snap = snapshot.read().await;
-    assert!(snap.messages.is_empty(), "live snapshot should be cleared");
+    let snap = snapshot.active_session.read().await;
     assert!(
-        snap.resolve(&msg_id).is_none(),
+        snap.conversation().live_messages().is_empty(),
+        "live snapshot should be cleared"
+    );
+    assert!(
+        snap.conversation().lookup(&msg_id).is_none(),
         "old message ref must not remain fetchable after clear_history"
     );
 }
@@ -44,18 +56,32 @@ async fn new_session_clears_message_ref_lookup_ledger() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[msg]);
-        assert!(snapshot.read().await.resolve(&msg_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[msg]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&msg_id)
+                .is_some()
+        );
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
     }
     assert!(
-        snapshot.read().await.resolve(&msg_id).is_none(),
+        snapshot
+            .active_session
+            .read()
+            .await
+            .conversation()
+            .lookup(&msg_id)
+            .is_none(),
         "old ref must not remain fetchable after /new"
     );
 }
@@ -71,7 +97,7 @@ async fn resume_session_clears_previous_session_ref() {
     let key = Session::build_key("cli", "saved");
     fx.store
         .save(&Session {
-            key,
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key),
             messages: vec![Message::user("restored")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -81,20 +107,34 @@ async fn resume_session_clears_previous_session_ref() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[old]);
-        assert!(snapshot.read().await.resolve(&old_id).is_some());
+        let snapshot = ctx.sessions.clone();
+        snapshot.active_session.write().await.record_full(&[old]);
+        assert!(
+            snapshot
+                .active_session
+                .read()
+                .await
+                .conversation()
+                .lookup(&old_id)
+                .is_some()
+        );
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(
             !handle_resume_session(&mut ctx, Some("rs"), "resume_session", "saved".into()).await
         );
     }
     assert!(
-        snapshot.read().await.resolve(&old_id).is_none(),
+        snapshot
+            .active_session
+            .read()
+            .await
+            .conversation()
+            .lookup(&old_id)
+            .is_none(),
         "a ref from the PREVIOUS session must not resolve after resume"
     );
 }
@@ -114,22 +154,132 @@ async fn rewind_to_drops_rewound_away_message_ref() {
 
     let snapshot = {
         let ctx = fx.ctx();
-        let snapshot = ctx.conversation_snapshot.clone();
-        snapshot.write().await.record_full(&[keep, drop]);
+        let snapshot = ctx.sessions.clone();
+        snapshot
+            .active_session
+            .write()
+            .await
+            .record_full(&[keep, drop]);
         snapshot
     };
     {
         let mut ctx = fx.ctx();
-        ctx.conversation_snapshot = snapshot.clone();
+        ctx.sessions = snapshot.clone();
         assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(2), None).await);
     }
-    let snap = snapshot.read().await;
+    let snap = snapshot.active_session.read().await;
     assert!(
-        snap.resolve(&drop_id).is_none(),
+        snap.conversation().lookup(&drop_id).is_none(),
         "a rewound-away message ref must not remain fetchable"
     );
     assert!(
-        snap.resolve(&keep_id).is_some(),
+        snap.conversation().lookup(&keep_id).is_some(),
         "a surviving message must still resolve after rewind"
+    );
+}
+
+// ─── D6 (#1975): the streaming refusals are admission, pinned on the wire ──
+
+/// Drive `handler` with the agent streaming over a two-turn conversation
+/// and a valid user target; returns the events the handler emitted.
+async fn refused_while_streaming(
+    handler: impl AsyncFnOnce(&mut crate::interface::cli::uds::DispatchCtx<'_>) -> bool,
+) -> Vec<serde_json::Value> {
+    let mut fx = Fixture::new();
+    fx.messages.push(Message::user("first"));
+    fx.messages.push(Message::assistant("answer", vec![]));
+    fx.messages.push(Message::user("second"));
+    let before: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    fx.session.set_streaming(true);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    {
+        let mut ctx = fx.ctx();
+        ctx.broadcast_tx = Some(tx);
+        assert!(!handler(&mut ctx).await);
+    }
+    let mut events = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        events.push(serde_json::from_str(line.trim()).unwrap());
+    }
+    let after: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(after, before, "a refused command changes nothing");
+    events
+}
+
+#[tokio::test]
+async fn clear_history_while_streaming_answers_the_refusal_and_touches_nothing() {
+    let events = refused_while_streaming(async |ctx| {
+        handle_clear_history(ctx, Some("c"), "clear_history").await
+    })
+    .await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(
+        events[0]["error"],
+        "cannot clear history while agent is running"
+    );
+}
+
+#[tokio::test]
+async fn rewind_to_while_streaming_answers_the_refusal_and_touches_nothing() {
+    let events = refused_while_streaming(async |ctx| {
+        let target = ctx.messages[2].id().to_string();
+        handle_rewind_to(ctx, Some("r"), "rewind_to", None, Some(target)).await
+    })
+    .await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(events[0]["error"], "cannot rewind while agent is running");
+}
+
+/// D7 (#1976): `new_session` while streaming is refused by the interface's
+/// admission before the transaction runs — nothing is saved, no key is
+/// generated or propagated, the conversation and the identity stay.
+#[tokio::test]
+async fn new_session_while_streaming_answers_the_refusal_and_keeps_the_session() {
+    let mut fx = Fixture::new();
+    fx.messages.push(Message::user("first"));
+    fx.messages.push(Message::assistant("answer", vec![]));
+    let before: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    fx.session.set_streaming(true);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    {
+        let mut ctx = fx.ctx();
+        ctx.broadcast_tx = Some(tx);
+        assert!(!handle_new_session(&mut ctx, Some("n"), "new_session").await);
+    }
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        events.push(serde_json::from_str(line.trim()).unwrap());
+    }
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["type"], "response");
+    assert_eq!(events[0]["id"], "n");
+    assert_eq!(events[0]["success"], false);
+    assert_eq!(
+        events[0]["error"],
+        "cannot start a new session while agent is running"
+    );
+    let after: Vec<String> = fx.messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(after, before, "a refused switch changes nothing");
+    assert_eq!(fx.current_session_key(), "cli:test");
+    assert_eq!(
+        fx.sessions
+            .active_session
+            .read()
+            .await
+            .identity()
+            .runtime_key(),
+        "cli:test"
+    );
+    assert!(
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .is_none(),
+        "no save ran before the admission refusal"
     );
 }

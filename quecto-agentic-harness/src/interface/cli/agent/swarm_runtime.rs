@@ -1,6 +1,6 @@
 //! CLI composition of container identity and the shared lifecycle adapter.
 use super::AgentFlags;
-use crate::domain::swarm::CoordinationPort;
+use crate::application::swarm::ports::CoordinationPort;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
 

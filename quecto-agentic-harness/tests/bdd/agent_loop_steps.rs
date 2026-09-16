@@ -48,7 +48,7 @@ fn build_agent_loop_with_callback(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,

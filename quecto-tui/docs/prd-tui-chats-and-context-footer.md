@@ -140,7 +140,7 @@ feature; it should now operate on a clean single-conversation session.
 
 ## Gates (must pass before merge)
 - `cargo build --workspace`; `cargo test --lib -p quecto -p quecto-tui`;
-  `cargo test -p quecto --test architecture --test contracts --test repo_docs --test workflow_docs`.
+  `cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture --test contracts --test docs`.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo fmt --check`.
 - Region coverage ≥ **87%** for both `quecto` and `quecto-tui`
   (`QUECTO_COV_THRESHOLD` is 87; pre-push enforces it).

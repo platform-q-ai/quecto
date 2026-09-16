@@ -3,6 +3,40 @@ import json
 from swarm_policy import SwarmError
 
 
+def lost_members(connection, members):
+    """The subset of `members` whose harness was quarantined (`scope_unknown`)
+    after their latest `activated` event, in one ordered scan of those two
+    event kinds; shared by the coordinator-loss blocker (#1924), the
+    per-member loss record (#1961) and the owner view (#1969)."""
+    wanted = set(members)
+    latest = {}
+    for row in connection.execute(
+            "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
+        member = json.loads(row['detail']).get('member')
+        if member in wanted:
+            latest.setdefault(member, {'scope_unknown': 0, 'activated': 0})[row['action']] = row['id']
+    return {member for member, seen in latest.items() if seen['scope_unknown'] > seen['activated']}
+
+
+def lost_after_activation(connection, member):
+    return member in lost_members(connection, [member])
+
+
+ACTIVE_CLAIM = "('claimed','blocked','submitted')"
+
+
+def member_claim_counts(connection, coordinator):
+    """Read-side membership counts (#1969): admitted members (live or
+    reserved, the coordinator excluded because it never claims by role) that
+    hold no active claim, and members whose death the harness confirmed."""
+    without_claim = connection.execute(
+        "SELECT count(*) FROM members m WHERE m.status IN ('live','reserved') AND m.id IS NOT ? "
+        "AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner=m.id AND t.status IN " + ACTIVE_CLAIM + ")",
+        (coordinator,)).fetchone()[0]
+    dead = connection.execute("SELECT count(*) FROM members WHERE status='dead'").fetchone()[0]
+    return {'members_without_claim': without_claim, 'members_dead': dead}
+
+
 class Transaction:
     def __init__(self, store, connection):
         self.store, self.connection = store, connection
@@ -19,7 +53,10 @@ class Transaction:
         return self.connection.execute("SELECT count(*) FROM members WHERE status IN ('live','reserved')").fetchone()[0]
 
     def reserve_member(self, identity, reservation):
-        self.connection.execute("INSERT INTO members VALUES(?,?,'reserved',NULL,NULL,NULL)", (identity, reservation))
+        """The reserving actor is the member's launcher (#1961)."""
+        self.connection.execute(
+            "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,'reserved',NULL,NULL,NULL,?)",
+            (identity, reservation, self.store.actor))
 
     def completion_state(self):
         return {'criteria': json.loads(self.run()['criteria']),
@@ -61,12 +98,7 @@ class Transaction:
         """The coordinator's id when its harness was quarantined after its latest
         activation (#1924); None while it is (re)activated or was never lost."""
         coordinator = self.run()['coordinator']
-        latest = {'scope_unknown': 0, 'activated': 0}
-        for row in self.connection.execute(
-                "SELECT id, action, detail FROM events WHERE action IN ('scope_unknown','activated') ORDER BY id"):
-            if json.loads(row['detail']).get('member') == coordinator:
-                latest[row['action']] = row['id']
-        return coordinator if latest['scope_unknown'] > latest['activated'] else None
+        return coordinator if lost_after_activation(self.connection, coordinator) else None
 
     def pause_started(self):
         row = self.connection.execute("SELECT detail FROM events WHERE action='paused' ORDER BY id DESC LIMIT 1").fetchone()

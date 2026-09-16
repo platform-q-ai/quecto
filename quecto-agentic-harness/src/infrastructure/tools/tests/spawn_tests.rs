@@ -359,7 +359,7 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
 
 #[tokio::test]
 async fn spawned_parent_id_ignores_empty_session_key_refresh() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let tool =
         SpawnTool::new(vec![]).with_event_forwarding(None, Some("existing-parent".to_string()));
@@ -378,7 +378,7 @@ async fn spawned_parent_id_ignores_empty_session_key_refresh() {
 
 #[tokio::test]
 async fn spawned_parent_id_tracks_raw_session_key_changes() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
     tool.set_session_key("raw-session".to_string());
@@ -396,7 +396,7 @@ async fn spawned_parent_id_tracks_raw_session_key_changes() {
 
 #[tokio::test]
 async fn spawned_parent_id_tracks_cli_session_name_changes() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
     tool.set_session_key("cli:new-name".to_string());
@@ -414,7 +414,7 @@ async fn spawned_parent_id_tracks_cli_session_name_changes() {
 
 #[tokio::test]
 async fn spawned_parent_id_tracks_colon_session_name_changes() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
     tool.set_session_key("kind:new-name".to_string());
@@ -432,7 +432,7 @@ async fn spawned_parent_id_tracks_colon_session_name_changes() {
 
 #[tokio::test]
 async fn spawned_parent_id_tracks_session_key_changes() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
 
     let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("chat-old".to_string()));
     tool.set_session_key("chat-new".to_string());

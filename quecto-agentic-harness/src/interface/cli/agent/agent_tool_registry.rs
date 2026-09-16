@@ -1,11 +1,10 @@
 use super::*;
-use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 pub(super) struct ToolRegistryBuild {
     pub(super) registry: ToolRegistryImpl,
-    pub(super) spill_store: Arc<FileContextSpillStore>,
+    pub(super) retention: crate::interface::cli::retention_handles::RetentionHandles,
     pub(super) session_key: String,
     pub(super) model: String,
     pub(super) ext_registry: ExtensionRegistry,
@@ -28,7 +27,7 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) config_path: &'a std::path::Path,
     pub(super) config: &'a Config,
     pub(super) http_client: &'a reqwest::Client,
-    pub(super) web_fetch_tool: Option<Arc<dyn crate::domain::tool::Tool>>,
+    pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
     /// Broadcast channel sender for workflow_state events (#598).
@@ -99,7 +98,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             String::new()
         } else {
             let name = flags.session_name.as_deref().unwrap_or("default");
-            Session::build_key("cli", name)
+            crate::domain::session::Session::build_key("cli", name)
         }
     });
     let entrypoint = if flags.uds_mode {
@@ -107,6 +106,13 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     } else {
         crate::interface::shared::ToolEntrypoint::CliAgent
     };
+    // The interface never constructs the retention store or the recall
+    // graph (D9 #1978): the run is composed over the builder `main` handed
+    // in, once, before the tools and the loop that consume it.
+    let Some(build_retention) = flags.retention else {
+        return Err("agent: retained-context capability not composed".to_string());
+    };
+    let retention = build_retention(base_dir);
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             swarm_context: crate::interface::tool_runtime::swarm_context(),
@@ -124,6 +130,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             sandbox,
             exec_options,
             session_key,
+            recall: retention.recall.clone(),
             spawned: flags.spawned,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
@@ -155,7 +162,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     // receiver/registry wired into the protocol runtime.
     Ok(ToolRegistryBuild {
         registry: runtime.registry,
-        spill_store: runtime.spill_store,
+        retention,
         session_key: runtime.session_key,
         model,
         ext_registry: runtime.ext_registry,

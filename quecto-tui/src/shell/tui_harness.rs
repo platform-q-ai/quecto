@@ -30,6 +30,8 @@ use tokio::sync::mpsc;
 mod disconnect;
 #[path = "tui_harness_events.rs"]
 mod events;
+#[path = "tui_harness_exit.rs"]
+mod exit;
 #[path = "tui_harness_sourced.rs"]
 mod sourced;
 #[path = "tui_harness_tabs.rs"]

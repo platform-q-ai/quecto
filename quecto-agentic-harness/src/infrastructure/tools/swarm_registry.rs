@@ -8,16 +8,38 @@ use super::{ActiveExecutions, JobRegistry, JobState};
 /// Retain this many finished artifact directories per execution registry.
 pub(crate) const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
 
+/// Retention ceilings the tool applies; the defaults are the production
+/// constants and nothing in production constructs anything else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retention {
+    /// Finished jobs kept in the registry ([`MAX_RETAINED_JOBS`]).
+    pub jobs: usize,
+    /// Finished artifact directories kept per registry
+    /// ([`MAX_RETAINED_ARTIFACT_DIRS`]).
+    pub artifact_dirs: usize,
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self {
+            jobs: MAX_RETAINED_JOBS,
+            artifact_dirs: MAX_RETAINED_ARTIFACT_DIRS,
+        }
+    }
+}
+
 /// Only this registry can know which of its executions are live. The opaque
 /// owner prefix excludes other registries, including those in other processes.
-/// Deletes the oldest owned artifact directories once the retention ceiling is
-/// passed. Directories belonging to a job that has not finished are never
-/// removed, so a running program cannot have its output deleted underneath it.
+/// Deletes the oldest owned artifact directories once the retention ceiling
+/// (`max_retained`) is passed. Directories belonging to a job that has not
+/// finished are never removed, so a running program cannot have its output
+/// deleted underneath it.
 pub(crate) fn prune_artifact_dirs(
     workspace: &Path,
     jobs: &JobRegistry,
     active: &ActiveExecutions,
     owner: &str,
+    max_retained: usize,
 ) {
     let root = workspace.join(".quecto/swarm");
     let mut live: Vec<String> = active
@@ -51,11 +73,11 @@ pub(crate) fn prune_artifact_dirs(
             Some((modified, e.path()))
         })
         .collect();
-    if dirs.len() <= MAX_RETAINED_ARTIFACT_DIRS {
+    if dirs.len() <= max_retained {
         return;
     }
     dirs.sort_unstable_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-    for (_, path) in dirs.into_iter().skip(MAX_RETAINED_ARTIFACT_DIRS) {
+    for (_, path) in dirs.into_iter().skip(max_retained) {
         let _ = std::fs::remove_dir_all(path);
     }
 }
@@ -70,8 +92,11 @@ pub(crate) fn is_terminal(status: &str) -> bool {
 /// reached the oldest finished jobs are dropped. Live jobs are never evicted.
 pub(crate) const MAX_RETAINED_JOBS: usize = 32;
 
-pub(crate) fn evict_finished_jobs(registry: &mut HashMap<String, Arc<Mutex<JobState>>>) {
-    if registry.len() < MAX_RETAINED_JOBS {
+pub(crate) fn evict_finished_jobs(
+    registry: &mut HashMap<String, Arc<Mutex<JobState>>>,
+    max_retained: usize,
+) {
+    if registry.len() < max_retained {
         return;
     }
     let mut finished: Vec<(u128, String)> = registry
@@ -84,7 +109,7 @@ pub(crate) fn evict_finished_jobs(registry: &mut HashMap<String, Arc<Mutex<JobSt
     finished.sort_unstable();
     for (_, id) in finished
         .into_iter()
-        .take((registry.len() + 1).saturating_sub(MAX_RETAINED_JOBS))
+        .take((registry.len() + 1).saturating_sub(max_retained))
     {
         registry.remove(&id);
     }

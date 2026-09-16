@@ -2,13 +2,16 @@
 
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
-use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+use quecto::application::tools::ports::Tool;
+use quecto::domain::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
-use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
+use quecto::domain::session::Session;
+use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
 };
@@ -91,7 +94,7 @@ impl LlmProvider for MockLlmProvider {
 
     fn chat(
         &self,
-        request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
         *self.last_max_tokens.lock().unwrap() = Some(request.max_tokens);
@@ -150,7 +153,7 @@ impl std::fmt::Debug for MockBddTool {
     }
 }
 
-impl quecto::domain::tool::Tool for MockBddTool {
+impl quecto::application::tools::ports::Tool for MockBddTool {
     fn definition(&self) -> ToolDefinition {
         self.def.clone()
     }
@@ -173,7 +176,9 @@ impl quecto::domain::tool::Tool for MockBddTool {
 }
 
 // Wrapper for Arc<dyn Extension> that implements Debug (opaque).
-pub struct DebugExtension(pub std::sync::Arc<dyn quecto::domain::extension::Extension>);
+pub struct DebugExtension(
+    pub std::sync::Arc<dyn quecto::application::extensions::ports::Extension>,
+);
 
 impl std::fmt::Debug for DebugExtension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -184,11 +189,11 @@ impl std::fmt::Debug for DebugExtension {
 impl Default for DebugExtension {
     fn default() -> Self {
         struct NullExt;
-        impl quecto::domain::extension::Extension for NullExt {
+        impl quecto::application::extensions::ports::Extension for NullExt {
             fn name(&self) -> &str {
                 ""
             }
-            fn tools(&self) -> Vec<std::sync::Arc<dyn quecto::domain::tool::Tool>> {
+            fn tools(&self) -> Vec<std::sync::Arc<dyn quecto::application::tools::ports::Tool>> {
                 vec![]
             }
         }
@@ -197,7 +202,7 @@ impl Default for DebugExtension {
 }
 
 impl std::ops::Deref for DebugExtension {
-    type Target = std::sync::Arc<dyn quecto::domain::extension::Extension>;
+    type Target = std::sync::Arc<dyn quecto::application::extensions::ports::Extension>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -218,6 +223,14 @@ impl std::ops::Deref for DebugSpillStore {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl DebugSpillStore {
+    /// The narrow handles the pruning policy consumes, composed over this
+    /// store exactly as the runtime composes them (D9 #1978).
+    fn retention(&self) -> quecto::application::context::ContextRetention {
+        quecto::composition::retention::context_retention_over(self.0.clone())
     }
 }
 
@@ -279,7 +292,14 @@ impl std::fmt::Debug for DebugSwarm {
 }
 
 #[derive(Debug, Default, World)]
+#[world(init = Self::new)]
 pub struct QuectoWorld {
+    /// When this scenario's first step began; `QUECTO_BDD_TIMING=1` prints
+    /// each scenario's elapsed time to stderr for the slow-scenario census.
+    pub scenario_started: Option<std::time::Instant>,
+    /// Process + reaped-children CPU seconds when the scenario began; the
+    /// per-scenario CPU delta is meaningful only under QUECTO_BDD_CONCURRENCY=1.
+    pub scenario_cpu_started: f64,
     pub admission: inference_admission_steps::AdmissionState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
@@ -289,6 +309,8 @@ pub struct QuectoWorld {
     pub restore_lifetime: restore_lifetime_steps::RestoreLifetimeState,
     /// #1938 fleet teardown state.
     pub fleet_teardown: fleet_teardown_steps::FleetTeardownState,
+    /// #1940 real root → child → grandchild delegation / parent-loss state.
+    pub delegated_subtree: delegated_subtree_steps::DelegatedSubtreeState,
     /// #1936 operator-selected termination state (root registry, fake
     /// direct-child endpoints, owned fixture processes, composed kill).
     pub selected_termination: selected_termination_steps::SelectedTerminationState,
@@ -719,6 +741,8 @@ pub struct QuectoWorld {
     pub swarm_job_id: Option<String>,
     /// Pid a background swarm program recorded for itself
     pub swarm_pid: Option<i32>,
+    /// Claim token a swarm member held before the coordinator revoked it
+    pub swarm_claim_token: Option<String>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,
@@ -975,6 +999,9 @@ pub struct QuectoWorld {
     pub _paged_response: Option<serde_json::Value>,
     /// Message contents collected while paging backward to the beginning.
     pub _paged_collected: Vec<String>,
+    /// Retained context over the real loop (D9 #1978): the built agent,
+    /// its composed retention handles and the loop's wire events.
+    pub retained_context_run: Option<uds_retained_context_steps::RetainedContextRun>,
     /// Live multi-client: socket path while agent is kept up across steps.
     pub _mc_live_socket: Option<std::path::PathBuf>,
     /// Live multi-client: agent thread handle.
@@ -1406,6 +1433,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_steps;
 mod context_pruning_steps;
+mod delegated_subtree_steps;
 mod e2e_steps;
 mod edit_tool_steps;
 mod embedded_docs_steps;
@@ -1462,10 +1490,16 @@ mod uds_bounded_events_steps;
 #[path = "../common/uds_event_reader.rs"]
 mod uds_event_reader;
 mod uds_framing_steps;
+mod uds_fresh_session_steps;
+mod uds_history_recovery_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
+mod uds_report_export_steps;
+mod uds_resume_session_steps;
+mod uds_retained_context_steps;
 mod uds_steps;
 mod uds_subagent_liveness_steps;
+mod uds_transcript_sync_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
 mod workflow_nudge_steps;
@@ -1473,6 +1507,23 @@ mod workflow_tool_steps;
 
 // Runner
 // ===========================================================================
+
+/// User + system CPU of this process and of the children it has reaped.
+fn cpu_seconds_self_and_children() -> f64 {
+    let mut total = 0.0;
+    for who in [libc::RUSAGE_SELF, libc::RUSAGE_CHILDREN] {
+        // SAFETY: rusage is plain old data, so the all-zero value is valid.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: `usage` is a valid, writable rusage; `who` is a documented selector.
+        if unsafe { libc::getrusage(who, &mut usage) } == 0 {
+            total += usage.ru_utime.tv_sec as f64
+                + usage.ru_utime.tv_usec as f64 / 1e6
+                + usage.ru_stime.tv_sec as f64
+                + usage.ru_stime.tv_usec as f64 / 1e6;
+        }
+    }
+    total
+}
 
 fn main() {
     // cucumber's debug-build scenario futures are stack-hungry (the runner
@@ -1521,8 +1572,41 @@ fn run_cucumber() {
 
     futures::executor::block_on(
         QuectoWorld::cucumber()
-            .max_concurrent_scenarios(25)
+            // QUECTO_BDD_CONCURRENCY=1 makes each scenario's elapsed time its
+            // own cost (with the default, a scenario's clock also runs while
+            // the co-scheduled ones hold the executor).
+            .max_concurrent_scenarios(
+                std::env::var("QUECTO_BDD_CONCURRENCY")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or(25),
+            )
             .fail_on_skipped()
+            .before(|_, _, _, world| {
+                Box::pin(async move {
+                    world.scenario_started = Some(std::time::Instant::now());
+                    world.scenario_cpu_started = cpu_seconds_self_and_children();
+                })
+            })
+            .after(|feature, _, scenario, _, world| {
+                let line = std::env::var_os("QUECTO_BDD_TIMING").and_then(|_| {
+                    let world = world?;
+                    let started = world.scenario_started?;
+                    Some(format!(
+                        "BDD_TIMING\t{:.3}\t{:.3}\t{}\t{}",
+                        started.elapsed().as_secs_f64(),
+                        cpu_seconds_self_and_children() - world.scenario_cpu_started,
+                        feature.name,
+                        scenario.name
+                    ))
+                });
+                Box::pin(async move {
+                    if let Some(line) = line {
+                        eprintln!("{line}");
+                    }
+                })
+            })
             // `_and_exit` makes the process exit non-zero when any scenario
             // fails. Plain `filter_run` returns normally even on failure, so
             // the bdd test binary exited 0 with failing scenarios — meaning the
@@ -1616,6 +1700,47 @@ fn run_cucumber() {
     );
 }
 
+/// World teardown for a child this world's spawn tool launched: the
+/// `shutdown` protocol over its endpoint, then the supervisor's owned-handle
+/// fallback. A row without a retained handle (a fixture, a merged or
+/// restored row, a script/container member) is left alone: nothing is
+/// signalled by pid.
+fn ask_owned_child_to_stop(
+    entry: &quecto::infrastructure::tools::subagent_registry::SubagentEntry,
+) {
+    use quecto::infrastructure::processes::direct_child_routing::{
+        PROTOCOL_ACK_TIMEOUT, shutdown_protocol_attempt,
+    };
+    use quecto::infrastructure::processes::owned_child_supervisor::TerminationBudget;
+    let (Some(handle), Some(supervisor)) = (entry.owned_child, &entry.owned_child_supervisor)
+    else {
+        return;
+    };
+    if !supervisor.retains(handle) {
+        return;
+    }
+    let protocol = shutdown_protocol_attempt(
+        entry.socket_path.clone(),
+        quecto::domain::subagent_teardown::ShutdownReason::ParentShutdown,
+        PROTOCOL_ACK_TIMEOUT,
+    );
+    supervisor.request_termination(handle, Box::pin(protocol), TerminationBudget::DEFAULT);
+}
+
+impl QuectoWorld {
+    /// A fresh world whose CLI context carries composition's sessions
+    /// capability (#1970) and its retained-context graph (#1978): every
+    /// `quecto agent …` run through `run_with_output` needs both or exits
+    /// with "… capability not composed", exactly as the binary's `main`
+    /// supplies them.
+    fn new() -> Self {
+        let mut world = Self::default();
+        world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
+        world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
+        world
+    }
+}
+
 impl Drop for QuectoWorld {
     fn drop(&mut self) {
         // Scenario-scoped cleanup for script-managed environment fixtures. The
@@ -1644,9 +1769,7 @@ impl Drop for QuectoWorld {
                 if let Some(handle) = &entry.monitor_handle {
                     handle.abort();
                 }
-                entry.request_owned_child_termination(
-                    quecto::domain::subagent_teardown::ShutdownReason::ParentShutdown,
-                );
+                ask_owned_child_to_stop(entry);
             }
         }
         // Also cover rollback and removed registry records: fixture ownership
@@ -1678,3 +1801,4 @@ mod inference_admission_observation_steps;
 mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
+mod list_sessions_steps;

@@ -180,3 +180,26 @@ fn redacting_writer_scrubs_keys_from_written_line() {
     assert!(!out.contains("sk-secret-key-12345"));
     assert!(out.contains("sk-***"));
 }
+
+/// A sink that fails like the stderr pipe of a child whose launcher died.
+struct BrokenPipe;
+
+impl Write for BrokenPipe {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
+/// A lost stderr never becomes an error (and so never a
+/// `tracing-subscriber` `eprintln!` panic) inside the logging task (#1940).
+#[test]
+fn redacting_writer_swallows_a_broken_sink() {
+    let mut w = RedactingWriter { inner: BrokenPipe };
+    assert_eq!(w.write(b"parent connection lost\n").unwrap(), 23);
+    w.write_all(b"again\n").unwrap();
+    w.flush().unwrap();
+}

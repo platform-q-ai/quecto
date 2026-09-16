@@ -1,63 +1,69 @@
-use crate::domain::error::DomainError;
+use crate::application::sessions::dto::SessionListQuery;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::session::{Session, SessionStore, SessionSummary};
-use crate::domain::workflow::WorkflowRunPersisted;
+use crate::domain::session::{Session, SessionSummary};
+use crate::domain::session_identity::SessionIdentity;
+use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+
+use super::session_layout::FlatSessionLayout;
+
+/// The file-backed session store: JSON/JSONL records under the flat layout
+/// (`FlatSessionLayout` owns every path; this adapter owns the I/O).
 #[derive(Debug)]
 pub struct FileSessionStore {
-    sessions_dir: PathBuf,
+    layout: FlatSessionLayout,
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
+#[path = "session_store_list.rs"]
+mod session_store_list;
 #[path = "session_store_ordinals.rs"]
-pub(crate) mod session_store_ordinals;
+mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
 
 impl FileSessionStore {
-    pub fn new(base_dir: impl AsRef<Path>) -> Self {
+    /// A store over `layout`'s flat directory.
+    pub fn new(layout: FlatSessionLayout) -> Self {
         Self {
-            sessions_dir: base_dir.as_ref().join("sessions"),
+            layout,
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
     }
 
-    fn claim_key(&self, key: &str) -> Result<(), DomainError> {
-        self.ownership.claim(&self.sessions_dir, key)
+    fn claim_key(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
+        self.ownership.claim(&self.layout, identity)
     }
 
-    fn key_to_filename(key: &str) -> String {
-        format!("{}.json", super::filename::sanitize_session_key(key))
-    }
-
-    fn session_path(&self, key: &str) -> PathBuf {
-        self.sessions_dir.join(Self::key_to_filename(key))
+    fn session_path(&self, identity: &SessionIdentity) -> PathBuf {
+        self.layout.session_file(identity)
     }
 
     pub async fn save_clean_delta(
         &self,
-        key: &str,
+        identity: &SessionIdentity,
         messages: &[Message],
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Result<(), DomainError> {
-        self.claim_key(key)?;
+        self.claim_key(identity)?;
         if messages.is_empty() && workflow_run.is_none() {
-            return self.delete_session_file_if_present(key).await;
+            return self.delete_session_file_if_present(identity).await;
         }
         self.ensure_dir().await?;
-        let path = self.session_path(key);
+        let path = self.session_path(identity);
         let must_compact = previously_persisted == 0
             || previously_persisted > messages.len()
             || !path.exists()
             || !is_jsonl_session_file(&path).await?;
         compact_or_append_delta(
             &path,
-            key,
+            identity,
             messages,
             previously_persisted,
             workflow_run.as_ref(),
@@ -66,8 +72,11 @@ impl FileSessionStore {
         .await
     }
 
-    async fn delete_session_file_if_present(&self, key: &str) -> Result<(), DomainError> {
-        match tokio::fs::remove_file(self.session_path(key)).await {
+    async fn delete_session_file_if_present(
+        &self,
+        identity: &SessionIdentity,
+    ) -> Result<(), DomainError> {
+        match tokio::fs::remove_file(self.session_path(identity)).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(DomainError::Session(format!(
@@ -77,26 +86,26 @@ impl FileSessionStore {
     }
 
     async fn ensure_dir(&self) -> Result<(), DomainError> {
-        tokio::fs::create_dir_all(&self.sessions_dir)
+        tokio::fs::create_dir_all(self.layout.sessions_dir())
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
 }
 
 impl SessionStore for FileSessionStore {
-    fn claim(&self, key: &str) -> Result<(), DomainError> {
-        self.claim_key(key)
+    fn claim(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
+        self.claim_key(identity)
     }
 
-    fn release(&self, key: &str) {
-        self.ownership.release(key);
+    fn release(&self, identity: &SessionIdentity) {
+        self.ownership.release(identity);
     }
 
     fn load(
         &self,
-        key: &str,
+        identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>> {
-        let path = self.session_path(key);
+        let path = self.session_path(identity);
         Box::pin(async move {
             if !path.exists() {
                 return Ok(None);
@@ -131,21 +140,21 @@ impl SessionStore for FileSessionStore {
 
     fn save_delta<'a>(
         &'a self,
-        key: &'a str,
+        identity: &'a SessionIdentity,
         messages: &'a [Message],
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let path = self.session_path(key);
+        let path = self.session_path(identity);
         Box::pin(async move {
-            self.claim_key(key)?;
+            self.claim_key(identity)?;
             if messages.is_empty() && workflow_run.is_none() {
-                return self.delete_session_file_if_present(key).await;
+                return self.delete_session_file_if_present(identity).await;
             }
             self.ensure_dir().await?;
             append_known_delta(
                 &path,
-                key,
+                identity,
                 messages,
                 previously_persisted,
                 workflow_run.as_ref(),
@@ -156,19 +165,19 @@ impl SessionStore for FileSessionStore {
 
     fn save_clean_delta<'a>(
         &'a self,
-        key: &'a str,
+        identity: &'a SessionIdentity,
         messages: &'a [Message],
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
-            self.claim_key(key)?;
+            self.claim_key(identity)?;
             if messages.is_empty() && workflow_run.is_none() {
-                return self.delete_session_file_if_present(key).await;
+                return self.delete_session_file_if_present(identity).await;
             }
             FileSessionStore::save_clean_delta(
                 self,
-                key,
+                identity,
                 messages,
                 previously_persisted,
                 workflow_run,
@@ -179,93 +188,18 @@ impl SessionStore for FileSessionStore {
 
     fn exists(
         &self,
-        key: &str,
+        identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>> {
-        let path = self.session_path(key);
+        let path = self.session_path(identity);
         Box::pin(async move { Ok(path.exists()) })
     }
 
     fn list(
         &self,
-        key_prefix: Option<&str>,
+        query: &SessionListQuery,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
-        let key_prefix = key_prefix.map(|p| p.to_string());
-        let file_prefix = key_prefix
-            .as_deref()
-            .map(super::filename::sanitize_session_key);
-        Box::pin(async move {
-            let mut summaries = Vec::new();
-            if !self.sessions_dir.exists() {
-                return Ok(summaries);
-            }
-            let mut entries = tokio::fs::read_dir(&self.sessions_dir)
-                .await
-                .map_err(|e| DomainError::Session(format!("failed to read sessions dir: {}", e)))?;
-            while let Some(entry) = entries.next_entry().await.map_err(|e| {
-                DomainError::Session(format!("failed to read sessions dir entry: {}", e))
-            })? {
-                let path = entry.path();
-                if path.extension().is_none_or(|ext| ext != "json") {
-                    continue;
-                }
-                if let Some(ref fp) = file_prefix {
-                    if !entry.file_name().to_string_lossy().starts_with(fp.as_str()) {
-                        continue;
-                    }
-                }
-                let metadata = entry.metadata().await.ok();
-                let updated_unix_secs = metadata
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs());
-                let content = match tokio::fs::read_to_string(&path).await {
-                    Ok(content) => content,
-                    Err(err) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            error = %err,
-                            "skipping unreadable session file while listing sessions"
-                        );
-                        continue;
-                    }
-                };
-                let header: SessionHeader = match parse_session_header(&content) {
-                    Ok(header) => header,
-                    Err(err) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            error = %err,
-                            "skipping invalid session file while listing sessions"
-                        );
-                        continue;
-                    }
-                };
-                if let Some(ref prefix) = key_prefix {
-                    if !header.key.starts_with(prefix.as_str()) {
-                        continue;
-                    }
-                }
-                let title = first_user_message(&header.messages);
-                let message_count = header
-                    .messages
-                    .iter()
-                    .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
-                    .count();
-                summaries.push(SessionSummary {
-                    title,
-                    key: header.key.into_owned(),
-                    message_count,
-                    updated_unix_secs,
-                });
-            }
-            summaries.sort_by(|a, b| {
-                b.updated_unix_secs
-                    .cmp(&a.updated_unix_secs)
-                    .then_with(|| a.title.cmp(&b.title))
-            });
-            Ok(summaries)
-        })
+        let query = query.clone();
+        Box::pin(async move { session_store_list::list_summaries(&self.layout, &query).await })
     }
 }
 
@@ -366,14 +300,14 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
     }
     Ok(session
         .map(session_store_ordinals::with_assigned_ordinals)
-        .unwrap_or_else(|| Session::new("")))
+        .unwrap_or_else(|| Session::new(SessionIdentity::ephemeral())))
 }
 
 fn session_from_file(file: SessionFile) -> Session {
     let messages =
         assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
     Session {
-        key: file.key,
+        key: SessionIdentity::from_persisted_key(file.key),
         messages,
         workflow_run: file.workflow_run,
         subagent_roster: file.subagent_roster,
@@ -419,7 +353,7 @@ async fn persisted_prefix_changed(
 
 async fn append_known_delta(
     path: &Path,
-    key: &str,
+    key: &SessionIdentity,
     messages: &[Message],
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
@@ -441,7 +375,7 @@ async fn append_known_delta(
 
 async fn compact_or_append_delta(
     path: &Path,
-    key: &str,
+    key: &SessionIdentity,
     messages: &[Message],
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
@@ -455,7 +389,7 @@ async fn compact_or_append_delta(
             .map(|s| s.subagent_roster)
             .unwrap_or_default();
         let session = Session {
-            key: key.to_string(),
+            key: key.clone(),
             messages: messages_with_assigned_ordinals(messages),
             workflow_run: workflow_run.cloned(),
             subagent_roster,
@@ -523,7 +457,7 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
 
 async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
     let record = SessionRecordRef::Snapshot(SessionFileRef {
-        key: &session.key,
+        key: session.key.runtime_key(),
         messages: session.messages.iter().map(message_to_record_ref).collect(),
         workflow_run: session.workflow_run.as_ref(),
         subagent_roster: &session.subagent_roster,
@@ -748,3 +682,6 @@ mod subagent_roster_tests;
 #[cfg(test)]
 #[path = "session_store_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "session_store_workflow_tests.rs"]
+mod workflow_tests;

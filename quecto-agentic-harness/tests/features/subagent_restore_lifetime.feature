@@ -68,7 +68,7 @@ Feature: Launcher lifetime and session restore without child readoption (#1937)
     And the registry entry for "respawned-worker" holds an owned child with a launch generation
     And the re-spawned "respawned-worker" has a fresh identity unlike every legacy row
     And no persisted child socket was connected to
-    When the owned child termination of "respawned-worker" is requested
+    When the operator kill of "respawned-worker" is requested
     Then the child process of "respawned-worker" exits within 15 seconds
     When the client disconnects from the restoring harness
     Then the restoring harness exits within 10 seconds

@@ -94,10 +94,42 @@ run pauses holding `failed` (a paused run keeps its pause clock and any verdict
 the coordinator had already proposed), membership and file ownership stay
 reserved, and replacement claims are rejected. Close and discard that container
 environment before starting a fresh run.
-The current adapter cannot safely recover an abruptly exited worker in place;
-`recover` requires independently confirmed execution-scope death, which ordinary
-harness reconciliation deliberately does not assert. Post-launch rollback is also
-conservative. Neither idle time nor a worker's completion message frees a slot.
+That loss is recorded once per member, and only by an observer with authority
+over the member's fate (#1961): the harness that launched it (the actor of its
+reservation, recorded as the member's `launcher`). Another member's reconcile
+may see the vanished pid but records nothing while the launcher lives; once the
+launcher is itself dead or lost, any member may record the loss. Every recording
+waits a grace of ten seconds from the first authorised observation (one
+`scope_observed` event per observer and member), because the launcher's
+owned-handle reaper normally confirms the death first (below) and a confirmed
+death never pauses the run. A later reconcile seeing the same vanished pid
+(after the master resumed the run) does not pause it again, and `revoke`
+reassigns the lost member's work. The bootstrapped coordinator has no launcher:
+its loss is recorded from outside the container (#1924), unchanged.
+
+A member exit the launching harness observed itself is different (#1961): the
+harness that spawned a member owns its process, and when that process exits
+(on its own, or because the coordinator ended it with `agent_cmd kill`, or a
+launch was rolled back after the child exited) the exit is authoritative for
+the member's harness. The member is confirmed dead, its active tasks block for
+`recover(task_id)`, and the run keeps running. What happens to its file
+reservations depends on how it ended, because reservations are cooperative and
+Bash tool children run in their own process groups: an **orderly** end (an exit
+code, a protocol shutdown, a delegated kill, or a fallback signal this harness
+sent to the member's whole group) ran the member's own teardown, so its
+reservations are released and the tasks read `worker death confirmed;
+coordinator recovery required`; an **abrupt** end (a signal nobody here sent —
+the OOM killer, an operator — or an unobservable exit) may leave an orphaned
+`cargo test` or build still writing the reserved paths, so the reservations are
+retained, the tasks read `worker death confirmed (abrupt exit; reservations
+retained); coordinator recovery required`, and the `death_confirmed` event
+carries `reservations_retained` and the reason. The coordinator decides:
+`revoke(task_id, reason)` frees them and records why, or
+`recover(task_id, release_files=True)` frees them explicitly; a plain `recover`
+refuses while they are retained. Only a harness death nobody observed this way
+(a socket loss, a vanished pid of a member this harness did not launch) is the
+conservative quarantine above; a socket loss alone never confirms a death.
+Neither idle time nor a worker's completion message frees a slot.
 
 ## Packaged API
 
@@ -132,9 +164,43 @@ submission and verification retries do not repeat their transitions.
 File sets are reserved all at once or not at all. Paths resolve inside the shared
 checkout, including symlink aliases and not-yet-created files.
 `release_files(task_id, claim_token, reservation_token)` cannot remove a newer
-owner's reservation. Only the coordinator may `recover(task_id)`, after the
-entire execution scope is confirmed stopped. A harness exit alone cannot grant
-that permission in the current adapter. There are no expiring ownership leases.
+owner's reservation. Only the coordinator may `recover(task_id)`, once the
+owner's death is confirmed by the harness that launched it (above), and only
+the coordinator may `revoke(task_id, reason)`: it takes a claim back from an
+owner that will not finish, alive or not, on a claimed, blocked or submitted
+task. The task returns to `ready` with no owner, token, blocker or evidence,
+its file reservations go, a `revoked` event records the reason and previous
+owner, and the previous owner receives a board message so a member that wakes
+later learns its claim is gone (its next owned call fails with `stale or
+unowned claim`). Revoking an unowned task is a no-op returning the task. There
+are no expiring ownership leases.
+
+A claimed, blocked or submitted task row (`task(id)`, `tasks()`, the summary's
+first 50 tasks) also says how its owner is doing, read side only (#1969).
+`owner_last_activity` is the number of seconds since the owner's most recent
+board event by the store clock. `owner_state` is the store's affirmative view
+of that member, authoritative signals first: `dead` when the harness that
+launched it confirmed its exit; `lost` when its harness loss was recorded
+(`scope_unknown` after its latest activation, #1924/#1961); `reserved` when it
+was admitted but never launched; `active` or `idle` only for a live launched
+member, `idle` meaning it has written no board event for 300 seconds; and
+`unknown` for anything else. An `active` or `idle` owner is named as a `send`
+recipient in `contact` (`board.send(request, '<owner id>', body)`); for every
+other owner `contact` is null and `recovery` says how the coordinator moves the
+work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
+then `revoke`, for a lost one). Board activity is the only liveness the store
+sees: an idle owner may be mid-turn running a long command, so `idle` is a
+prompt to look (or `send`), not proof of a stall, and nothing follows from it
+automatically. A provider suspension is a harness fact the board cannot see;
+`agent_cmd status` (get_state's `automaticTurnsSuspended`) is the source for
+that. Unowned tasks carry none of these fields. The summary's `counts` add
+`members_without_claim` (live or reserved members other than the coordinator
+holding no active claim) and `members_dead`. Because an owner turns idle by
+the clock alone, with no event to move the cursor, `summary(since=cursor)`
+returns a full summary rather than `unchanged` while an owner is idle who was
+not at the time of the cursor's event, and both responses carry
+`next_liveness_check_at`, the store-clock instant the earliest active owner
+would turn idle (null when none would), so a caller knows when to look again.
 
 These are **cooperative reservations**, not mandatory locks: Bash and arbitrary
 Python can bypass them. The container is the external containment boundary,
@@ -154,8 +220,10 @@ for message in board.inbox():
     board.ack(message["id"])
 ```
 
-Messages are `accepted` when durable and `consumed` when acknowledged. Neither
-means work completed. `inbox(include_consumed=True)` also reads consumed history.
+Any member may message any other member directly; nothing routes through the
+coordinator. A question about a task you depend on belongs with that task's
+owner, which its row names as `contact`. Messages are `accepted` when durable
+and `consumed` when acknowledged. Neither means work completed. `inbox(include_consumed=True)` also reads consumed history.
 A message may carry the `revision` it is about, and `send(..., supersedes=id)`
 retires your own earlier unread message to the same recipient in the same
 transaction; `withdraw(id)` retires one without a replacement. Retired messages
@@ -217,10 +285,11 @@ cancelled). The supervisor then either resumes the same run (`swarm_control
 resume`, which extends the deadline by the paused time, clears the outcome and
 wakes every member) or closes it (`swarm_control close`), which makes the held
 outcome terminal and settles: local Python is cancelled, workers are aborted
-and asked to shut down by delegation (#1939: the `shutdown` protocol over
-the endpoint each member registered, the locally owned handle only for a
-member this harness launched itself; a member reachable neither way is
-reported as a settlement failure, never signalled by pid), and the
+and asked to shut down by delegation (the `shutdown` protocol over the
+endpoint each member registered, the locally owned handle only for a member
+this harness launched itself; a member reachable neither way is reported as
+a settlement failure — no member is ever ended by its pid, and a member's
+recorded pid is only the store's liveness observation), and the
 coordinator harness stays for reporting. A run paused for `budget-exhausted` refuses to resume until
 the supervisor grants budget (`swarm_control extend` with `deadline_seconds`,
 or `usage_budget`); the refusal names what to grant. Members, including the
@@ -289,9 +358,10 @@ checks and reservation writes share the same immediate transaction. SQL-facing
 workbench/task adapters retain dispatch and the existing task implementation; this
 is an incremental extraction, not a second implementation of the policy in Rust.
 
-Rust domain ports expose typed membership, process identity, outcomes, coordination,
-process control and clock contracts. `src/application/swarm.rs` owns reconciliation
-and settlement sequencing. Infrastructure handles Python wire decoding, Linux
+The Rust domain (`src/domain/swarm.rs`) holds the typed membership, process
+identity and outcome vocabulary; the coordination, run-control, process control
+and clock ports are the swarm capability's (`src/application/swarm/ports.rs`),
+and `src/application/swarm/mod.rs` owns reconciliation and settlement sequencing. Infrastructure handles Python wire decoding, Linux
 identity checks, UDS commands, cancellation registries and timer scheduling. Pure
 policy/fake-port tests supplement the real SQLite and process integration tests.
 
@@ -452,7 +522,14 @@ alone; poll connections do not consume that capacity (#1720). Do not pause a
 run because one member failed: pause is a whole-run wait. Resume the run (the
 parent may send `swarm_control` `resume` to the coordinator's socket at any
 time; it is
-handled below the model) and, only if a member is still stuck, steer it. A run paused because a
+handled below the model) and, only if a member is still stuck, steer it. When a
+member holds a claim it will not finish, the coordinator has three tools and
+no prescribed order: an explicit `agent_cmd` `steer` or `follow_up` re-arms a
+member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
+it off a failing provider; `board.revoke(task_id, reason)` reassigns its work
+so another member can claim it. `recover(task_id)` applies once the member's
+death is confirmed (its harness exited under the coordinator's own
+observation, for instance after `agent_cmd kill`). A run paused because a
 strict budget saw an answered request without usage re-pauses on the next
 admission until `strict_unknown` is disabled (or the budget removed); raising
 the limit alone does not clear it. Cancelled and rejected attempts never count

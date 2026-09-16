@@ -118,7 +118,7 @@ the 30s deadline instead.
 | `Shift+Enter` or `Alt+Enter` | Insert newline |
 | `Escape` | Abort the active agent run, or clear the editor if idle |
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
-| `Ctrl+D` | Exit immediately |
+| `Ctrl+D` | Exit: persist, then ask each owned agent to settle its subagents and exit |
 | `Ctrl+G` | Jump to the latest conversation output |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
@@ -177,8 +177,9 @@ alias for `/help`.
   `quecto_tui::client`-style shims are intentionally not part of the public API.
 - Auto-discovered socket paths are validated and must be real Unix sockets under
   canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
-- On exit, `quecto-tui` terminates the spawned agent process group so child
-  agents are cleaned up too.
+- On exit, `quecto-tui` sends SIGTERM to the spawned agent's leader process
+  only and waits for it to settle its own subagents (see "Exit, detach, and
+  resume"); it never signals a process group or a descendant.
 
 ### Admission waiting indicators
 
@@ -223,28 +224,46 @@ returning to the tail restores following.
 ### Exit, detach, and resume
 
 Ordinary Ctrl-D, `/exit`, and `/quit` persist the conversation before terminating
-TUI-owned agents and their owned children. Resuming restores transcript history;
-it does **not** recreate killed children as operational agent-panel rows. Old spawn
-and tool messages remain history, not evidence that their processes are alive.
+TUI-owned agents. Resuming restores transcript history; it does **not** recreate
+old children as operational agent-panel rows. Old spawn and tool messages remain
+history, not evidence that their processes are alive: a harness-launched
+subagent is lifetime-bound to the harness that launched it and ends by itself
+when that harness exits or loses its connection to it.
 
-Container environments are outside the TUI's process group, so their teardown
-is the harness's job: on the exit signal it runs every environment's retained
-kill before it exits, so container agents do not outlive the session either.
-The SIGTERM-to-SIGKILL window is 1.5 seconds to cover that work, and it ends
-as soon as the leader and every owned descendant have exited.
+Since epic #1929 the harness owns its own teardown: on SIGTERM it asks every
+direct child to shut down over the protocol, each child settles its own
+subtree the same way, container environments run their retained kill, and the
+harness persists and exits 0 by itself. Its fleet teardown settles direct
+children 8 at a time with a 25 s per-child worst case, over at most 3 passes;
+a **repeated** SIGTERM inside that work is ignored, and one arriving after
+45 s forces the harness out. The TUI's exit path (#1956) therefore signals
+**one** process per owned harness and mirrors those numbers:
+
+1. After the snapshots are persisted, SIGTERM to the harness leader pid —
+   never `kill(-pgid)`, never a descendant.
+2. Wait for that process to exit within the *settle* budget: `ceil(n / 8)`
+   batches × 25 s + 5 s to persist and exit, where `n` is the number of
+   subagents the tab's roster last showed (30 s for up to 8, 55 s for 9–16,
+   80 s — the 3-pass worst case — beyond that or when the roster is unknown,
+   e.g. a spawn still in flight).
+3. If it is still running, send a **second** SIGTERM — the repeated signal is
+   what arms the harness's own 45 s force-exit — and wait those 45 s.
+4. Only then SIGKILL that one pid.
+
+If the wait passes ~1 s the TUI shows "waiting for the agent to settle its
+subagents… (Ns)" and keeps it updated; the notice is dismissed as soon as the
+leaders are gone. A leader that needed the SIGKILL is reported after terminal
+cleanup. After each leader exits a read-only canary reads `/proc` once and
+reports — never signals — any process still naming the old pid as parent or
+process group (skipped if the pid has already been recycled); under the
+lifetime binding that list is always empty, and a non-empty one is printed
+after terminal cleanup as the evidence. Swarm members and bash tool children
+that run in their own process group are, by design, outside the canary's
+view. The same leader-only helper serves tab close, `/new` workspace reset
+and startup-failure cleanup (which prints "waiting for the agent to exit…"
+once on stderr if it takes more than a second).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
-Reconnecting to a running harness uses its live registry. Recovery in a new harness
-only restores children whose sockets verify the expected session identity; dead or
-unreachable children are not automatically restarted. Exit durability and cleanup
-errors are reported separately.
-
-On Linux, cleanup retains the owned leader until escalation and uses pidfds for
-observed descendants, including tools in separate process groups. Cleanup success
-is acknowledged only after these processes have exited (zombies count as exited,
-not executing survivors). This is not a sandbox containment guarantee: a process
-that double-forks into a separate session and loses all observable ancestry before
-the watcher samples it can escape discovery. Other Unix platforms receive owned
-process-group escalation but currently report cleanup as unverified, rather than
-claiming complete separate-group cleanup without a supported verifier.
+Reconnecting to a running harness uses its live registry. Exit durability and
+cleanup errors are reported separately.

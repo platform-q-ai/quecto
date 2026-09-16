@@ -304,12 +304,9 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
 /// #1276 Phase 3: session-scoped provider supplies recall with the expected name.
 #[test]
 fn build_session_tool_extensions_supplies_recall() {
-    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
-    use std::sync::Arc;
-
     let tmp = tempfile::TempDir::new().unwrap();
     let exts = build_session_tool_extensions(SessionToolDeps {
-        spill_store: Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf())),
+        recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         session_key: "cli:test".into(),
     });
     assert_eq!(exts.len(), 1);
@@ -333,8 +330,6 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
         inherited_tool_policy: None,
-        owner: crate::domain::ids::AgentUuid::new("harness"),
-        kill_tool: None,
     });
     assert_eq!(built.extensions.len(), 1);
     assert_eq!(built.extensions[0].name(), "quecto:agent-control");
@@ -364,8 +359,6 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
         inherited_tool_policy: None,
-        owner: crate::domain::ids::AgentUuid::new("harness"),
-        kill_tool: None,
     });
     let spawn = built.extensions[0]
         .tools()

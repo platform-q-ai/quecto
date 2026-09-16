@@ -398,7 +398,7 @@ async fn chat_stream_incremental_reports_send_errors_as_stream_event() {
 
 #[tokio::test]
 async fn chat_stream_wiremock_success_assembles_sse_body() {
-    use crate::domain::provider::LlmProvider;
+    use crate::application::providers::ports::LlmProvider;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -422,7 +422,7 @@ async fn chat_stream_wiremock_success_assembles_sse_body() {
 
 #[tokio::test]
 async fn chat_stream_drains_more_than_channel_capacity_without_deadlock() {
-    use crate::domain::provider::LlmProvider;
+    use crate::application::providers::ports::LlmProvider;
     use tokio::time::{Duration, timeout};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -453,7 +453,7 @@ async fn chat_stream_drains_more_than_channel_capacity_without_deadlock() {
 
 #[tokio::test]
 async fn chat_stream_rejects_over_limit_sse_body_without_buffering_full_response() {
-    use crate::domain::provider::LlmProvider;
+    use crate::application::providers::ports::LlmProvider;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -485,7 +485,7 @@ async fn chat_stream_rejects_over_limit_sse_body_without_buffering_full_response
 
 #[tokio::test]
 async fn chat_stream_incremental_wiremock_emits_text_and_done() {
-    use crate::domain::provider::LlmProvider;
+    use crate::application::providers::ports::LlmProvider;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -512,7 +512,7 @@ async fn chat_stream_incremental_wiremock_emits_text_and_done() {
 
 #[tokio::test]
 async fn chat_stream_http_error_includes_retry_after() {
-    use crate::domain::provider::LlmProvider;
+    use crate::application::providers::ports::LlmProvider;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

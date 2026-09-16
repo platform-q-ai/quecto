@@ -3,12 +3,20 @@ use std::sync::Arc;
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
 use quecto::application::context_pruning;
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
+use quecto::domain::session::{Session, SpillEntry, SpillIndex};
+use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 
 // ===========================================================================
 // In-memory ContextSpillStore for BDD tests
 // ===========================================================================
+
+/// Session identity for a raw persisted key (`""` is the ephemeral identity).
+fn sid(key: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
+}
 
 #[derive(Debug)]
 struct InMemorySpillStore {
@@ -26,7 +34,7 @@ impl InMemorySpillStore {
 impl ContextSpillStore for InMemorySpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().push(entry.clone());
@@ -35,10 +43,10 @@ impl ContextSpillStore for InMemorySpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
-        let id = id.to_string();
+        let id = id.as_str().to_string();
         let result = self
             .entries
             .lock()
@@ -51,7 +59,7 @@ impl ContextSpillStore for InMemorySpillStore {
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         let entries: Vec<SpillIndex> = self
             .entries
@@ -70,7 +78,7 @@ impl ContextSpillStore for InMemorySpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries.lock().unwrap().clear();
         Box::pin(async { Ok(()) })
@@ -246,7 +254,7 @@ fn when_agent_executes_bash_turn_1(world: &mut QuectoWorld) {
     };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.append("test-session", &entry))
+        .block_on(store.append(&sid("test-session"), &entry))
         .unwrap();
 
     // Append the tool result message with metadata
@@ -317,7 +325,7 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
 
     let result: ToolResult = tokio::runtime::Runtime::new().unwrap().block_on(async {
         if id == "list" {
-            let entries = store.list_entries("test-session").await.unwrap();
+            let entries = store.list_entries(&sid("test-session")).await.unwrap();
             if entries.is_empty() {
                 return ToolResult {
                     content: "No spilled outputs in this session.".to_string(),
@@ -340,7 +348,11 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
                 delivery_metadata: None,
             }
         } else {
-            match store.recall("test-session", &id).await.unwrap() {
+            match store
+                .recall(&sid("test-session"), &SpillId::new(&id))
+                .await
+                .unwrap()
+            {
                 Some(entry) => ToolResult {
                     content: entry.content,
                     is_error: false,
@@ -367,7 +379,7 @@ fn when_agent_calls_recall_on_turn(world: &mut QuectoWorld, id: String, turn: u3
 
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { store.recall("test-session", &id).await })
+        .block_on(async { store.recall(&sid("test-session"), &SpillId::new(&id)).await })
         .unwrap();
 
     if let Some(entry) = result {
@@ -390,7 +402,7 @@ fn when_agent_calls_recall_three_times(world: &mut QuectoWorld, id: String) {
     for _ in 0..3 {
         let result = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(async { store.recall("test-session", &id).await })
+            .block_on(async { store.recall(&sid("test-session"), &SpillId::new(&id)).await })
             .unwrap();
         if result.is_some() {
             recall_count += 1;
@@ -410,8 +422,8 @@ fn when_sliding_window_drops(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.0.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 
     // Add some non-pinned messages to exceed the budget
@@ -491,7 +503,7 @@ fn when_agent_executes_tools_turns_1_through_5(world: &mut QuectoWorld) {
         };
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(store.append("test-session", &entry))
+            .block_on(store.append(&sid("test-session"), &entry))
             .unwrap();
 
         let mut msg = Message::tool(format!("call_{}", turn), content);
@@ -506,8 +518,8 @@ fn when_agent_executes_tools_turns_1_through_5(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 
     world.context_current_turn = Some(5);
@@ -526,8 +538,8 @@ fn when_agent_processes_3_turns_no_tools(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 }
 
@@ -545,7 +557,7 @@ fn given_spilled_tool_result(world: &mut QuectoWorld, id: String) {
     };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.append("test-session", &entry))
+        .block_on(store.append(&sid("test-session"), &entry))
         .unwrap();
 }
 
@@ -568,7 +580,7 @@ fn given_n_spilled_tool_results(world: &mut QuectoWorld, count: usize) {
         };
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(store.append("test-session", &entry))
+            .block_on(store.append(&sid("test-session"), &entry))
             .unwrap();
     }
 }
@@ -617,7 +629,7 @@ fn then_spill_file_contains_entry(world: &mut QuectoWorld, id: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("test-session", &id))
+        .block_on(store.recall(&sid("test-session"), &SpillId::new(&id)))
         .unwrap();
     assert!(
         result.is_some(),
@@ -635,7 +647,7 @@ fn then_spill_entry_matches_original(world: &mut QuectoWorld) {
         .expect("should have saved original content");
     let entry = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("test-session", "turn1:bash:0"))
+        .block_on(store.recall(&sid("test-session"), &SpillId::new("turn1:bash:0")))
         .unwrap()
         .expect("should find spill entry");
     assert_eq!(
@@ -828,8 +840,8 @@ fn then_pinned_manifest_appears(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 
     let manifest = messages.iter().find(|m| m.is_manifest);
@@ -877,8 +889,8 @@ fn then_manifest_lists_10_recent(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 
     let manifest = messages
@@ -1107,16 +1119,21 @@ fn run_spilling_sliding_window(world: &mut QuectoWorld) {
         .expect("recent-turn pinning must be set");
     let messages = world.context_messages.as_mut().unwrap();
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        context_pruning::update_spill_manifest(messages, store.0.as_ref(), "test-session").await;
+        let retention = store.retention();
+        context_pruning::update_spill_manifest(messages, &retention.list, &sid("test-session"))
+            .await;
         let mut spilled = false;
         for msg in messages.iter_mut().filter(|m| m.spill_id.is_none()) {
-            spilled |=
-                msg_pruning::spill_conversation_message(msg, store.0.as_ref(), "test-session")
-                    .await;
+            spilled |= msg_pruning::spill_conversation_message(
+                msg,
+                &retention.retain,
+                &sid("test-session"),
+            )
+            .await;
         }
         msg_pruning::enforce_context_ceiling_ladder(messages, max_tokens, pin_recent_turns);
         if spilled {
-            context_pruning::update_spill_manifest(messages, store.0.as_ref(), "test-session")
+            context_pruning::update_spill_manifest(messages, &retention.list, &sid("test-session"))
                 .await;
         }
     });
@@ -1146,7 +1163,7 @@ fn then_spill_entry_matches_original_assistant(world: &mut QuectoWorld) {
         .expect("should have saved the original assistant content");
     let entry = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("test-session", "turn1:msg:assistant"))
+        .block_on(store.recall(&sid("test-session"), &SpillId::new("turn1:msg:assistant")))
         .unwrap()
         .expect("should find spill entry turn1:msg:assistant");
     assert_eq!(
@@ -1228,18 +1245,18 @@ fn then_current_user_prompt_remains(world: &mut QuectoWorld) {
 fn when_session_saved_and_reloaded(world: &mut QuectoWorld) {
     let messages = world.context_messages.take().unwrap();
     let session = Session {
-        key: "test:persistence".to_string(),
+        key: sid("test:persistence"),
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = FileSessionStore::new(tmp.path());
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
     let reloaded = tokio::runtime::Runtime::new().unwrap().block_on(async {
         store.save(&session).await.unwrap();
-        store.load("test:persistence").await.unwrap().unwrap()
+        store.load(&sid("test:persistence")).await.unwrap().unwrap()
     });
 
     world.context_messages = Some(reloaded.messages);
@@ -1256,8 +1273,8 @@ fn when_spill_manifest_updated(world: &mut QuectoWorld) {
         .unwrap()
         .block_on(context_pruning::update_spill_manifest(
             messages,
-            store.as_ref(),
-            "test-session",
+            &store.retention().list,
+            &sid("test-session"),
         ));
 }
 
@@ -1355,7 +1372,7 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
-        tmp.path().to_path_buf(),
+        FlatSessionLayout::new(tmp.path()),
     );
     let (cache_count, cache_result) = rt.block_on(async {
         // Append first entry, then seed cache via list_entries (mirrors agent loop)
@@ -1366,8 +1383,8 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
             tokens: 100,
             content: "output-1\n".to_string(),
         };
-        store.append("cache-test", &first).await.unwrap();
-        let _ = store.list_entries("cache-test").await.unwrap();
+        store.append(&sid("cache-test"), &first).await.unwrap();
+        let _ = store.list_entries(&sid("cache-test")).await.unwrap();
         // Append remaining entries (cache updated incrementally)
         for i in 1..count {
             let entry = SpillEntry {
@@ -1377,7 +1394,7 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
                 tokens: 100,
                 content: format!("output-{}\n", i + 1),
             };
-            store.append("cache-test", &entry).await.unwrap();
+            store.append(&sid("cache-test"), &entry).await.unwrap();
         }
         // Delete the spill file to prove cache is used
         let spill_path = tmp
@@ -1387,7 +1404,7 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
             .join("spill.jsonl");
         tokio::fs::remove_file(&spill_path).await.unwrap();
         // Verify list_entries still works from cache
-        let entries = store.list_entries("cache-test").await.unwrap();
+        let entries = store.list_entries(&sid("cache-test")).await.unwrap();
         (count.to_string(), entries.len().to_string())
     });
     world
@@ -1403,7 +1420,7 @@ fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
-        tmp.path().to_path_buf(),
+        FlatSessionLayout::new(tmp.path()),
     );
     let (result_id, result_content) = rt.block_on(async {
         for i in 0..10 {
@@ -1414,9 +1431,12 @@ fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
                 tokens: 100,
                 content: format!("output-{}\n", i + 1),
             };
-            store.append("recall-test", &entry).await.unwrap();
+            store.append(&sid("recall-test"), &entry).await.unwrap();
         }
-        let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
+        let recalled = store
+            .recall(&sid("recall-test"), &SpillId::new("turn5:bash:0"))
+            .await
+            .unwrap();
         let entry = recalled.expect("should find turn5:bash:0");
         (entry.id, entry.content)
     });
@@ -1470,7 +1490,7 @@ use quecto::application::context_pruning::messages as msg_pruning;
 /// in-flight prompt) into the world's spill store.
 fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let mock = ensure_mock_llm(world);
@@ -1487,7 +1507,9 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: Some(store.0.clone()),
+        retention: Some(quecto::composition::retention::context_retention_over(
+            store.0.clone(),
+        )),
         session_key: session_key_under_test(world),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
@@ -1525,7 +1547,7 @@ fn then_spill_entry_matches_reply(world: &mut QuectoWorld, id: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let entry = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("test-session", &id))
+        .block_on(store.recall(&sid("test-session"), &SpillId::new(&id)))
         .unwrap()
         .unwrap_or_else(|| panic!("spill entry {id} must exist at creation time"));
     let original = world
@@ -1913,7 +1935,7 @@ struct RecordingAuditSink {
     events: Mutex<Vec<quecto::domain::audit::AuditEvent>>,
 }
 
-impl quecto::domain::audit::AuditSink for RecordingAuditSink {
+impl quecto::application::audit::ports::AuditSink for RecordingAuditSink {
     fn emit(
         &self,
         _turn: u32,
@@ -1927,7 +1949,7 @@ impl quecto::domain::audit::AuditSink for RecordingAuditSink {
 #[when("the agent completes a prompt exceeding the budget")]
 fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let max_context_tokens = world
         .context_max_tokens
@@ -1947,14 +1969,14 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "test-session".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
-        audit_log: Some(sink.clone() as Arc<dyn quecto::domain::audit::AuditSink>),
+        audit_log: Some(sink.clone() as Arc<dyn quecto::application::audit::ports::AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
@@ -2014,7 +2036,7 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: None,
+        retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: world.context_budget_config.expect("config budget set"),
@@ -2067,7 +2089,7 @@ fn run_prompt_through_loop(
     responses: Vec<quecto::domain::message::LlmResponse>,
 ) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use quecto::domain::agent::AgentLoop;
+    use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let session_key = session_key_under_test(world);
@@ -2081,7 +2103,9 @@ fn run_prompt_through_loop(
         model: "test-model".into(),
         max_tokens: 1024,
         temperature: 0.0,
-        spill_store: Some(store.0.clone()),
+        retention: Some(quecto::composition::retention::context_retention_over(
+            store.0.clone(),
+        )),
         session_key,
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
@@ -2133,7 +2157,7 @@ fn then_ephemeral_spill_recallable(world: &mut QuectoWorld, id: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let entry = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("", &id))
+        .block_on(store.recall(&sid(""), &SpillId::new(&id)))
         .unwrap()
         .unwrap_or_else(|| {
             panic!(
@@ -2156,7 +2180,7 @@ fn then_ephemeral_spill_has_tool_entry(world: &mut QuectoWorld, tool: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let index = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.list_entries(""))
+        .block_on(store.list_entries(&sid("")))
         .unwrap();
     let entry = index.iter().find(|e| e.tool == tool).unwrap_or_else(|| {
         panic!(
@@ -2166,7 +2190,7 @@ fn then_ephemeral_spill_has_tool_entry(world: &mut QuectoWorld, tool: String) {
     });
     let recalled = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.recall("", &entry.id))
+        .block_on(store.recall(&sid(""), &SpillId::new(&entry.id)))
         .unwrap();
     assert!(
         recalled.is_some(),
@@ -2203,7 +2227,9 @@ fn when_rewound_to_inflight_prompt(world: &mut QuectoWorld) {
         .rposition(|m| m.role == Role::User && m.turn.is_none())
         .expect("precondition: an in-flight user prompt must exist");
     assert!(
-        quecto::interface::cli::uds_session::rewind_to_message_index(messages, idx),
+        quecto::application::sessions::use_cases::rewind_conversation::rewind_to_message_index_for_test(
+            messages, idx
+        ),
         "precondition: rewind to a user-message boundary must succeed"
     );
 }

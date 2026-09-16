@@ -7,7 +7,14 @@ fn snapshot_for(size: usize) -> serde_json::Value {
     let messages: Vec<Message> = (0..size)
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
-    let line = build_get_messages_line(&messages);
+    let handles =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+    let line = build_get_messages_line(
+        handles
+            .read_history
+            .tail(&messages, "", HISTORY_PAGE_SIZE)
+            .expect("cursorless"),
+    );
     let event: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot event json");
     event["data"].clone()
 }

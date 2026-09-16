@@ -9,11 +9,14 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
+use quecto::application::sessions::ports::SessionStore;
+use quecto::application::tools::ports::Tool;
 use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::harness_lifetime::{HarnessLifetime, HarnessLifetimeError};
 use quecto::domain::message::Message;
-use quecto::domain::session::{Session, SessionStore};
-use quecto::domain::tool::Tool;
+use quecto::domain::session::Session;
+use quecto::domain::session_identity::SessionIdentity;
+use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::agent_cmd::{AgentCmdTool, SubagentRegistry};
 use quecto::infrastructure::tools::spawn::SpawnTool;
@@ -190,10 +193,10 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
     let base = base(world);
     let key = Session::build_key("cli", &session_name);
     // Let the store place the file, then overwrite it with the legacy shape.
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(store.save(&Session {
-        key: key.clone(),
+        key: SessionIdentity::from_persisted_key(&key),
         messages: vec![Message::user("placeholder")],
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -259,10 +262,10 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
 
 #[given(expr = "session {string} was saved by an earlier harness with no child rows")]
 fn given_plain_session(world: &mut QuectoWorld, session_name: String) {
-    let store = FileSessionStore::new(base(world));
+    let store = FileSessionStore::new(FlatSessionLayout::new(base(world)));
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(store.save(&Session {
-        key: Session::build_key("cli", &session_name),
+        key: SessionIdentity::from_persisted_key(Session::build_key("cli", &session_name)),
         messages: vec![Message::user("a session with no children")],
         workflow_run: None,
         subagent_roster: Vec::new(),
@@ -310,14 +313,18 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
+            retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            session_key,
+            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+                &session_key,
+            ),
             model,
             ephemeral,
             system_prompt: String::new(),
             socket_path: sp,
             socket_override: None,
+            sessions: quecto::composition::sessions::build_session_handles,
             session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime,
@@ -539,10 +546,10 @@ fn when_new_session(world: &mut QuectoWorld) {
 fn then_saved_session_migrated(world: &mut QuectoWorld, session_name: String, count: usize) {
     let base = base(world);
     let key = Session::build_key("cli", &session_name);
-    let store = FileSessionStore::new(&base);
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let rt = tokio::runtime::Runtime::new().unwrap();
     let saved = rt
-        .block_on(store.load(&key))
+        .block_on(store.load(&SessionIdentity::from_persisted_key(&key)))
         .unwrap()
         .expect("session kept");
     assert_eq!(saved.messages.len(), count);
@@ -588,9 +595,11 @@ fn when_harness_respawns(world: &mut QuectoWorld, agent_id: String, task: String
     let registry = state(world).harness.as_ref().unwrap().registry.clone();
     let socket_dir = base.join("sockets");
     std::fs::create_dir_all(&socket_dir).unwrap();
-    let tool = SpawnTool::with_base_dir(vec![], base)
-        .with_socket_dir(socket_dir)
-        .with_registry(registry.clone());
+    let tool = quecto::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::with_base_dir(vec![], base)
+            .with_socket_dir(socket_dir)
+            .with_registry(registry.clone()),
+    );
     let args = serde_json::json!({
         "agent_id": agent_id,
         "task": task,

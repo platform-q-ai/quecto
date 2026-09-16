@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::subagents::dto::{KillDelegatedAgentError, KillDelegatedAgentRequest};
-use crate::application::subagents::ports::{ResolutionError, TerminationConclusion};
+use crate::application::subagents::ports::{
+    ConclusionBudget, ProtocolAttempt, ResolutionError, TerminationConclusion,
+};
+use crate::application::subagents::use_cases::OwnerConclusionPorts;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{
     HarnessLifecycleState, LineageSnapshot, ShutdownReason, TerminationRouteError,
@@ -20,6 +23,9 @@ struct Rig {
     use_case: KillDelegatedAgent,
 }
 
+/// The route is composed as this harness's own owner conclusion, exactly
+/// as production composes it: the kill claims, the route concludes and
+/// compensates a direct child, the kill joins.
 fn rig(
     registry: Arc<FakeRegistry>,
     lineage: LineageSnapshot,
@@ -29,16 +35,20 @@ fn rig(
     let lifecycle = FakeLifecycle::new(lineage);
     let termination = FakeTermination::new(registry.clone(), conclusion);
     let compensation = FakeCompensation::new(registry.clone());
-    let route = Arc::new(TerminateDelegatedAgent::new(
-        lifecycle.clone(),
-        routing.clone(),
-    ));
+    let route = Arc::new(
+        TerminateDelegatedAgent::new(lifecycle.clone(), routing.clone()).with_owner_conclusion(
+            OwnerConclusionPorts {
+                registry: registry.clone(),
+                termination: termination.clone(),
+                compensation: compensation.clone(),
+            },
+        ),
+    );
     let use_case = KillDelegatedAgent::new(
         route,
         KillDelegatedAgentPorts {
             registry: registry.clone(),
             lifecycle: lifecycle.clone(),
-            termination: termination.clone(),
             compensation: compensation.clone(),
         },
     );
@@ -86,7 +96,16 @@ async fn direct_child_is_claimed_then_shut_down_then_compensated_gracefully() {
     let outcome = bounded(rig.use_case.execute(kill("A"))).await.unwrap();
     assert_eq!(outcome.target, identity("A", 1));
     assert_eq!(outcome.result, TerminationResult::Graceful);
-    assert_eq!(outcome.removed, [AgentUuid::new("A")]);
+    // The owner conclusion compensated; the kill joined and reports the
+    // subtree the route saw beneath A.
+    assert_eq!(
+        outcome.removed,
+        [
+            AgentUuid::new("A"),
+            AgentUuid::new("B"),
+            AgentUuid::new("C")
+        ]
+    );
     // One edge, self shutdown, to the target only.
     assert_eq!(
         rig.routing.calls(),
@@ -108,24 +127,71 @@ async fn direct_child_is_claimed_then_shut_down_then_compensated_gracefully() {
         rig.compensation.calls(),
         [(identity("A", 1), TerminationCause::SelectedTermination)]
     );
-    // Claimed before the edge, compensated only after the exit.
+    // Claimed before the edge, compensated only after the exit, joined by
+    // the kill (the owner conclusion ran it).
     assert_eq!(
         rig.registry.trace(),
-        ["claim-stopping A", "claim-terminal A", "compensated A"]
+        [
+            "claim-stopping A",
+            "claim-terminal A",
+            "compensated A",
+            "await-compensated A"
+        ]
     );
     assert_eq!(rig.registry.phase("A"), Phase::Compensated);
     assert_eq!(rig.lifecycle.lifecycle(), HarnessLifecycleState::Accepting);
 }
 
 #[tokio::test]
-async fn nested_target_is_forwarded_and_its_ancestor_never_gets_self_shutdown() {
+async fn nested_target_is_forwarded_with_the_exact_depth_and_the_owner_result_is_relayed() {
     let mut lineage = root_tree();
     lineage.records.push(record("E", 1, "B"));
     let registry = tree_registry().with_row("E", 1, "echo");
     let rig = rig(registry, lineage, TerminationConclusion::NoRetainedHandle);
+    *rig.routing.forward_result.lock().unwrap() = Some(TerminationResult::Fallback);
+    *rig.compensation.descendants.lock().unwrap() = vec![AgentUuid::new("E")];
+    let outcome = bounded(rig.use_case.execute(kill("B"))).await.unwrap();
+    assert_eq!(
+        outcome.result,
+        TerminationResult::Fallback,
+        "the owner's answer"
+    );
+    assert_eq!(outcome.removed, [AgentUuid::new("B"), AgentUuid::new("E")]);
+    // Exactly the two edges root → A → B, never the maximum.
+    assert_eq!(
+        rig.routing.calls(),
+        [RoutingCall::Forward {
+            via: identity("A", 1),
+            target: identity("B", 1),
+            remaining_depth: RoutingDepth::new(1).unwrap(),
+        }]
+    );
+    assert!(
+        rig.termination.calls().is_empty(),
+        "no fallback for a target this harness does not own"
+    );
+    // The owner ended B; this harness compensates its own reported row
+    // without waiting for the snapshot prune.
+    assert_eq!(rig.compensation.calls().len(), 1);
+    assert_eq!(
+        rig.registry.phase("A"),
+        Phase::Live,
+        "the ancestor survives"
+    );
+    assert_eq!(rig.registry.phase("C"), Phase::Live, "its sibling survives");
+}
+
+#[tokio::test]
+async fn a_bare_forward_waits_for_the_reported_compensation() {
+    let registry = tree_registry();
+    let rig = rig(
+        registry,
+        root_tree(),
+        TerminationConclusion::NoRetainedHandle,
+    );
     let registry = rig.registry.clone();
-    // The intermediate's reported snapshot later drops B: its row (and
-    // E's) is compensated by the merge, which is what the kill observes.
+    // The intermediate's reported snapshot later drops B: its row is
+    // compensated by the merge, which is what the kill observes.
     let observer = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         registry.set_phase("B", Phase::Compensated);
@@ -133,29 +199,8 @@ async fn nested_target_is_forwarded_and_its_ancestor_never_gets_self_shutdown() 
     let outcome = bounded(rig.use_case.execute(kill("B"))).await.unwrap();
     bounded(observer).await.unwrap();
     assert_eq!(outcome.result, TerminationResult::Graceful);
-    assert_eq!(outcome.removed, [AgentUuid::new("B"), AgentUuid::new("E")]);
-    assert_eq!(
-        rig.routing.calls(),
-        [RoutingCall::Forward {
-            via: identity("A", 1),
-            target: identity("B", 1),
-            remaining_depth: RoutingDepth::new(RoutingDepth::MAX_HOPS - 1).unwrap(),
-        }]
-    );
-    assert!(
-        rig.termination.calls().is_empty(),
-        "no fallback for a target this harness does not own"
-    );
-    assert!(
-        rig.compensation.calls().is_empty(),
-        "the merge already compensated; nothing runs twice"
-    );
-    assert_eq!(
-        rig.registry.phase("A"),
-        Phase::Live,
-        "the ancestor survives"
-    );
-    assert_eq!(rig.registry.phase("C"), Phase::Live, "its sibling survives");
+    assert_eq!(outcome.removed, [AgentUuid::new("B")]);
+    assert!(rig.compensation.calls().is_empty(), "joined the prune");
 }
 
 #[tokio::test]
@@ -329,7 +374,7 @@ async fn an_already_exited_owned_child_is_reported_as_such() {
 }
 
 #[tokio::test]
-async fn an_unreachable_child_without_a_retained_handle_fails_truthfully() {
+async fn an_unreachable_child_without_a_retained_handle_fails_truthfully_and_lifts_the_claim() {
     let registry = FakeRegistry::new().with_row("A", 1, "alpha");
     let rig = rig(
         registry,
@@ -345,18 +390,19 @@ async fn an_unreachable_child_without_a_retained_handle_fails_truthfully() {
     assert_eq!(
         error,
         KillDelegatedAgentError::Failed {
-            detail: "unreachable: socket closed".into()
+            detail: "unreachable: socket closed".into(),
+            effects_dispatched: false,
         }
     );
     assert!(
         rig.compensation.calls().is_empty(),
         "no removal without an exit"
     );
-    assert_eq!(rig.registry.phase("A"), Phase::Live, "the claim was lifted");
+    assert_eq!(rig.registry.phase("A"), Phase::Live, "nothing reached A");
 }
 
 #[tokio::test]
-async fn an_acknowledged_child_without_a_handle_whose_exit_is_not_observed_fails() {
+async fn an_acknowledged_child_without_a_handle_whose_exit_is_not_observed_keeps_the_claim() {
     let registry = FakeRegistry::new().with_row("A", 1, "alpha");
     *registry.time_out_waits.lock().unwrap() = true;
     let rig = rig(
@@ -365,13 +411,86 @@ async fn an_acknowledged_child_without_a_handle_whose_exit_is_not_observed_fails
         TerminationConclusion::NoRetainedHandle,
     );
     let error = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
-    assert!(matches!(error, KillDelegatedAgentError::Failed { .. }));
-    assert_eq!(rig.registry.phase("A"), Phase::Live);
+    assert!(matches!(
+        error,
+        KillDelegatedAgentError::Failed {
+            effects_dispatched: true,
+            ..
+        }
+    ));
+    assert_eq!(
+        rig.registry.phase("A"),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        "the child acknowledged: its eventual exit is this kill's, and a retry may re-take it"
+    );
     assert!(rig.compensation.calls().is_empty());
 }
 
+/// #1953 review (1): a kill that failed after effects on a child this
+/// harness holds no handle for is not a dead end. The claim is kept for
+/// the exit, but recorded as returned, so the next kill re-takes it and
+/// sends a second `shutdown` — and, once the exit is observed, concludes.
 #[tokio::test]
-async fn a_fallback_that_could_not_end_the_child_fails_and_lifts_the_claim() {
+async fn a_retry_after_a_failed_kill_re_takes_the_claim_and_sends_a_second_shutdown() {
+    let registry = FakeRegistry::new().with_row("A", 1, "alpha");
+    *registry.time_out_waits.lock().unwrap() = true;
+    let rig = rig(
+        registry,
+        root_tree(),
+        TerminationConclusion::NoRetainedHandle,
+    );
+    let first = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
+    assert!(matches!(
+        first,
+        KillDelegatedAgentError::Failed {
+            effects_dispatched: true,
+            ..
+        }
+    ));
+    assert_eq!(rig.routing.calls().len(), 1);
+    // The retry is not "already in flight": nothing is executing.
+    let second = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
+    assert!(
+        matches!(
+            second,
+            KillDelegatedAgentError::Failed {
+                effects_dispatched: true,
+                ..
+            }
+        ),
+        "{second:?}"
+    );
+    assert_eq!(rig.routing.calls().len(), 2, "a second shutdown was sent");
+    assert_eq!(
+        rig.registry.phase("A"),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        "still this kill's, still re-takeable"
+    );
+    assert_eq!(
+        rig.registry.trace(),
+        [
+            "claim-stopping A",
+            "await-compensated A",
+            "retain-stopping A",
+            "re-take-stopping A",
+            "await-compensated A",
+            "retain-stopping A",
+        ]
+    );
+    // The third attempt observes the exit and concludes as the kill.
+    *rig.registry.time_out_waits.lock().unwrap() = false;
+    let registry = rig.registry.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        registry.set_phase("A", Phase::Compensated);
+    });
+    let outcome = bounded(rig.use_case.execute(kill("A"))).await.unwrap();
+    assert_eq!(outcome.result, TerminationResult::Graceful);
+    assert_eq!(rig.routing.calls().len(), 3);
+}
+
+#[tokio::test]
+async fn a_fallback_that_could_not_end_the_child_fails_and_keeps_the_claim() {
     let rig = rig(
         tree_registry(),
         root_tree(),
@@ -381,10 +500,29 @@ async fn a_fallback_that_could_not_end_the_child_fails_and_lifts_the_claim() {
     assert_eq!(
         error,
         KillDelegatedAgentError::Failed {
-            detail: "kill sent; no exit within 2s".into()
+            detail: "kill sent; no exit within 2s".into(),
+            effects_dispatched: true,
         }
     );
-    assert_eq!(rig.registry.phase("A"), Phase::Live);
+    assert_eq!(
+        rig.registry.phase("A"),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination),
+        "TERM and KILL were sent: a later exit is compensated as this kill"
+    );
+    // A second kill re-takes the returned claim and re-attempts, rather
+    // than being refused forever as in flight (#1953 review).
+    let again = bounded(rig.use_case.execute(kill("A"))).await.unwrap_err();
+    assert!(
+        matches!(
+            again,
+            KillDelegatedAgentError::Failed {
+                effects_dispatched: true,
+                ..
+            }
+        ),
+        "{again:?}"
+    );
+    assert_eq!(rig.routing.calls().len(), 2);
 }
 
 #[tokio::test]
@@ -409,7 +547,7 @@ async fn a_kill_racing_a_natural_exit_compensates_exactly_once() {
     );
     assert!(
         rig.compensation.calls().is_empty(),
-        "the reaper compensated; the kill joined"
+        "the reaper compensated; the owner conclusion and the kill joined"
     );
     assert_eq!(
         rig.registry.trace(),
@@ -417,6 +555,7 @@ async fn a_kill_racing_a_natural_exit_compensates_exactly_once() {
             "claim-stopping A",
             "claim-terminal A",
             "reaper-compensated A",
+            "await-compensated A",
             "await-compensated A"
         ]
     );
@@ -474,6 +613,56 @@ async fn an_unreachable_intermediate_reports_the_route_not_the_target() {
     assert_eq!(rig.registry.phase("A"), Phase::Live);
 }
 
+/// A downstream refusal keeps its kind: unknown or stale there is a
+/// refusal with the claim lifted; already exited there is a result; a
+/// failure after effects there keeps the claim here.
+#[tokio::test]
+async fn downstream_refusals_are_presented_by_kind() {
+    let rig = rig(
+        tree_registry(),
+        root_tree(),
+        TerminationConclusion::NoRetainedHandle,
+    );
+    let a = AgentUuid::new("A");
+    for rejection in [
+        DownstreamRejection::UnknownTarget,
+        DownstreamRejection::StaleGeneration,
+        DownstreamRejection::NotAccepting,
+        DownstreamRejection::Rejected("cycle".into()),
+        DownstreamRejection::Unreachable("gone".into()),
+    ] {
+        *rig.routing.downstream.lock().unwrap() = vec![(a.clone(), rejection.clone())];
+        let error = bounded(rig.use_case.execute(kill("B"))).await.unwrap_err();
+        assert_eq!(
+            error,
+            KillDelegatedAgentError::DownstreamRejected {
+                via: a.clone(),
+                detail: rejection.to_string(),
+            }
+        );
+        assert_eq!(rig.registry.phase("B"), Phase::Live, "{rejection:?}");
+    }
+    *rig.routing.downstream.lock().unwrap() =
+        vec![(a.clone(), DownstreamRejection::Failed("no exit".into()))];
+    let error = bounded(rig.use_case.execute(kill("B"))).await.unwrap_err();
+    assert_eq!(
+        error,
+        KillDelegatedAgentError::Failed {
+            detail: "no exit".into(),
+            effects_dispatched: true,
+        }
+    );
+    assert_eq!(
+        rig.registry.phase("B"),
+        Phase::StoppingReturned(TerminationCause::SelectedTermination)
+    );
+    rig.registry.set_phase("B", Phase::Live);
+    *rig.routing.downstream.lock().unwrap() = vec![(a, DownstreamRejection::AlreadyExited)];
+    let outcome = bounded(rig.use_case.execute(kill("B"))).await.unwrap();
+    assert_eq!(outcome.result, TerminationResult::AlreadyExited);
+    assert_eq!(rig.registry.phase("B"), Phase::Compensated);
+}
+
 #[test]
 fn errors_render_their_vocabulary() {
     for (error, expected) in [
@@ -497,8 +686,16 @@ fn errors_render_their_vocabulary() {
             "route via A unreachable: gone",
         ),
         (
+            KillDelegatedAgentError::DownstreamRejected {
+                via: AgentUuid::new("A"),
+                detail: "target unknown downstream".into(),
+            },
+            "refused via A: target unknown downstream",
+        ),
+        (
             KillDelegatedAgentError::Failed {
                 detail: "no exit".into(),
+                effects_dispatched: true,
             },
             "termination failed: no exit",
         ),
@@ -512,72 +709,13 @@ fn errors_render_their_vocabulary() {
     assert_eq!(TerminationResult::Graceful.to_string(), "graceful");
     assert_eq!(TerminationResult::Fallback.as_str(), "fallback");
     assert_eq!(TerminationResult::AlreadyExited.as_str(), "already-exited");
-}
-
-/// The child dies (and its reaper claims, compensates and retires the
-/// handle) while the kill's protocol attempt is in flight, so the edge
-/// answers negatively and no handle remains: that is an exited child with
-/// this kill's intent already honoured, never a failed termination.
-#[tokio::test]
-async fn a_child_reaped_during_the_protocol_attempt_is_reported_as_already_exited() {
-    let registry = tree_registry();
-    let routing = FakeRouting::new();
-    // The reaper wins while the edge is held open.
-    *routing.hold_child.lock().unwrap() = Some(AgentUuid::new("A"));
-    routing
-        .unreachable
-        .lock()
-        .unwrap()
-        .push(AgentUuid::new("A"));
-    let lifecycle = FakeLifecycle::new(root_tree());
-    let termination =
-        FakeTermination::new(registry.clone(), TerminationConclusion::NoRetainedHandle);
-    let compensation = FakeCompensation::new(registry.clone());
-    let use_case = KillDelegatedAgent::new(
-        Arc::new(TerminateDelegatedAgent::new(
-            lifecycle.clone(),
-            routing.clone(),
-        )),
-        KillDelegatedAgentPorts {
-            registry: registry.clone(),
-            lifecycle,
-            termination: termination.clone(),
-            compensation: compensation.clone(),
-        },
-    );
-    let kill_task = {
-        let registry = registry.clone();
-        let routing = routing.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            // Reaper: claims the terminal effects (kill intent) and compensates.
-            assert_eq!(
-                registry.claim_terminal(&identity("A", 1)),
-                TerminalClaim::Claimed
-            );
-            registry.set_phase("A", Phase::Compensated);
-            // Now the edge answers: the socket is gone.
-            routing.gate.notify_one();
-        })
-    };
-    let outcome = bounded(use_case.execute(kill("A"))).await.unwrap();
-    bounded(kill_task).await.unwrap();
-    assert_eq!(outcome.result, TerminationResult::AlreadyExited);
-    assert_eq!(
-        outcome.removed,
-        [
-            AgentUuid::new("A"),
-            AgentUuid::new("B"),
-            AgentUuid::new("C")
-        ]
-    );
-    assert!(
-        compensation.calls().is_empty(),
-        "the reaper's compensation was joined"
-    );
-    assert_eq!(registry.phase("A"), Phase::Compensated);
-    assert_eq!(
-        termination.calls()[0].1,
-        ProtocolAttempt::Negative("unreachable: socket closed".into())
-    );
+    for result in [
+        TerminationResult::Graceful,
+        TerminationResult::Fallback,
+        TerminationResult::AlreadyExited,
+    ] {
+        assert_eq!(TerminationResult::parse(result.as_str()), Some(result));
+    }
+    assert_eq!(TerminationResult::parse("killed"), None);
+    assert_eq!(TerminationResult::parse(""), None);
 }

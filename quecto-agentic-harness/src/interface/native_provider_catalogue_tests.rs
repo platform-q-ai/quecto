@@ -2,7 +2,6 @@ use crate::infrastructure::extensions::native::{
     AgentControlToolDeps, SessionToolDeps, build_agent_control_tool_extensions,
     build_session_tool_extensions, register_bundled_native_tools,
 };
-use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 #[test]
@@ -12,7 +11,7 @@ fn bundled_native_registration_preserves_provider_ids() {
     register_bundled_native_tools(
         &mut registry,
         build_session_tool_extensions(SessionToolDeps {
-            spill_store: std::sync::Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf())),
+            recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
             session_key: "provider-test".to_string(),
         }),
     );
@@ -31,8 +30,6 @@ fn bundled_native_registration_preserves_provider_ids() {
             broadcast_tx: None,
             parent_session_name: None,
             inherited_tool_policy: None,
-            owner: crate::domain::ids::AgentUuid::new("harness"),
-            kill_tool: None,
         })
         .extensions,
     );

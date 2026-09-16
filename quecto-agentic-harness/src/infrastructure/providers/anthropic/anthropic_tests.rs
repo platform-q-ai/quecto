@@ -1,6 +1,6 @@
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::domain::message::Message;
-use crate::domain::provider::ChatRequest;
 use crate::domain::tool::ToolDefinition;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool::Tool;
+use crate::application::tools::ports::Tool;
 #[tokio::test]
 async fn stale_pause_settlement_preserves_resumed_python_job() {
     let directory = tempfile::tempdir().unwrap();

@@ -1,4 +1,7 @@
 //! Request diagnostics contain measurements and availability, never prompt content or billing claims.
+//!
+//! The accounting port a completed observation is recorded through is the
+//! application's (`application::providers::ports::RequestAccounting`, #1960).
 use super::attempt_diagnostics::AttemptDiagnostics;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -72,13 +75,6 @@ pub struct RequestObservation {
     pub harness_prefix_unchanged: Option<bool>,
 }
 
-pub trait RequestAccounting: Send + Sync {
-    fn record<'a>(
-        &'a self,
-        observation: &'a RequestObservation,
-    ) -> super::subagent_launch::LaunchFuture<'a, Result<(), super::error::DomainError>>;
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestDiagnostics {
     pub logical_requests: u64,
@@ -124,11 +120,6 @@ impl RequestDiagnostics {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeIdentity {
     pub process_instance_id: String,
-    /// The reporting process's own pid in its pid namespace (0 when unknown,
-    /// for example a pre-#1925 peer). Lets a restoring parent confirm that a
-    /// persisted pid still names the harness answering on the socket.
-    #[serde(default)]
-    pub pid: u32,
     pub executable_digest_pending: bool,
     pub package_version: String,
     pub build_source_revision: Option<String>,

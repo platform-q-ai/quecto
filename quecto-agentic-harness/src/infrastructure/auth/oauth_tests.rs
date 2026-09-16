@@ -711,13 +711,16 @@ async fn test_refresh_paths_fail_fast_via_connect_timeout() {
         );
     };
 
+    // Both refreshes hit the same connect timeout, so time them concurrently:
+    // one timeout of wall clock, not two.
     let start = std::time::Instant::now();
-    let err = refresh_anthropic_token(&cfg, "rt").await.unwrap_err();
-    assert_fast("anthropic", err, start.elapsed());
-
-    let start = std::time::Instant::now();
-    let err = refresh_openai_token(&cfg, "rt").await.unwrap_err();
-    assert_fast("openai", err, start.elapsed());
+    let (anthropic, openai) = tokio::join!(
+        refresh_anthropic_token(&cfg, "rt"),
+        refresh_openai_token(&cfg, "rt")
+    );
+    let elapsed = start.elapsed();
+    assert_fast("anthropic", anthropic.unwrap_err(), elapsed);
+    assert_fast("openai", openai.unwrap_err(), elapsed);
 }
 
 #[tokio::test]

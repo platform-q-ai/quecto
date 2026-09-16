@@ -697,36 +697,54 @@ async fn test_exec_drop_kills_whole_process_group() {
     // drop it). `kill_on_drop` only reaps the leader shell; the backgrounded
     // subshell survives and touches the marker unless the whole group is killed.
     //
-    // Timing is chosen for CI robustness: the subshell waits a generous SLEEP_S
-    // before it would touch the marker, so even a heavily loaded runner that lags
-    // the drop far past its 300ms target still cancels the group well before the
-    // touch would fire — no false failure. A broken implementation (leader-only
-    // kill) leaves the subshell alive and it touches the marker at ~SLEEP_S,
-    // which the post-drop poll below catches within OBSERVE_S.
-    const SLEEP_S: u64 = 8;
-    const OBSERVE_S: u64 = SLEEP_S + 4;
+    // The subshell publishes its pid before it sleeps, so the test waits on
+    // the receipt (that pid is gone) rather than sitting out a sleep long
+    // enough to prove a survivor would have touched the marker: a leaked
+    // subshell stays alive in its 60 s sleep and the bounded wait fails.
+    let pid_file = tmp.path().join("subshell.pid");
     let cmd = format!(
-        r#"{{"command": "( sleep {SLEEP_S} && touch '{}' ) & sleep {}"}}"#,
+        r#"{{"command": "( sh -c 'echo $PPID' > '{}'; sleep 60 && touch '{}' ) & sleep 70"}}"#,
+        pid_file.display(),
         marker.display(),
-        SLEEP_S + 10,
     );
 
-    {
+    // Drop only once the subshell exists (it publishes its pid first), so a
+    // slow spawn under load cannot turn into a missing-pid failure.
+    let publish = async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    let pid = {
         let fut = tool.execute(&cmd);
         tokio::pin!(fut);
-        let _ = tokio::time::timeout(Duration::from_millis(300), &mut fut).await;
+        tokio::select! {
+            pid = tokio::time::timeout(Duration::from_secs(10), publish) => pid.expect("the subshell publishes its pid"),
+            _ = &mut fut => panic!("the command must still be running when its pid is published"),
+        }
         // `fut` dropped here → ProcessGroupGuard must kill the whole group.
-    }
-
-    // Poll across the whole window the subshell would need to surface the marker.
-    // Fail fast the moment a leaked subshell writes it; otherwise confirm absence
-    // for the full OBSERVE_S (longer than SLEEP_S, so a survivor cannot hide).
-    let deadline = std::time::Instant::now() + Duration::from_secs(OBSERVE_S);
-    while std::time::Instant::now() < deadline {
+    };
+    let alive = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|stat| !stat.contains(") Z "))
+            .unwrap_or(false)
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while alive(pid) {
         assert!(
-            !marker.exists(),
-            "whole process group must be killed on cancel; detached subshell survived"
+            std::time::Instant::now() < deadline,
+            "whole process group must be killed on cancel; detached subshell {pid} survived"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    assert!(
+        !marker.exists(),
+        "a killed subshell cannot have touched the marker"
+    );
 }

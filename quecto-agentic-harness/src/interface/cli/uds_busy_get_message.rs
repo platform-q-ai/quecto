@@ -1,9 +1,10 @@
 use super::protocol::AgentEvent;
-use super::uds_multi::ConversationSnapshot;
+use super::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
 
 pub(super) struct BusyCommandCtx<'a> {
     pub line: &'a str,
-    pub snapshot: &'a ConversationSnapshot,
+    pub session: &'a SessionReadHandles,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub client_id: u64,
 }
@@ -24,7 +25,7 @@ pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
         return true;
     }
     if let Some(parsed) = parse(ctx.line.trim()) {
-        service(parsed, ctx.snapshot, ctx.registry, ctx.client_id).await;
+        service(parsed, ctx.session, ctx.registry, ctx.client_id).await;
         return true;
     }
     false
@@ -42,7 +43,7 @@ pub(super) struct ParsedGetMessage {
 
 pub(super) async fn service(
     parsed: ParsedGetMessage,
-    snapshot: &ConversationSnapshot,
+    session: &SessionReadHandles,
     registry: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) {
@@ -54,28 +55,25 @@ pub(super) async fn service(
         thinking_offset,
         limit,
     } = parsed;
-    // Resolve against the id-addressable ledger (full copies) first, falling
-    // back to the live snapshot — a ref pruned/collapsed from the live
-    // conversation still resolves to its full content (#1060 review 1a).
-    let data = super::uds_snapshots::resolve_get_message(snapshot, &message_id)
-        .await
-        .and_then(|msg| match tool_call_id.as_deref() {
-            Some(tool_call_id) => {
-                super::uds_session::tool_call_arguments_to_json_range_for_response(
-                    &msg,
-                    tool_call_id,
-                    offset,
-                    limit,
-                    request_id.as_deref(),
-                )
-            }
-            None => Some(super::uds_session::message_to_json_range_for_response(
-                &msg,
+    // The same recovery owner as the idle loop (#1971): the ledger's full
+    // copy before the live view, the retention store behind a collapsed
+    // stub (#1060 review 1a). No live-vector fallback on the busy path.
+    let data = session
+        .recover_message
+        .recover(
+            GetMessageFields {
+                message_id: &message_id,
+                tool_call_id: tool_call_id.as_deref(),
                 offset,
                 thinking_offset,
                 limit,
-                request_id.as_deref(),
-            )),
+            },
+            &[],
+        )
+        .await
+        .ok()
+        .and_then(|content| {
+            super::uds_session::recovered_content_json(&content, request_id.as_deref())
         });
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),

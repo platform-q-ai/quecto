@@ -196,6 +196,7 @@ fn responses_serialize_as_correlated_newline_terminated_frames() {
         TeardownResponseData::Forwarded {
             via_uuid: "A".into(),
             remaining_depth: 2,
+            result: Some("graceful".into()),
         },
     );
     let round_trip: TeardownResponse = serde_json::from_str(forwarded.to_line().trim()).unwrap();
@@ -205,6 +206,7 @@ fn responses_serialize_as_correlated_newline_terminated_frames() {
         TERMINATE_DELEGATED_AGENT_COMMAND,
         TeardownResponseData::ShutdownRequested {
             child_uuid: "B".into(),
+            result: None,
         },
     );
     assert!(

@@ -13,7 +13,8 @@ use super::dispatch_test_env::{
     DispatchTestEnv, make_completed_feature_workflow, make_selected_feature_workflow,
 };
 use super::*;
-use crate::domain::provider::{LlmProvider, StreamEvent};
+use crate::application::providers::ports::LlmProvider;
+use crate::domain::provider::StreamEvent;
 use crate::interface::shared::WorkflowStateHandle;
 
 /// Fragment of the standard auto-continue nudge (first nudge, and any nudge
@@ -66,7 +67,7 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
     assert!(format!("{provider:?}").contains("ScriptedProgressProvider"));
     assert!(provider.as_any().is::<()>());
 
-    let request = crate::domain::provider::ChatRequest {
+    let request = crate::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &[],
@@ -91,7 +92,7 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
         Some("status")
     );
 
-    let request = crate::domain::provider::ChatRequest {
+    let request = crate::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &[],
@@ -113,14 +114,14 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
     }
 }
 
-impl crate::domain::provider::LlmProvider for ScriptedProgressProvider {
+impl crate::application::providers::ports::LlmProvider for ScriptedProgressProvider {
     fn name(&self) -> &str {
         "scripted-progress"
     }
 
     fn chat(
         &self,
-        request: crate::domain::provider::ChatRequest<'_>,
+        request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<

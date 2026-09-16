@@ -11,9 +11,10 @@ use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::StreamEvent;
 
 #[path = "codex_sse_state.rs"]
 mod codex_sse_state;

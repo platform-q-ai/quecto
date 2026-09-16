@@ -68,14 +68,14 @@ impl AgentLoopImpl {
     }
     pub fn with_tool_admission(
         mut self,
-        admission: Option<Arc<dyn crate::domain::tool::ToolExecutionAdmission>>,
+        admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     ) -> Self {
         self.tool_admission = admission;
         self
     }
     pub fn with_request_accounting(
         mut self,
-        accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
+        accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     ) -> Self {
         self.request_accounting = accounting;
         self
@@ -83,7 +83,7 @@ impl AgentLoopImpl {
 
     pub fn with_request_admission(
         mut self,
-        admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
+        admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     ) -> Self {
         self.request_admission = admission;
         self

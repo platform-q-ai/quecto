@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
-from swarm_policy import require_unsubmitted
+from swarm_policy import ADDRESSABLE_OWNER_STATES, owner_recovery, owner_state, require_unsubmitted
+from swarm_repository import lost_members
 from swarm_store import SwarmError, bounded, encode
 
 
@@ -12,7 +13,8 @@ class Tasks:
         if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
             raise SwarmError('task page requires nonnegative offset and limit 1 through 100')
         with self.store.operation(active=False, read_only=True) as (db, _):
-            return [self._task(db, row[0]) for row in db.execute('SELECT id FROM tasks ORDER BY id LIMIT ? OFFSET ?', (limit, offset))]
+            page = [self._task(db, row[0]) for row in db.execute('SELECT id FROM tasks ORDER BY id LIMIT ? OFFSET ?', (limit, offset))]
+            return self._with_owner_liveness(db, page)
 
     def file_owners(self, offset=0, limit=50):
         if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
@@ -22,7 +24,47 @@ class Tasks:
 
     def task(self, task_id):
         with self.store.operation(active=False, read_only=True) as (db, _):
-            return self._task(db, task_id)
+            return self._with_owner_liveness(db, [self._task(db, task_id)])[0]
+
+    def _with_owner_liveness(self, db, tasks):
+        """Read side only (#1969): a claimed, blocked or submitted task carries
+        the store's view of its owner: `owner_last_activity`, seconds since the
+        owner's most recent board event by the store clock, and `owner_state`
+        (`swarm_policy.owner_state`). An owner `send` would accept (active or
+        idle) is named as a recipient in `contact`; otherwise `contact` is
+        None and `recovery` says how the coordinator moves the work. Three
+        bounded queries per call, never per row: the owners' member rows, one
+        grouped scan of their events and one scan of loss/activation events.
+        Unowned tasks carry none of these fields. Nothing is written."""
+        owned = self.owned_tasks(tasks)
+        if not owned:
+            return tasks
+        now = self.store.clock()
+        for task, (last, state) in zip(owned, self._owner_views(db, owned, now)):
+            task['owner_last_activity'] = None if last is None else max(0.0, now - last)
+            task['owner_state'] = state
+            if state in ADDRESSABLE_OWNER_STATES:
+                task['contact'] = f"board.send(request, {task['owner']!r}, body)"
+            else:
+                task['contact'] = None
+                task['recovery'] = owner_recovery(state)
+        return tasks
+
+    @staticmethod
+    def owned_tasks(tasks):
+        return [t for t in tasks if t['owner'] is not None and t['status'] in ('claimed', 'blocked', 'submitted')]
+
+    @staticmethod
+    def _owner_views(db, owned, now):
+        """`(last_activity, owner_state)` per owned task, from bounded queries."""
+        owners = sorted({t['owner'] for t in owned})
+        marks = ','.join('?' * len(owners))
+        status = {r['id']: r['status'] for r in db.execute(f'SELECT id,status FROM members WHERE id IN ({marks})', owners)}
+        latest = {r['actor']: r['latest'] for r in db.execute(
+            f'SELECT actor, max(time) latest FROM events WHERE actor IN ({marks}) GROUP BY actor', owners)}
+        lost = lost_members(db, owners)
+        return [(latest.get(t['owner']), owner_state(status.get(t['owner']), t['owner'] in lost, latest.get(t['owner']), now))
+                for t in owned]
 
     @staticmethod
     def _task(db, task_id):
@@ -166,17 +208,64 @@ class Tasks:
             db.execute('DELETE FROM files WHERE task=? AND claim=?', (task_id, token))
             self.store.event(db, 'verified', {'task': task_id, 'revision': revision})
 
-    def recover(self, task_id):
+    def recover(self, task_id, release_files=False):
+        """Coordinator only: reopen work whose owner's death the harness confirmed
+        (its owned process exited, #1961); `revoke` covers a live owner. After
+        an abrupt exit the owner's file reservations were retained (orphaned
+        tool processes may still write them): pass `release_files=True` to
+        free them explicitly, or `revoke(id, reason)` to record why."""
         with self.store.operation(coordinator=True) as (db, _):
             task = self._task(db, task_id)
             if task['status'] not in ('claimed', 'blocked', 'submitted'):
                 raise SwarmError('only abandoned active work can be recovered')
             member = db.execute('SELECT status FROM members WHERE id=?', (task['owner'],)).fetchone()
             if not member or member['status'] != 'dead':
-                raise SwarmError('recovery requires confirmed worker death')
-            db.execute('DELETE FROM files WHERE task=?', (task_id,))
-            db.execute("UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?", (task_id,))
-            self.store.event(db, 'recovered', {'task': task_id})
+                raise SwarmError('recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner')
+            retained = db.execute('SELECT count(*) FROM files WHERE task=?', (task_id,)).fetchone()[0]
+            if retained and release_files is not True:
+                raise SwarmError('reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)')
+            self._reopen(db, task_id)
+            self.store.event(db, 'recovered', {'task': task_id, 'reservations_released': retained})
+
+    def revoke(self, task_id, reason):
+        """Coordinator only (#1961): take a claim back from an owner that will
+        not finish (suspended, hung, silent), whether or not it is alive. The
+        task returns to `ready` without owner, token, blocker or evidence, its
+        file reservations go, the audit records the reason and previous owner,
+        and the previous owner gets a board message so it learns on its next
+        wake (its owned calls with the old token fail as stale). Revoking an
+        unowned task is a no-op returning the task as it stands."""
+        bounded(reason, 'revocation reason')
+        with self.store.operation(coordinator=True) as (db, _):
+            task = self._task(db, task_id)
+            if task['owner'] is None and task['status'] in ('ready', 'blocked'):
+                return task
+            if task['owner'] is None or task['status'] not in ('claimed', 'blocked', 'submitted'):
+                raise SwarmError('only claimed, blocked or submitted work can be revoked')
+            previous = task['owner']
+            self._reopen(db, task_id)
+            self.store.event(db, 'revoked', {'task': task_id, 'reason': reason, 'previous_owner': previous})
+            self._notify_revoked(db, previous, task_id, reason)
+            return self._task(db, task_id)
+
+    @staticmethod
+    def _reopen(db, task_id):
+        db.execute('DELETE FROM files WHERE task=?', (task_id,))
+        db.execute("UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?", (task_id,))
+
+    def _notify_revoked(self, db, previous, task_id, reason):
+        """Best effort inside the revoke transaction: a dead owner or a full
+        inbox loses the message, never the revocation; the event is the audit."""
+        target = db.execute('SELECT status FROM members WHERE id=?', (previous,)).fetchone()
+        if not target or target['status'] == 'dead':
+            return
+        count = db.execute("SELECT count(*) FROM messages WHERE recipient=? AND status='accepted'", (previous,)).fetchone()[0]
+        if count >= 100:
+            return
+        body = f'claim on task {task_id} revoked by the coordinator: {reason}'
+        cursor = db.execute("INSERT INTO messages(sender,recipient,body,status) VALUES(?,?,?,'accepted')",
+                            (self.member, previous, body))
+        self.store.event(db, 'message_accepted', {'message': cursor.lastrowid, 'recipient': previous, 'revision': None})
 
     def reserve(self, task_id: int, token: str, paths: list[str]):
         """Atomically reserve 1–100 paths inside the checkout for this claim."""

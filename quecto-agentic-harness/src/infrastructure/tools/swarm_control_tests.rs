@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::swarm::CoordinationPort;
+use crate::application::swarm::ports::CoordinationPort;
 use serde_json::json;
 #[tokio::test]
 async fn native_supervisor_validates_budget_and_event_requests_without_mutation() {
@@ -63,7 +63,7 @@ fn public_tool(context: SwarmContext) -> super::super::swarm::SwarmTool {
 
 #[tokio::test]
 async fn public_swarm_tool_reports_usage_after_completion() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let (_directory, context) = crate::swarm_control_fixture::context();
     context.cancel_run().unwrap();
     let result = public_tool(context)
@@ -77,7 +77,7 @@ async fn public_swarm_tool_reports_usage_after_completion() {
 
 #[tokio::test]
 async fn public_swarm_tool_configures_and_disables_usage_budget() {
-    use crate::domain::tool::Tool;
+    use crate::application::tools::ports::Tool;
     let (_directory, context) = crate::swarm_control_fixture::context();
     let tool = public_tool(context.clone());
     for limit in [json!(100), serde_json::Value::Null] {

@@ -7,15 +7,17 @@
 // stubs once `context_collapse_after_messages` live messages accumulate, and
 // demoted down the ladder (full → stub → removed) under token-budget pressure.
 //
-// Depends on: domain::message, domain::session (ContextSpillStore).
-// Never imports infrastructure.
+// Depends on: domain::message, application::sessions::use_cases (the narrow
+// retention writer, D9 #1978). Never imports infrastructure, never reaches
+// the retention store.
 
 use super::{
     COLLAPSE_DISABLED, collapse_message, drop_until_under_budget, estimate_message_tokens,
     estimate_tokens, estimate_total_tokens, truncate_utf8_safe,
 };
+use crate::application::sessions::use_cases::RetainContext;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
 
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]
@@ -248,9 +250,11 @@ pub fn enforce_context_ceiling_ladder(
 /// Spill a conversation (assistant/user) message to the store at creation
 /// time (#1046 AC1) under `turn{N}:msg:{role}` — the single spill writer for
 /// conversation content. Turn numbering restarts each prompt while the store
-/// persists for the session, so the base id is de-duplicated against the
-/// store index with a `:{n}` suffix (highest existing suffix + 1, computed in
-/// one pass over the index). The message's `spill_id` is stamped so later
+/// persists for the session, so the base id is de-duplicated by the sessions
+/// capability with a `:{n}` suffix (`RetainContext::retain_deduplicated`,
+/// D9 #1978: highest existing suffix + 1, one pass over the index); the
+/// policy allocates the base id, sessions appends and issues the id it
+/// retained. The message's `spill_id` is stamped with that id so later
 /// collapse/demotion can reference it. Ephemeral sessions (empty key)
 /// deliberately persist too, matching tool-output spilling: collapse and the
 /// demotion ladder can fire within a single `--no-session` run, and their
@@ -261,52 +265,31 @@ pub fn enforce_context_ceiling_ladder(
 /// Returns true when an entry was written (the manifest needs a refresh).
 pub async fn spill_conversation_message(
     msg: &mut Message,
-    store: &dyn ContextSpillStore,
-    session_key: &str,
+    retain: &RetainContext,
+    session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
     if !is_conversation(msg) || msg.is_collapsed || msg.content.is_empty() {
         return false;
     }
     let role = msg.role.as_str();
     let base = format!("turn{}:msg:{role}", msg.turn.unwrap_or(0));
-    let existing = store.list_entries(session_key).await.unwrap_or_default();
-    // One linear pass: the next free suffix is (highest taken suffix) + 1,
-    // where the bare base id counts as suffix 1. Avoids the quadratic
-    // probe-and-rescan a `while any(id taken)` loop would cost per prompt.
-    let mut max_n = 0usize;
-    for e in existing.iter() {
-        if e.id == base {
-            max_n = max_n.max(1);
-        } else if let Some(n) =
-            e.id.strip_prefix(&base)
-                .and_then(|rest| rest.strip_prefix(':'))
-                .and_then(|n| n.parse::<usize>().ok())
-        {
-            max_n = max_n.max(n);
-        }
-    }
-    let id = if max_n == 0 {
-        base
-    } else {
-        format!("{base}:{}", max_n + 1)
-    };
     // Move (not clone) the content into the SpillEntry for the borrowing
     // append, then move it back — avoids copying large message bodies on the
     // per-turn hot path (same pattern as the tool-output spill writer).
     let content = std::mem::take(&mut msg.content);
-    let entry = SpillEntry {
-        id: id.clone(),
+    let mut entry = SpillEntry {
+        id: base,
         tool: role.to_string(),
         input_preview: truncate_utf8_safe(&content, 100).into_owned(),
         tokens: estimate_tokens(&content),
         content,
     };
-    let result = store.append(session_key, &entry).await;
+    let result = retain.retain_deduplicated(session_key, &mut entry).await;
     // Restore content back into the message (entry is consumed here).
     msg.content = entry.content;
     match result {
-        Ok(()) => {
-            msg.spill_id = Some(id);
+        Ok(retained) => {
+            msg.spill_id = Some(retained.id);
             true
         }
         Err(e) => {

@@ -5,6 +5,7 @@ use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::provider::EffortLevel;
 use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 
 // ── protocol parsing ─────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ fn make_effort_test_agent(effort: Option<EffortLevel>) -> AgentLoopImpl {
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:test".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -54,7 +55,6 @@ struct EffortFx {
     session: AgentSession,
     execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }
@@ -65,12 +65,9 @@ impl EffortFx {
         Self {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session: AgentSession::new("stub".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
-            store: crate::infrastructure::persistence::session_store::FileSessionStore::new(
-                tmp.path(),
-            ),
             _tmp: tmp,
             writer: tokio::io::sink(),
         }
@@ -81,25 +78,32 @@ impl EffortFx {
             &self.session_key,
             &self.messages,
         );
+        let save_session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
+        let rewrite =
+            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
         DispatchCtx {
             execution_state: self.execution_state.clone(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
-            )),
+            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+                &self.session_key,
+                None,
+                &[],
+            ),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0, None),
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::interface::cli::uds_cancel::CancelSlot::Idle,
@@ -116,9 +120,13 @@ impl EffortFx {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
+            save_session,
+            rewrite,
+            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
             fleet_teardown: None,
+            list_sessions: list_handle(self._tmp.path()),
         }
     }
 }

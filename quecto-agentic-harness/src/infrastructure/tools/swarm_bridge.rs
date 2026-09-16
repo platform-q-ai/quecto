@@ -10,14 +10,14 @@ use crate::domain::error::DomainError;
 pub struct SwarmContext {
     pub checkout: PathBuf,
     pub member: String,
-    pub lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
+    pub lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
 }
 
 impl SwarmContext {
     /// Explicit context supplied by the container launch adapter. Host-local
     /// reference scripts deliberately do not set this contract.
     pub fn discover(
-        lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
+        lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
     ) -> Option<Self> {
         let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
         let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;
@@ -161,39 +161,23 @@ fn bootstrap_source(checkout: &Path, member: &str) -> String {
     source
 }
 
-/// One isolated interpreter call against the store at `checkout`, acting as
-/// `member`. Shared by in-swarm contexts and the supervising session's
-/// host-side handle (#1924).
+/// One board call against the store at `checkout`, acting as `member`, over
+/// the persistent interpreter for that pair (see `swarm_board_worker`).
+/// Shared by in-swarm contexts and the supervising session's host-side
+/// handle (#1924).
 fn store_rpc(
     checkout: &Path,
     member: &str,
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
-    let source = format!(
-        "{}\ntry:\n print(json.dumps({{'ok':getattr(swarm.board,{}) (*json.loads({}))}}))\nexcept Exception as e:\n print(json.dumps({{'error':str(e)}}))\n",
-        bootstrap_source(checkout, member),
-        json!(method),
-        json!(args.to_string())
-    );
-    let output = std::process::Command::new("python3")
-        .args(["-I", "-c", &source])
-        .env_clear()
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-        .output()
-        .map_err(|e| DomainError::Tool(format!("swarm coordination interpreter: {e}")))?;
-    if !output.status.success() {
-        return Err(DomainError::Tool(format!(
-            "swarm coordination failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    let value: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| DomainError::Tool(format!("invalid swarm coordination response: {e}")))?;
-    if let Some(error) = value.get("error") {
-        return Err(DomainError::Tool(format!("swarm: {error}")));
-    }
-    Ok(value["ok"].clone())
+    super::swarm_board_worker::call(
+        checkout,
+        member,
+        &bootstrap_source(checkout, member),
+        method,
+        args,
+    )
 }
 
 /// Host-side handle on a container's coordination store for the supervising

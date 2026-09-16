@@ -111,3 +111,19 @@ fn tool_choice_specific() {
     assert_eq!(tc, ToolChoice::Specific("bash".to_string()));
     assert_ne!(tc, ToolChoice::Specific("read".to_string()));
 }
+
+#[test]
+fn effort_levels_for_model_selects_anthropic_or_openai_scale() {
+    assert_eq!(
+        EffortLevel::levels_for_model("anthropic-api/claude-sonnet-4.6"),
+        EffortLevel::ANTHROPIC_LEVELS
+    );
+    assert_eq!(
+        EffortLevel::levels_for_model("claude-opus-4.6"),
+        EffortLevel::ANTHROPIC_LEVELS
+    );
+    assert_eq!(
+        EffortLevel::levels_for_model("openai-api/gpt-5.6"),
+        EffortLevel::OPENAI_LEVELS
+    );
+}

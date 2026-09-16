@@ -194,9 +194,9 @@ receive explicit reconciliation/reset tools rather than automatic unsafe reclaim
 The transport cancellation work is required; an outer receiver-only decorator is
 insufficient. No fresh retry owner, delegation cap or broad generic framework.
 
-P0 fixtures: `tests/inference_admission_characterization.rs` characterizes delayed
+P0 fixtures: `tests/integration/inference_admission_characterization.rs` characterizes delayed
 terminal delivery, >64-event slow consumption, HTTP rejection and receiver drop;
-`tests/inference_admission_transport.rs` proves real local direct/nested bridge
+`tests/integration/inference_admission_transport.rs` proves real local direct/nested bridge
 connectivity and negative framing/capability cases. Existing retry, refresh,
 AbortOnDrop and launch contracts remain regression seams. Full runtime policy,
 crash, reload, observation and real Docker/Podman tests are P1–P4 gates, not claims
@@ -256,7 +256,7 @@ outstanding work; a corrupt ledger fails closed. Docker/Podman adapters mount th
 client directory by path and report `shared-directory-v1`; an enabled parent
 refuses containers without it.
 
-Real multi-process evidence (`tests/inference_admission_processes.rs`) covers two
+Real multi-process evidence (`tests/integration/inference_admission_processes.rs`) covers two
 independent roots plus a third bounded at C=2 against a fake HTTP provider, a
 control burst without admission, descendant wait/forged-capability refusal,
 SIGKILL of a client and of the authority.

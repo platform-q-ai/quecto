@@ -17,7 +17,7 @@
 |---|---|---|
 | Sessions / workflow / inference / workspace characterization | `cargo test -p quecto-tui --lib` → **1667 passed** (includes moved suites + new protocol mapper tests) | PASS |
 | Architecture ratchets | `tui_interface_raw_json_parsing_sites_do_not_grow` (55), `tui_protocol_raw_json_parsing_sites_do_not_grow` (121), combined raw-JSON inventory 176 ≤ historical ceiling 178, `tui_wire_dto_usage_does_not_grow` (122) | PASS |
-| TUI architecture BDD | `QUECTO_TAG=tui cargo test -p quecto-agentic-harness --features test-support --test bdd` → Phase 5 scenarios green | PASS |
+| TUI architecture BDD | `QUECTO_TAG=tui cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd` → Phase 5 scenarios green | PASS |
 | Formatting / lint | `cargo fmt --all -- --check`; `cargo clippy -p quecto-tui --all-targets -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines`; architecture clippy `-D warnings` | PASS |
 
 ## Mapper conversion inventory (genuine burn-down)

@@ -4,11 +4,17 @@
 /// Uses shared mock infrastructure from `super::tests`.
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::SpillEntry;
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 /// Mock spill store that records appended entries.
 #[derive(Debug, Default)]
@@ -19,7 +25,7 @@ struct MockSpillStore {
 impl ContextSpillStore for MockSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -29,8 +35,8 @@ impl ContextSpillStore for MockSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -43,14 +49,14 @@ impl ContextSpillStore for MockSpillStore {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.as_str())
             .cloned();
         Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<
         Box<
             dyn Future<
@@ -79,7 +85,7 @@ impl ContextSpillStore for MockSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         Box::pin(async { Ok(()) })
@@ -102,7 +108,9 @@ async fn test_spill_preserves_message_content_after_spill() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store.clone()),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store.clone(),
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -147,7 +155,9 @@ fn tight_budget_agent(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store,
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
@@ -277,7 +287,7 @@ struct FailingSpillStore;
 impl ContextSpillStore for FailingSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         _entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
@@ -290,8 +300,8 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        _id: &str,
+        _session_key: &SessionIdentity,
+        _id: &SpillId,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -304,7 +314,7 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<
         Box<
             dyn Future<
@@ -321,7 +331,7 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
     {
         Box::pin(async { Ok(()) })
@@ -346,7 +356,9 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(Arc::new(FailingSpillStore)),
+        retention: Some(crate::composition::retention::context_retention_over(
+            Arc::new(FailingSpillStore),
+        )),
         session_key: "test-session".to_string(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -406,7 +418,9 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
-        spill_store: Some(spill_store.clone()),
+        retention: Some(crate::composition::retention::context_retention_over(
+            spill_store.clone(),
+        )),
         session_key: String::new(), // ephemeral: --no-session
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -448,14 +462,24 @@ async fn mock_spill_store_trait_surface_recalls_and_clears() {
         tokens: 2,
         content: "out".into(),
     };
-    store.append("s", &entry).await.unwrap();
+    store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(
-        store.recall("s", "id1").await.unwrap().unwrap().content,
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         "out"
     );
-    store.clear("s").await.unwrap();
+    store.clear(&id("s")).await.unwrap();
     assert_eq!(
-        store.recall("s", "id1").await.unwrap().unwrap().content,
+        store
+            .recall(&id("s"), &SpillId::new("id1"))
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         "out"
     );
 }
@@ -463,6 +487,12 @@ async fn mock_spill_store_trait_surface_recalls_and_clears() {
 #[tokio::test]
 async fn failing_spill_store_trait_surface_errors_on_recall_and_clear() {
     let store = FailingSpillStore;
-    assert!(store.recall("s", "missing").await.unwrap().is_none());
-    assert!(store.clear("s").await.is_ok());
+    assert!(
+        store
+            .recall(&id("s"), &SpillId::new("missing"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.clear(&id("s")).await.is_ok());
 }

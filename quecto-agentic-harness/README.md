@@ -134,6 +134,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for interactive agent clients. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
 | `context_pruning.rs` | Token estimation, pinned spill manifest, tool-call-count tool-result collapse, conversation-message collapse (`context_collapse_after_messages`, default 50), and the demotion-ladder ceiling (stub, then drop; `pin_recent_turns = 2` tail is never demoted). Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`, `context_collapse_after_messages = 50`; set a collapse knob to `4294967295` (`u32::MAX`) to disable it |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
+| `sessions/` | The sessions capability (#1968): `use_cases/` (list, history, recovery, sync, report, save, clear, rewind, fresh, resume, recall/retain), `ports.rs` + `ports/` (the `SessionStore`, `ContextSpillStore`, export and runtime ports, each contract-tested), `dto/`, and the one `ActiveSessionState`. Constructed only by `composition/`; the interface parses, maps and presents. See [docs/sessions.md](docs/sessions.md#architecture-epic-1968) |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited tool policy |
 
 ### infrastructure/ — Concrete adapters
@@ -185,7 +186,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 | `protocol.rs` | `AgentCommand` enum (documented surface: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`/`agent_id`), `get_message` (`messageId` plus optional `offset`/`limit`/`agent_id`/`toolCallId` for bounded recovery), `get_session_stats`, `list_models`, `list_sessions`, `new_session`, `resume_session`, `set_model`, `set_effort`, `get_tool_catalogue`, `reload`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `rewind_to`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end` (`messageRefs`; legacy `messages` empty after #1060), `workflow_idle`, `token`, `turn_start`, `turn_end` (`messageRefs` / context occupancy fields), `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `tool_catalogue_changed`, `subagent_notification`, `subagent_state_changed`, `subagent_messages_appended`, `workflow_state`), `StreamingBehavior`, `SessionState` (includes `effort` / `effortLevels` / `maxContextTokens`), `SessionStats` (includes `contextTokens` / `maxContextTokens`). All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
-| `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
+| `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, usage, pending message queue with `VecDeque`, max 64 pending; it holds no session key — presenters read the active session's identity). `compute_session_stats()`, `message_to_json()`, `history_page_json()` |
 | `uds_cancel.rs` | `CancelSlot`/`CancelHandle` state machine (Idle → Armed → Fired) for race-free steer/abort. `run_agent_prompt()` with real-time progress event forwarding. `emit_event()` helper |
 
 Socket path: `--socket <path>` (max 104 bytes, macOS `sockaddr_un` limit) or auto-generated in `$XDG_RUNTIME_DIR` / `$TMPDIR` with UUID. Stale sockets older than 24h are reaped on startup. Socket printed to stderr: `quecto-agent-socket: <path>`.
@@ -271,9 +272,9 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `toolCallId`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent; `toolCallId` recovers tool-call arguments instead of message content |
 | `get_session_stats` | optional `id` | Return normalized token/cache usage, `costMicroUsd`, `cacheHitRatio`, and context occupancy (`contextTokens` / `maxContextTokens`); legacy float `cost` remains hidden from serialization |
 | `list_models` | optional `id` | Return configured and built-in models from the runtime registry |
-| `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
+| `list_sessions` | optional `id` | Return every persisted session available for resume, newest first (`key`, `title`, `messageCount`, `updatedUnixSecs`) |
 | `new_session` | optional `id` | Switch to a fresh user-chat session (idle only) |
-| `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
+| `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted session (a listed `chat-…` key, a `cli:<name>` key, or a bare CLI session name) |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
 | `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's provider vocabulary) |
 | `get_tool_catalogue` / `list_tools` | optional `id` | Return the rich `ToolCatalogueEntry` snapshot for control/query clients in `data.tools` (bundled-native and UDS tools, policy/effective availability, source/owner/lifecycle/health) |
@@ -711,8 +712,8 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 | Quality scripts | `scripts/check-quality.sh`, `scripts/check-bdd-quality.sh` |
 | Format | `cargo fmt --check` |
 | Lint | `cargo clippy -p quecto -- -D warnings` (zero warnings) |
-| Unit tests | `cargo test -p quecto --no-fail-fast --lib 2>&1 \| scripts/test-filter.sh` |
-| Architecture | `cargo test -p quecto --no-fail-fast --test architecture 2>&1 \| scripts/test-filter.sh` |
+| Unit tests | `cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --lib 2>&1 \| scripts/test-filter.sh` |
+| Architecture | `cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test architecture 2>&1 \| scripts/test-filter.sh` |
 | BDD (sharded) | See [Sharded BDD](#sharded-bdd-24-way-parallel) below |
 
 All test commands pipe through `scripts/test-filter.sh` which strips the per-test `... ok` noise and shows only:
@@ -729,14 +730,14 @@ Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and fo
 Non-real-LLM (fast, no API key needed):
 ```bash
 (for i in $(seq 0 23); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```
 
 Provider smoke (paid, opt-in, minimal live request):
 ```bash
-QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh
 ```
 
 Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `OPENAI_API_KEY`, Anthropic uses `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
@@ -747,7 +748,7 @@ Legacy live behavioral suites are tagged `@manual-real-llm` and still gated by `
 
 To debug a single scenario, add a temporary tag (e.g. `@focus`) to the scenario in the `.feature` file, then run:
 ```bash
-QUECTO_TAG=focus cargo test -p quecto --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
+QUECTO_TAG=focus cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd 2>&1 | scripts/test-filter.sh
 ```
 Remove the tag before committing.
 
@@ -755,16 +756,21 @@ Remove the tag before committing.
 
 ```bash
 # Core suite (no real provider calls)
-cargo test -p quecto --features test-support --test bdd
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd
 
-# Core suite (24-way sharded, fastest local full run)
+# Core suite (24-way sharded, fastest local full run; the binary is built once
+# and run per shard. CI uses --shards 8 on 4-vcpu runners.)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
+
+# Same lane with function coverage; the instrumented build persists in
+# target/llvm-cov-non-real-bdd so repeat runs only re-execute the scenarios.
+bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m --coverage --coverage-threshold 72
 
 # Mocked e2e suite (free, deterministic, authoritative CI lane — no API key)
 bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
 
 # Provider smoke subset (paid, opt-in; filters providers without credentials)
-QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto --no-fail-fast --features test-support --test bdd
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --workspace --no-fail-fast --features quecto-agentic-harness/test-support --bins --test bdd
 
 # Live Real-LLM full suite (paid, manual/on-demand — needs OPENAI_API_KEY in .env)
 bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag manual-real-llm --real-llm
@@ -783,7 +789,7 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, changed-package strict Clippy, and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
+`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, strict workspace-shape Clippy (one feature unification, plus the standalone per-crate shapes), and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
 
 Pre-push control:
 - `QUECTO_PREPUSH_BASE` overrides the comparison base used to identify changed workspace packages (default `origin/master`, falling back to local `master`).

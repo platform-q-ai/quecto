@@ -33,6 +33,7 @@ fn flags_for_wiring_test() -> AgentFlags {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
         admission_context: None,
         parent_control: None,
     }

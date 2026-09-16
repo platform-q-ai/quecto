@@ -10,8 +10,9 @@ use crate::application::subagents::dto::{
     KillDelegatedAgentError, KillDelegatedAgentOutcome, KillDelegatedAgentRequest,
 };
 use crate::application::subagents::use_cases::KillDelegatedAgent;
+use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{ToolDefinition, ToolResult};
 
 /// Name under which `AgentCmdTool` delegates its `kill` command.
 pub const KILL_TOOL_NAME: &str = "agent_cmd:kill";
@@ -75,7 +76,7 @@ pub fn present_outcome(outcome: &KillDelegatedAgentOutcome) -> ToolResult {
 
 pub fn present_error(reference: &str, error: &KillDelegatedAgentError) -> ToolResult {
     match error {
-        KillDelegatedAgentError::Failed { detail } => result(
+        KillDelegatedAgentError::Failed { detail, .. } => result(
             serde_json::json!({
                 "result": "failed",
                 "target": reference,
@@ -91,7 +92,8 @@ pub fn present_error(reference: &str, error: &KillDelegatedAgentError) -> ToolRe
         KillDelegatedAgentError::AlreadyStopping
         | KillDelegatedAgentError::Rejected(_)
         | KillDelegatedAgentError::NotAccepting
-        | KillDelegatedAgentError::RouteUnreachable { .. } => {
+        | KillDelegatedAgentError::RouteUnreachable { .. }
+        | KillDelegatedAgentError::DownstreamRejected { .. } => {
             result(format!("agent_cmd error: {error}"), true)
         }
     }

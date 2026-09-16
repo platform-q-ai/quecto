@@ -6,14 +6,24 @@
 //!
 //! Also owns the shared `the agent is streaming a response` Given (reused by
 //! `tui_esc_abort_recovery.feature`), which starts a real agent run.
+//!
+//! The #1956 scenarios adopt a REAL spawned stand-in harness (a shell script
+//! in its own process group, under the production child watcher) and run the
+//! production `finalize_ordinary_exit`: SIGTERM to the leader pid only, the
+//! budgeted wait with the settling notice, SIGKILL of that one pid past the
+//! budget, and the read-only post-exit canary.
 
 use crate::{TuiParityHarness, TuiWorld};
+
+#[path = "tui_ctrl_d_exit_leader_steps.rs"]
+mod leader;
 use cucumber::{given, then, when};
+pub use leader::ExitFixture;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 
-fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+pub(crate) fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }

@@ -12,6 +12,15 @@ concurrency:
   group: merge-ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# rust-cache keys (`shared-key`) name a BUILD SHAPE, not a job, and the same
+# keys are produced on every master push by cache-warm.yml. This workflow only
+# runs on labelled PRs, so without that warm-up no cache ever exists in
+# master's scope and every PR's first run compiles everything cold (measured:
+# Coverage 180 s warm vs 343 s cold, Static Quality 58 s vs 137 s).
+#   workspace    - cargo test/clippy of the workspace shape (target/)
+#   coverage-lib - instrumented workspace lib build (target/llvm-cov-lib)
+#   coverage-bdd - instrumented bdd builds (target/llvm-cov-<suite>)
+
 jobs:
   # Complements branch-protection `required_conversation_resolution` with a
   # visible merge-CI check so unresolved review threads fail next to other jobs.
@@ -42,11 +51,19 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
       - run: scripts/check-quality.sh
       - run: scripts/check-bdd-quality.sh
       - run: scripts/check-bdd-tags.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
+      # Feature unification: the harness's dev-dependency enables quecto-tui's
+      # `test-harness` feature in every workspace build, so code that only the
+      # headless harness uses looks live above. `cargo install --path <crate>`
+      # builds each package alone with default features; check that shape too.
+      - run: cargo clippy -p quecto-tui --lib --bins -- -D warnings
+      - run: cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings
 
   workspace-tests:
     needs: [static-quality, dependency-policy]
@@ -58,6 +75,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+      - uses: taiki-e/install-action@nextest
       - name: Install fd
         run: |
           sudo apt-get update
@@ -68,16 +88,39 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
       - name: All workspace unit and integration tests except sharded BDD targets
+        # One feature unification for every invocation. Cargo resolves
+        # dependency features over the packages whose targets it builds, so a
+        # `-p <crate>` run, a run without `test-support`, or a bare
+        # `--test <harness target>` (which builds only the harness) each
+        # resolve a different feature set for tokio/reqwest/serde/... and
+        # rebuild the harness library and shared deps whenever the shape
+        # changes. The shape below matches `--workspace --all-targets`:
+        # `--workspace` selects every member and `--bins` (five empty bin test
+        # harnesses, 0.2 s) keeps every member's dev-dependencies in the
+        # resolution even when the test targets belong to one crate.
+        # `test-support` is additive test-only surface; the real-process
+        # selected-termination target requires it (its child harness is the
+        # `quecto` binary built with the test-only exit hold, #1936 review).
+        # Non-harness BDD targets are named `<crate>_bdd`, so `--test <name>`
+        # selects exactly one target across the workspace.
+        #
+        # libtest-harness targets run under cargo-nextest (one process per
+        # test, scheduled across binaries; `ci` profile in .config/nextest.toml),
+        # which is built from the same cargo artifacts; the cucumber `*_bdd`
+        # targets (harness = false) stay on `cargo test`.
         run: |
-          cargo test --workspace --lib --bins
-          mapfile -t targets < <(find quecto-agentic-harness/tests -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
-          args=()
-          for target in "${targets[@]}"; do args+=(--test "$target"); done
-          # Explicit names are retained as executable documentation and architecture guards.
-          cargo test -p quecto-agentic-harness --no-fail-fast --test architecture --test contracts
-          cargo test -p quecto-agentic-harness --no-fail-fast "${args[@]}"
-          cargo test -p quecto-api --no-fail-fast --all-targets
-          cargo test -p quecto-tui --lib
+          SHAPE=(--workspace --features quecto-agentic-harness/test-support --bins)
+          # Unit tests of every crate (harness, tui, api, mcp, runtime-manager, line-io).
+          cargo nextest run "${SHAPE[@]}" --lib --profile ci
+          # Explicit names are retained as executable documentation and architecture guards,
+          # with the harness integration targets tests/integration and tests/docs.
+          cargo nextest run "${SHAPE[@]}" --test architecture --test contracts --test integration --test docs --profile ci
+          # The two real-process proofs that must run apart from the other modules
+          # (see quecto-agentic-harness/Cargo.toml). The architecture suite asserts
+          # every harness target on disk appears in this job.
+          cargo nextest run "${SHAPE[@]}" --test parent_loss --test selected_termination --profile ci
+          # quecto-api and quecto-mcp BDD scenarios (their unit tests ran in the --lib pass above).
+          cargo test "${SHAPE[@]}" --no-fail-fast --test api_bdd --test mcp_bdd
 
   non-real-bdd:
     needs: [static-quality, dependency-policy]
@@ -91,6 +134,8 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-bdd
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install fd
         run: |
@@ -101,7 +146,7 @@ jobs:
           ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
-      - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m --coverage --coverage-threshold 72
+      - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 8 --timeout 5m --coverage --coverage-threshold 72
 
   tui-bdd:
     needs: [static-quality, dependency-policy]
@@ -115,8 +160,10 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-bdd
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m --coverage --coverage-threshold 62
+      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --shards 8 --timeout 5m --coverage --coverage-threshold 62
 
   mock-llm-e2e:
     needs: [static-quality, dependency-policy]
@@ -128,7 +175,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
+        with:
+          shared-key: workspace
+      - run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 8 --timeout 5m --tag mock-llm
 
   coverage:
     needs: [static-quality, dependency-policy]
@@ -142,6 +191,8 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-lib
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install fd
         run: |
@@ -152,12 +203,10 @@ jobs:
           ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
-      - run: cargo llvm-cov clean --workspace
-      - run: cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 92 --summary-only
-      - run: cargo llvm-cov clean --workspace
-      - run: cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
-      - run: cargo llvm-cov clean --workspace
-      - run: cargo llvm-cov --lib -p quecto-api --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
+      # One instrumented workspace-shape build; each package's lib tests run
+      # and report alone (the same per-package numbers as three `cargo llvm-cov
+      # --lib -p` runs, which each compiled their own feature unification).
+      - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95
 
   dependency-policy:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'

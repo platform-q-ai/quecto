@@ -1,9 +1,8 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::future::Future;
 use std::pin::Pin;
@@ -41,7 +40,7 @@ fn make_agent() -> AgentLoopImpl {
         model: "stub".into(),
         max_tokens: 32,
         temperature: 0.0,
-        spill_store: None,
+        retention: None,
         session_key: "cli:life".into(),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
@@ -59,15 +58,17 @@ fn make_agent() -> AgentLoopImpl {
 fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> UdsLoopArgs<'a> {
     UdsLoopArgs {
         agent: make_agent(),
+        retention: None,
         base_dir: base,
         workspace: base,
-        session_key: "cli:life".into(),
+        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:life"),
         model: "stub".into(),
         ephemeral: true,
         system_prompt: "system".into(),
         socket_path,
         socket_override: None,
         session_store_override: None,
+        sessions: crate::composition::sessions::build_session_handles,
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
@@ -248,7 +249,12 @@ async fn single_client_socket_override_serves_get_state() {
             .build()
             .unwrap();
         rt.block_on(async move {
-            let store = FileSessionStore::new(dir.path());
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
+            );
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
@@ -257,14 +263,12 @@ async fn single_client_socket_override_serves_get_state() {
                     messages: Vec::new(),
                     model: "stub".into(),
                     session_key: "cli:single".into(),
-                    ephemeral: true,
                     system_prompt: "system".into(),
                     ext_registry: None,
                     subagent_registry: None,
                     workflow_state: None,
                     provider_reload: None,
                     provider_reload_inputs: None,
-                    last_persisted_message_index: 0,
                 },
                 server_std,
                 &store,

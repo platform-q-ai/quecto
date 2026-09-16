@@ -241,11 +241,8 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // The get_state/session projection for a selected model must publish the
     // same canonical vocabulary the listing does — not a per-surface one.
     for qualified in ["anthropic-api/claude-opus-4-6", "openai-api/gpt-5.5"] {
-        let state = quecto::interface::cli::uds_session::AgentSession::new(
-            qualified.to_string(),
-            "conformance".to_string(),
-        )
-        .state_snapshot(0, None, 0, None);
+        let state = quecto::interface::cli::uds_session::AgentSession::new(qualified.to_string())
+            .state_snapshot("conformance", 0, None, 0, None);
         assert_eq!(
             state.effort_levels.join(", "),
             vocab(qualified),

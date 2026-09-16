@@ -1,5 +1,6 @@
 use super::*;
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[derive(Debug)]
 struct CovProvider;
@@ -110,7 +111,7 @@ pub(super) fn cov_agent_with_registry(
             model: "stub".into(),
             max_tokens: 100,
             temperature: 0.0,
-            spill_store: None,
+            retention: None,
             session_key: "cli:test".into(),
             context_collapse_after_tool_calls: u32::MAX,
             max_context_tokens: 190_000,
@@ -348,10 +349,12 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
 
     handle_one_request(
         "weather",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "call-1".to_string(),
-            tool_name: "weather".to_string(),
-            arguments: r#"{"city":"Oslo"}"#.to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "weather".to_string(),
+                arguments: r#"{"city":"Oslo"}"#.to_string(),
+            },
             reply: reply_tx,
         },
         91,
@@ -390,10 +393,12 @@ async fn handle_one_request_without_writer_drops_pending_so_caller_fails_fast() 
 
     handle_one_request(
         "offline",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "call-2".to_string(),
-            tool_name: "offline".to_string(),
-            arguments: "{}".to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-2".to_string(),
+                tool_name: "offline".to_string(),
+                arguments: "{}".to_string(),
+            },
             reply: reply_tx,
         },
         92,
@@ -414,36 +419,37 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = cov_agent();
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let registry = new_client_tool_registry();
     let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<String>(4);
     register_client_writer(&registry, 123, writer_tx);
     let tools = [tool_reg("cov_ext")];
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -459,9 +465,13 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
+        rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-1"), &tools).await;
@@ -512,34 +522,35 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     );
     agent.register_uds_tool_for_owner(existing_tool, "uds:client:123".into());
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("weather"), tool_reg("blocked_ext")];
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -555,9 +566,13 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
+        rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;
@@ -595,12 +610,16 @@ async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason(
     ));
 
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    tx.send(crate::domain::extension_tool::ToolInvocation {
-        tool_call_id: "call-3".to_string(),
-        tool_name: "drainme".to_string(),
-        arguments: "{}".to_string(),
-        reply: reply_tx,
-    })
+    tx.send(
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "call-3".to_string(),
+                tool_name: "drainme".to_string(),
+                arguments: "{}".to_string(),
+            },
+            reply: reply_tx,
+        },
+    )
     .await
     .unwrap();
     shutdown_tx.send("Tool unregistered").unwrap();
@@ -684,10 +703,12 @@ async fn poisoned_registry_lock_recovered_by_forwarder_paths() {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     handle_one_request(
         "poisoned_forward",
-        crate::domain::extension_tool::ToolInvocation {
-            tool_call_id: "forward-call".to_string(),
-            tool_name: "poisoned_forward".to_string(),
-            arguments: "{}".to_string(),
+        crate::application::extensions::ports::PendingToolInvocation {
+            invocation: crate::domain::extension_tool::ToolInvocation {
+                tool_call_id: "forward-call".to_string(),
+                tool_name: "poisoned_forward".to_string(),
+                arguments: "{}".to_string(),
+            },
             reply: reply_tx,
         },
         777,

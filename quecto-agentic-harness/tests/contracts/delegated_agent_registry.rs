@@ -20,7 +20,7 @@ use quecto::application::subagents::ports::{
     SubagentLifecycleRepository, TerminalClaim, TerminationCause,
 };
 use quecto::application::subagents::use_cases::{
-    KillDelegatedAgent, KillDelegatedAgentPorts, TerminateDelegatedAgent,
+    KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
 };
 use quecto::composition::subagent_teardown::LifecycleAdapter as RegistryLifecycleRepository;
 use quecto::domain::ids::AgentUuid;
@@ -117,8 +117,13 @@ fn tree(a_socket: &std::path::Path, d_socket: &std::path::Path) -> SubagentRegis
 
 fn port(registry: &SubagentRegistry) -> Arc<dyn DelegatedAgentRegistry> {
     Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_millis(200)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_millis(200)),
     )
 }
 
@@ -241,6 +246,7 @@ async fn nested_targets_are_forwarded_through_their_direct_ancestor_only() {
         TerminationRouted::Forwarded {
             via: identity("A", 1),
             remaining_depth: RoutingDepth::new(RoutingDepth::MAX_HOPS - 1).unwrap(),
+            result: None,
         }
     );
     let seen = a_requests.lock().unwrap().clone();
@@ -289,8 +295,13 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
     let (d, _) = fake_child();
     let registry = tree(&a, &d);
     let agents = Arc::new(
-        RegistryDelegatedAgents::new(registry.clone(), None, None)
-            .with_compensation_wait(Duration::from_secs(5)),
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            None,
+            None,
+            quecto::composition::environments::build_member_finalizer,
+        )
+        .with_compensation_wait(Duration::from_secs(5)),
     );
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),
@@ -298,14 +309,20 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
         quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     ));
     let kill = KillDelegatedAgent::new(
-        Arc::new(TerminateDelegatedAgent::new(
-            lifecycle.clone(),
-            Arc::new(UdsDirectChildRouting::new(registry.clone())),
-        )),
+        Arc::new(
+            TerminateDelegatedAgent::new(
+                lifecycle.clone(),
+                Arc::new(UdsDirectChildRouting::new(registry.clone())),
+            )
+            .with_owner_conclusion(OwnerConclusionPorts {
+                registry: agents.clone(),
+                termination: Arc::new(SupervisedChildTermination::new(registry.clone())),
+                compensation: agents.clone(),
+            }),
+        ),
         KillDelegatedAgentPorts {
             registry: agents.clone(),
             lifecycle,
-            termination: Arc::new(SupervisedChildTermination::new(registry.clone())),
             compensation: agents,
         },
     );
@@ -318,10 +335,9 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
             let mut entries = registry.lock().unwrap();
             let next =
                 quecto::infrastructure::tools::subagent_cascade::next_roster_sequence(&entries);
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(
-                entries.get_mut("B").unwrap(),
-                next,
-            );
+            let row = entries.get_mut("B").unwrap();
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(row, next);
+            quecto::infrastructure::tools::subagent_cascade::mark_entry_compensated(row);
         })
     };
     let outcome = tokio::time::timeout(

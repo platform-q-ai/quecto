@@ -28,6 +28,11 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 
 - Live idle child → `prompt`. Active → `steer` or `follow_up`. Use the child’s returned UUID, not its UI label.
 
+## Ending children
+
+- `agent_cmd kill` (by UUID) asks the child to shut down over its control connection; it settles its own children the same way. Result `graceful` / `fallback` / `already-exited`; an idle child ends in milliseconds, worst case ≈ 19 s.
+- Children end with their launcher. Restore is history only: re-spawn what you need.
+
 ## Container spawning (named container configs)
 
 When a config file defines `container_configs`, `spawn` can place a child in an isolated container (with its own repository checkout) instead of a local process. Each named container config is **self-contained**: its repository and auth are baked into the config itself — there is no repo field, and where the parent is running is irrelevant.

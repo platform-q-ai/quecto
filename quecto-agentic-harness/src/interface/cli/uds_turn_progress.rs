@@ -15,22 +15,22 @@ use crate::domain::agent::AgentProgressEvent;
 /// unchanged republish emits nothing.
 pub(crate) async fn publish_turn_progress(
     event: &AgentProgressEvent,
-    snapshot: Option<&super::super::uds_multi::ConversationSnapshot>,
+    session: Option<&crate::application::sessions::active_session::ActiveSessionHandle>,
     sink: &mut EventSink<'_>,
 ) {
-    let (Some(snapshot), AgentProgressEvent::TurnCompleted { messages }) = (snapshot, event) else {
+    let (Some(session), AgentProgressEvent::TurnCompleted { messages }) = (session, event) else {
         return;
     };
-    let mut snap = snapshot.write().await;
-    let mut live = snap.messages.clone();
+    let mut state = session.write().await;
+    let mut live = state.conversation().live_messages().to_vec();
     for message in messages.iter() {
         if !live.iter().any(|existing| existing.id() == message.id()) {
             live.push(message.clone());
         }
     }
-    let publish = snap.publish(&live);
-    let full = snap.record_full(messages);
-    drop(snap);
+    let publish = state.publish(&live);
+    let full = state.record_full(messages);
+    drop(state);
     sink.emit_ledger_advanced(publish).await;
     sink.emit_ledger_advanced(full).await;
 }

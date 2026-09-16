@@ -16,14 +16,11 @@ mod uds_busy_get_message;
 mod uds_busy_subagents;
 #[cfg(test)]
 mod uds_busy_subagents_tests;
-mod uds_busy_sync;
-#[cfg(test)]
-mod uds_busy_sync_tests;
 pub mod uds_cancel;
 mod uds_cancel_history;
 mod uds_control_forward;
 mod uds_delete_all_subagents;
-mod uds_execution_state;
+pub mod uds_execution_state;
 mod uds_progress_forward;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -116,14 +113,12 @@ pub fn completed_live_execution_state(
 #[cfg(any(test, feature = "test-support"))]
 pub async fn ledger_hint_lines_for_turn_events(
     events: &[crate::domain::agent::AgentProgressEvent],
+    session: &crate::application::sessions::active_session::ActiveSessionHandle,
 ) -> Vec<serde_json::Value> {
-    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        uds_snapshots::ConversationSnapshotData::default(),
-    ));
     let mut buf: Vec<u8> = Vec::new();
     let mut sink = uds_cancel::EventSink::writer(&mut buf);
     for event in events {
-        uds_cancel::publish_turn_progress(event, Some(&snapshot), &mut sink).await;
+        uds_cancel::publish_turn_progress(event, Some(session), &mut sink).await;
     }
     String::from_utf8_lossy(&buf)
         .lines()
@@ -137,15 +132,18 @@ pub async fn ledger_hint_lines_for_turn_events(
 /// is true when the command was answered on the reader task and never queued
 /// behind the dispatch loop. Covers the TUI's DIRECT child-feed path — a
 /// plain `sync` with no `agent_id` on the child's own socket — which is
-/// served by the child-local `uds_busy_sync` fast path even while the child's
+/// served by the child-local `uds_sync` fast path even while the child's
 /// dispatch loop is occupied (PR #1307 review).
 #[cfg(any(test, feature = "test-support"))]
-pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value>) {
-    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        uds_snapshots::ConversationSnapshotData::from_messages(vec![
-            crate::domain::message::Message::user("committed"),
-        ]),
-    ));
+pub async fn busy_reader_dispatch(
+    line: &str,
+    session: &uds_session_handles::SessionReadHandles,
+) -> (bool, Option<serde_json::Value>) {
+    let _ = session
+        .active_session
+        .write()
+        .await
+        .publish(&[crate::domain::message::Message::user("committed")]);
     let clients = uds_ext_protocol::new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
     uds_ext_protocol::register_client_writer(&clients, 1, tx);
@@ -154,7 +152,7 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
     uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
         line: line.to_string(),
-        snapshot: &snapshot,
+        session,
         registry: &clients,
         subagent_registry: &None,
         fleet: None,
@@ -185,6 +183,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 #[cfg(any(test, feature = "test-support"))]
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
+pub mod retention_handles;
 #[cfg(test)]
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
@@ -194,12 +193,14 @@ mod uds_lifecycle;
 pub mod uds_models;
 pub(crate) mod uds_multi;
 mod uds_multi_accept;
-pub(crate) mod uds_parent_control;
+pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
 mod uds_reload;
 pub mod uds_session;
+pub mod uds_session_handles;
+pub mod uds_session_switch_runtime;
 mod uds_shutdown;
 mod uds_snapshots;
 mod uds_socket;
@@ -207,11 +208,15 @@ mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
 mod uds_swarm_control;
+mod uds_sync;
+#[cfg(test)]
+mod uds_sync_tests;
 pub(crate) mod uds_teardown_adapters;
-pub mod uds_teardown_graph;
+pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;
+pub mod uds_turn_accounting;
 pub mod uds_wire;
 mod uds_workflow_nudge;
 
@@ -250,7 +255,67 @@ pub struct CliOutput {
 
 /// Runtime context for CLI commands, allowing override of paths for testing.
 pub type WebFetchToolFactory =
-    fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::domain::tool::Tool>;
+    fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::application::tools::ports::Tool>;
+
+/// What the agent-control use cases are built over (#1936, #1939): the
+/// launcher registry the spawn tool populates, the event stream their
+/// compensation broadcasts on, the notification channel it posts passive
+/// notes to, the lineage owner, the harness lifecycle cell a frozen
+/// harness refuses new control commands from, the session's environment
+/// registry, and the slots the built agent-control tools read their use
+/// cases from. The interface hands it to composition's installer once those
+/// tools exist; composition builds the graph and fills the slots.
+#[derive(Clone)]
+pub struct KillToolWiring {
+    pub owner: crate::domain::ids::AgentUuid,
+    pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
+    /// The harness lifecycle cell (#1938): a frozen harness refuses new
+    /// control commands; shared with the spawn tool and the teardown graph.
+    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
+    /// The session-scoped environment registry the spawn tool commits
+    /// members to; the environment control is composed over it.
+    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
+    /// Where the built agent-control tools read their composed use cases.
+    pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+}
+
+/// Composition's installer of the agent-control use cases — the `agent_cmd
+/// kill` tool, the environment member shutdown and the swarm member
+/// termination over one shared graph, the spawn tool's launch lifecycle
+/// and the environment control — injected through the CLI context like
+/// the web-fetch factory and the teardown handles builder. `true` when
+/// every slot was empty and took its owner: one set per harness.
+pub type KillToolBuilder = fn(KillToolWiring) -> bool;
+
+/// Composition's builder of the handles one dispatch loop holds on the
+/// subagent teardown capability (#1935, #1938), injected through the CLI
+/// context; the loop hands over its runtime inputs and holds only the
+/// use-case and controller handles back, never the graph between them.
+pub type TeardownHandlesBuilder =
+    fn(uds_teardown_handles::TeardownLoopInputs) -> uds_teardown_handles::TeardownHandles;
+
+/// Composition's builder of the handles one loop holds on the sessions
+/// capability (#1970): the session store and the saved-session queries,
+/// composed over the loop's base directory. Injected through the CLI
+/// context; the interface never constructs a store or a use case.
+pub type SessionHandlesBuilder =
+    fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
+
+/// Composition's builder of the handles one run holds on retained context
+/// (D9 #1978): the retention store, the recall use case and the pruning
+/// policy's writer/reader, composed over the run's base directory.
+/// Injected through the CLI context; the interface never constructs the
+/// store or the recall graph.
+pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::RetentionHandles;
+
+/// Composition's builder of the fresh user-chat identity generator (D7
+/// #1976): the one source of a fresh key, for the startup identity of an
+/// unnamed chat run. The fresh-session transaction holds its own injected
+/// handle on the same generator; the interface never generates a key.
+pub type FreshSessionIdentityBuilder =
+    fn() -> std::sync::Arc<dyn crate::application::sessions::ports::FreshSessionIdentityGenerator>;
 
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
@@ -270,13 +335,28 @@ pub struct CliContext {
     pub cwd: Option<PathBuf>,
     /// Opaque outer-layer constructor for the optional web-fetch graph.
     pub web_fetch_tool_factory: Option<WebFetchToolFactory>,
-    /// Composition's subagent teardown graph builder (#1935). Supplied by the
-    /// binary's `main` through [`run`]'s [`CliComposition`]; a launched child
-    /// (one started with `--parent-control`) refuses to start without it.
-    pub teardown_graph: Option<uds_teardown_graph::TeardownGraphBuilder>,
+    /// Composition's subagent teardown handles builder (#1935). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; a launched
+    /// child (one started with `--parent-control`) refuses to start without
+    /// it.
+    pub teardown_graph: Option<TeardownHandlesBuilder>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936). Without
     /// it `kill` is unavailable: the interface never composes a lifecycle.
-    pub kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's sessions handles builder (#1970). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
+    /// refuses to start without it, since the interface never constructs
+    /// a session store.
+    pub sessions: Option<SessionHandlesBuilder>,
+    /// Composition's retained-context handles builder (#1978). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
+    /// run refuses to start without it, since the interface never
+    /// constructs the retention store or the recall graph.
+    pub retention: Option<RetentionHandlesBuilder>,
+    /// Composition's fresh-identity generator builder (#1976). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
+    /// chat run refuses to start without it.
+    pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
 }
 
 impl CliContext {
@@ -370,8 +450,11 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
 #[derive(Debug, Clone, Copy)]
 pub struct CliComposition {
     pub web_fetch_tool_factory: WebFetchToolFactory,
-    pub teardown_graph: uds_teardown_graph::TeardownGraphBuilder,
-    pub kill_tool: crate::infrastructure::extensions::native::KillToolBuilder,
+    pub teardown_graph: TeardownHandlesBuilder,
+    pub kill_tool: crate::interface::cli::KillToolBuilder,
+    pub sessions: SessionHandlesBuilder,
+    pub retention: RetentionHandlesBuilder,
+    pub fresh_session_identity: FreshSessionIdentityBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -391,6 +474,9 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
+        sessions: Some(composition.sessions),
+        retention: Some(composition.retention),
+        fresh_session_identity: Some(composition.fresh_session_identity),
         ..Default::default()
     };
 
@@ -556,12 +642,10 @@ pub(crate) fn explicit_config_missing(
         .then(|| format!("config not found: {}", config_path.display()))
 }
 
+/// Wire syntax of a session name: the domain's named-session allowlist
+/// (`-`, the ephemeral marker, is itself an admitted name).
 pub(crate) fn is_valid_session_name(name: &str) -> bool {
-    name == "-"
-        || (!name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    crate::domain::session_identity::SessionIdentity::is_valid_cli_name(name)
 }
 
 /// The harness runs a current-thread runtime whose blocking pool keeps a
@@ -627,7 +711,7 @@ fn help_text(out: &mut String) {
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
     );
     out.push_str(
-        "                       --persist     Keep a top-level UDS agent alive after its last client disconnects (harness-spawned subagents are lifetime-bound to their launcher instead)\n",
+        "                       --persist     Keep a top-level UDS agent alive after its last client disconnects; SIGTERM/SIGINT or a protocol shutdown then tears its subagents down over the protocol before it exits (harness-spawned subagents are lifetime-bound to their launcher instead)\n",
     );
     out.push_str(
         "                       --effort <level>  Effort level for 4.6 models (low/medium/high/max)\n",

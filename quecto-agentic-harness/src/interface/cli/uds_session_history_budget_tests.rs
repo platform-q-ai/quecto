@@ -295,3 +295,34 @@ fn collapsed_history_summary_bounds_many_visible_thinking_blocks() {
     );
     assert!(!serde_json::to_string(summary).unwrap().contains("private"));
 }
+
+/// When the byte budget drops older messages of the window, the page still
+/// reports older history and its cursor names the oldest KEPT message, so a
+/// client pages on from exactly where the frame stopped (#1971).
+#[test]
+fn budget_trimming_reports_more_history_and_moves_the_cursor_to_the_oldest_kept() {
+    let body = "b".repeat(HISTORY_PAGE_JSON_BUDGET / 3);
+    let messages: Vec<Message> = (0..6)
+        .map(|i| Message::user(format!("{i}-{body}")))
+        .collect();
+    // The whole window is requested; only the newest two fit the budget.
+    let page = messages_page_json(&messages, 6, None);
+    let kept = page_messages(&page);
+    assert!(
+        kept.len() < 6 && !kept.is_empty(),
+        "the budget must drop some but not all of the window: {}",
+        kept.len()
+    );
+    assert_eq!(
+        message_content(kept.last().unwrap(), "content"),
+        format!("5-{body}"),
+        "the newest message always arrives"
+    );
+    assert_eq!(page["hasMoreBefore"], true);
+    assert_eq!(
+        page["before"], kept[0]["id"],
+        "the cursor names the oldest kept message, not the oldest of the window"
+    );
+    let encoded = serde_json::to_vec(&page).unwrap();
+    assert!(encoded.len() <= HISTORY_PAGE_JSON_BUDGET);
+}

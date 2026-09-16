@@ -16,7 +16,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain an event of type "agent_end"
 
-  @done
+  @done @issue-1972 @issue-1860
   Scenario: --system flag system prompt is not persisted in session history
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -187,6 +187,160 @@ Feature: UDS mode for headless agent operation
     And I send rewind_to messageIndex 99 with id "rw-invalid"
     And I close the UDS connection
     Then the agent output should contain a response command "rewind_to" with success false
+
+  # ─── clear_history / rewind_to transactions (#1864, #1865; D6 #1975) ─────
+
+  @done @issue-1975 @issue-1864
+  Scenario: clear_history empties the conversation a client reads back
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send command "clear_history" with id "ch-1"
+    And I send command "get_messages" with id "gm-ch"
+    And I close the UDS connection
+    Then the agent output should contain a response command "clear_history" with success true
+    And the get_messages response data should include a "messages" array with 0 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a stale or unknown messageId without effect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send rewind_to messageId "00000000-0000-4000-8000-000000000000" with id "rw-stale"
+    And I send command "get_messages" with id "gm-stale"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "rewind target not found"
+    And the get_messages response data should include a "messages" array with 2 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a non-user boundary without effect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send prompt "first"
+    And I send rewind_to messageIndex 1 with id "rw-assistant"
+    And I send command "get_messages" with id "gm-assistant"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "invalid rewind target"
+    And the get_messages response data should include a "messages" array with 2 messages
+
+  @done @issue-1975 @issue-1865
+  Scenario: rewind_to refuses a request that names neither a messageId nor a messageIndex
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send rewind_to with no target and id "rw-none"
+    And I close the UDS connection
+    Then the agent output should contain a response command "rewind_to" with error "rewind requires messageId or messageIndex"
+
+  # ─── new_session command (#1862, D7 #1976) ──────────────────────────────────
+
+  @done @issue-1976 @issue-1862
+  Scenario: new_session moves an ephemeral loop to a fresh, distinct chat key and empties the conversation
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "first reply"
+    When I start the UDS agent with no [session]
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send command "new_session" with id "ns-1"
+    And I send get_state with id "gs-1"
+    And I send command "get_messages" with id "gm-1"
+    And I send command "new_session" with id "ns-2"
+    And I close the UDS connection
+    Then the agent output should contain a response command "new_session" with success true
+    And the new_session response with id "ns-1" should carry a fresh chat session key
+    And the new_session response with id "ns-2" should carry a fresh chat session key
+    And the session keys of the responses with ids "gs-0" and "ns-1" should differ
+    And the session keys of the responses with ids "ns-1" and "gs-1" should match
+    And the session keys of the responses with ids "ns-1" and "ns-2" should differ
+    And the get_messages response data should include a "messages" array with 0 messages
+    And the get_state response effort should be unset
+
+  @done @issue-1976 @issue-1862
+  Scenario: new_session saves the departing conversation and starts the fresh one clean on disk
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    When I start the UDS agent with session "departing"
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send command "new_session" with id "ns-1"
+    And I send prompt "second"
+    And I close the UDS connection
+    Then the session keys of the responses with ids "gs-0" and "ns-1" should differ
+    And the session file for the key of the response with id "gs-0" should hold 2 messages
+    And the session file for the key of the response with id "ns-1" should hold 2 messages
+
+  # ─── resume_session command (#1863, D8 #1977) ──────────────────────────────
+  # The application owns the transaction: the target is admitted by its
+  # accepted spellings, the departing session is settled and saved, the
+  # target claimed and loaded, its history restored, and the loop moves to
+  # its key; every refusal keeps the current session whole.
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session restores a saved conversation, moves the loop to its key and keeps serving
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    And a saved UDS [session] "cli:saved" with 4 messages in the base directory
+    When I start the UDS agent with session "departing"
+    And I send get_state with id "gs-0"
+    And I send prompt "first"
+    And I send set_effort "low"
+    And I send resume_session "saved" with id "rs-1"
+    And I send get_state with id "gs-1"
+    And I send command "get_messages" with id "gm-1"
+    And I send resume_session "cli:saved" with id "rs-2"
+    And I send prompt "second"
+    And I close the UDS connection
+    Then the resume_session response with id "rs-1" should carry session key "cli:saved" and message count 4
+    And the resume_session response with id "rs-2" should carry session key "cli:saved" and message count 4
+    And the session keys of the responses with ids "rs-1" and "gs-1" should match
+    And the session keys of the responses with ids "gs-0" and "rs-1" should differ
+    And the get_messages response data should include a "messages" array with 4 messages
+    And the get_state response effort should be unset
+    And the session file for the key of the response with id "gs-0" should hold 2 messages
+    And the session file for the key of the response with id "rs-1" should hold 6 messages
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session refuses a missing or malformed target and keeps the current session
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    When I start the UDS agent with session "keep"
+    And I send get_state with id "gs-0"
+    And I send resume_session "missing" with id "rs-missing"
+    And I send resume_session "cli:missing" with id "rs-missing-cli"
+    And I send resume_session "bad name!" with id "rs-bad"
+    And I send resume_session "telegram:1" with id "rs-foreign"
+    And I send get_state with id "gs-1"
+    And I send prompt "still here"
+    And I close the UDS connection
+    Then the response with id "rs-missing" should carry the error "session not found: missing"
+    And the response with id "rs-missing-cli" should carry the error "session not found: cli:missing"
+    And the response with id "rs-bad" should carry the error "session name must contain only alphanumeric, '-', or '_'"
+    And the response with id "rs-foreign" should carry the error "session name must contain only alphanumeric, '-', or '_'"
+    And the session keys of the responses with ids "gs-0" and "gs-1" should match
+    And the agent output should contain a response command "prompt" with success true
+
+  @done @issue-1977 @issue-1863
+  Scenario: resume_session is refused on an ephemeral loop
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "a reply"
+    And a saved UDS [session] "cli:saved" with 2 messages in the base directory
+    When I start the UDS agent with no [session]
+    And I send resume_session "saved" with id "rs-eph"
+    And I send get_state with id "gs-1"
+    And I close the UDS connection
+    Then the response with id "rs-eph" should carry the error "cannot resume sessions in ephemeral mode"
+    And the agent output should contain a response command "get_state" with success true
 
   # ─── get_session_stats command ──────────────────────────────────────────────
 
@@ -410,7 +564,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the session "uds-workflow-load" should retain workflow "feature" with 2 completed steps
 
-  @done @issue-1586
+  @done @issue-1586 @issue-1972 @issue-1860
   Scenario: persist_session explicitly replaces a stale roster before process exit
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -422,7 +576,7 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "persist_session" with success true
     And the session for "uds-persist-barrier" should have no persisted subagent roster rows
 
-  @done
+  @done @issue-1972 @issue-1860
   Scenario: UDS mode with --no-session does not persist session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -1102,3 +1256,24 @@ Feature: UDS mode for headless agent operation
     When I run a live delayed steer from prompt "original task" to "new direction"
     Then the agent output should contain text "STEERED_RESPONSE_COMMITTED"
     And the agent output should not contain text "ORIGINAL_SHOULD_BE_CANCELLED"
+
+  # ─── List saved sessions (#1861, #1970) ──────────────────────────────────────
+  # The `list_sessions` command is answered by the composed sessions query:
+  # every saved session, newest first, in the summary shape the TUI resume
+  # selector reads (key, title, messageCount, updatedUnixSecs, updatedAt).
+
+  @done @issue-1970 @issue-1861
+  Scenario: list_sessions reports every saved session newest first in the summary shape
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    And a saved [session] "older" titled "first question" with 2 messages updated at 1000
+    And a saved [session] "newer" titled "latest question" with 1 messages updated at 2000
+    When I start the UDS agent with [session] "current"
+    And I send command "list_sessions" with id "ls-1"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the list_sessions response should list the [session] keys "cli:newer, cli:older" in order
+    And every listed [session] should carry the summary fields key, title, messageCount, updatedUnixSecs and updatedAt
+    And the listed [session] "cli:newer" should show title "latest question" with 1 messages updated at 2000
+    And the listed [session] "cli:older" should show title "first question" with 2 messages updated at 1000

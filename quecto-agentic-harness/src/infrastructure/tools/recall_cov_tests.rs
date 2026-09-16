@@ -1,8 +1,22 @@
 use super::*;
+use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::session::{SpillEntry, SpillIndex};
+use crate::domain::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+/// The recall use case over `store`, composed as the runtime composes it
+/// (D9 #1978): the tool adapts the use case, never the store.
+fn recall_over(
+    store: Arc<dyn crate::application::sessions::ports::ContextSpillStore>,
+) -> Arc<crate::application::sessions::use_cases::RecallContext> {
+    crate::composition::retention::retention_handles_over(store).recall
+}
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
 
 #[derive(Debug, Default)]
 struct FailingSpillStore {
@@ -14,7 +28,7 @@ struct FailingSpillStore {
 impl ContextSpillStore for FailingSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
         _entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
@@ -22,19 +36,23 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn recall(
         &self,
-        _session_key: &str,
-        id: &str,
+        _session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         if self.fail_recall {
             return Box::pin(async { Err(DomainError::Session("spill read failed".into())) });
         }
-        let found = self.entries.iter().find(|entry| entry.id == id).cloned();
+        let found = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id.as_str())
+            .cloned();
         Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         if self.fail_list {
             return Box::pin(async { Err(DomainError::Session("spill index failed".into())) });
@@ -54,7 +72,7 @@ impl ContextSpillStore for FailingSpillStore {
 
     fn clear(
         &self,
-        _session_key: &str,
+        _session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
@@ -73,7 +91,7 @@ fn entry(id: &str, preview: &str, tokens: usize, content: &str) -> SpillEntry {
 #[tokio::test]
 async fn missing_id_from_empty_arguments_reports_error_for_empty_id() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session".to_string(),
     );
 
@@ -93,7 +111,7 @@ async fn list_index_includes_preview_and_token_counts_but_not_content() {
         fail_recall: false,
         fail_list: false,
     };
-    let tool = RecallTool::new(Arc::new(store), "session".to_string());
+    let tool = RecallTool::new(recall_over(Arc::new(store)), "session".to_string());
 
     let result = tool.execute(r#"{"id":"list"}"#).await.unwrap();
 
@@ -112,10 +130,10 @@ async fn list_index_includes_preview_and_token_counts_but_not_content() {
 #[tokio::test]
 async fn recall_propagates_spill_read_failure() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore {
+        recall_over(Arc::new(FailingSpillStore {
             fail_recall: true,
             ..FailingSpillStore::default()
-        }),
+        })),
         "session".to_string(),
     );
 
@@ -127,10 +145,10 @@ async fn recall_propagates_spill_read_failure() {
 #[tokio::test]
 async fn list_propagates_spill_index_failure() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore {
+        recall_over(Arc::new(FailingSpillStore {
             fail_list: true,
             ..FailingSpillStore::default()
-        }),
+        })),
         "session".to_string(),
     );
 
@@ -142,7 +160,7 @@ async fn list_propagates_spill_index_failure() {
 #[tokio::test]
 async fn recall_count_tracking_caps_new_ids_after_256_entries() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session".to_string(),
     );
 
@@ -159,7 +177,7 @@ async fn recall_count_tracking_caps_new_ids_after_256_entries() {
 #[test]
 fn debug_includes_session_key_when_lock_available() {
     let tool = RecallTool::new(
-        Arc::new(FailingSpillStore::default()),
+        recall_over(Arc::new(FailingSpillStore::default())),
         "session-a".to_string(),
     );
 
@@ -178,17 +196,17 @@ async fn failing_spill_store_trait_surface_defaults_are_exercised() {
     };
 
     let appended = entry("turn2:bash:0", "echo add", 3, "add");
-    store.append("session", &appended).await.unwrap();
-    assert!(store.has_entries("session").await.unwrap());
+    store.append(&id("session"), &appended).await.unwrap();
+    assert!(store.has_entries(&id("session")).await.unwrap());
     assert_eq!(
         store
-            .recall("session", "turn1:bash:0")
+            .recall(&id("session"), &SpillId::new("turn1:bash:0"))
             .await
             .unwrap()
             .unwrap()
             .content,
         "ok"
     );
-    assert_eq!(store.list_entries("session").await.unwrap().len(), 1);
-    store.clear("session").await.unwrap();
+    assert_eq!(store.list_entries(&id("session")).await.unwrap().len(), 1);
+    store.clear(&id("session")).await.unwrap();
 }

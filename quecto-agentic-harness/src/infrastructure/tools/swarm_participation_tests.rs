@@ -1,7 +1,7 @@
 //! #1715: swarm participation handle, engaged-workflow probe and the
 //! membership-free run status (split from `swarm_bridge_tests.rs`).
 use super::*;
-use crate::domain::swarm::CoordinationPort;
+use crate::application::swarm::ports::CoordinationPort;
 use serde_json::json;
 
 fn context(directory: &tempfile::TempDir) -> SwarmContext {

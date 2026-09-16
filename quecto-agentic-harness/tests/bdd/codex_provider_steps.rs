@@ -121,7 +121,7 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         description: "Execute a command".into(),
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
-    let request = quecto::domain::provider::ChatRequest {
+    let request = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -186,7 +186,7 @@ fn when_provider_builds_responses_request(world: &mut QuectoWorld) {
         description: "Execute a command".into(),
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
-    let request = quecto::domain::provider::ChatRequest {
+    let request = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -217,7 +217,7 @@ fn given_codex_request_body_with_session_id(
     session_id: String,
 ) {
     let messages = vec![Message::user("Hi")];
-    let request = quecto::domain::provider::ChatRequest {
+    let request = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,
@@ -244,7 +244,7 @@ fn given_codex_request_body_with_session_id(
 #[given(expr = "a Codex request body for model {string} without a session ID")]
 fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: String) {
     let messages = vec![Message::user("Hi")];
-    let request = quecto::domain::provider::ChatRequest {
+    let request = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
         messages: &messages,

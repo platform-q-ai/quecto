@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::domain::harness_lifetime::HarnessLifetime;
 use crate::domain::parent_control::ParentControlBinding;
 use crate::infrastructure::processes::parent_control::take_sidecar;
-use crate::interface::cli::uds_teardown_graph::{
+use crate::interface::cli::uds_parent_control::{
     BIND_DEADLINE_ENV, BindDeadline, DEFAULT_BIND_DEADLINE, ParentControlLaunch,
 };
 

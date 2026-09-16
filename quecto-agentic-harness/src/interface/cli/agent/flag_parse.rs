@@ -46,7 +46,10 @@ pub(crate) struct AgentFlags {
     /// Opaque constructor injected by the executable bootstrap.
     pub(crate) web_fetch_tool_factory: Option<super::super::WebFetchToolFactory>,
     /// Composition's `agent_cmd kill` owner builder (#1936), from CliContext.
-    pub(crate) kill_tool: Option<crate::infrastructure::extensions::native::KillToolBuilder>,
+    pub(crate) kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's retained-context handles builder (D9 #1978), from
+    /// CliContext; the tool registry and the agent loop consume its handles.
+    pub(crate) retention: Option<crate::interface::cli::RetentionHandlesBuilder>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
@@ -64,6 +67,7 @@ impl AgentFlags {
         self.cwd_override = ctx.cwd.clone();
         self.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
         self.kill_tool = ctx.kill_tool;
+        self.retention = ctx.retention;
     }
 }
 

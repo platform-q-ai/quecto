@@ -1,13 +1,31 @@
 use super::*;
-use quecto::domain::session::{SpillEntry, SpillIndex, SpillIndexList};
+use quecto::application::sessions::ports::SpillIndexList;
+use quecto::domain::session::{SpillEntry, SpillIndex};
+use quecto::domain::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::tools::recall::RecallTool;
+
+/// The recall use case over `store`, composed as the runtime composes it
+/// (D9 #1978): the tool adapts the use case, never the store.
+fn recall_over(
+    store: Arc<dyn quecto::application::sessions::ports::ContextSpillStore>,
+) -> Arc<quecto::application::sessions::use_cases::RecallContext> {
+    quecto::composition::retention::retention_handles_over(store).recall
+}
 
 #[derive(Debug, Default)]
 pub struct BddMemorySpillStore {
     entries_by_session: Mutex<HashMap<String, Vec<SpillEntry>>>,
+    /// Port calls the tool's recall reached the store with (D9 #1978): a
+    /// malformed id makes none, an index recall exactly one.
+    consulted: std::sync::atomic::AtomicUsize,
 }
 
 impl BddMemorySpillStore {
+    fn consult(&self) {
+        self.consulted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn add_entry(
         &self,
         session_key: &str,
@@ -34,13 +52,13 @@ impl BddMemorySpillStore {
 impl ContextSpillStore for BddMemorySpillStore {
     fn append(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
         entry: &SpillEntry,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.entries_by_session
             .lock()
             .unwrap()
-            .entry(session_key.to_string())
+            .entry(session_key.runtime_key().to_string())
             .or_default()
             .push(entry.clone());
         Box::pin(async { Ok(()) })
@@ -48,24 +66,31 @@ impl ContextSpillStore for BddMemorySpillStore {
 
     fn recall(
         &self,
-        session_key: &str,
-        id: &str,
+        session_key: &SessionIdentity,
+        id: &SpillId,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
+        self.consult();
         let result = self
             .entries_by_session
             .lock()
             .unwrap()
-            .get(session_key)
-            .and_then(|entries| entries.iter().find(|entry| entry.id == id).cloned());
+            .get(session_key.runtime_key())
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.id == id.as_str())
+                    .cloned()
+            });
         Box::pin(async move { Ok(result) })
     }
 
-    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_> {
+    fn list_entries(&self, session_key: &SessionIdentity) -> SpillIndexList<'_> {
+        self.consult();
         let entries = self
             .entries_by_session
             .lock()
             .unwrap()
-            .get(session_key)
+            .get(session_key.runtime_key())
             .cloned()
             .unwrap_or_default()
             .into_iter()
@@ -81,9 +106,12 @@ impl ContextSpillStore for BddMemorySpillStore {
 
     fn clear(
         &self,
-        session_key: &str,
+        session_key: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.entries_by_session.lock().unwrap().remove(session_key);
+        self.entries_by_session
+            .lock()
+            .unwrap()
+            .remove(session_key.runtime_key());
         Box::pin(async { Ok(()) })
     }
 }
@@ -97,20 +125,55 @@ fn recall_store(world: &QuectoWorld) -> Arc<BddMemorySpillStore> {
 }
 
 fn execute_recall(world: &mut QuectoWorld, id: &str) {
-    let tool = world.recall_tool.as_ref().expect("recall tool not set");
     let args = serde_json::json!({ "id": id }).to_string();
+    execute_recall_raw(world, &args);
+}
+
+fn execute_recall_raw(world: &mut QuectoWorld, args: &str) {
+    let tool = world.recall_tool.as_ref().expect("recall tool not set");
+    if let Some(store) = world.recall_spill_store.as_ref() {
+        store
+            .consulted
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(tool.execute(&args))
+        .block_on(tool.execute(args))
         .expect("recall tool execution should not raise a domain error");
     world.recall_result = Some(result);
+}
+
+#[when(expr = "I run recall with raw arguments {string}")]
+fn when_i_run_recall_with_raw_arguments(world: &mut QuectoWorld, args: String) {
+    execute_recall_raw(world, &args);
+}
+
+#[then(expr = "the in-memory retention double behind the tool was consulted {int} times")]
+fn then_recall_consulted_store_times(world: &mut QuectoWorld, times: usize) {
+    let consulted = recall_store(world)
+        .consulted
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(consulted, times, "retention store calls");
+}
+
+#[then(expr = "the recall result should list ids in order {string}")]
+fn then_recall_result_lists_ids_in_order(world: &mut QuectoWorld, expected: String) {
+    let result = world.recall_result.as_ref().expect("recall result not set");
+    let listed: Vec<&str> = result
+        .content
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.trim_start().split(" — ").next())
+        .collect();
+    let expected: Vec<&str> = expected.split(", ").collect();
+    assert_eq!(listed, expected, "index order: {}", result.content);
 }
 
 #[given(expr = "a recall tool for session {string} with no spilled outputs")]
 fn given_recall_tool_with_no_spills(world: &mut QuectoWorld, session_key: String) {
     let store = Arc::new(BddMemorySpillStore::default());
     world.recall_spill_store = Some(store.clone());
-    world.recall_tool = Some(RecallTool::new(store, session_key));
+    world.recall_tool = Some(RecallTool::new(recall_over(store), session_key));
     world.recall_result = None;
 }
 

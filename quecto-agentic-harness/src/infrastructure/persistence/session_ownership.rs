@@ -25,15 +25,9 @@
 
 use std::path::{Path, PathBuf};
 
+use super::session_layout::FlatSessionLayout;
 use crate::domain::error::DomainError;
-
-/// Path of the ownership stamp sidecar for `key` under `sessions_dir`.
-pub fn ownership_stamp_path(sessions_dir: &Path, key: &str) -> PathBuf {
-    sessions_dir.join(format!(
-        "{}.owner",
-        super::filename::sanitize_session_key(key)
-    ))
-}
+use crate::domain::session_identity::SessionIdentity;
 
 /// What to tell the user about a refused claim. The lock itself is the truth —
 /// reaching here means it is held. The stamp only hints at by whom, and can name
@@ -88,12 +82,16 @@ fn pid_is_live(_pid: u32) -> bool {
     true
 }
 
-/// Open (creating if needed, mode 0600) the stamp file for `key`.
+/// Open (creating if needed, mode 0600) the stamp file of `identity`, at
+/// the layout's [`FlatSessionLayout::ownership_stamp`] path.
 ///
 /// Also used by tests to simulate a foreign owner: an independently opened
 /// file description holding the exclusive lock behaves exactly as another
 /// process would (`flock(2)` locks are per open file description).
-pub fn open_stamp_file(sessions_dir: &Path, key: &str) -> std::io::Result<std::fs::File> {
+pub fn open_stamp_file(
+    layout: &FlatSessionLayout,
+    identity: &SessionIdentity,
+) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
@@ -101,7 +99,7 @@ pub fn open_stamp_file(sessions_dir: &Path, key: &str) -> std::io::Result<std::f
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(ownership_stamp_path(sessions_dir, key))
+        .open(layout.ownership_stamp(identity))
 }
 
 /// RAII claim on a session key. Holding the guard marks the calling process
@@ -127,12 +125,16 @@ impl SessionOwnershipGuard {
     // declared 1.85 predates the #1460 locking work and awaits a coordinated
     // MSRV bump.
     #[expect(clippy::incompatible_msrv)]
-    pub fn acquire(sessions_dir: &Path, key: &str) -> Result<Self, DomainError> {
-        std::fs::create_dir_all(sessions_dir).map_err(|e| {
+    pub fn acquire(
+        layout: &FlatSessionLayout,
+        identity: &SessionIdentity,
+    ) -> Result<Self, DomainError> {
+        let key = identity.runtime_key();
+        std::fs::create_dir_all(layout.sessions_dir()).map_err(|e| {
             DomainError::Session(format!("failed to create sessions dir for ownership: {e}"))
         })?;
-        let stamp_path = ownership_stamp_path(sessions_dir, key);
-        let file = open_stamp_file(sessions_dir, key).map_err(|e| {
+        let stamp_path = layout.ownership_stamp(identity);
+        let file = open_stamp_file(layout, identity).map_err(|e| {
             DomainError::Session(format!("failed to open ownership stamp for '{key}': {e}"))
         })?;
         match file.try_lock() {
@@ -195,26 +197,30 @@ impl Drop for SessionOwnershipGuard {
 /// never silently interleave writes to one session key (#1460).
 #[derive(Debug, Default)]
 pub struct SessionOwnershipRegistry {
-    owned: std::sync::Mutex<std::collections::HashMap<String, SessionOwnershipGuard>>,
+    owned: std::sync::Mutex<std::collections::HashMap<SessionIdentity, SessionOwnershipGuard>>,
 }
 
 impl SessionOwnershipRegistry {
-    /// Ensure the calling process owns `key`, claiming it on first use.
+    /// Ensure the calling process owns `identity`, claiming it on first use.
     /// A key locked by another live process is refused with an explicit
     /// error instead of silently losing turns.
-    pub fn claim(&self, sessions_dir: &Path, key: &str) -> Result<(), DomainError> {
+    pub fn claim(
+        &self,
+        layout: &FlatSessionLayout,
+        identity: &SessionIdentity,
+    ) -> Result<(), DomainError> {
         let mut owned = self.owned.lock().expect("session ownership mutex");
-        if owned.contains_key(key) {
+        if owned.contains_key(identity) {
             return Ok(());
         }
-        let guard = SessionOwnershipGuard::acquire(sessions_dir, key)?;
-        owned.insert(key.to_string(), guard);
+        let guard = SessionOwnershipGuard::acquire(layout, identity)?;
+        owned.insert(identity.clone(), guard);
         Ok(())
     }
 
-    pub fn release(&self, key: &str) {
+    pub fn release(&self, identity: &SessionIdentity) {
         let mut owned = self.owned.lock().expect("session ownership mutex");
-        owned.remove(key);
+        owned.remove(identity);
     }
 }
 

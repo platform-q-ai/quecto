@@ -1,4 +1,5 @@
-use quecto::domain::request_observation::{RequestAccounting, RequestObservation};
+use quecto::application::providers::ports::RequestAccounting;
+use quecto::domain::request_observation::RequestObservation;
 #[tokio::test]
 async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements() {
     let (_directory, context) = super::swarm_control_fixture::context();

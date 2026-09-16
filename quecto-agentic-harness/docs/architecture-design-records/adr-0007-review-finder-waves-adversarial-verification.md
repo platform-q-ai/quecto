@@ -29,7 +29,7 @@ refuting findings or with proving each assertion can fail.
 
 Restructure both review stages in `workflow-config.json` (mirrored in
 `examples/config.json`, `docs/workflow.md`, and guarded by
-`tests/workflow_config_template.rs` / `tests/workflow_docs.rs`):
+`tests/docs/workflow_config_template.rs` / `tests/docs/workflow_docs.rs`):
 
 1. **PR `reviewers` step becomes three waves — find → verify → single-post.**
    - *Wave 1*: parallel narrow finders, read-only, no GitHub writes, each given

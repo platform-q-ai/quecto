@@ -18,6 +18,12 @@ use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
 /// then re-serialized at every ancestor hop).
 const MAX_FORWARDED_SUBAGENTS: usize = 256;
 
+/// The pid every merged descendant row carries: none. A descendant's process
+/// belongs to the harness that launched it (#1940); this harness only ever
+/// holds the handles of the children it spawned itself, through the
+/// `OwnedChildSupervisor`, and never a number reported over a hop.
+pub const REPORTED_DESCENDANT_PID: u32 = 0;
+
 /// Merge the descendants from a child's `subagent_state_changed` `value` into
 /// the registry (preserving each entry's REAL `agentId`/`parentId`), then build
 /// a single canonical `subagent_state_changed` event carrying the WHOLE current
@@ -85,25 +91,6 @@ fn merge_descendants(
         guard.get(forwarding_child_id).is_some_and(|entry| {
             entry.environment_ref.is_some() || entry.forwarded_environment.is_some()
         });
-    // #1925: a descendant's pid is only signallable when it provably lives in
-    // OUR pid namespace. The forwarding child must itself be reachable in our
-    // namespace (launched by us, or reported same-namespace) and must not sit
-    // behind an environment boundary; every hop from it down to the
-    // descendant must then be a host-local launch. Evaluated per descendant
-    // along its `parentId` chain, because a snapshot is the WHOLE subtree and
-    // each entry's `executionBackend` is relative to its own parent.
-    let forwarding_child_same_namespace = !forwarding_child_crosses_environment
-        && guard.get(forwarding_child_id).is_some_and(|entry| {
-            // A child whose process this harness holds is, by that very
-            // fact, in our pid namespace (#1935); reported leases keep
-            // their #1925 scaffolding until #1940.
-            entry.owned_child.is_some() || entry.process_ownership.is_same_namespace()
-        });
-    let same_namespace_keys = if forwarding_child_same_namespace {
-        same_namespace_descendant_keys(forwarding_child_id, descendants)
-    } else {
-        std::collections::HashSet::new()
-    };
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut next_sequence = guard
         .values()
@@ -153,18 +140,21 @@ fn merge_descendants(
                 .map(std::path::PathBuf::from)
                 .unwrap_or_default()
         };
-        let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let descendant_same_namespace = same_namespace_keys.contains(&registry_key);
+        // A reported descendant's pid is dropped at this hop (#1940): a pid
+        // is meaningful only inside the namespace of the harness that
+        // launched the process and only while it lives, and this harness
+        // never signals a process it did not launch. The merged row carries
+        // pid 0; its end is observed through the forwarding child's
+        // snapshots, never by process identity.
         let agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         let entry = guard.entry(registry_key.clone()).or_insert_with(|| {
-            SubagentEntry::with_identity(agent_uuid, display_name.clone(), socket_path.clone(), pid)
+            SubagentEntry::with_identity(
+                agent_uuid,
+                display_name.clone(),
+                socket_path.clone(),
+                REPORTED_DESCENDANT_PID,
+            )
         });
-        // The snapshot is authoritative for provenance too. A launched lease
-        // is shared with a reaper and is never replaced.
-        if entry.owned_child.is_none() && !entry.process_ownership.is_launched() {
-            entry.process_ownership =
-                super::process_ownership::ProcessOwnership::reported(descendant_same_namespace);
-        }
         // Keep identity fields authoritative from the child's snapshot.
         entry.agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         entry.display_name = display_name;
@@ -185,7 +175,7 @@ fn merge_descendants(
             .get("lastError")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        entry.pid = pid;
+        entry.pid = REPORTED_DESCENDANT_PID;
         // #1936: a reported generation makes the descendant addressable for
         // selected termination through its direct ancestor. A row this
         // harness launched keeps its own minted generation.
@@ -235,79 +225,13 @@ fn merge_descendants(
             }
             super::subagent_cascade::mark_entry_dead(entry, next_sequence);
             super::subagent_cascade::clear_cleanup_ownership(entry);
-            // The forwarding child already reaped this descendant; its pid is
-            // free for reuse, so the reported lease is retired IN PLACE so a
-            // cascade-removed clone sharing it loses authority too (#1925).
-            entry.process_ownership.retire_reported();
+            // The forwarding child already ran this descendant's teardown;
+            // pruning it here is the whole of its compensation.
+            super::subagent_cascade::mark_entry_compensated(entry);
             next_sequence = next_sequence.saturating_add(1);
             entry.updated_at = Instant::now();
         }
     }
-}
-
-/// Snapshot key of a descendant: its durable UUID, else its legacy id.
-fn snapshot_key(d: &serde_json::Value) -> Option<&str> {
-    d.get("agentUuid")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            d.get("agentId")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-        })
-}
-
-/// A hop that stays in the launching harness's pid namespace: a local launch
-/// with no environment. Script/container backends, an environment object or
-/// a legacy snapshot without a backend all deny.
-fn is_host_local_hop(d: &serde_json::Value) -> bool {
-    d.get("executionBackend").and_then(|v| v.as_str())
-        == Some(super::subagent_environment_wire::BACKEND_LOCAL)
-        && d.get("environment").is_none()
-}
-
-/// The subset of `descendants` whose pid provably lives in the forwarding
-/// child's (hence our) pid namespace (#1925): the descendant and EVERY
-/// ancestor between it and `forwarding_child_id` is a host-local hop found in
-/// this same snapshot with an explicit `parentId`. Any container/script hop,
-/// unknown parent, missing `parentId` or over-long chain denies.
-fn same_namespace_descendant_keys(
-    forwarding_child_id: &str,
-    descendants: &[serde_json::Value],
-) -> std::collections::HashSet<String> {
-    let by_key: std::collections::HashMap<&str, &serde_json::Value> = descendants
-        .iter()
-        .take(MAX_FORWARDED_SUBAGENTS)
-        .filter_map(|d| snapshot_key(d).map(|key| (key, d)))
-        .collect();
-    let chain_is_host_local = |start: &serde_json::Value| -> bool {
-        let mut current = start;
-        for _ in 0..=MAX_FORWARDED_SUBAGENTS {
-            if !is_host_local_hop(current) {
-                return false;
-            }
-            let Some(parent) = current
-                .get("parentId")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            else {
-                return false;
-            };
-            if parent == forwarding_child_id {
-                return true;
-            }
-            let Some(next) = by_key.get(parent) else {
-                return false;
-            };
-            current = next;
-        }
-        false
-    };
-    by_key
-        .iter()
-        .filter(|(_, d)| chain_is_host_local(d))
-        .map(|(key, _)| (*key).to_string())
-        .collect()
 }
 
 fn forwarded_script_descendant_socket_is_ancestor_local(d: &serde_json::Value) -> bool {
@@ -362,5 +286,5 @@ pub fn forward_child_state_changed(
 mod cov_tests;
 
 #[cfg(test)]
-#[path = "subagent_monitor_merge_ownership_tests.rs"]
-mod ownership_tests;
+#[path = "subagent_monitor_merge_pid_tests.rs"]
+mod pid_tests;

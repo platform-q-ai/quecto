@@ -43,12 +43,22 @@ mod catalogue_source;
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
+#[path = "contracts/delegated_children_roster.rs"]
+mod delegated_children_roster;
+#[path = "contracts/durable_prefix_observation.rs"]
+mod durable_prefix_observation;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
 #[path = "contracts/environment_process_commands.rs"]
 mod environment_process_commands;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/fleet_settlement.rs"]
+mod fleet_settlement;
+#[path = "contracts/fresh_session_identity_generator.rs"]
+mod fresh_session_identity_generator;
+#[path = "contracts/historical_roster_source.rs"]
+mod historical_roster_source;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
@@ -59,16 +69,30 @@ mod provider_runtime_factory;
 mod refresh_redaction_port;
 #[path = "contracts/refreshable_catalogue_source.rs"]
 mod refreshable_catalogue_source;
+#[path = "contracts/retained_context.rs"]
+mod retained_context;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]
 mod runtime_tool_lifecycle_registry;
 #[path = "contracts/session_aware_tools.rs"]
 mod session_aware_tools;
+#[path = "contracts/session_export_port.rs"]
+mod session_export_port;
+#[path = "contracts/session_key_propagation.rs"]
+mod session_key_propagation;
+#[path = "contracts/session_layout.rs"]
+mod session_layout;
+#[path = "contracts/session_list_scale.rs"]
+mod session_list_scale;
 #[path = "contracts/session_store.rs"]
 mod session_store;
+#[path = "contracts/session_switch_runtime.rs"]
+mod session_switch_runtime;
 #[path = "contracts/subagent_launch_ports.rs"]
 mod subagent_launch_ports;
+#[path = "common/switch_runtime_fixture.rs"]
+mod switch_runtime_fixture;
 #[path = "contracts/tool.rs"]
 mod tool;
 #[path = "contracts/tool_catalog.rs"]
@@ -81,6 +105,8 @@ mod tool_guard;
 mod tool_policy_mutator;
 #[path = "contracts/tool_registry.rs"]
 mod tool_registry;
+#[path = "contracts/turn_accounting_reset.rs"]
+mod turn_accounting_reset;
 
 #[path = "contracts/clock.rs"]
 mod clock;
@@ -136,3 +162,5 @@ mod teardown_loop_adapters;
 mod turn_cancellation;
 #[path = "contracts/uds_direct_child_routing.rs"]
 mod uds_direct_child_routing;
+#[path = "contracts/workflow_run_source.rs"]
+mod workflow_run_source;

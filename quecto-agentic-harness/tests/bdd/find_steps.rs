@@ -1,7 +1,7 @@
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
+use quecto::application::tools::ports::Tool;
 use quecto::composition::find::{build_find_tool, build_find_tool_with_binary};
-use quecto::domain::tool::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use std::path::PathBuf;
 use std::sync::Arc;

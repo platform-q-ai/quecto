@@ -1,6 +1,6 @@
-use super::cov_tests::Fixture;
-use super::{
-    dispatch_command, persist_current_session, persist_current_session_with_restore_reason,
+use super::dispatch_command;
+use super::fixture_tests::{
+    Fixture, killing_exit, persist_current_session, persist_current_session_with_restore_reason,
 };
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
@@ -11,13 +11,8 @@ use crate::interface::cli::protocol::AgentCommand;
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {
     use crate::domain::session::SubagentRestoreReason;
     use crate::interface::cli::protocol::build_compact_subagent_roster;
-    use crate::interface::cli::uds::uds_dispatch_session::{
-        note_persisted_roster_is_history, reset_subagent_roster,
-        snapshot_subagent_roster_with_restore_reason,
-    };
-    let reset_subagent_roster_on_restore = |registry: &Option<_>, persisted: &[_]| {
-        note_persisted_roster_is_history(registry, persisted);
-        reset_subagent_roster(registry, "resume_session").expect("no live delegated row");
+    use crate::interface::cli::uds::dispatch_session_roster_tests::{
+        reset_roster_for_restore, snapshot_subagent_roster_with_restore_reason,
     };
 
     let registry = new_registry();
@@ -27,7 +22,7 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
             SubagentRestoreReason::OrdinaryTuiExitStopped,
         );
         assert!(snapshot.is_empty());
-        reset_subagent_roster_on_restore(&Some(registry.clone()), &snapshot);
+        reset_roster_for_restore(&Some(registry.clone()), &snapshot);
         assert!(
             build_compact_subagent_roster(&Some(registry.clone()), None)
                 .unwrap()
@@ -52,7 +47,8 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
 
 #[tokio::test]
 async fn persist_session_unknown_restore_reason_matches_omitted_legacy_behavior() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
 
     async fn saved_reason(reason: SubagentRestoreReason) -> SubagentRestoreReason {
         let mut fx = Fixture::new();
@@ -70,15 +66,15 @@ async fn persist_session_unknown_restore_reason_matches_omitted_legacy_behavior(
             );
         }
         fx.messages = vec![Message::user("hello")];
+        fx.set_subagent_registry(registry);
         {
             let mut ctx = fx.ctx();
-            ctx.subagent_registry = Some(registry);
             persist_current_session_with_restore_reason(&mut ctx, reason)
                 .await
                 .unwrap();
         }
         fx.store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -94,7 +90,8 @@ async fn persist_session_unknown_restore_reason_matches_omitted_legacy_behavior(
 
 #[tokio::test]
 async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
 
     let mut fx = Fixture::new();
     let registry = new_registry();
@@ -111,9 +108,9 @@ async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
         );
     }
     fx.messages = vec![Message::user("hello")];
+    fx.set_subagent_registry(registry);
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry);
         persist_current_session_with_restore_reason(
             &mut ctx,
             SubagentRestoreReason::LegacyUnspecified,
@@ -122,7 +119,12 @@ async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
         .unwrap();
     }
 
-    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let loaded = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.subagent_roster.len(), 1);
     assert_eq!(
         loaded.subagent_roster[0].restore_reason,
@@ -132,15 +134,15 @@ async fn persist_session_omitted_restore_reason_uses_legacy_behavior() {
 
 #[tokio::test]
 async fn persist_session_empty_roster_replaces_stale_same_session_only() {
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
 
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("old-a")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -160,7 +162,7 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
         .unwrap();
     fx.store
         .save(&Session {
-            key: "cli:other".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:other"),
             messages: vec![Message::user("old-b")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -180,32 +182,42 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
         .unwrap();
 
     fx.messages = vec![Message::user("new-a")];
+    fx.set_subagent_registry(new_registry());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(new_registry());
         persist_current_session(&mut ctx).await.unwrap();
     }
 
-    let current = fx.store.load("cli:test").await.unwrap().unwrap();
+    let current = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(current.subagent_roster.is_empty());
     assert_eq!(current.messages[0].content, "new-a");
 
-    let other = fx.store.load("cli:other").await.unwrap().unwrap();
+    let other = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:other"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(other.subagent_roster.len(), 1);
     assert_eq!(other.subagent_roster[0].agent_uuid, "other-child");
 }
 
 #[tokio::test]
 async fn killing_exit_preserves_transcript_without_operational_roster() {
+    use crate::application::sessions::ports::SessionStore;
     use crate::domain::session::{
-        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
-        SubagentRestoreReason,
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
 
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
-            key: "cli:test".into(),
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("old")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -238,9 +250,9 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
         );
     }
     fx.messages = vec![Message::user("new")];
+    fx.set_subagent_registry(registry);
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry);
         persist_current_session_with_restore_reason(
             &mut ctx,
             SubagentRestoreReason::OrdinaryTuiExitStopped,
@@ -249,7 +261,12 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
         .unwrap();
     }
 
-    let current = fx.store.load("cli:test").await.unwrap().unwrap();
+    let current = fx
+        .store
+        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(current.subagent_roster.is_empty());
     assert_eq!(current.messages.len(), 1);
     assert_eq!(current.messages[0].content, "new");
@@ -257,7 +274,7 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
 
 #[tokio::test]
 async fn persist_session_dispatch_success_emits_correlated_ok_event() {
-    use crate::domain::session::SessionStore;
+    use crate::application::sessions::ports::SessionStore;
 
     let mut fx = Fixture::new();
     fx.messages = vec![Message::user("persist me")];
@@ -282,7 +299,13 @@ async fn persist_session_dispatch_success_emits_correlated_ok_event() {
     assert_eq!(event["command"], "persist_session");
     assert_eq!(event["success"], true);
     assert_eq!(
-        fx.store.load("cli:test").await.unwrap().unwrap().messages[0].content,
+        fx.store
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .unwrap()
+            .messages[0]
+            .content,
         "persist me"
     );
 }
@@ -320,7 +343,8 @@ async fn persist_session_dispatch_failure_emits_correlated_err_event() {
 
 #[tokio::test]
 async fn killing_barrier_survives_routine_saves_without_clearing_live_registry() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
     let mut fx = Fixture::new();
     let registry = new_registry();
     registry.lock().unwrap().insert(
@@ -328,9 +352,9 @@ async fn killing_barrier_survives_routine_saves_without_clearing_live_registry()
         SubagentEntry::new("/tmp/live.sock".into(), 123),
     );
     fx.messages = vec![Message::user("keep transcript")];
+    fx.set_subagent_registry(registry.clone());
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry.clone());
         persist_current_session_with_restore_reason(
             &mut ctx,
             SubagentRestoreReason::OrdinaryTuiExitStopped,
@@ -341,7 +365,7 @@ async fn killing_barrier_survives_routine_saves_without_clearing_live_registry()
     }
     assert!(
         fx.store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -358,16 +382,28 @@ async fn killing_barrier_survives_routine_saves_without_clearing_live_registry()
 
 #[tokio::test]
 async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
-    use crate::domain::session::{SessionStore, SubagentRestoreReason};
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::session::SubagentRestoreReason;
     let mut fx = Fixture::new();
     let registry = new_registry();
     registry.lock().unwrap().insert(
         "live".into(),
         SubagentEntry::new("/tmp/live.sock".into(), 123),
     );
+    fx.set_subagent_registry(registry);
+    fx.store
+        .save(&crate::domain::session::Session {
+            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                "cli:another",
+            ),
+            messages: vec![Message::user("elsewhere")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
     {
         let mut ctx = fx.ctx();
-        ctx.subagent_registry = Some(registry);
         persist_current_session_with_restore_reason(
             &mut ctx,
             SubagentRestoreReason::OrdinaryTuiExitStopped,
@@ -380,14 +416,11 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         )
         .await
         .unwrap();
-        assert!(!ctx.session.killing_exit);
-        ctx.session.killing_exit = true;
-        ctx.session.set_session_key("cli:another".into());
-        assert!(!ctx.session.killing_exit);
+        assert!(!killing_exit(&ctx));
     }
     assert_eq!(
         fx.store
-            .load("cli:test")
+            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -395,4 +428,20 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
             .len(),
         1
     );
+    // A session switch (a resume to a saved session, D8 #1977) drops the
+    // killing exit armed for the departing session.
+    {
+        let mut ctx = fx.ctx();
+        ctx.sessions
+            .active_session
+            .write()
+            .await
+            .set_killing_exit(true);
+        assert!(killing_exit(&ctx));
+        assert!(
+            !super::handle_resume_session(&mut ctx, None, "resume_session", "another".into()).await
+        );
+        assert_eq!(ctx.sessions.current_session_key().await, "cli:another");
+        assert!(!killing_exit(&ctx));
+    }
 }

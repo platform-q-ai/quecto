@@ -1,6 +1,7 @@
 use super::cov_tests::{cov_agent_with_registry, tool_reg};
 use super::*;
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[tokio::test]
 async fn dispatch_register_tools_rejects_disabled_core_shadow() {
@@ -34,34 +35,35 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("bash")];
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -77,9 +79,13 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
+        rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
@@ -98,34 +104,35 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     registry.remove("blocked_ext");
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let tools = [tool_reg("blocked_ext")];
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -141,9 +148,13 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
+        rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
@@ -161,36 +172,37 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session =
-        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
-    let mut session_key = "cli:test".to_string();
-    let store =
-        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
-    let state = session.state_snapshot(0, None, 0, None);
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let mut tool = tool_reg("weather");
     tool.stable_id = Some("com.example.weather.v1".into());
     let tools = [tool];
+    let save_session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
+    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+        &session_key,
+    );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_snapshots::ConversationSnapshotData::default(),
-        )),
+        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
-        session_key: &mut session_key,
-        session_store: &store,
-        ephemeral: false,
         system_prompt: "",
         cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
             super::super::uds_cancel::CancelSlot::Idle,
@@ -206,9 +218,13 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         workflow_config: None,
         provider_reload: None,
         provider_reload_inputs: None,
-        last_persisted_message_index: 0,
-        durable_prefix_dirty: false,
+        save_session,
+        rewrite,
+        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
         fleet_teardown: None,
+        list_sessions: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;
