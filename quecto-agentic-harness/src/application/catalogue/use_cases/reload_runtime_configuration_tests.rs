@@ -125,9 +125,12 @@ fn use_case(source: &FakeSource) -> ReloadRuntimeConfiguration {
 fn an_unconfigured_run_reports_not_configured_on_both_triggers() {
     let uc = ReloadRuntimeConfiguration::unconfigured();
     let mut runtime = FakeRuntime::default();
-    assert_eq!(uc.execute(&mut runtime), ReloadOutcome::NotConfigured);
     assert_eq!(
-        uc.execute_if_changed(&mut runtime),
+        uc.apply(&mut runtime, uc.rebuild()),
+        ReloadOutcome::NotConfigured
+    );
+    assert_eq!(
+        uc.apply(&mut runtime, uc.rebuild_if_changed()),
         ReloadOutcome::NotConfigured
     );
     assert!(runtime.providers.is_empty());
@@ -139,7 +142,7 @@ fn a_forced_reload_rebuilds_without_asking_whether_anything_changed() {
     let source = FakeSource::default().will_rebuild("v2", vec![]);
     let mut runtime = FakeRuntime::default();
     assert_eq!(
-        use_case(&source).execute(&mut runtime),
+        forced(&source, &mut runtime),
         ReloadOutcome::Reloaded {
             unknown_policy_tools: vec![]
         }
@@ -154,7 +157,7 @@ fn a_forced_reload_reports_the_rebuild_error_and_swaps_nothing() {
     let source = FakeSource::default().will_fail("malformed config");
     let mut runtime = FakeRuntime::default();
     assert_eq!(
-        use_case(&source).execute(&mut runtime),
+        forced(&source, &mut runtime),
         ReloadOutcome::Failed("malformed config".into())
     );
     assert!(runtime.providers.is_empty());
@@ -165,10 +168,7 @@ fn a_forced_reload_reports_the_rebuild_error_and_swaps_nothing() {
 fn a_poll_with_no_change_neither_rebuilds_nor_swaps() {
     let source = FakeSource::changing(false).will_rebuild("never", vec![]);
     let mut runtime = FakeRuntime::default();
-    assert_eq!(
-        use_case(&source).execute_if_changed(&mut runtime),
-        ReloadOutcome::Unchanged
-    );
+    assert_eq!(polled(&source, &mut runtime), ReloadOutcome::Unchanged);
     assert_eq!(source.rebuild_calls(), 0);
     assert!(runtime.providers.is_empty());
 }
@@ -178,7 +178,7 @@ fn a_poll_after_a_change_rebuilds_and_swaps_the_new_provider() {
     let source = FakeSource::changing(true).will_rebuild("v2", vec![]);
     let mut runtime = FakeRuntime::default();
     assert_eq!(
-        use_case(&source).execute_if_changed(&mut runtime),
+        polled(&source, &mut runtime),
         ReloadOutcome::Reloaded {
             unknown_policy_tools: vec![]
         }
@@ -190,10 +190,7 @@ fn a_poll_after_a_change_rebuilds_and_swaps_the_new_provider() {
 fn a_poll_whose_rebuild_fails_keeps_the_last_good_runtime_and_reports_unchanged() {
     let source = FakeSource::changing(true).will_fail("malformed config");
     let mut runtime = FakeRuntime::default();
-    assert_eq!(
-        use_case(&source).execute_if_changed(&mut runtime),
-        ReloadOutcome::Unchanged
-    );
+    assert_eq!(polled(&source, &mut runtime), ReloadOutcome::Unchanged);
     assert_eq!(source.rebuild_calls(), 1);
     assert!(runtime.providers.is_empty());
 }
@@ -211,7 +208,7 @@ fn a_successful_reload_applies_the_tool_policy_from_the_same_rebuild_and_reports
         ],
     );
     let mut runtime = FakeRuntime::default();
-    let outcome = use_case(&source).execute(&mut runtime);
+    let outcome = forced(&source, &mut runtime);
     assert_eq!(
         outcome,
         ReloadOutcome::Reloaded {
@@ -287,4 +284,17 @@ fn rebuild_steps_carry_the_trigger_policy_for_failure_and_absence() {
         ReloadOutcome::Unchanged
     );
     assert!(runtime.providers.is_empty());
+}
+
+/// The two phases as production composes them (`uds_dispatch_reload.rs`).
+fn forced(source: &FakeSource, runtime: &mut FakeRuntime) -> ReloadOutcome {
+    let uc = use_case(source);
+    let step = uc.rebuild();
+    uc.apply(runtime, step)
+}
+
+fn polled(source: &FakeSource, runtime: &mut FakeRuntime) -> ReloadOutcome {
+    let uc = use_case(source);
+    let step = uc.rebuild_if_changed();
+    uc.apply(runtime, step)
 }

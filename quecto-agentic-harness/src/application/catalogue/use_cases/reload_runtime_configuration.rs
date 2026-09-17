@@ -58,19 +58,6 @@ impl ReloadRuntimeConfiguration {
         Self { source: None }
     }
 
-    /// Forced reload (UDS `reload`): [`rebuild`](Self::rebuild) then
-    /// [`apply`](Self::apply) in one go.
-    pub fn execute(&self, runtime: &mut dyn ReloadRuntime) -> ReloadOutcome {
-        self.apply(runtime, self.rebuild())
-    }
-
-    /// Poll (before a prompt or `set_model`):
-    /// [`rebuild_if_changed`](Self::rebuild_if_changed) then
-    /// [`apply`](Self::apply) in one go.
-    pub fn execute_if_changed(&self, runtime: &mut dyn ReloadRuntime) -> ReloadOutcome {
-        self.apply(runtime, self.rebuild_if_changed())
-    }
-
     /// The forced rebuild phase: rebuild regardless of whether anything
     /// changed; a failure is reported to the requester. Holds the source's
     /// lock for the rebuild and borrows no runtime, so it may run on a
