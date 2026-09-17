@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::model_selector::{ModelEntry, ModelSelector};
+use crate::components::model_selector::{ModelDefaultAction, ModelEntry, ModelSelector};
 
 pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
     // Protocol boundary (#1220): raw payload interpretation lives in the
@@ -26,13 +26,22 @@ impl App {
     /// post-success `get_state` resync, so a rejected switch keeps the
     /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
+        self.send_set_model_with(model, ModelDefaultAction::Session);
+    }
+
+    /// `set_model` with the selector's action (#2024 S2): the persist scope
+    /// rides on the command; the harness decides whether it can record it.
+    /// A pinned default is a session-level decision, so it is never routed
+    /// to a focused sub-agent's own connection — the master switches.
+    pub(super) fn send_set_model_with(&mut self, model: &str, action: ModelDefaultAction) {
         let cmd = Command::SetModel {
             id: Some(self.ac().namespaced_id("sm")),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
+            persist: action.persist_scope().map(str::to_string),
         };
-        if self.ac().roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() && action == ModelDefaultAction::Session {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for model changes yet",
@@ -81,10 +90,11 @@ impl App {
         if let Some(selector) = &mut self.inference.model_selector {
             selector.handle_input(key);
 
+            let action = selector.action();
             match selector.take_result() {
                 ModelSelectorResult::Selected(model) => {
                     self.inference.model_selector = None;
-                    self.send_set_model(&model);
+                    self.send_set_model_with(&model, action);
                 }
                 ModelSelectorResult::Dismissed => {
                     self.inference.model_selector = None;

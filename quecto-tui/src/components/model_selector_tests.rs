@@ -450,3 +450,65 @@ fn removed_fireworks_defaults_remain_selectable_when_user_configured() {
         assert_eq!(sel.take_result(), ModelSelectorResult::Selected(id));
     }
 }
+
+// ── Pin as default (#2024 S2) ───────────────────────────────────────────
+
+#[test]
+fn tab_cycles_the_default_action_and_the_footer_names_it() {
+    let mut sel = ModelSelector::new(None);
+    assert_eq!(sel.action(), ModelDefaultAction::Session);
+    assert_eq!(sel.action().persist_scope(), None);
+    let plain = |sel: &mut ModelSelector| {
+        sel.render(80)
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(plain(&mut sel).contains("Enter: use for this session"));
+    assert!(plain(&mut sel).contains("Tab: change"));
+
+    sel.handle_input(&Key::Tab);
+    assert_eq!(sel.action(), ModelDefaultAction::RepoDefault);
+    assert_eq!(sel.action().persist_scope(), Some("local"));
+    assert!(plain(&mut sel).contains("pin as this repo's default"));
+
+    sel.handle_input(&Key::Tab);
+    assert_eq!(sel.action(), ModelDefaultAction::GlobalDefault);
+    assert_eq!(sel.action().persist_scope(), Some("global"));
+    assert!(plain(&mut sel).contains("pin as the global default"));
+
+    sel.handle_input(&Key::Tab);
+    assert_eq!(sel.action(), ModelDefaultAction::Session);
+    sel.handle_input(&Key::BackTab);
+    assert_eq!(sel.action(), ModelDefaultAction::GlobalDefault);
+}
+
+#[test]
+fn the_action_survives_filtering_and_rides_with_the_selection() {
+    let mut sel = ModelSelector::new(None);
+    sel.handle_input(&Key::Tab);
+    for c in "opus".chars() {
+        sel.handle_input(&Key::Char(c));
+    }
+    assert_eq!(sel.action(), ModelDefaultAction::RepoDefault);
+    sel.handle_input(&Key::Enter);
+    assert!(matches!(
+        sel.take_result(),
+        ModelSelectorResult::Selected(_)
+    ));
+    assert_eq!(
+        sel.action(),
+        ModelDefaultAction::RepoDefault,
+        "the controller reads the action after the result"
+    );
+}
+
+#[test]
+fn the_footer_fits_the_width() {
+    let mut sel = ModelSelector::new(None);
+    sel.handle_input(&Key::Tab);
+    for line in sel.render(30) {
+        assert!(visible_width(&line) <= 30, "{}", strip_ansi(&line));
+    }
+}

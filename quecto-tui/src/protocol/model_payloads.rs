@@ -166,3 +166,43 @@ pub fn parse_refresh_outcomes(
 #[cfg(test)]
 #[path = "model_payloads_tests.rs"]
 mod tests;
+
+/// Where a `set_model` / `set_effort` recorded a default (#2024 S2): the
+/// reply's `persisted: {scope, path}`. Absent when the switch was in-memory
+/// only; a malformed object maps to `None` (the switch still happened).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedDefault {
+    pub scope: String,
+    pub path: String,
+}
+
+impl PersistedDefault {
+    /// The toast suffix: ` and pinned as this repo's default (<path>)` /
+    /// ` and pinned as the global default (<path>)`.
+    pub fn describe(&self) -> String {
+        let scope = match self.scope.as_str() {
+            "local" => "this repo's default",
+            "global" => "the global default",
+            other => other,
+        };
+        format!(" and pinned as {scope} ({})", self.path)
+    }
+}
+
+pub fn parse_persisted_default(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Option<PersistedDefault> {
+    let persisted = data.get("persisted")?;
+    let field = |key: &str| {
+        persisted
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(sanitize)
+            .filter(|value| !value.is_empty())
+    };
+    Some(PersistedDefault {
+        scope: field("scope")?,
+        path: field("path")?,
+    })
+}

@@ -91,6 +91,7 @@ impl App {
         let cmd = Command::SetEffort {
             id: Some(self.ac().namespaced_id("se")),
             effort: effort.to_string(),
+            persist: None,
         };
         if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
@@ -124,7 +125,20 @@ impl App {
             .footer
             .set_effort(Some(level.clone()));
         if self.ac().roster.active_agent_id.is_none() {
-            self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
+            let pinned = data
+                .as_ref()
+                .and_then(|d| {
+                    crate::protocol::model_payloads::parse_persisted_default(
+                        d,
+                        &crate::components::ansi::sanitize_control,
+                    )
+                })
+                .map(|persisted| persisted.describe())
+                .unwrap_or_default();
+            self.notify(
+                &format!("Effort set to {level}{pinned}"),
+                NotifyLevel::Success,
+            );
             self.ac_mut().inference.current_effort = Some(level);
         }
     }

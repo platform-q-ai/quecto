@@ -2,7 +2,10 @@
 //!
 //! Opened by `/model` (no args) or Ctrl+L. Shows a list of available
 //! models with fuzzy filtering. The currently active model is marked.
-//! Selecting a model sends a `set_model` command to the agent.
+//! Selecting a model sends a `set_model` command to the agent; Tab cycles
+//! what the selection does besides switching the session (#2024 S2):
+//! nothing more, or pin the model as this repository's default, or as the
+//! global default — the harness records it, the TUI only asks.
 
 use crate::components::autocomplete::Suggestion;
 use crate::components::component::Component;
@@ -80,6 +83,57 @@ pub struct ModelEntry {
 /// surface's historical name.
 pub use crate::components::autocomplete::AutocompleteResult as ModelSelectorResult;
 
+/// What a selection does besides switching the session (#2024 S2). Tab
+/// cycles through the three; the footer names the one in effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelDefaultAction {
+    /// Switch this session only.
+    #[default]
+    Session,
+    /// Switch and record the model as this repository's default
+    /// (`./.quecto/config.json`).
+    RepoDefault,
+    /// Switch and record the model as the global default
+    /// (`~/.quecto/config.json`).
+    GlobalDefault,
+}
+
+impl ModelDefaultAction {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Session => Self::RepoDefault,
+            Self::RepoDefault => Self::GlobalDefault,
+            Self::GlobalDefault => Self::Session,
+        }
+    }
+
+    pub fn previous(self) -> Self {
+        match self {
+            Self::Session => Self::GlobalDefault,
+            Self::RepoDefault => Self::Session,
+            Self::GlobalDefault => Self::RepoDefault,
+        }
+    }
+
+    /// The `persist` value of the `set_model` command, if any.
+    pub fn persist_scope(self) -> Option<&'static str> {
+        match self {
+            Self::Session => None,
+            Self::RepoDefault => Some("local"),
+            Self::GlobalDefault => Some("global"),
+        }
+    }
+
+    /// The footer text for the action in effect.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Session => "Enter: use for this session",
+            Self::RepoDefault => "Enter: use and pin as this repo's default",
+            Self::GlobalDefault => "Enter: use and pin as the global default",
+        }
+    }
+}
+
 /// Scrollable model selector with fuzzy search.
 pub struct ModelSelector {
     /// All available models (unfiltered).
@@ -94,6 +148,8 @@ pub struct ModelSelector {
     result: ModelSelectorResult,
     /// Cached max label width (recalculated only when filter changes).
     cached_max_label_width: usize,
+    /// What Enter does besides switching the session.
+    action: ModelDefaultAction,
 }
 
 impl ModelSelector {
@@ -147,7 +203,13 @@ impl ModelSelector {
             query: String::new(),
             result: ModelSelectorResult::Pending,
             cached_max_label_width: cached_width,
+            action: ModelDefaultAction::default(),
         }
+    }
+
+    /// The action Enter applies: session only, or also pin as a default.
+    pub fn action(&self) -> ModelDefaultAction {
+        self.action
     }
 
     /// Take the interaction result, resetting to Pending.
@@ -200,6 +262,18 @@ fn to_suggestion(m: &ModelEntry) -> Suggestion {
     Suggestion {
         value: m.id.clone(),
         description,
+    }
+}
+
+impl ModelSelector {
+    /// The key line under the list: the action Enter applies and how to
+    /// change it. Letters go to the filter, so the cycle key is Tab.
+    fn footer(&self) -> String {
+        format!(
+            "  {} {}",
+            theme::bold(self.action.label()),
+            theme::dim("· Tab: change · Esc: close")
+        )
     }
 }
 
@@ -268,6 +342,8 @@ impl Component for ModelSelector {
                 ..ListRow::plain(s.value.clone())
             }
         }));
+        lines.push(String::new());
+        lines.push(truncate_to_width(&self.footer(), width, None));
         lines
     }
 
@@ -275,6 +351,8 @@ impl Component for ModelSelector {
         match key {
             Key::Up => self.list.move_previous(),
             Key::Down => self.list.move_next(),
+            Key::Tab => self.action = self.action.next(),
+            Key::BackTab => self.action = self.action.previous(),
             Key::Enter => {
                 // With no matches, Enter cancels.
                 self.result = match self.selected_model() {

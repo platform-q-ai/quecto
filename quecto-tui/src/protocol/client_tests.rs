@@ -358,6 +358,7 @@ fn command_set_model_serializes() {
         model: Some("gpt-4o".into()),
         provider: None,
         model_id: None,
+        persist: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"set_model\""));
@@ -373,6 +374,7 @@ fn command_set_model_with_provider() {
         model: None,
         provider: Some("anthropic".into()),
         model_id: Some("claude-sonnet-4-6".into()),
+        persist: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"provider\":\"anthropic\""));
@@ -664,6 +666,7 @@ async fn client_connect_reads_events_and_writes_commands() {
             model: Some("test-model".into()),
             provider: None,
             model_id: None,
+            persist: None,
         })
         .await
         .unwrap();
@@ -739,6 +742,7 @@ async fn command_sender_and_client_send_emit_identical_bytes() {
         model: Some("claude".into()),
         provider: None,
         model_id: None,
+        persist: None,
     };
     sender.send(&cmd).await.expect("send");
     let from_sender = rx.recv().await.expect("frame");

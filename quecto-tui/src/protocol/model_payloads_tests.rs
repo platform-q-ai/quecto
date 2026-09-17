@@ -218,3 +218,67 @@ fn refresh_outcomes_skip_malformed_entries_and_sanitize_text() {
     assert!(empty.summaries.is_empty());
     assert!(!empty.any_unsuccessful);
 }
+
+#[test]
+fn persisted_default_parses_scope_and_path_and_describes_each_scope() {
+    let sanitize = |s: &str| s.replace('\u{1b}', "");
+    let local = parse_persisted_default(
+        &serde_json::json!({"selection": {}, "persisted": {"scope": "local", "path": "/r/.quecto/config.json"}}),
+        &sanitize,
+    )
+    .unwrap();
+    assert_eq!(
+        local,
+        PersistedDefault {
+            scope: "local".into(),
+            path: "/r/.quecto/config.json".into()
+        }
+    );
+    assert_eq!(
+        local.describe(),
+        " and pinned as this repo's default (/r/.quecto/config.json)"
+    );
+    let global = parse_persisted_default(
+        &serde_json::json!({"persisted": {"scope": "global", "path": "/h/.quecto/config.json"}}),
+        &sanitize,
+    )
+    .unwrap();
+    assert_eq!(
+        global.describe(),
+        " and pinned as the global default (/h/.quecto/config.json)"
+    );
+}
+
+#[test]
+fn persisted_default_is_absent_for_in_memory_switches_and_malformed_objects() {
+    let sanitize = |s: &str| s.to_string();
+    assert_eq!(
+        parse_persisted_default(&serde_json::json!({"effort": "high"}), &sanitize),
+        None
+    );
+    assert_eq!(
+        parse_persisted_default(&serde_json::json!({"persisted": "local"}), &sanitize),
+        None
+    );
+    assert_eq!(
+        parse_persisted_default(
+            &serde_json::json!({"persisted": {"scope": "local"}}),
+            &sanitize
+        ),
+        None
+    );
+    assert_eq!(
+        parse_persisted_default(
+            &serde_json::json!({"persisted": {"scope": "", "path": "/p"}}),
+            &sanitize
+        ),
+        None
+    );
+    // Control characters in a path are stripped through the injected sanitizer.
+    let parsed = parse_persisted_default(
+        &serde_json::json!({"persisted": {"scope": "global", "path": "/p\u{1b}[31m"}}),
+        &|s: &str| s.replace("\u{1b}[31m", ""),
+    )
+    .unwrap();
+    assert_eq!(parsed.path, "/p");
+}

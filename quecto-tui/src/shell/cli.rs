@@ -17,6 +17,11 @@ pub(crate) struct CliFlags {
     pub(crate) disable_tools: Vec<String>,
     pub(crate) persist: bool,
     pub(crate) kill_on_exit: bool,
+    /// `--model <m>` (#2024 S2): the spawned agent starts on this model
+    /// for this run only (in-memory, like `quecto agent --model`).
+    pub(crate) model: Option<String>,
+    /// `--effort <e>`: the spawned agent's startup effort for this run.
+    pub(crate) effort: Option<String>,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -45,6 +50,8 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         disable_tools: Vec::new(),
         persist: true,
         kill_on_exit: true,
+        model: None,
+        effort: None,
     };
     let mut system_literal_seen = false;
     let mut i = 1;
@@ -57,6 +64,18 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
             "--config" if i + 1 < args.len() => {
                 flags.config_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
+            }
+            "--model" if i + 1 < args.len() => {
+                flags.model = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--effort" if i + 1 < args.len() => {
+                flags.effort = Some(args[i + 1].clone());
+                i += 2;
+            }
+            flag @ ("--model" | "--effort") => {
+                eprintln!("warning: {flag} requires a value; ignoring trailing flag");
+                i += 1;
             }
             "--system" if i + 1 < args.len() => {
                 flags.system_prompt = Some(args[i + 1].clone());
@@ -243,6 +262,14 @@ pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     for tool in &flags.disable_tools {
         args.push("--disable-tool".to_string());
         args.push(tool.clone());
+    }
+    if let Some(ref model) = flags.model {
+        args.push("--model".to_string());
+        args.push(model.clone());
+    }
+    if let Some(ref effort) = flags.effort {
+        args.push("--effort".to_string());
+        args.push(effort.clone());
     }
     args
 }
