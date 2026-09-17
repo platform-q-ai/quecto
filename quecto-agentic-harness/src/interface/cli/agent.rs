@@ -349,6 +349,13 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: provider runtime capability not composed\n");
         return None;
     };
+    // The catalogue handles (#1845, #1848) are built once per run, after the
+    // provider, before the tools and the loop that consume them; the
+    // interface never constructs a catalogue use case.
+    let Some(build_catalogue) = flags.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return None;
+    };
     if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
         return None;
     }
@@ -385,13 +392,6 @@ pub(crate) fn build_agent_from_config(
             config.tools.web.fetch.max_response_kb,
         )
     });
-    // The catalogue handles (#1845, #1848): built once per run, before the
-    // tools and the loop that consume them; the interface never constructs
-    // a catalogue use case.
-    let Some(build_catalogue) = flags.catalogue else {
-        stderr.push_str("agent: catalogue capability not composed\n");
-        return None;
-    };
     let catalogue = build_catalogue(base_dir);
     let ToolRegistryBuild {
         registry,

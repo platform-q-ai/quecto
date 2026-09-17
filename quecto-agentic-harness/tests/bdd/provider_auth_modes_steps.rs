@@ -120,7 +120,7 @@ fn given_registry_anthropic_api(world: &mut QuectoWorld, api_key: String) {
         if !name.is_empty() && std::env::var(name).is_err() {
             // BDD scenarios seed a deterministic placeholder for an env var
             // that is otherwise unset.
-            // SAFETY: single-threaded step; the value is idempotent across scenarios.
+            // SAFETY: only ever set to this one constant; a concurrent reader sees unset or this value.
             unsafe { std::env::set_var(name, "sk-ant-env-placeholder") };
         }
     }
