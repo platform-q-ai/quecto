@@ -214,12 +214,14 @@ impl CredentialStore {
         {
             use std::os::fd::AsRawFd;
             let fd = file.as_raw_fd();
+            // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             if flags < 0 {
                 return Err(DomainError::Config(
                     "failed to read credentials lock fd flags".to_string(),
                 ));
             }
+            // SAFETY: fd is a live File raw fd; F_SETFD only sets FD_CLOEXEC on FD_* flags.
             let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
             if rc != 0 {
                 return Err(DomainError::Config(
@@ -227,6 +229,7 @@ impl CredentialStore {
                 ));
             }
             debug_assert_eq!(
+                // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
                 unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC,
                 libc::FD_CLOEXEC,
                 "credentials lock fd must be FD_CLOEXEC"

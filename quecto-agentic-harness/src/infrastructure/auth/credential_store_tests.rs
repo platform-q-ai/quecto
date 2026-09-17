@@ -531,6 +531,7 @@ fn credentials_lock_fd_is_cloexec() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
     let lock = store.lock_exclusive().unwrap();
+    // SAFETY: lock.as_raw_fd() is a live File raw fd; F_GETFD only reads FD_* flags.
     let flags = unsafe { libc::fcntl(lock.as_raw_fd(), libc::F_GETFD) };
     assert!(flags >= 0, "F_GETFD on credentials lock");
     assert_ne!(
