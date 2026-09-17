@@ -1,7 +1,24 @@
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Serialize};
 
-pub use crate::interface::uds::sessions::controller::SessionListScopeCommand;
+/// Discovery scope of `list_sessions` (#2009) as spelled on the wire; the
+/// dispatch edge maps it onto the application's scope.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionListScopeCommand {
+    #[default]
+    Local,
+    Global,
+}
+
+impl From<SessionListScopeCommand> for crate::application::sessions::dto::SessionListScope {
+    fn from(scope: SessionListScopeCommand) -> Self {
+        match scope {
+            SessionListScopeCommand::Local => Self::Local,
+            SessionListScopeCommand::Global => Self::Global,
+        }
+    }
+}
 
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.

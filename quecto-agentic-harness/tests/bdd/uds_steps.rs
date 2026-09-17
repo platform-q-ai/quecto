@@ -434,7 +434,6 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             socket_override: Some(server_tokio),
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
@@ -2148,7 +2147,6 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
@@ -2570,7 +2568,6 @@ fn mc_spawn_agent(
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime: if persist {
                 quecto::domain::harness_lifetime::HarnessLifetime::Persistent

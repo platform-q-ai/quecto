@@ -3,8 +3,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::application::sessions::dto::{ListSessionsRequest, SessionListScope};
+use crate::application::sessions::dto::{ListSessionsRequest, SessionListQuery, SessionListScope};
 use crate::domain::session::Session;
+use crate::domain::session::SessionSummary;
 use crate::domain::session_home::SessionHomeScope;
 use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
 
@@ -68,6 +69,13 @@ fn summary(key: &str, updated: Option<u64>) -> SessionSummary {
     }
 }
 
+fn global(query: SessionListQuery) -> ListSessionsRequest {
+    ListSessionsRequest {
+        query,
+        scope: SessionListScope::Global,
+    }
+}
+
 #[tokio::test]
 async fn all_query_returns_the_store_summaries_in_store_order() {
     // The adapter promises newest-first; the query passes that order through
@@ -81,9 +89,13 @@ async fn all_query_returns_the_store_summaries_in_store_order() {
     let store = ScriptedStore::answering(Ok(newest_first.clone()));
     let query = ListSessions::new(store.clone());
 
-    let listed = query.execute(&SessionListQuery::All).await.unwrap();
+    let listed = query
+        .discover(&global(SessionListQuery::All))
+        .await
+        .unwrap();
 
-    assert_eq!(listed, newest_first);
+    let summaries: Vec<_> = listed.sessions.into_iter().map(|row| row.summary).collect();
+    assert_eq!(summaries, newest_first);
     assert_eq!(*store.queries.lock().unwrap(), vec![SessionListQuery::All]);
     assert_eq!(*store.loads.lock().unwrap(), 0, "list is summary-only");
 }
@@ -95,11 +107,11 @@ async fn prefix_query_is_handed_to_the_store_as_the_identity_prefix() {
     let prefix = SessionKeyPrefix::new("chat-").unwrap();
 
     let listed = query
-        .execute(&SessionListQuery::ExistingKeyPrefix(prefix.clone()))
+        .discover(&global(SessionListQuery::ExistingKeyPrefix(prefix.clone())))
         .await
         .unwrap();
 
-    assert_eq!(listed.len(), 1);
+    assert_eq!(listed.sessions.len(), 1);
     assert_eq!(
         *store.queries.lock().unwrap(),
         vec![SessionListQuery::ExistingKeyPrefix(prefix)]
@@ -110,10 +122,10 @@ async fn prefix_query_is_handed_to_the_store_as_the_identity_prefix() {
 async fn empty_store_lists_nothing() {
     let store = ScriptedStore::answering(Ok(Vec::new()));
     let listed = ListSessions::new(store)
-        .execute(&SessionListQuery::All)
+        .discover(&global(SessionListQuery::All))
         .await
         .unwrap();
-    assert!(listed.is_empty());
+    assert!(listed.sessions.is_empty());
 }
 
 #[tokio::test]
@@ -122,7 +134,7 @@ async fn store_error_surfaces_unchanged() {
         "failed to read sessions dir: boom".to_string(),
     )));
     let err = ListSessions::new(store)
-        .execute(&SessionListQuery::All)
+        .discover(&global(SessionListQuery::All))
         .await
         .unwrap_err();
     assert_eq!(
@@ -224,7 +236,7 @@ async fn discovery_observations_scale_with_directories_not_rows() {
         .with_home(SessionHomeContext {
             catalogue: Arc::new(FixedCatalogue(entries)),
             discovery: discovery.clone(),
-            execution_dir: "/here".into(),
+            execution_dir: Ok("/here".into()),
         })
         .discover(&ListSessionsRequest {
             query: SessionListQuery::All,
@@ -266,7 +278,7 @@ async fn one_hundred_sessions_in_one_directory_discover_once() {
         .with_home(SessionHomeContext {
             catalogue: Arc::new(FixedCatalogue(entries)),
             discovery: discovery.clone(),
-            execution_dir: "/here".into(),
+            execution_dir: Ok("/here".into()),
         })
         .discover(&ListSessionsRequest {
             query: SessionListQuery::All,
@@ -314,7 +326,7 @@ async fn current_canonical_observation_is_reused_for_saved_directory() {
         .with_home(SessionHomeContext {
             catalogue: Arc::new(FixedCatalogue(entries)),
             discovery: discovery.clone(),
-            execution_dir: "/cwd".into(),
+            execution_dir: Ok("/cwd".into()),
         })
         .discover(&ListSessionsRequest {
             query: SessionListQuery::All,
@@ -369,7 +381,7 @@ async fn local_scope_skips_discovery_for_foreign_and_non_scoped_homes() {
         .with_home(SessionHomeContext {
             catalogue: Arc::new(FixedCatalogue(entries)),
             discovery: discovery.clone(),
-            execution_dir: "/here".into(),
+            execution_dir: Ok("/here".into()),
         })
         .discover(&ListSessionsRequest {
             query: SessionListQuery::All,
@@ -399,7 +411,7 @@ async fn discovery_observations_are_fresh_each_query_and_failure_never_admits() 
             SessionHomeScope::Scoped(saved.clone()),
         )])),
         discovery: discovery.clone(),
-        execution_dir: "/here".into(),
+        execution_dir: Ok("/here".into()),
     };
     let query = ListSessions::new(store.clone()).with_home(context.clone());
     let request = ListSessionsRequest {
@@ -412,12 +424,12 @@ async fn discovery_observations_are_fresh_each_query_and_failure_never_admits() 
     }
     assert_eq!(discovery.0.lock().unwrap().len(), 2);
     // Advisory query caching does not change the authoritative context's checks.
-    assert!(context.eligible(&SessionHomeScope::Scoped(saved)));
+    assert!(context.eligible(&SessionHomeScope::Scoped(saved)).await);
     assert_eq!(discovery.0.lock().unwrap().len(), 4);
     *store.outcome.lock().unwrap() = Some(Ok(vec![summary(identity.runtime_key(), None)]));
     let unavailable = ListSessions::new(store)
         .with_home(SessionHomeContext {
-            execution_dir: "/missing".into(),
+            execution_dir: Ok("/missing".into()),
             ..context
         })
         .discover(&request)

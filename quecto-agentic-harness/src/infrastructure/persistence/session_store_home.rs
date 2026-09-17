@@ -119,6 +119,10 @@ pub(in crate::infrastructure::persistence) fn atomic_write(
 }
 
 impl FileSessionStore {
+    /// The flat layout this store's records, homes and catalogue live in.
+    pub fn layout(&self) -> &super::super::session_layout::FlatSessionLayout {
+        &self.layout
+    }
     pub fn read_home(&self, identity: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         match std::fs::read(self.layout.home_file(identity)) {
             Ok(bytes) => Ok(decode(&bytes)),

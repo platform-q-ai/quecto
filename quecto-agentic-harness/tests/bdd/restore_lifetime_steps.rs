@@ -332,7 +332,6 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime,
             notification_rx: None,

@@ -7,8 +7,10 @@ use std::path::PathBuf;
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession, SessionListScope};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::session::SessionSummary;
-use crate::domain::session_home::{SessionHome, SessionHomeScope};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::session_home::{HomeAdmission, SessionHome, SessionHomeScope};
+
+/// Catalogue rows keyed by runtime key; `None` when authority is unavailable.
+type CatalogueRows = Option<HashMap<String, SessionHomeScope>>;
 
 pub(super) async fn discover(
     home: Option<&SessionHomeContext>,
@@ -20,33 +22,44 @@ pub(super) async fn discover(
         diagnostics: Vec::new(),
         rebuilt: false,
     };
-    let current = current_home(home, &mut result.diagnostics);
-    let entries = catalogue_entries(home, &mut result).await;
+    let current = current_home(home, &mut result.diagnostics).await;
+    let rows = catalogue_rows(home, &mut result).await;
     // Query-local observations only: resume still performs fresh admission under
     // its claim. Cache failures too, and reuse the current canonical observation.
     let mut observations = seed_observations(home, current.as_ref());
     for summary in summaries {
-        let Some(listed) = project_row(
-            summary,
-            entries.as_deref(),
-            current.as_ref(),
-            home,
-            scope,
-            &mut observations,
-        ) else {
-            continue;
+        let home_scope = match &rows {
+            // A store-listed record the strict catalogue rejected (a crash-
+            // truncated transcript) stays visible globally and never eligible.
+            Some(rows) => rows
+                .get(&summary.key)
+                .cloned()
+                .unwrap_or_else(|| SessionHomeScope::Unavailable("record not in catalogue".into())),
+            None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
         };
-        result.sessions.push(listed);
+        let local = matches!(
+            (&home_scope, &current),
+            (SessionHomeScope::Scoped(saved), Some(current)) if saved.group == current.group
+        );
+        if scope == SessionListScope::Global || local {
+            let resume_eligible =
+                resume_eligible(home, current.as_ref(), &home_scope, &mut observations).await;
+            result.sessions.push(ListedSession {
+                summary,
+                home: home_scope,
+                resume_eligible,
+            });
+        }
     }
     result
 }
 
-fn current_home(
+async fn current_home(
     home: Option<&SessionHomeContext>,
     diagnostics: &mut Vec<String>,
 ) -> Option<SessionHome> {
     match home {
-        Some(context) => match context.current() {
+        Some(context) => match context.current().await {
             Ok(home) => Some(home),
             Err(error) => {
                 diagnostics.push(error.to_string());
@@ -60,16 +73,22 @@ fn current_home(
     }
 }
 
-async fn catalogue_entries(
+async fn catalogue_rows(
     home: Option<&SessionHomeContext>,
     result: &mut ListSessionsResult,
-) -> Option<Vec<(SessionIdentity, SessionHomeScope)>> {
+) -> CatalogueRows {
     match home {
         Some(context) => match context.catalogue.list_async().await {
             Ok(snapshot) => {
                 result.diagnostics.extend(snapshot.diagnostics);
                 result.rebuilt = snapshot.rebuilt;
-                Some(snapshot.entries)
+                Some(
+                    snapshot
+                        .entries
+                        .into_iter()
+                        .map(|(identity, home)| (identity.runtime_key().to_string(), home))
+                        .collect(),
+                )
             }
             Err(error) => {
                 result.diagnostics.push(error.to_string());
@@ -86,54 +105,37 @@ fn seed_observations(
 ) -> HashMap<PathBuf, Option<SessionHome>> {
     let mut observations = HashMap::new();
     if let (Some(context), Some(current)) = (context, current) {
-        observations.insert(context.execution_dir.clone(), Some(current.clone()));
+        if let Ok(execution_dir) = &context.execution_dir {
+            observations.insert(execution_dir.clone(), Some(current.clone()));
+        }
         observations.insert(current.execution_dir.clone(), Some(current.clone()));
     }
     observations
 }
 
-fn project_row(
-    summary: SessionSummary,
-    entries: Option<&[(SessionIdentity, SessionHomeScope)]>,
-    current: Option<&SessionHome>,
-    context: Option<&SessionHomeContext>,
-    scope: SessionListScope,
-    observations: &mut HashMap<PathBuf, Option<SessionHome>>,
-) -> Option<ListedSession> {
-    let home = match entries {
-        Some(entries) => entries
-            .iter()
-            .find(|(identity, _)| identity.runtime_key() == summary.key)
-            .map(|(_, home)| home.clone())?,
-        None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
-    };
-    let local = matches!(
-        (&home, current),
-        (SessionHomeScope::Scoped(home), Some(current)) if home.group == current.group
-    );
-    if scope == SessionListScope::Global || local {
-        Some(ListedSession {
-            summary,
-            home: home.clone(),
-            resume_eligible: resume_eligible(context, current, &home, observations),
-        })
-    } else {
-        None
-    }
-}
-
-fn resume_eligible(
+/// Advisory eligibility by the one domain rule, over cached observations.
+async fn resume_eligible(
     context: Option<&SessionHomeContext>,
     current: Option<&SessionHome>,
     home: &SessionHomeScope,
     observations: &mut HashMap<PathBuf, Option<SessionHome>>,
 ) -> bool {
-    match (context, current, home) {
-        (Some(context), Some(current), SessionHomeScope::Scoped(saved)) => observations
-            .entry(saved.execution_dir.clone())
-            .or_insert_with(|| context.discovery.discover(&saved.execution_dir).ok())
-            .as_ref()
-            .is_some_and(|observed| observed == saved && observed.same_execution(current)),
-        _ => false,
+    let (Some(context), Some(current), SessionHomeScope::Scoped(saved)) = (context, current, home)
+    else {
+        return false;
+    };
+    if !observations.contains_key(&saved.execution_dir) {
+        let observed = context
+            .discovery
+            .discover_async(&saved.execution_dir)
+            .await
+            .ok();
+        observations.insert(saved.execution_dir.clone(), observed);
     }
+    observations
+        .get(&saved.execution_dir)
+        .and_then(Option::as_ref)
+        .is_some_and(|observed| {
+            SessionHome::admission(saved, observed, current) == HomeAdmission::Eligible
+        })
 }

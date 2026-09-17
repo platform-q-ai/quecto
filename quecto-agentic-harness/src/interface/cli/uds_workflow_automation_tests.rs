@@ -1,4 +1,5 @@
 use super::dispatch_test_env::DispatchTestEnv;
+use crate::application::sessions::ports::SessionStore;
 use crate::domain::session::Session;
 
 fn seed_existing_home(base: &std::path::Path, name: &str) {

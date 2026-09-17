@@ -1252,7 +1252,7 @@ fn interface_never_lists_the_store_directly() {
         query.contains("handle_list_sessions(ctx, id, tn, *scope)")
             && std::fs::read_to_string("src/interface/cli/uds_dispatch_session.rs")
                 .unwrap()
-                .contains("ctx.list_sessions.list(scope).await"),
+                .contains("ctx.list_sessions.list(requested).await"),
         "the list_sessions command is answered through the composed controller"
     );
 }

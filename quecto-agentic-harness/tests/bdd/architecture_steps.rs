@@ -42,9 +42,7 @@ fn then_application_has_no_runtime_io(_world: &mut QuectoWorld) {
 
         for line in file_content.lines().skip(1) {
             let trimmed = line.trim();
-            // Inner cfg makes the entire file test-only; outer cfg starts
-            // the existing inline test module. Filename alone grants no exemption.
-            if matches!(trimmed, "#[cfg(test)]" | "#![cfg(test)]") {
+            if trimmed == "#[cfg(test)]" {
                 break;
             }
             if trimmed.starts_with("//") {

@@ -17,6 +17,7 @@ use crate::application::sessions::ports::{
     DelegatedChildrenRoster, FreshSessionIdentityGenerator, HistoricalRosterSource, SessionStore,
     WorkflowRunSource,
 };
+use crate::application::sessions::session_home::SessionHomeContext;
 use crate::application::sessions::use_cases::{
     ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, ResumeSavedSession,
     RewindConversation, SaveSession, StartFreshConversation, SynchronizeTranscript,
@@ -37,25 +38,17 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 /// retention backstop, injected prompt, dirty latch, workflow and roster
 /// runtime: the one active-session state, the history, recovery, sync,
 /// report, save, clear, rewind and fresh-session use cases over it,
-/// `store`, `export` and `identities`, and the list controller the
-/// sessions composition already built.
+/// `store`, `export` and `identities`, the list controller the sessions
+/// composition already built, and the home context (#2009) the save,
+/// list and resume transactions share — mandatory, so no loop's resume
+/// admission is ever fail-open.
 pub fn assemble_session_handles(
     inputs: SessionLoopInputs,
     store: Arc<dyn SessionStore>,
     list_sessions: Arc<ListSessionsController>,
     export: Option<Arc<dyn SessionExportPort>>,
     identities: Arc<dyn FreshSessionIdentityGenerator>,
-) -> SessionHandles {
-    assemble_session_handles_with_home(inputs, store, list_sessions, export, identities, None)
-}
-
-pub(crate) fn assemble_session_handles_with_home(
-    inputs: SessionLoopInputs,
-    store: Arc<dyn SessionStore>,
-    list_sessions: Arc<ListSessionsController>,
-    export: Option<Arc<dyn SessionExportPort>>,
-    identities: Arc<dyn FreshSessionIdentityGenerator>,
-    home: Option<crate::application::sessions::session_home::SessionHomeContext>,
+    home: SessionHomeContext,
 ) -> SessionHandles {
     let mut state = ActiveSessionState::new(inputs.identity);
     state.set_spill_store(inputs.spill_store);
@@ -74,18 +67,17 @@ pub(crate) fn assemble_session_handles_with_home(
     let delegated = inputs.subagent_registry.map(|registry| {
         Arc::new(RegistryDelegatedRoster::new(registry)) as Arc<dyn DelegatedChildrenRoster>
     });
-    let save_session = SaveSession::new(
-        active_session.clone(),
-        store.clone(),
-        inputs.durable_prefix,
-        workflow,
-        roster,
-        inputs.ephemeral,
+    let save_session = Arc::new(
+        SaveSession::new(
+            active_session.clone(),
+            store.clone(),
+            inputs.durable_prefix,
+            workflow,
+            roster,
+            inputs.ephemeral,
+        )
+        .with_home(home.clone()),
     );
-    let save_session = Arc::new(match &home {
-        Some(home) => save_session.with_home(home.clone()),
-        None => save_session,
-    });
     let rewrite = ConversationRewriteHandles {
         clear: Arc::new(ClearConversation::new(
             active_session.clone(),
@@ -103,11 +95,8 @@ pub(crate) fn assemble_session_handles_with_home(
         store.clone(),
         departing_children.clone(),
         inputs.ephemeral,
+        home,
     );
-    let resume = match home {
-        Some(home) => resume.with_home(home),
-        None => resume,
-    };
     let switch = SessionSwitchHandles {
         fresh: Arc::new(StartFreshConversation::new(
             active_session.clone(),

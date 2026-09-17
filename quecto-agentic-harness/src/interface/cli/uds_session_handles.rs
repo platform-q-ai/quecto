@@ -26,8 +26,6 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 pub struct SessionLoopInputs {
     /// The harness base directory the file store lives under.
     pub base_dir: PathBuf,
-    /// A store the loop already holds (rigs); `None` composes the file store.
-    pub store: Option<Arc<dyn SessionStore>>,
     /// The typed identity the loop was opened on (D10 #1979): ephemeral,
     /// the named `cli:<name>`, or the fresh chat identity drawn at startup.
     pub identity: SessionIdentity,

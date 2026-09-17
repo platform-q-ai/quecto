@@ -10,6 +10,10 @@ use crate::domain::session::USER_CHAT_PREFIX;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 
+#[path = "resume_disposition.rs"]
+mod resume_disposition;
+pub use resume_disposition::ResumeDisposition;
+
 /// The saved session a client asked to resume: the name as the client
 /// spelled it (trimmed; echoed in the acknowledgement and the not-found
 /// refusal) and the identity it denotes.
@@ -68,30 +72,6 @@ pub struct SavedSessionResumed {
 pub struct StartupSessionOpened {
     pub messages: Vec<Message>,
     pub workflow_run: Option<WorkflowRunPersisted>,
-}
-
-/// Minimum scope admission. Unimplemented actions never authorize history reuse.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResumeDisposition {
-    LegacyUnscoped,
-    DifferentExecutionDirectory,
-    Unavailable(String),
-}
-
-impl std::fmt::Display for ResumeDisposition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LegacyUnscoped => {
-                f.write_str("legacy session requires explicit first association (unavailable)")
-            }
-            Self::DifferentExecutionDirectory => {
-                f.write_str("session belongs to a different execution directory")
-            }
-            Self::Unavailable(_) => f.write_str(
-                "session home or workspace is unavailable and needs validation or repair",
-            ),
-        }
-    }
 }
 
 /// Why no saved session was resumed. Every failure precedes the key

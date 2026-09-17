@@ -81,22 +81,6 @@ impl SaveSession {
         self
     }
 
-    async fn prepare_home(&self, identity: &SessionIdentity) -> Result<(), SaveSessionError> {
-        if let Some(home) = &self.home {
-            self.store
-                .claim(identity)
-                .map_err(SaveSessionError::Store)?;
-            if SessionStore::exists(self.store.as_ref(), identity)
-                .await
-                .map_err(SaveSessionError::Store)?
-            {
-                return Ok(());
-            }
-            home.record_new(identity).map_err(SaveSessionError::Store)?;
-        }
-        Ok(())
-    }
-
     /// Persist `messages` (the loop's live conversation, injected prompt
     /// included) as the current session.
     pub async fn save(
@@ -108,7 +92,8 @@ impl SaveSession {
         let Some(inputs) = self.begin(trigger).await else {
             return Ok(SaveOutcome::Ephemeral);
         };
-        self.prepare_home(&inputs.identity).await?;
+        save_session_home::prepare_home(self.home.as_ref(), self.store.as_ref(), &inputs.identity)
+            .await?;
         remove_injected_system_prompt(messages, &inputs.injected_prompt);
         assign_missing_ordinals(messages);
         // Drain the agent's latch into the session state before the store is
@@ -182,7 +167,8 @@ impl SaveSession {
         let Some(inputs) = self.begin(SaveTrigger::Routine).await else {
             return Ok(SaveOutcome::Ephemeral);
         };
-        self.prepare_home(&inputs.identity).await?;
+        save_session_home::prepare_home(self.home.as_ref(), self.store.as_ref(), &inputs.identity)
+            .await?;
         let mut persisted = messages.to_vec();
         remove_injected_system_prompt(&mut persisted, &inputs.injected_prompt);
         persisted.push(pending.clone());
@@ -289,6 +275,8 @@ impl std::fmt::Debug for SaveSession {
 #[cfg(test)]
 #[path = "save_session_rig_tests.rs"]
 mod rig_tests;
+#[path = "save_session_home.rs"]
+mod save_session_home;
 #[cfg(test)]
 #[path = "save_session_tests.rs"]
 mod tests;

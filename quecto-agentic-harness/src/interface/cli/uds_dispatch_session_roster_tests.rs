@@ -57,6 +57,24 @@ pub(crate) fn composed_sessions_from(
     crate::composition::sessions::build_session_handles(inputs)
 }
 
+/// The file store a rig holds and composes its loops over.
+pub(crate) type RigStore =
+    std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>;
+
+/// A rig's own file store under `base`.
+pub(crate) fn rig_store(base: &std::path::Path) -> RigStore {
+    std::sync::Arc::new(crate::composition::sessions::build_file_session_store(base))
+}
+
+/// The composed sessions handles of `inputs` over the rig's own `store`
+/// and the home context (#2009) composition pairs with it.
+pub(crate) fn composed_sessions_over(
+    store: RigStore,
+    inputs: crate::interface::cli::uds_session_handles::SessionLoopInputs,
+) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    crate::composition::sessions::build_session_handles_over(store, inputs)
+}
+
 /// The rows a routine (legacy-reason) save records for `registry`.
 pub(crate) fn snapshot_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -544,7 +562,6 @@ pub(crate) fn loop_inputs(
 ) -> crate::interface::cli::uds_session_handles::SessionLoopInputs {
     crate::interface::cli::uds_session_handles::SessionLoopInputs {
         base_dir: base.to_path_buf(),
-        store: None,
         identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(session_key),
         ephemeral: false,
         system_prompt: String::new(),
@@ -579,15 +596,14 @@ pub(crate) fn composed_sessions_for(
 /// rig's own `store`, with `messages` already published as its live
 /// transcript.
 pub(crate) fn handles_over(
-    store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[crate::domain::message::Message],
 ) -> crate::interface::cli::uds_session_handles::SessionHandles {
     let mut inputs = loop_inputs(std::path::Path::new(""), session_key);
-    inputs.store = Some(store);
     inputs.spill_store = spill_store;
-    let handles = crate::composition::sessions::build_session_handles(inputs);
+    let handles = composed_sessions_over(store, inputs);
     let _ = handles
         .active_session
         .try_write()
@@ -596,10 +612,23 @@ pub(crate) fn handles_over(
     handles
 }
 
+/// Record a home at the current directory for `key` (#2009) before its
+/// transcript is seeded directly into `store`, so the rig's resume
+/// admission sees the authority a real save would have written.
+pub(crate) async fn seed_home(
+    store: &std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    key: &str,
+) {
+    crate::composition::session_home::build_session_home(store.clone())
+        .record_new(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .await
+        .expect("home at the current directory");
+}
+
 /// The read handles of a session opened on `session_key` over the rig's
 /// own `store`, with `messages` already published as its live transcript.
 pub(crate) fn read_handles_over(
-    store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[crate::domain::message::Message],

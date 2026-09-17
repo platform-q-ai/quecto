@@ -2,7 +2,6 @@ use super::uds_multi::MultiClientArgs;
 use super::uds_session_handles::SessionLoopInputs;
 use super::uds_single_client::{SingleClientArgs, single_client_loop};
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::sessions::ports::SessionStore;
 pub(crate) use crate::domain::conversation_view::inject_system_prompt;
 #[cfg(test)]
 pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
@@ -36,9 +35,6 @@ pub struct UdsLoopArgs<'a> {
     pub socket_path: std::path::PathBuf,
     /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
-    /// A store the loop is handed instead of the composed file store
-    /// (tests); threaded into the sessions builder's inputs.
-    pub session_store_override: Option<std::sync::Arc<dyn SessionStore>>,
     /// Composition's sessions handles builder (#1970): the loop hands over
     /// its base directory (and any override) and holds the handles back.
     pub sessions: super::SessionHandlesBuilder,
@@ -92,7 +88,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         system_prompt,
         socket_path,
         socket_override,
-        session_store_override,
         sessions,
         catalogue,
         ext_registry,
@@ -111,7 +106,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
-        store: session_store_override,
         identity,
         ephemeral,
         system_prompt: system_prompt.clone(),

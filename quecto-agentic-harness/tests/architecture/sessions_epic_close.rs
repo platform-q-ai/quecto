@@ -64,7 +64,7 @@ const TRANSACTION_OWNERS: &[(&str, &str, &str)] = &[
     (
         "ListSessions",
         "src/application/sessions/use_cases/list_sessions.rs",
-        "pub async fn execute(",
+        "pub async fn discover(",
     ),
     (
         "ReadHistory",
@@ -207,15 +207,17 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/resume_saved_session.rs",
+    // #2009 admission holds the target's claim guard beside the owner.
+    "src/application/sessions/use_cases/resume_saved_session_admission.rs",
     "src/application/sessions/use_cases/save_session.rs",
+    // #2009 home acquisition runs on the save owner's existing path.
+    "src/application/sessions/use_cases/save_session_home.rs",
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/composition/active_session.rs",
+    // #2009 the home context is composed over the one file store.
+    "src/composition/session_home.rs",
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/session_store.rs",
-    // The dispatch test rig (a `cfg(test)`-declared module without the
-    // `_tests.rs` suffix) declares the store field of its env.
-    "src/interface/cli/uds_dispatch_test_env.rs",
-    "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

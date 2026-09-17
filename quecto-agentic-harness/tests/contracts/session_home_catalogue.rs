@@ -11,10 +11,8 @@ fn corrupt_authority_is_unavailable_not_legacy() {
     let layout = FlatSessionLayout::new(dir.path());
     std::fs::create_dir_all(layout.sessions_dir()).unwrap();
     let identity = SessionIdentity::from_persisted_key("chat-test");
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout.clone())),
-    );
+    let catalogue =
+        FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout.clone())));
     assert_eq!(
         catalogue.read(&identity).unwrap(),
         SessionHomeScope::LegacyUnscoped
@@ -57,7 +55,7 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-home");
     catalogue.record_new(&identity, &home()).unwrap();
     assert!(catalogue.list().unwrap().entries.is_empty());
@@ -75,10 +73,7 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     assert_eq!(snapshot.entries, recovered.entries);
     assert!(!catalogue.list().unwrap().rebuilt);
     assert!(store.load(&identity).await.unwrap().is_some());
-    let restarted = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout)),
-    );
+    let restarted = FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout)));
     assert_eq!(
         restarted.read(&identity).unwrap(),
         SessionHomeScope::Scoped(home())
@@ -89,7 +84,7 @@ async fn ordinary_full_and_delta_saves_preserve_invalid_authority_bytes_and_lega
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-legacy");
     let mut value = session(identity.clone());
     store.save(&value).await.unwrap();
@@ -133,10 +128,8 @@ async fn ordinary_full_and_delta_saves_preserve_invalid_authority_bytes_and_lega
 fn ephemeral_metadata_is_never_durable() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout.clone())),
-    );
+    let catalogue =
+        FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout.clone())));
     catalogue
         .record_new(&SessionIdentity::ephemeral(), &home())
         .unwrap();
@@ -148,7 +141,7 @@ async fn catalogue_write_failure_preserves_authority_and_exact_lookup() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-fault");
     catalogue.record_new(&identity, &home()).unwrap();
     store.save(&session(identity.clone())).await.unwrap();
@@ -182,10 +175,7 @@ fn partially_appended_transcript_cannot_publish_a_catalogue_row() {
     std::fs::create_dir_all(layout.sessions_dir()).unwrap();
     let identity = SessionIdentity::from_persisted_key("chat-partial");
     std::fs::write(layout.session_file(&identity), b"{\"type\":\"snapshot\",\"key\":\"chat-partial\",\"messages\":[]}\n{\"type\":\"append\",\"messages\":[").unwrap();
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout)),
-    );
+    let catalogue = FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout)));
     let snapshot = catalogue.list().unwrap();
     assert!(snapshot.entries.is_empty());
     assert!(
@@ -201,7 +191,7 @@ async fn derived_index_contains_no_transcript_and_detects_content_changes() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-digest");
     let mut value = session(identity);
     value.messages = vec![Message::user("DISTINCTIVE-SECRET-TRANSCRIPT")];
@@ -227,10 +217,7 @@ fn syntactically_valid_but_schema_invalid_record_is_not_published() {
         b"{\"key\":\"chat-invalid\",\"messages\":42}",
     )
     .unwrap();
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout)),
-    );
+    let catalogue = FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout)));
     assert!(catalogue.list().unwrap().entries.is_empty());
 }
 
@@ -241,10 +228,7 @@ fn dangling_home_authority_is_unavailable_not_absent() {
     std::fs::create_dir_all(layout.sessions_dir()).unwrap();
     let identity = SessionIdentity::from_persisted_key("chat-dangling");
     std::os::unix::fs::symlink(dir.path().join("missing"), layout.home_file(&identity)).unwrap();
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout)),
-    );
+    let catalogue = FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout)));
     assert!(matches!(
         catalogue.read(&identity).unwrap(),
         SessionHomeScope::Unavailable(_)
@@ -257,7 +241,7 @@ async fn warm_projection_reuses_only_unchanged_validated_transcripts() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-incremental");
     store.save(&session(identity.clone())).await.unwrap();
     assert_eq!(catalogue.list().unwrap().entries.len(), 1);
@@ -286,7 +270,7 @@ async fn warm_projection_invalidates_same_length_rewrites_and_home_changes() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-rewrite");
     store.save(&session(identity.clone())).await.unwrap();
     catalogue.list().unwrap();
@@ -318,10 +302,7 @@ async fn concurrent_saves_and_catalogue_publication_recover_to_complete_authorit
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = Arc::new(FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        store.clone(),
-    ));
+    let catalogue = Arc::new(FileSessionHomeCatalogue::with_store(store.clone()));
     let identity = SessionIdentity::from_persisted_key("chat-concurrent");
     store.save(&session(identity.clone())).await.unwrap();
     catalogue.list().unwrap();
@@ -353,7 +334,7 @@ async fn asynchronous_projection_preserves_warm_cache_and_checks_permissions() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-permissions");
     store.save(&session(identity.clone())).await.unwrap();
     catalogue.list_async().await.unwrap();
@@ -375,7 +356,7 @@ async fn concurrent_home_replacement_keeps_published_observation_consistent() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-home-race");
     catalogue.record_new(&identity, &home()).unwrap();
     store.save(&session(identity.clone())).await.unwrap();
@@ -445,10 +426,8 @@ fn exact_key_read_never_depends_on_the_index() {
     let layout = FlatSessionLayout::new(dir.path());
     std::fs::create_dir_all(layout.sessions_dir()).unwrap();
     let identity = SessionIdentity::from_persisted_key("chat-exact");
-    let catalogue = FileSessionHomeCatalogue::with_store(
-        layout.clone(),
-        Arc::new(FileSessionStore::new(layout.clone())),
-    );
+    let catalogue =
+        FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout.clone())));
     catalogue.record_new(&identity, &home()).unwrap();
     std::fs::write(
         layout.home_catalogue_file(),
@@ -477,7 +456,7 @@ async fn warm_listing_does_not_reread_unchanged_transcripts_across_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let first = SessionIdentity::from_persisted_key("chat-warm-a");
     let second = SessionIdentity::from_persisted_key("chat-warm-b");
     store.save(&session(first.clone())).await.unwrap();
@@ -512,7 +491,7 @@ async fn stale_corrupt_index_recovers_from_authority_without_trusting_disk() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
-    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-stale-index");
     catalogue.record_new(&identity, &home()).unwrap();
     store.save(&session(identity.clone())).await.unwrap();

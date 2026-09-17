@@ -38,29 +38,24 @@ pub fn build_retention_handles(base_dir: &std::path::Path) -> RetentionHandles {
     )))
 }
 
-/// The handles one loop holds, over the file store of `inputs.base_dir`
-/// unless the loop supplied a store (unit rigs and BDD fixtures).
-pub fn build_session_handles(mut inputs: SessionLoopInputs) -> SessionHandles {
-    let (store, home): (Arc<dyn SessionStore>, _) = match inputs.store.take() {
-        Some(store) => (store, None),
-        None => {
-            let layout = FlatSessionLayout::new(&inputs.base_dir);
-            let store = Arc::new(build_file_session_store(&inputs.base_dir));
-            let home = crate::application::sessions::session_home::SessionHomeContext {
-                catalogue: Arc::new(crate::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue::with_store(layout, store.clone())),
-                discovery: Arc::new(crate::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery::default()),
-                execution_dir: std::env::current_dir().unwrap_or_default(),
-            };
-            (store, Some(home))
-        }
-    };
-    let list_sessions = ListSessions::new(store.clone());
-    let list_sessions = Arc::new(match &home {
-        Some(home) => list_sessions.with_home(home.clone()),
-        None => list_sessions,
-    });
+/// The handles one loop holds, over the file store of `inputs.base_dir`.
+pub fn build_session_handles(inputs: SessionLoopInputs) -> SessionHandles {
+    let store = Arc::new(build_file_session_store(&inputs.base_dir));
+    build_session_handles_over(store, inputs)
+}
+
+/// The handles one loop holds over `store` (a rig's own, or the one just
+/// built) and the home context (#2009) every session transaction admits
+/// under: mandatory, so no loop's resume admission is ever fail-open.
+pub fn build_session_handles_over(
+    store: Arc<FileSessionStore>,
+    inputs: SessionLoopInputs,
+) -> SessionHandles {
+    let home = super::session_home::build_session_home(store.clone());
+    let store: Arc<dyn SessionStore> = store;
+    let list_sessions = Arc::new(ListSessions::new(store.clone()).with_home(home.clone()));
     let export = super::session_report::build_session_export(&inputs.base_dir);
-    super::active_session::assemble_session_handles_with_home(
+    super::active_session::assemble_session_handles(
         inputs,
         store,
         Arc::new(ListSessionsController::new(list_sessions)),

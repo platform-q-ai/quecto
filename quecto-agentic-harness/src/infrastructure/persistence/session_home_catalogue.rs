@@ -61,9 +61,11 @@ struct Catalogue {
     records: BTreeMap<String, Vec<u8>>,
 }
 impl FileSessionHomeCatalogue {
-    pub fn with_store(layout: FlatSessionLayout, store: std::sync::Arc<FileSessionStore>) -> Self {
+    /// The catalogue over `store`'s own layout: home authority is written
+    /// under the store's claims, so the two never diverge.
+    pub fn with_store(store: std::sync::Arc<FileSessionStore>) -> Self {
         Self {
-            layout,
+            layout: store.layout().clone(),
             store,
             published: Default::default(),
             projection: Default::default(),

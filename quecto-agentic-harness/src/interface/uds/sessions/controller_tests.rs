@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session::Session;
+use crate::domain::session::{Session, SessionSummary};
 use crate::domain::session_identity::SessionIdentity;
 
 struct RecordingStore {
@@ -65,18 +65,18 @@ fn controller(fail: bool) -> (Arc<RecordingStore>, ListSessionsController) {
 }
 
 #[tokio::test]
-async fn list_all_maps_the_fieldless_command_to_the_all_query() {
+async fn every_scope_maps_to_the_all_query() {
     let (store, controller) = controller(false);
-    let listed = controller.list_all().await.unwrap();
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].key, "chat-1");
+    let listed = controller.list(SessionListScope::Global).await.unwrap();
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(listed.sessions[0].summary.key, "chat-1");
     assert_eq!(*store.queries.lock().unwrap(), vec![SessionListQuery::All]);
 }
 
 #[tokio::test]
 async fn store_errors_pass_through_for_the_presenter() {
     let (_, controller) = controller(true);
-    let err = controller.list_all().await.unwrap_err();
+    let err = controller.list(SessionListScope::Local).await.unwrap_err();
     assert_eq!(err.to_string(), "session error: read failed");
     assert_eq!(format!("{controller:?}"), "ListSessionsController { .. }");
 }
@@ -84,16 +84,10 @@ async fn store_errors_pass_through_for_the_presenter() {
 #[tokio::test]
 async fn scoped_controller_uses_application_discovery_without_guessing_home() {
     let (store, controller) = controller(false);
-    let local = controller
-        .list(SessionListScopeCommand::Local)
-        .await
-        .unwrap();
+    let local = controller.list(SessionListScope::Local).await.unwrap();
     assert!(local.sessions.is_empty());
     assert!(!local.diagnostics.is_empty());
-    let global = controller
-        .list(SessionListScopeCommand::Global)
-        .await
-        .unwrap();
+    let global = controller.list(SessionListScope::Global).await.unwrap();
     assert_eq!(global.sessions[0].summary.key, "chat-1");
     assert!(!global.sessions[0].resume_eligible);
     assert!(matches!(

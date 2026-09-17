@@ -463,6 +463,7 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
             store.clone(),
             children.clone(),
             options.ephemeral,
+            permissive_home(),
         ),
         state,
         store,
@@ -574,4 +575,53 @@ async fn the_fakes_journal_and_fail_as_told() {
     assert!(rig.store.load(&identity).await.is_err());
     assert!(format!("{:?}", rig.children).contains("tracks_roster: true"));
     assert!(format!("{:?}", rig.fresh).starts_with("StartFreshConversation"));
+}
+
+/// A home context whose every observation admits: the rigs exercise the
+/// transaction's ordering, not scope admission (covered by the composed
+/// real-adapter tests and `session_home` fakes).
+pub(crate) fn permissive_home() -> crate::application::sessions::session_home::SessionHomeContext {
+    use crate::application::sessions::ports::session_home::{
+        HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
+    };
+    use crate::domain::session_home::{
+        AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
+    };
+    fn home_at(path: &std::path::Path) -> SessionHome {
+        SessionHome {
+            execution_dir: path.into(),
+            group: WorkspaceGroup::Folder {
+                directory: path.into(),
+            },
+            provenance: AssociationProvenance::SavedHere,
+        }
+    }
+    struct Permissive;
+    impl WorkspaceDiscovery for Permissive {
+        fn discover(&self, path: &std::path::Path) -> Result<SessionHome, DomainError> {
+            Ok(home_at(path))
+        }
+    }
+    impl SessionHomeCatalogue for Permissive {
+        fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
+            Ok(SessionHomeScope::Scoped(home_at(std::path::Path::new(
+                "/rig",
+            ))))
+        }
+        fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
+            Ok(HomeCatalogueSnapshot {
+                entries: Vec::new(),
+                diagnostics: Vec::new(),
+                rebuilt: false,
+            })
+        }
+        fn record_new(&self, _: &SessionIdentity, _: &SessionHome) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+    crate::application::sessions::session_home::SessionHomeContext::at(
+        Arc::new(Permissive),
+        Arc::new(Permissive),
+        "/rig".into(),
+    )
 }

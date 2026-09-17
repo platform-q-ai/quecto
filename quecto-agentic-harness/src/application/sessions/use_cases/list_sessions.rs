@@ -8,13 +8,10 @@
 //! presents the summaries. Nothing here forms a path or reads a directory.
 use std::sync::Arc;
 
-use crate::application::sessions::dto::{
-    ListSessionsRequest, ListSessionsResult, SessionListQuery,
-};
+use crate::application::sessions::dto::{ListSessionsRequest, ListSessionsResult};
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::error::DomainError;
-use crate::domain::session::SessionSummary;
 
 /// The saved-session listing query over the session store port.
 pub struct ListSessions {
@@ -35,24 +32,17 @@ impl ListSessions {
         self
     }
 
-    /// Discovery is summary-only; eligibility here is advisory and resume rechecks it.
+    /// The sessions `request` covers, newest first when the store knows
+    /// modification times, each with its home and advisory eligibility;
+    /// resume rechecks admission under its claim. Summary-only: a listed
+    /// session may still fail a subsequent full load (see
+    /// [`SessionStore::list`]); the store's own error surfaces unchanged.
     pub async fn discover(
         &self,
         request: &ListSessionsRequest,
     ) -> Result<ListSessionsResult, DomainError> {
         let summaries = self.store.list(&request.query).await?;
         Ok(list_sessions_discover::discover(self.home.as_ref(), summaries, request.scope).await)
-    }
-
-    /// The summaries of the sessions `query` covers, newest first when the
-    /// store knows modification times. Summary-only: a listed session may
-    /// still fail a subsequent full load (see [`SessionStore::list`]); the
-    /// store's own error surfaces unchanged.
-    pub async fn execute(
-        &self,
-        query: &SessionListQuery,
-    ) -> Result<Vec<SessionSummary>, DomainError> {
-        self.store.list(query).await
     }
 }
 
