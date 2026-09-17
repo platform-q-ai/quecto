@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+# Official Podman adapter for the Quecto container-runtime contract: `create`.
+# Modeled on the host-local reference set at scripts/container-runtime/ (see
+# docs/container-runtimes.md for the contract). Verified manually against a
+# local Docker daemon; the CI-exercised default remains the host-local set.
+#
+#   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
+# The repository is BAKED INTO the container config's own argv via --repo
+# (#1410): Quecto passes no source information. No --repo → sandbox config
+# (empty workspace, no clone).
+# Environment: QUECTO_CONTAINER_CONFIG,
+#              QUECTO_CONTAINER_ENVIRONMENT_REF
+#
+# Design: one container per environment; the child IS the container's main
+# process (docker's view of the container == the child's liveness). All
+# host paths the child needs are identity-mounted (same path inside and
+# outside), so the parent's --socket/--config CLI args need no rewriting
+# and the UDS socket the child binds appears directly on the host:
+#   - the per-environment workspace (rw)  — the isolated checkout
+#   - the parent's socket dir (rw)        — UDS endpoint + launch sidecars
+#   - the child binary (ro)
+#   - the --config file (ro), when given
+#   - ~/.quecto (rw) with HOME preserved  — auth/sessions behave like a
+#     host child; isolation targets the PR workspace, not user identity
+set -euo pipefail
+
+log() { printf 'container-runtime-podman create: %s\n' "$*" >&2; }
+die() {
+  log "$@"
+  exit 1
+}
+
+command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
+# Runtime CLI: rootless Podman by default. Membership of the `docker` group
+# is root-equivalent on the host (the daemon runs as root and has no policy
+# layer, so anything holding the socket can mount / and escalate), which is
+# exactly what an autonomous agent spawner must not hand out. Rootless
+# Podman runs the container as the invoking user with a user namespace, so
+# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
+# Docker stays a fallback for hosts without Podman.
+cli=podman
+[ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
+
+state_dir=""
+repo=""
+image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --state-dir)
+    [ "$#" -ge 2 ] || die "--state-dir needs a value"
+    state_dir="$2"
+    shift 2
+    ;;
+  --repo)
+    [ "$#" -ge 2 ] || die "--repo needs a value"
+    repo="$2"
+    shift 2
+    ;;
+  --image)
+    [ "$#" -ge 2 ] || die "--image needs a value"
+    image="$2"
+    shift 2
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) die "unknown argument: $1" ;;
+  esac
+done
+[ -n "$state_dir" ] || die "--state-dir is required"
+[ "$#" -gt 0 ] || die "missing child command after --"
+[ -n "${QUECTO_CONTAINER_ENVIRONMENT_REF:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_REF must be set"
+
+child_binary="$1"
+[ -x "$child_binary" ] || die "child binary $child_binary is not executable"
+
+# The child's CLI carries the UDS endpoint and (optionally) its config file.
+socket_path=""
+config_path=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in
+  --socket) socket_path="$arg" ;;
+  --config) config_path="$arg" ;;
+  esac
+  prev="$arg"
+done
+[ -n "$socket_path" ] || die "child command has no --socket argument"
+socket_dir="$(dirname "$socket_path")"
+[ -d "$socket_dir" ] || die "socket dir $socket_dir does not exist"
+# Validate BEFORE any environment state exists: `die` exits without firing
+# the ERR trap, so every die-able check must precede the mktemp below or a
+# failed create would leak an unreported env dir forever.
+if [ -n "$config_path" ]; then
+  [ -f "$config_path" ] || die "child --config $config_path does not exist"
+fi
+# Every die-able check precedes the environment mktemp below so a failed
+# create never leaks an unreported environment directory.
+admission_dir="${QUECTO_ADMISSION_DIR:-}"
+if [ -n "$admission_dir" ]; then
+  [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
+fi
+
+mkdir -p -m 700 "$state_dir"
+[ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
+env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
+environment_id="$(basename "$env_dir")"
+container="quecto-$environment_id"
+# Rollback on any later failure: remove partial state AND any container we
+# managed to start — an unreported environment can never be cleaned up by
+# Quecto.
+trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
+workspace_path="$env_dir/workspace"
+mkdir "$workspace_path"
+printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
+
+# The clone source is this config's own --repo (#1410); no --repo → sandbox.
+child_cwd="$workspace_path"
+source="none"
+if [ -n "$repo" ]; then
+  log "checking out $repo"
+  # SECURITY (PR #1401 review): this clone runs on the HOST, before any
+  # container exists. Whitelist git transports so command-running helpers
+  # (`ext::sh -c ...`) cannot execute host commands — a containment bypass
+  # for the adapter whose whole point is isolation. The URL is now baked
+  # into the trusted config's argv rather than agent-supplied, but the
+  # restriction stays: config files travel.
+  GIT_ALLOW_PROTOCOL="file:https:ssh:git" \
+    git clone --quiet -- "$repo" "$workspace_path/repo"
+  child_cwd="$workspace_path/repo"
+  source="repo"
+fi
+
+# --- Runtime-specific section (Docker) ----------------------------------
+mounts=(
+  -v "$workspace_path:$workspace_path:rw"
+  -v "$socket_dir:$socket_dir:rw"
+  -v "$child_binary:$child_binary:ro"
+  -v "$HOME/.quecto:$HOME/.quecto:rw"
+)
+if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
+  mounts+=(-v "$config_path:$config_path:ro")
+fi
+# Shared inference admission (#1679 P3): the authority's client directory is
+# identity-mounted so the child reaches the same private socket by path. The
+# capability is reported only when the mount is actually present; an
+# admission-enabled parent refuses to launch without it. When the authority
+# lives under the identity-mounted $HOME/.quecto, its root (journal, admin
+# socket, owner token) is masked with an empty directory and only client/ is
+# re-exposed underneath it.
+admission_capability=""
+if [ -n "$admission_dir" ]; then
+  admission_root="$(dirname "$admission_dir")"
+  # Compare resolved paths so a symlinked HOME or an aliased base dir cannot
+  # dodge the mask; the mask itself is mounted at the spelled path the child
+  # will use.
+  real_root="$(realpath -m "$admission_root")"
+  real_quecto="$(realpath -m "$HOME/.quecto")"
+  case "$real_root" in
+  "$real_quecto")
+    die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
+    ;;
+  "$real_quecto"/*)
+    # An empty owner-only host directory bound read-only over the authority
+    # root hides journal/admin/token identically under Docker and Podman
+    # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.
+    mask_dir="$env_dir/admission-mask"
+    mkdir -m 700 "$mask_dir"
+    mounts+=(-v "$mask_dir:$admission_root:ro")
+    ;;
+  esac
+  mounts+=(-v "$admission_dir:$admission_dir:rw")
+  admission_capability="shared-directory-v1"
+  printf '%s\n' "$admission_dir" >"$env_dir/admission-dir"
+fi
+# HOME is preserved and QUECTO_BASE_DIR is deliberately NOT overridden:
+# QUECTO_BASE_DIR is quecto's credentials/config home ($HOME/.quecto by
+# default). Overriding it inside the container detaches the child from the
+# identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
+# Member harness logs go to the container's journald stream. Without RUST_LOG
+# the redacting subscriber is a no-op and an environment that dies leaves no
+# trace of why (termination signal, teardown, socket close). The host can
+# still override the level per spawn.
+envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
+# Run as the host user so the identity-mounted paths keep their ownership.
+# Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
+# ids inside the container (the default rootless mapping would send uid 1000
+# to a subuid and every mounted file would look foreign); Docker already maps
+# container uids 1:1 to the host.
+run_as=(--user "$(id -u):$(id -g)")
+if [ "$cli" = podman ]; then
+  run_as+=(--userns=keep-id)
+fi
+# --init puts a minimal init (catatonit under Podman, tini under Docker) at
+# PID 1 with the child as its direct descendant. The child otherwise IS PID 1
+# and inherits two duties a normal binary does not perform: reaping orphaned
+# grandchildren (nested agents whose parent exited pile up as zombies) and
+# handling signals (PID 1 ignores SIGTERM without a handler, so `stop` hangs
+# until the SIGKILL escalation). The child is still the container's liveness:
+# the init exits when it does.
+run_as+=(--init)
+# Threads count against the container's pid cgroup, and the runtime default
+# (Podman `pids_limit = 2048`) is exhausted by an in-container `cargo test`
+# or a parallel build. Once the cgroup is full every fork and thread spawn
+# fails with EAGAIN, worker agents lose their subprocesses and the founding
+# agent cannot even tear down cleanly, so the whole environment dies and
+# every member disconnects at once. Keep a fence, but a generous one;
+# QUECTO_CONTAINER_PIDS_LIMIT overrides it (-1 defers to the user slice).
+# `0` is refused: Docker reads it as "daemon default" and Podman ignores it
+# (falling back to the 2048 this fence exists to replace).
+pids_limit="${QUECTO_CONTAINER_PIDS_LIMIT:-16384}"
+case "$pids_limit" in
+  -1) ;;
+  ''|0|*[!0-9]*) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a positive integer" ;;
+esac
+run_as+=(--pids-limit "$pids_limit")
+# SECURITY (PR #1401 review): provider API keys must NOT be passed with
+# `run -e KEY=value` — that bakes them into the container config,
+# readable for the container's whole lifetime via `inspect` and
+# persisted in /var/lib/docker/containers/<id>/config.v2.json. Instead they
+# are written to a 0600 file in the 0700 state dir, identity-mounted ro, and
+# sourced by a bootstrap shell that `exec`s the child — so the child still
+# ends up as PID 1 with the keys in its environment, but the keys never
+# appear in the docker-side container config. (/proc/1/environ inside the
+# container is unavoidable: joiners there already share $HOME/.quecto.)
+secret_env_file=""
+append_secret() {
+  # $1=name $2=value — single-quote-escaped export into the 0600 env file.
+  if [ -z "$secret_env_file" ]; then
+    secret_env_file="$env_dir/provider-env"
+    (umask 077 && : >"$secret_env_file")
+  fi
+  local value="$2"
+  printf "export %s='%s'\n" "$1" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
+}
+for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY FIREWORKS_API_KEY; do
+  if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
+done
+# GitHub access for agents inside the environment (workflows need `gh` and
+# git-over-https pushes). A host keyring is unreachable from a container, so
+# the token is resolved host-side (`gh auth token`) and rides in via the same
+# 0600 secret file; git identity and the gh credential helper are non-secret
+# and travel as GIT_CONFIG_* env entries, so the host gitconfig (which may
+# carry LFS filters or keyring helpers the image lacks) is never mounted.
+gh_token=""
+if command -v gh >/dev/null 2>&1; then
+  gh_token="$(gh auth token 2>/dev/null || true)"
+fi
+if [ -n "$gh_token" ]; then
+  append_secret GH_TOKEN "$gh_token"
+  append_secret GITHUB_TOKEN "$gh_token"
+fi
+gcfg_i=0
+add_git_cfg() {
+  envs+=(-e "GIT_CONFIG_KEY_${gcfg_i}=$1" -e "GIT_CONFIG_VALUE_${gcfg_i}=$2")
+  gcfg_i=$((gcfg_i + 1))
+}
+# Deterministic identity: the global gitconfig only (repo-local identity at
+# the parent's cwd is an accident of where the spawn ran).
+git_name="$(git config --global --get user.name 2>/dev/null || true)"
+git_email="$(git config --global --get user.email 2>/dev/null || true)"
+[ -n "$git_name" ] && add_git_cfg user.name "$git_name"
+[ -n "$git_email" ] && add_git_cfg user.email "$git_email"
+if [ -n "$gh_token" ]; then
+  add_git_cfg credential.https://github.com.helper "!gh auth git-credential"
+fi
+[ "$gcfg_i" -gt 0 ] && envs+=(-e "GIT_CONFIG_COUNT=$gcfg_i")
+if [ -n "$secret_env_file" ]; then
+  mounts+=(-v "$secret_env_file:$secret_env_file:ro")
+fi
+if [ -n "$secret_env_file" ]; then
+  # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
+  # child as the container's PID 1. Requires /bin/sh in the image.
+  "$cli" run -d --name "$container" \
+    --label "quecto.environment_id=$environment_id" \
+    "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
+    -w "$child_cwd" \
+    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
+else
+  "$cli" run -d --name "$container" \
+    --label "quecto.environment_id=$environment_id" \
+    "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
+    -w "$child_cwd" \
+    "$image" "$@" >/dev/null
+fi
+# ------------------------------------------------------------------------
+
+printf '%s\n' "$container" >"$env_dir/container"
+jq -cn --arg container "$container" --arg socket "$socket_path" \
+  '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"
+printf '%s\n' "$environment_id" >>"$state_dir/creates.log"
+
+# metadata.repository is how listings/TUI learn the source truthfully: the
+# config owns its repository, so only the script can report it (#1410).
+# metadata.checkout is the members' working directory and swarm checkout root
+# (QUECTO_SWARM_CHECKOUT), identity-mounted so the supervising session can
+# read the coordination store there after the members' sockets are gone and
+# keep the environment instead of destroying a resumable run (#1924).
+jq -cn \
+  --arg id "$environment_id" \
+  --arg workspace "$workspace_path" \
+  --arg checkout "$child_cwd" \
+  --arg socket "$socket_path" \
+  --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
+  --arg image "$image" \
+  --arg container "$container" \
+  --arg cli "$cli" \
+  --arg source "$source" \
+  --arg repository "$repo" \
+  --arg admission "$admission_capability" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+# Reproducible standard harness image. Keep the digest updated deliberately.
+FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG STANDARD_IMAGE_VERSION=1
+
+LABEL org.opencontainers.image.title="Quecto standard harness" \
+      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
+      org.opencontainers.image.description="Pinned Debian trixie slim runtime for the Quecto harness"
+
+# Keep the package set explicit: this is the complete approved build-time
+# toolchain used by docker-harness-entrypoint.sh and the repository tools.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      bash ca-certificates cargo rustc build-essential fd-find git gh \
+      openssh-client python3 ripgrep socat gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+ && install --directory --mode=0777 /home/appuser /workspace /socket
+
+COPY scripts/docker-harness-entrypoint.sh /usr/local/bin/docker-harness-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-harness-entrypoint.sh
+
+ENV HOME=/home/appuser \
+    QUECTO_BASE_DIR=/home/appuser/.quecto \
+    QUECTO_DEV_REPO_DIR=/workspace/quecto \
+    QUECTO_INSTALL_ROOT=/workspace/.cargo-install
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/docker-harness-entrypoint.sh"]

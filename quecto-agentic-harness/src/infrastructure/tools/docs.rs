@@ -57,6 +57,10 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         "models",
         include_str!("../../../docs/docs-tool-embeds/models.md"),
     ),
+    (
+        "podman",
+        include_str!("../../../docs/docs-tool-embeds/podman.md"),
+    ),
 ];
 
 /// Normalize a requested doc name: strip a leading `docs/` or

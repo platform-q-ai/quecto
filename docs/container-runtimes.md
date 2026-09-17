@@ -564,6 +564,21 @@ the same contract (the directory keeps its historical `docker` name):
 - [`scripts/container-runtime/docker/inspect.sh`](../scripts/container-runtime/docker/inspect.sh)
 - [`scripts/container-runtime/docker/kill.sh`](../scripts/container-runtime/docker/kill.sh)
 
+The standard rootless Podman adapter has the same contract and lives beside
+this historical Docker adapter:
+
+- [`scripts/container-runtime/podman/create.sh`](../scripts/container-runtime/podman/create.sh)
+- [`scripts/container-runtime/podman/exec.sh`](../scripts/container-runtime/podman/exec.sh)
+- [`scripts/container-runtime/podman/inspect.sh`](../scripts/container-runtime/podman/inspect.sh)
+- [`scripts/container-runtime/podman/kill.sh`](../scripts/container-runtime/podman/kill.sh)
+
+Select it with a named `container_configs` entry (`"podman"`) and use
+`container_config: "podman"` when spawning. The swarm pool limit is 1–25
+members total, including the coordinator; idle and reserved members count.
+This orchestration limit is independent of Podman's process limit. The
+standard adapter's default `--pids-limit` is 16384 (`-1` delegates to the user
+slice and `0` is refused); threads count against the limit.
+
 Design properties:
 
 - **Rootless Podman by default, Docker as fallback.** Every script resolves

@@ -90,4 +90,21 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(), "user content");
         assert!(!original.is_empty());
     }
+
+    #[test]
+    fn architecture_guard_rejects_every_non_normal_asset_path() {
+        for path in ["", "/tmp/escape", "../escape", "a/../escape", "./file"] {
+            assert!(safe_relative_path(path).is_err(), "accepted unsafe asset path: {path:?}");
+        }
+        assert_eq!(safe_relative_path("nested/file").unwrap(), PathBuf::from("nested/file"));
+    }
+
+    #[test]
+    fn materialization_creates_missing_project_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("new/project");
+        let created = materialize_standard_assets(&project).unwrap();
+        assert_eq!(created, vec![project.join("AGENTS.md")]);
+        assert!(project.join("AGENTS.md").is_file());
+    }
 }
