@@ -104,3 +104,85 @@ fn worktree_membership_requires_one_nonbare_record() {
     let bare = format!("worktree {}\0bare\0\0", root.display());
     assert!(validate_worktree_membership(bare.as_bytes(), &root).is_err());
 }
+
+#[test]
+fn not_a_repository_is_recognised_at_root_and_at_filesystem_boundaries() {
+    use std::os::unix::process::ExitStatusExt;
+    let failed = std::process::ExitStatus::from_raw(128 << 8);
+    assert!(is_not_a_repository(
+        &failed,
+        b"fatal: not a git repository (or any of the parent directories): .git\n"
+    ));
+    assert!(is_not_a_repository(
+        &failed,
+        b"fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n"
+    ));
+    assert!(!is_not_a_repository(
+        &failed,
+        b"fatal: detected dubious ownership in repository at '/srv/repo'\n"
+    ));
+    assert!(!is_not_a_repository(
+        &std::process::ExitStatus::from_raw(1 << 8),
+        b"fatal: not a git repository (or any of the parent directories): .git\n"
+    ));
+}
+
+/// A writable directory whose device differs from its parent's: a mount
+/// boundary Git's parent walk stops at. `None` when this machine has none.
+fn mount_boundary_directory() -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let mut candidates = vec![
+        std::env::temp_dir(),
+        PathBuf::from("/tmp"),
+        "/dev/shm".into(),
+    ];
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        candidates.push(runtime.into());
+    }
+    candidates.into_iter().find(|dir| {
+        let parent_dev = dir
+            .parent()
+            .and_then(|parent| std::fs::metadata(parent).ok())
+            .map(|m| m.dev());
+        std::fs::metadata(dir).ok().map(|m| m.dev()) != parent_dev
+            && parent_dev.is_some()
+            && tempfile::tempdir_in(dir).is_ok()
+    })
+}
+
+#[test]
+fn non_git_folder_on_a_mount_boundary_is_an_exact_folder() {
+    let Some(boundary) = mount_boundary_directory() else {
+        eprintln!("no writable mount boundary on this machine; classifier test covers the message");
+        return;
+    };
+    let dir = tempfile::tempdir_in(&boundary).unwrap();
+    let home = GitScopeDiscovery::default().discover(dir.path()).unwrap();
+    assert_eq!(
+        home.group,
+        WorkspaceGroup::Folder {
+            directory: dir.path().canonicalize().unwrap()
+        }
+    );
+}
+
+#[test]
+fn git_is_resolved_to_an_absolute_program_once() {
+    let discovery = GitScopeDiscovery::default();
+    assert!(
+        Path::new(&discovery.executable).is_absolute(),
+        "{:?} must be resolved on PATH so std uses posix_spawn",
+        discovery.executable
+    );
+    assert!(resolve_on_path("quecto-no-such-program-2009").is_none());
+}
+
+#[tokio::test]
+async fn async_discovery_matches_blocking_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let discovery = GitScopeDiscovery::default();
+    assert_eq!(
+        discovery.discover_async(dir.path()).await.unwrap(),
+        discovery.discover(dir.path()).unwrap()
+    );
+}

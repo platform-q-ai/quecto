@@ -15,6 +15,16 @@ pub struct HomeCatalogueSnapshot {
 
 pub trait WorkspaceDiscovery: Send + Sync {
     fn discover(&self, path: &Path) -> Result<SessionHome, DomainError>;
+    /// Async discovery entry point; process-spawning adapters isolate blocking work.
+    fn discover_async(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<SessionHome, DomainError>> + Send + '_>,
+    > {
+        let home = self.discover(path);
+        Box::pin(async move { home })
+    }
 }
 
 pub trait SessionHomeCatalogue: Send + Sync {

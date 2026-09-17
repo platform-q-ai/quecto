@@ -6,20 +6,63 @@ use crate::{
         session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
     },
 };
-use std::{ffi::OsString, path::Path};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GitScopeDiscovery {
+    /// Resolved once on the parent's PATH so every spawn is an absolute-program
+    /// `posix_spawn`, never a fork of a tokio worker holding locked descriptors.
     executable: OsString,
 }
 impl Default for GitScopeDiscovery {
     fn default() -> Self {
         Self {
-            executable: "git".into(),
+            executable: resolve_on_path("git")
+                .map_or_else(|| "git".into(), PathBuf::into_os_string),
         }
     }
 }
+
+/// The first executable regular file named `program` on the parent's PATH.
+fn resolve_on_path(program: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(program))
+        .find(|candidate| {
+            std::fs::metadata(candidate).is_ok_and(|metadata| {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+}
+
+/// Git reports "not a repository" with exit 128 and one of two prefixes: the
+/// parent walk ended at the root, or at a filesystem boundary (tmpfs `/tmp`,
+/// a separate `/home`, containers). Anything else stays an observable failure.
+fn is_not_a_repository(status: &std::process::ExitStatus, stderr: &[u8]) -> bool {
+    status.code() == Some(128) && stderr.starts_with(b"fatal: not a git repository")
+}
+
 impl WorkspaceDiscovery for GitScopeDiscovery {
+    fn discover_async(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<SessionHome, DomainError>> + Send + '_>,
+    > {
+        let discovery = self.clone();
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || discovery.discover(&path))
+                .await
+                .map_err(|error| DomainError::Session(format!("Git discovery aborted: {error}")))?
+        })
+    }
+
     fn discover(&self, path: &Path) -> Result<SessionHome, DomainError> {
         let execution_dir = FilesystemScope.canonicalize(path)?;
         let output = self
@@ -57,10 +100,7 @@ impl WorkspaceDiscovery for GitScopeDiscovery {
             WorkspaceGroup::Git {
                 common_dir: FilesystemScope.canonicalize(&common_dir)?,
             }
-        } else if output.status.code() == Some(128)
-            && output.stderr
-                == b"fatal: not a git repository (or any of the parent directories): .git\n"
-        {
+        } else if is_not_a_repository(&output.status, &output.stderr) {
             verify_no_git_marker(&execution_dir)?;
             WorkspaceGroup::Folder {
                 directory: execution_dir.clone(),
