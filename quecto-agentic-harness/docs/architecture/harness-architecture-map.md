@@ -196,10 +196,52 @@ case into `CatalogueHandles.reload` and the presenter in
 `src/interface/uds/catalogue/reload_presenter.rs` renders the outcome. The
 durable tool-policy persistence hook is its own composition seam
 (`src/composition/tool_policy.rs`, `CliComposition.tool_policy_persistence`),
-installed on the loop by the agent build. The
+installed on the loop by the agent build; it is a caller of the configuration
+writer below, patching `tools.policy.entries` only. The
 composition publishes the routing provider and the catalogue as one
 generation into the per-directory stores; a failed composition retains the
 previously published generation.
+
+## Configuration: selection, overlay, safe writer
+
+The configuration capability (`src/application/configuration/`, #1966,
+#2024) owns which files a run loads and the one write path every change goes
+through. `use_cases/select_config.rs` turns the CLI's inputs into a
+`ConfigSelection` (`dto/config_selection.rs`): an explicit `--config` file, or
+the global `<base_dir>/config.json` layered with the working directory's
+`.quecto/config.json` overlay candidate (and the retired `<cwd>/config.json`
+location, reported if present, never loaded).
+`use_cases/resolve_effective_config.rs` reads both layers through the
+`ConfigDocumentStore` port, gates the overlay through the `OverlayTrustStore`
+port (untrusted: reported in the `ConfigSources` layer report, not applied),
+refuses the global-only sections (`providers`, `admission` — the rule lives in
+the use case), validates each layer and the merge through the `ConfigValidator`
+port, and merges by the pure section-wise policy in `overlay_policy.rs`.
+`use_cases/patch_configuration.rs` is the safe writer: a dotted-path patch of
+the JSON document (never of the `Config` struct, so unknown keys and order
+survive), global-only keys refused for the overlay, an untrusted overlay never
+patched, the result validated before a byte is written, the write through the
+`ConfigDocumentWriter` port, and trust re-recorded for an overlay.
+`use_cases/read_configuration.rs` and `use_cases/trust_config_overlay.rs`
+serve `quecto config get` and `quecto config trust`.
+
+Infrastructure lives under `src/infrastructure/config/`: `loaders.rs` (the
+filesystem document store — a present-but-broken entry is an error, never
+absence), `mapping.rs` (document → `Config` with every load-time validation,
+the env overrides, the validator adapter, `realize_config`),
+`persistence.rs` (the overlay trust record `<base_dir>/config-overlay-trust.json`,
+canonical path + sha256, shared primitives with the container-config overlay
+in `repo_local_container_config.rs`), and `writer/` (the JSON document writer:
+existing indentation kept, tmp + fsync + rename via `atomic_write`; plus the
+tool-policy persistence hook as a caller of it). The runtime-configuration
+source (`src/infrastructure/runtime_configuration.rs`) rebuilds through a
+composition-supplied `ConfigLoader` and watches the overlay as well as the
+base file. Composition (`src/composition/configuration.rs`) builds the
+`ConfigurationHandles` (`src/interface/cli/configuration_handles.rs`) `main`
+hands the CLI through `CliComposition.configuration`, and the loader for
+reloads; the interface (`src/interface/cli/{config_cmd.rs, config_loading.rs,
+commands.rs}`) parses `quecto config get|set|trust`, loads through the
+handles and presents the layer report in `quecto status`.
 
 ## Baseline subsystem checks
 
