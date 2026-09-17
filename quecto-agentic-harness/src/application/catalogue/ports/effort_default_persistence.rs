@@ -1,7 +1,8 @@
 //! Persist a validated reasoning-effort level as a configured default
 //! (#2024 S2): `agents.defaults.effort` in the repository overlay or the
 //! global file. The change-reasoning-effort use case is its only caller;
-//! infrastructure implements it over the one safe configuration writer.
+//! composition maps it onto the configuration capability's patch use case
+//! (`composition/catalogue_defaults.rs`).
 
 use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
 use crate::domain::provider::EffortLevel;

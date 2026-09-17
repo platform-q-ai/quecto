@@ -1,9 +1,10 @@
 //! Persist the model a switch resolved as a configured default (#2024 S2):
 //! `agents.defaults.model` in the repository overlay or the global file.
-//! The change-active-model use case is its only caller; infrastructure
-//! implements it over the one safe configuration writer, so the write
-//! carries that writer's guarantees (exclusive hold, validation, trust
-//! recorded for the bytes written, global-only sections untouched).
+//! The change-active-model use case is its only caller; composition maps
+//! it onto the configuration capability's patch use case
+//! (`composition/catalogue_defaults.rs`), so the write carries that use
+//! case's guarantees (exclusive hold, validation, trust recorded for the
+//! bytes written, global-only sections untouched).
 
 pub use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 

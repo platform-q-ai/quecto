@@ -3930,6 +3930,49 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     assert!(native.contains(".with_harness_lifecycle(harness_lifecycle.clone())"));
 }
 
+/// `composition/catalogue_defaults.rs` (#2024 S2) maps the catalogue's
+/// default-persistence ports onto the configuration capability's patch use
+/// case. It is a mapping only: it names the two capabilities, the domain
+/// and pure `std`, never an adapter or a filesystem, so every write keeps
+/// the patch use case's guarantees.
+#[test]
+fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
+    let mapping = production_source("src/composition/catalogue_defaults.rs");
+    assert!(mapping.contains("impl ModelDefaultPersistence for ConfigDefaultsWriter"));
+    assert!(mapping.contains("impl EffortDefaultPersistence for ConfigDefaultsWriter"));
+    let allowed = [
+        "crate::application::catalogue::",
+        "crate::application::configuration::",
+        "crate::domain::",
+        "std::sync::",
+        "std::fmt",
+        "serde_json",
+    ];
+    for path in dependency_paths(&mapping)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| {
+            path.starts_with("crate::") || path.starts_with("std::") || path.starts_with("tokio::")
+        })
+    {
+        assert!(
+            allowed.iter().any(|prefix| path.starts_with(prefix)),
+            "catalogue_defaults.rs names {path}: a mapping only translates between the two capabilities"
+        );
+    }
+    for forbidden in [
+        "crate::infrastructure",
+        "std::fs",
+        "std::io",
+        "std::process",
+    ] {
+        assert!(
+            !mapping.contains(forbidden),
+            "catalogue_defaults.rs must not reach {forbidden}"
+        );
+    }
+}
+
 // ─── Environments capability (#1939, epic #1929) ─────────────────────────────
 
 /// The ports the environments capability declares, and nothing else.
