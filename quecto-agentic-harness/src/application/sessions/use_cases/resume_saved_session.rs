@@ -37,6 +37,7 @@ use crate::application::sessions::ports::{FleetSettlement, SessionStore, Session
 use crate::domain::conversation_view::inject_system_prompt;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
+use crate::domain::session_identity::SessionIdentity;
 
 pub struct ResumeSavedSession {
     state: ActiveSessionHandle,
@@ -170,7 +171,9 @@ impl ResumeSavedSession {
             let mut claim = PendingClaim::new(self.store.clone(), identity.clone());
             let session = match self.store.load(&identity).await {
                 Ok(Some(session)) => {
-                    admit_home(&self.home, &identity).await?;
+                    admit_home(&self.home, &identity)
+                        .await
+                        .map_err(|error| startup_refusal(&identity, error))?;
                     session
                 }
                 Ok(None) => {
@@ -192,6 +195,21 @@ impl ResumeSavedSession {
             messages: session.messages,
             workflow_run: session.workflow_run,
         })
+    }
+}
+
+/// A scope refusal of the loop's own session names the key and what the
+/// user can do now; every other startup failure is reported as it is.
+fn startup_refusal(
+    identity: &SessionIdentity,
+    error: ResumeSavedSessionError,
+) -> ResumeSavedSessionError {
+    match error {
+        ResumeSavedSessionError::Scope(disposition) => ResumeSavedSessionError::StartupScope {
+            key: identity.runtime_key().to_string(),
+            disposition,
+        },
+        other => other,
     }
 }
 

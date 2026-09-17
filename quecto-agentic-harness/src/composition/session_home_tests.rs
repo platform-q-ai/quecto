@@ -121,20 +121,45 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
         ..context.clone()
     };
     let resume = resume_over(&state, save.clone(), store.clone(), foreign);
-    assert!(matches!(
-        resume.open_at_startup().await,
-        Err(ResumeSavedSessionError::Scope(
-            ResumeDisposition::DifferentExecutionDirectory
-        ))
-    ));
+    let refused = resume
+        .open_at_startup()
+        .await
+        .expect_err("foreign directory");
+    assert!(
+        matches!(
+            refused,
+            ResumeSavedSessionError::StartupScope {
+                disposition: ResumeDisposition::DifferentExecutionDirectory,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    assert!(refused.to_string().contains("-s <name>"), "{refused}");
     assert_eq!(state.read().await.identity(), &identity);
     let resume = resume_over(&state_of(&legacy), save, store, context);
-    assert!(matches!(
-        resume.open_at_startup().await,
-        Err(ResumeSavedSessionError::Scope(
-            ResumeDisposition::LegacyUnscoped
-        ))
-    ));
+    let refused = resume.open_at_startup().await.expect_err("legacy record");
+    assert!(
+        matches!(
+            refused,
+            ResumeSavedSessionError::StartupScope {
+                disposition: ResumeDisposition::LegacyUnscoped,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    let text = refused.to_string();
+    for expected in [
+        "session 'chat-legacy' cannot start here",
+        "predates workspace scoping",
+        "-s <name>",
+        "--no-session",
+        "Global list",
+        "#2014",
+    ] {
+        assert!(text.contains(expected), "{text}");
+    }
 }
 
 struct UntouchedRuntime;

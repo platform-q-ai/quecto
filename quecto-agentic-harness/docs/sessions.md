@@ -42,11 +42,25 @@ quecto agent --mode uds -s my-project
 quecto agent -m "hello"
 ```
 
-When the agent starts, it claims and loads the session from disk (if it
-exists; a key another live harness holds open is refused at startup). All
-messages are appended to the session during the run. The session is saved
+When the agent starts, it claims the session key (a key another live harness
+holds open is refused at startup) and, if a transcript exists, loads it —
+provided its saved home admits the current execution directory (#2009, below).
+All messages are appended to the session during the run. The session is saved
 after each prompt completes, at every session transition, on an explicit
-`persist_session`, and once more on the ordinary exit of the loop.
+`persist_session`, and once more on the ordinary exit of the loop. A session
+that exits with nothing to save leaves no transcript and no home sidecar.
+
+**Legacy records are refused at startup, not claimed and loaded.** A transcript
+saved before workspace scoping has no `.home`; because history is never
+associated with a folder implicitly, `quecto agent -m hello` over a pre-existing
+`cli:default`, or `-s <name>` over a pre-existing named session, exits 1 with
+`session '<key>' cannot start here: it predates workspace scoping and has no
+home ...`. The text names the way out — start under a new name with `-s <name>`,
+or run `--no-session` — and the old transcript is preserved untouched and stays
+visible, unassociated, in the Global list of `/resume`. Explicit association of
+a legacy session with a folder is a later slice (#2014). The same wording covers
+a session saved in another execution directory (start it from there, or start a
+new name) and a home that is unavailable or whose workspace changed.
 
 ### Ephemeral
 
@@ -165,6 +179,16 @@ existing authority bytes, including unsupported or corrupt metadata. Only a new
 persistent identity can receive its initial home; existing legacy records are not
 automatically associated. Ephemeral runs write neither transcripts nor homes.
 
+A home exists only with a transcript. The home is recorded before the first
+transcript write (so no home failure can cost a transcript), and a save that
+then commits nothing — the empty exit of a `-s` run or a TUI tab that never
+spoke — removes the sidecar with the record it never wrote. A sidecar found
+without a transcript at startup (a save that never committed, a transcript
+removed by hand) is an orphan: it is discarded under the key's claim and the
+session starts new, so a name is never locked to a directory with no history
+and a stale home is never inherited by the first transcript written under the
+key. A home beside a transcript is authority and is never touched by this rule.
+
 The derived `home.catalogue` is discardable. Listing validates it against
 authoritative records and rebuilds by atomic replacement: an absent, unreadable
 or version-incompatible index is recovery, reported once as `rebuilt` with a
@@ -175,11 +199,23 @@ transcripts are not rows; a store-listed record the strict catalogue rejects (a
 crash-truncated transcript) stays a Global row with an unavailable home, never
 eligible. Exact-key admission reads authority independently of catalogue health.
 
-Discovery that fails for a new identity (no Git on PATH, a mount boundary the
-parent walk stops at, an unreadable current directory) never costs a
-transcript: the record is saved without a `.home` — legacy-unscoped, visible in
-Global — and the failure is a diagnostic. Git is resolved on PATH once and
-spawned by absolute path off the async executor.
+**Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
+found on PATH (resolved once, spawned by absolute path off the async executor,
+with the ambient `GIT_DIR`/`GIT_WORK_TREE`/`GIT_CEILING_DIRECTORIES` and config
+cleared so only the requested directory defines the scope). Without a usable
+`git` the adapter fails closed: discovery is observably unavailable, a new
+identity is saved without a `.home` (legacy-unscoped) and no saved home admits,
+so nothing is guessed as local or eligible. Discovery that fails for a new
+identity (no Git on PATH, a mount boundary the parent walk stops at, an
+unreadable current directory) never costs a transcript: the record is saved
+without a `.home` — legacy-unscoped, visible in Global — and the failure is a
+diagnostic.
+
+Outside a repository the adapter also checks that no ancestor of the execution
+directory carries a `.git` marker, up to (and not beyond) the filesystem the
+directory lives on — the same boundary git's own parent walk stops at — so a
+repository above a mount point (a bind-mounted subdirectory, a container volume)
+does not turn "not a repository" into an unavailable discovery.
 
 `SessionHomeContext` is an application observation collaborator, not another
 query/save/restore owner. `ListSessions`, `SaveSession` and `ResumeSavedSession`

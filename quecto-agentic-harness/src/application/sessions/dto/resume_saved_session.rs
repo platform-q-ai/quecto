@@ -85,6 +85,12 @@ pub enum ResumeSavedSessionError {
     /// The target is not one of the accepted spellings.
     InvalidName,
     Scope(ResumeDisposition),
+    /// The loop's own composed session does not admit at startup (#2009):
+    /// carries the key as composed, so the refusal can say what to do now.
+    StartupScope {
+        key: String,
+        disposition: ResumeDisposition,
+    },
     Refused(SessionTransitionRefused),
     /// The departing session could not be saved.
     Save(SaveSessionError),
@@ -107,6 +113,27 @@ impl std::fmt::Display for ResumeSavedSessionError {
                 f,
                 "session resume unavailable: {disposition}; Cancel (open/fork/locate are unavailable)"
             ),
+            Self::StartupScope { key, disposition } => match disposition {
+                ResumeDisposition::LegacyUnscoped => write!(
+                    f,
+                    "session '{key}' cannot start here: it predates workspace scoping and has \
+                     no home, and history is never associated implicitly. Start a new \
+                     session under another name with `-s <name>` (or `--no-session` for an \
+                     ephemeral run); the old transcript stays in place and visible in the \
+                     Global list of /resume. Explicit association of a legacy session with \
+                     a folder arrives in a later slice (#2014)."
+                ),
+                ResumeDisposition::DifferentExecutionDirectory => write!(
+                    f,
+                    "session '{key}' cannot start here: {disposition}. Start it from that \
+                     directory, or start a new session under another name with `-s <name>`."
+                ),
+                ResumeDisposition::HomeChanged | ResumeDisposition::Unavailable(_) => write!(
+                    f,
+                    "session '{key}' cannot start here: {disposition}. Start a new session \
+                     under another name with `-s <name>`; the transcript is preserved."
+                ),
+            },
             Self::Refused(refused) => write!(f, "{refused}"),
             Self::Save(error) => write!(f, "failed to save current session: {error}"),
             Self::Claim(error) => write!(f, "{error}"),
