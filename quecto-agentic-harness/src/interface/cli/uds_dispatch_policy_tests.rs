@@ -173,6 +173,7 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
         tmp.path().to_path_buf(),
         std::collections::HashMap::new(),
         reqwest::Client::new(),
+        crate::composition::runtime::build_agent_provider,
     ));
 
     let cmd = AgentCommand::SetToolPolicy {
@@ -237,6 +238,7 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
         tmp.path().to_path_buf(),
         std::collections::HashMap::new(),
         reqwest::Client::new(),
+        crate::composition::runtime::build_agent_provider,
     ));
 
     {
@@ -280,6 +282,7 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
         tmp.path().to_path_buf(),
         std::collections::HashMap::new(),
         reqwest::Client::new(),
+        crate::composition::runtime::build_agent_provider,
     ));
 
     let cmd = AgentCommand::SetToolPolicy {

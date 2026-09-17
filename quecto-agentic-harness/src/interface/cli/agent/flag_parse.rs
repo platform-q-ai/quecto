@@ -54,6 +54,10 @@ pub(crate) struct AgentFlags {
     /// CliContext; startup effort admission and the spawn tool consume the
     /// change-reasoning-effort use case it builds.
     pub(crate) catalogue: Option<crate::interface::cli::CatalogueHandlesBuilder>,
+    /// Composition's provider-runtime builder (#1849), from CliContext;
+    /// startup composes the provider through it and provider reload keeps
+    /// it for every rebuild.
+    pub(crate) provider_runtime: Option<crate::interface::cli::ProviderRuntimeBuilder>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
@@ -73,6 +77,7 @@ impl AgentFlags {
         self.kill_tool = ctx.kill_tool;
         self.retention = ctx.retention;
         self.catalogue = ctx.catalogue;
+        self.provider_runtime = ctx.provider_runtime;
     }
 }
 

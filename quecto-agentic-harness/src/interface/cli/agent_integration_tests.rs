@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::composition::runtime::build_agent_provider;
 use crate::domain::message::Message;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
@@ -48,6 +49,7 @@ fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     }
 }
@@ -90,6 +92,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     }

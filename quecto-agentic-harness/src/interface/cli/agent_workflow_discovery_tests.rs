@@ -41,6 +41,7 @@ fn workflow_flags() -> AgentFlags {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     }

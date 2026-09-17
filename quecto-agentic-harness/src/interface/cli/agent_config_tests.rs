@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
+use crate::composition::runtime::build_agent_provider;
 use crate::domain::message::Message;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
@@ -249,6 +250,7 @@ fn test_agent_config_flag_loads_custom_path() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     };
     let args = vec![
@@ -277,6 +279,7 @@ fn test_agent_config_flag_missing_value() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     };
     let out = run_with_output(
@@ -296,6 +299,7 @@ fn test_agent_config_flag_nonexistent_path() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     };
     let args = vec![

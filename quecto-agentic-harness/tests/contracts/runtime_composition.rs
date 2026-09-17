@@ -1,18 +1,19 @@
 //! Entry-point contract for provider runtime composition (issue #1573, epic
-//! #1193 slice 3): no provider construction, credential resolution, or router
-//! orchestration remains in `interface/cli` modules. That orchestration lives
-//! behind the application's `ProviderRuntimeFactory` port (implemented in
-//! `infrastructure::provider_runtime`); entry points wire dependencies and
-//! invoke the shared compose use case via `interface::catalogue_runtime`.
+//! #1193 slice 3; #1849 PR 1): no provider construction, credential
+//! resolution, or router orchestration remains anywhere under `interface/`.
+//! That orchestration lives behind the application's `ProviderRuntimeFactory`
+//! port (implemented in `infrastructure::provider_runtime`); the composition
+//! layer (`composition::runtime`) wires dependencies and invokes the shared
+//! compose use case, and entry points receive its builder by injection.
 //!
-//! Source-level ratchet: reintroducing a construction call into an
-//! `interface/cli` module fails this test before review ever sees it.
+//! Source-level ratchet: reintroducing a construction call into any
+//! `interface` module fails this test before review ever sees it.
 
 use std::path::Path;
 
-/// Symbols that only the infrastructure composition layer may touch. Any of
-/// these appearing in a non-test `interface/cli` source means provider
-/// construction or router orchestration leaked back into the interface.
+/// Symbols that only infrastructure and composition may touch. Any of these
+/// appearing in a non-test `interface` source means provider construction,
+/// refresh wiring or router orchestration leaked back into the interface.
 const FORBIDDEN: &[&str] = &[
     "ProviderRouter",
     "RetryingProvider",
@@ -24,6 +25,9 @@ const FORBIDDEN: &[&str] = &[
     "create_openai_provider_with_client",
     "create_codex_provider_with_client",
     "make_provider_factory",
+    "make_oauth_refresh_fn",
+    "compose_and_publish_runtime",
+    "ComposeProviderRuntimeUseCase",
 ];
 
 fn is_test_source(name: &str) -> bool {
@@ -31,11 +35,11 @@ fn is_test_source(name: &str) -> bool {
 }
 
 #[test]
-fn interface_cli_contains_no_provider_construction_or_router_orchestration() {
-    let cli_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interface/cli");
+fn interface_contains_no_provider_construction_or_router_orchestration() {
+    let interface_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interface");
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
-    for entry in walk(&cli_dir) {
+    for entry in walk(&interface_dir) {
         let name = entry.file_name().unwrap().to_string_lossy().to_string();
         if !name.ends_with(".rs") || is_test_source(&name) {
             continue;
@@ -57,18 +61,18 @@ fn interface_cli_contains_no_provider_construction_or_router_orchestration() {
     }
     assert!(
         scanned > 50,
-        "expected to scan the cli modules, saw {scanned}"
+        "expected to scan the interface modules, saw {scanned}"
     );
     assert!(
         offenders.is_empty(),
-        "provider construction leaked back into interface/cli:\n{}",
+        "provider construction leaked back into interface:\n{}",
         offenders.join("\n")
     );
 }
 
-/// The thin entry point routes through the shared composition use case: the
-/// provider it returns IS the published runtime generation's provider, and
-/// the runtime + catalogue stores publish one coherent generation.
+/// Composition's entry point routes through the shared composition use case:
+/// the provider it returns IS the published runtime generation's provider,
+/// and the runtime + catalogue stores publish one coherent generation.
 #[test]
 fn build_agent_provider_publishes_through_the_composition_use_case() {
     let tmp = tempfile::tempdir().unwrap();
@@ -80,9 +84,12 @@ fn build_agent_provider_publishes_through_the_composition_use_case() {
     )
     .unwrap();
     let config = quecto::infrastructure::config::Config::default();
-    let provider =
-        quecto::interface::cli::build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
-            .expect("provider builds");
+    let provider = quecto::composition::runtime::build_agent_provider(
+        &config,
+        tmp.path(),
+        &reqwest::Client::new(),
+    )
+    .expect("provider builds");
     let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
         .current()
         .expect("the entry point published a runtime generation");

@@ -10,6 +10,7 @@ fn ctx_for(dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(dir.to_path_buf()),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     }
 }

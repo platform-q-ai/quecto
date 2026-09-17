@@ -10,7 +10,7 @@ fn write_models_json(dir: &std::path::Path, body: &str) {
 }
 
 fn compose(dir: &std::path::Path) {
-    crate::interface::catalogue_runtime::compose_and_publish_runtime(
+    crate::composition::runtime::compose_and_publish_runtime(
         &crate::infrastructure::config::Config::default(),
         dir,
         &reqwest::Client::new(),

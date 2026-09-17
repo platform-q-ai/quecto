@@ -23,6 +23,7 @@ fn inputs(path: std::path::PathBuf, dir: &TempDir) -> ProviderReloadInputs {
         dir.path().to_path_buf(),
         std::collections::HashMap::new(),
         reqwest::Client::new(),
+        crate::composition::runtime::build_agent_provider,
     )
 }
 

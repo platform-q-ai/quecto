@@ -17,7 +17,7 @@ fn compose(dir: &std::path::Path) {
         r#"{"providers":{"wired":{"api":"openai-completions","apiKey":"sk-wired","baseUrl":"https://wired.test/v1","models":[{"id":"m"}]}}}"#,
     )
     .unwrap();
-    quecto::interface::catalogue_runtime::compose_and_publish_runtime(
+    quecto::composition::runtime::compose_and_publish_runtime(
         &quecto::infrastructure::config::Config::default(),
         dir,
         &reqwest::Client::new(),

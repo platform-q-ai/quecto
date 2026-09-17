@@ -361,7 +361,9 @@ fn cmd_auth_login_openai_oauth(
                 out.stderr
                     .push_str("auth login: warning — could not extract account ID from token\n");
             }
-            let expires = crate::interface::shared::expires_at_with_margin(token_resp.expires_in);
+            let expires = crate::infrastructure::auth::token_refresh::expires_at_with_margin(
+                token_resp.expires_in,
+            );
             let params = OAuthStoreParams {
                 provider: "openai".to_string(),
                 account_id,
@@ -557,7 +559,9 @@ fn cmd_auth_login_anthropic_oauth(
 
     match rt.block_on(exchange_anthropic_code(config, &auth_code, &pkce.verifier)) {
         Ok(token_resp) => {
-            let expires = crate::interface::shared::expires_at_with_margin(token_resp.expires_in);
+            let expires = crate::infrastructure::auth::token_refresh::expires_at_with_margin(
+                token_resp.expires_in,
+            );
             let params = OAuthStoreParams {
                 provider: "anthropic".to_string(),
                 account_id: None,

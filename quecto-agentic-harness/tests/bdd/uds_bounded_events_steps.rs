@@ -1504,11 +1504,11 @@ fn drive_mc_start_and_connect(world: &mut QuectoWorld, clients: &[u32]) {
 
 fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::composition::runtime::build_agent_provider;
     use quecto::domain::session::Session;
     use quecto::infrastructure::config::Config;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-    use quecto::interface::cli::build_agent_provider;
     use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
     use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 
@@ -1534,8 +1534,13 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         }
     };
     let mut provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs =
-        ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
+    let provider_reload_inputs = ProviderReloadInputs::new(
+        config_path,
+        base.to_path_buf(),
+        env_overrides,
+        http_client,
+        build_agent_provider,
+    );
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
     let sandbox = Sandbox::new(Some(workspace.clone()));

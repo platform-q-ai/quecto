@@ -8,7 +8,7 @@ use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
-use super::build_agent_provider;
+use super::ProviderRuntimeBuilder;
 
 pub type ProviderReload = RuntimeReload<Arc<dyn LlmProvider>>;
 
@@ -23,6 +23,9 @@ pub struct ProviderReloadInputs {
     pub base_dir: PathBuf,
     pub env_overrides: HashMap<String, String>,
     pub http_client: reqwest::Client,
+    /// Composition's provider-runtime builder (#1849): every rebuild
+    /// composes through the same function startup did.
+    pub build_provider: ProviderRuntimeBuilder,
 }
 
 impl ProviderReloadInputs {
@@ -31,12 +34,14 @@ impl ProviderReloadInputs {
         base_dir: PathBuf,
         env_overrides: HashMap<String, String>,
         http_client: reqwest::Client,
+        build_provider: ProviderRuntimeBuilder,
     ) -> Self {
         Self {
             config_path,
             base_dir,
             env_overrides,
             http_client,
+            build_provider,
         }
     }
 
@@ -54,7 +59,7 @@ impl ProviderReloadInputs {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
-        build_agent_provider(&config, &self.base_dir, &self.http_client)
+        (self.build_provider)(&config, &self.base_dir, &self.http_client)
     }
 }
 

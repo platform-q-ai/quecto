@@ -17,6 +17,7 @@ fn default_ctx() -> CliContext {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     }
 }
@@ -432,6 +433,7 @@ fn test_build_agent_from_config_no_config_file() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };
@@ -473,6 +475,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };
@@ -517,6 +520,7 @@ fn test_build_agent_from_config_invalid_json() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };
@@ -563,6 +567,7 @@ fn test_build_agent_from_config_no_providers() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };
@@ -609,6 +614,7 @@ fn test_build_agent_from_config_with_model_override() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };

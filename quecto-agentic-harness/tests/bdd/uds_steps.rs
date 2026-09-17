@@ -12,6 +12,7 @@ use super::*;
 //   4. Reads all response lines from `client_half` until the server closes.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::message::Role;
 use quecto::domain::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
@@ -22,7 +23,6 @@ use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::build_agent_provider;
 use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use wiremock::Request;
@@ -109,8 +109,13 @@ pub(crate) fn build_uds_agent(
     let provider = build_agent_provider(&config, base, &http_client)
         .map_err(|e| format!("provider error: {e}"))?;
     let provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs =
-        ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
+    let provider_reload_inputs = ProviderReloadInputs::new(
+        config_path,
+        base.to_path_buf(),
+        env_overrides,
+        http_client,
+        build_agent_provider,
+    );
 
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();

@@ -94,16 +94,10 @@ const LEGACY_RECORDS: &[&str] = &[
 /// and infrastructure still construct themselves (pre-#1929, tracked by
 /// #1666): (file, construction). Exact and non-growing: a construction
 /// that moves to composition leaves the list; nothing may join it.
-const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[
-    (
-        "src/interface/catalogue_runtime.rs",
-        "ComposeProviderRuntimeUseCase::new(",
-    ),
-    (
-        "src/infrastructure/tools/spawn.rs",
-        "SubagentLaunchUseCase::new(",
-    ),
-];
+const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[(
+    "src/infrastructure/tools/spawn.rs",
+    "SubagentLaunchUseCase::new(",
+)];
 
 fn ident_at_start(rest: &str) -> String {
     rest.chars()

@@ -1,4 +1,4 @@
-//! Tests for the interface runtime-composition wiring (issue #1573): the real
+//! Tests for the runtime-composition wiring (issue #1573, #1849 PR 1): the real
 //! factory, sources, and stores behind `compose_and_publish_runtime`, and the
 //! selection verdict the change-active-model plan reads over what it
 //! published (#1847), driven with on-disk models.json fixtures (no network).

@@ -5,6 +5,7 @@ use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
+use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message};
 use quecto::domain::session::Session;
@@ -15,7 +16,6 @@ use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::build_agent_provider;
 use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
@@ -279,8 +279,13 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let http_client = reqwest::Client::new();
     let provider = build_agent_provider(&config, base, &http_client).expect("provider");
     let mut provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs =
-        ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
+    let provider_reload_inputs = ProviderReloadInputs::new(
+        config_path,
+        base.to_path_buf(),
+        env_overrides,
+        http_client,
+        build_agent_provider,
+    );
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);

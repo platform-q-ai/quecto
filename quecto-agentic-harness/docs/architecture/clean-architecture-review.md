@@ -157,7 +157,7 @@ Fresh static review at `43dfad9c` after moving to the chore branch; no tests run
 
 #### A4-01 — Model limits can diverge from selected runtime (priority: high; strengthens A3-02)
 
-**Evidence:** `src/interface/catalogue_runtime.rs:71-77` selects against the runtime aggregate, while `:93-109` independently reloads/publishes catalogue sources when reading model limits. These are distinct generation paths, not merely two names for the same aggregate. Actual consumers include startup agent construction (`src/interface/cli/agent.rs:402-407`) and model switching (`src/interface/cli/uds_dispatch_runtime.rs:33-54`). In the latter, catalogue selection is a status verdict rather than the operation that installs the provider; the independently refreshed limits still apply to the current agent runtime.
+**Evidence:** `src/interface/catalogue_runtime.rs:71-77` (since moved to `src/composition/runtime.rs`, #1849) selects against the runtime aggregate, while `:93-109` independently reloads/publishes catalogue sources when reading model limits. These are distinct generation paths, not merely two names for the same aggregate. Actual consumers include startup agent construction (`src/interface/cli/agent.rs:402-407`) and model switching (`src/interface/cli/uds_dispatch_runtime.rs:33-54`). In the latter, catalogue selection is a status verdict rather than the operation that installs the provider; the independently refreshed limits still apply to the current agent runtime.
 
 **Cost:** A disk edit between composition and limit lookup can supply newer context/output limits alongside an older selected runtime. The earlier publication concern therefore has consequential consumers, though no execution failure was reproduced.
 

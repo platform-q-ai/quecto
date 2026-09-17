@@ -164,6 +164,25 @@ Important invariants before later phases:
 - workflow state is session metadata and must recover to a valid template/mode
   if the configured workflow library changes.
 
+## Provider runtime composition
+
+**Primary code:** the compose-provider-runtime use case in
+`src/application/provider_runtime.rs`; the concrete factories in
+`src/infrastructure/provider_runtime.rs` and
+`src/infrastructure/provider_runtime_admission.rs`; the OAuth refresh wiring
+in `src/infrastructure/providers/refresh_wiring.rs` and the refreshed-credential
+persistence in `src/infrastructure/auth/token_refresh.rs`; the composition in
+`src/composition/runtime.rs` (`compose_and_publish_runtime`,
+`build_agent_provider`).
+
+`main` hands composition's `build_agent_provider` to the CLI through
+`CliComposition`; agent startup (`src/interface/cli/agent.rs`) and provider
+reload (`src/interface/cli/provider_reload.rs`) call the injected builder and
+never construct provider state themselves (#1849 PR 1). The composition
+publishes the routing provider and the catalogue as one generation into the
+per-directory stores; a failed composition retains the previously published
+generation.
+
 ## Baseline subsystem checks
 
 Use these focused checks while hardening the architecture. The full pre-push gate

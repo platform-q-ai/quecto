@@ -73,7 +73,9 @@ pub(crate) fn cmd_auth_login_xai_oauth(
 
     match rt.block_on(exchange_xai_code(config, &code, &pkce.verifier)) {
         Ok(token_resp) => {
-            let expires = crate::interface::shared::expires_at_with_margin(token_resp.expires_in);
+            let expires = crate::infrastructure::auth::token_refresh::expires_at_with_margin(
+                token_resp.expires_in,
+            );
             let params = OAuthStoreParams {
                 provider: "xai".to_string(),
                 account_id: None,

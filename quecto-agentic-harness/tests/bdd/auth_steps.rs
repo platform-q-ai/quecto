@@ -1057,7 +1057,7 @@ fn when_expires_at_with_margin(world: &mut QuectoWorld) {
     // cucumber's concurrent scenario scheduling and intermittently drifted past
     // the tolerance under CPU contention.
     let now = quecto::infrastructure::time::unix_timestamp_secs();
-    let result = quecto::interface::shared::expires_at_with_margin(expires_in);
+    let result = quecto::infrastructure::auth::token_refresh::expires_at_with_margin(expires_in);
     world.gateway_expires_at_reference_now = Some(now);
     world.gateway_computed_expires_at = Some(result);
 }

@@ -11,6 +11,7 @@ fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..Default::default()
     };
@@ -52,6 +53,7 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         fresh_session_identity: None,
         ..Default::default()
     };
@@ -60,6 +62,28 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
     assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
     assert!(
         stderr.contains("fresh session identity generator not composed"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_agent_run_refuses_to_start_without_a_composed_provider_runtime() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        config_selection: Some(crate::composition::configuration::build_select_config),
+        provider_runtime: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    let flags = parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        stderr.contains("agent: provider runtime capability not composed"),
         "{stderr}"
     );
 }

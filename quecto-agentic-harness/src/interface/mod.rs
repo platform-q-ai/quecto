@@ -1,4 +1,3 @@
-pub mod catalogue_runtime;
 pub mod cli;
 pub mod repl;
 pub mod shared;
