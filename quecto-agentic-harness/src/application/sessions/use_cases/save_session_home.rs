@@ -11,6 +11,11 @@ use crate::domain::session_identity::SessionIdentity;
 /// cwd) never loses the transcript: the record is written without a home
 /// — legacy-unscoped, observable in every listing — and the failure is
 /// surfaced as a diagnostic.
+///
+/// The home outlives this call only with a transcript: a save that then
+/// commits nothing (an empty exit) removes the sidecar with the record it
+/// never wrote, and startup discards a sidecar found without a transcript,
+/// so an ephemeral session leaves no durable metadata behind.
 pub(super) async fn prepare_home(
     home: Option<&SessionHomeContext>,
     store: &dyn SessionStore,

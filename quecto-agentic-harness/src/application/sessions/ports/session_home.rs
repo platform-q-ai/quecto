@@ -47,4 +47,8 @@ pub trait SessionHomeCatalogue: Send + Sync {
     /// before the first transcript save; existing authority is immutable here.
     fn record_new(&self, identity: &SessionIdentity, home: &SessionHome)
     -> Result<(), DomainError>;
+    /// A home without a transcript is no session (#2009): discard it under
+    /// ownership so the key is not locked to a directory with no history.
+    /// Authority beside a transcript is never touched.
+    fn discard_orphan(&self, identity: &SessionIdentity) -> Result<(), DomainError>;
 }

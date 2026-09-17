@@ -332,6 +332,9 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
     ) -> Result<(), DomainError> {
         self.store.record_new_home(identity, home)
     }
+    fn discard_orphan(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
+        self.store.discard_orphan_home(identity)
+    }
     fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
         // Serialize list/publication within this adapter. Disk data never seeds
         // the trusted projection: restart and externally changed indexes rebuild.

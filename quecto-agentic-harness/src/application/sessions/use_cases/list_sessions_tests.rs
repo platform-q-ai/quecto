@@ -201,6 +201,9 @@ impl SessionHomeCatalogue for FixedCatalogue {
     fn record_new(&self, _: &SessionIdentity, _: &SessionHome) -> Result<(), DomainError> {
         panic!("listing must not mutate authority")
     }
+    fn discard_orphan(&self, _: &SessionIdentity) -> Result<(), DomainError> {
+        panic!("listing must not mutate authority")
+    }
     fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
         Ok(HomeCatalogueSnapshot {
             entries: self.0.clone(),

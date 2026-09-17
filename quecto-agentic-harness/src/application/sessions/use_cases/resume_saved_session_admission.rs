@@ -47,8 +47,12 @@ pub(super) async fn admit_home(
         .map_err(ResumeSavedSessionError::Scope)
 }
 
-/// A startup identity without a transcript: no home authority means a
-/// genuinely new session; any present authority is admitted like a load.
+/// A startup identity without a transcript is a genuinely new session,
+/// whatever sidecar is beside the absent transcript: a home there is an
+/// orphan (a save that never committed a message, a transcript removed
+/// by hand) and is discarded under the claim rather than admitted, so a
+/// key with no history never refuses to start, and a stale home can never
+/// be inherited by the first transcript written under the key.
 pub(super) async fn admit_new_at_startup(
     home: &SessionHomeContext,
     identity: &SessionIdentity,
@@ -59,9 +63,15 @@ pub(super) async fn admit_new_at_startup(
         .map_err(ResumeSavedSessionError::Load)?;
     match scope {
         SessionHomeScope::LegacyUnscoped => Ok(()),
-        SessionHomeScope::Scoped(_) | SessionHomeScope::Unavailable(_) => home
-            .admit(&scope)
-            .await
-            .map_err(ResumeSavedSessionError::Scope),
+        SessionHomeScope::Scoped(_) | SessionHomeScope::Unavailable(_) => {
+            tracing::info!(
+                target: "session_home",
+                session = %identity.runtime_key(),
+                "home without a transcript at startup; discarded as an orphan"
+            );
+            home.catalogue
+                .discard_orphan(identity)
+                .map_err(ResumeSavedSessionError::Load)
+        }
     }
 }

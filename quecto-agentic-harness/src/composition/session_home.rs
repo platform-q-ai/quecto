@@ -31,6 +31,9 @@ pub fn session_home_in(
 }
 
 #[cfg(test)]
+#[path = "session_home_orphan_tests.rs"]
+mod orphan_tests;
+#[cfg(test)]
 #[path = "session_home_save_tests.rs"]
 mod save_tests;
 #[cfg(test)]

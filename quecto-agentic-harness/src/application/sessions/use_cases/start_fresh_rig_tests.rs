@@ -618,6 +618,9 @@ pub(crate) fn permissive_home() -> crate::application::sessions::session_home::S
         fn record_new(&self, _: &SessionIdentity, _: &SessionHome) -> Result<(), DomainError> {
             Ok(())
         }
+        fn discard_orphan(&self, _: &SessionIdentity) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
     crate::application::sessions::session_home::SessionHomeContext::at(
         Arc::new(Permissive),

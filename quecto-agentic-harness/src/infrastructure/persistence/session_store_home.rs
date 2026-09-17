@@ -157,4 +157,26 @@ impl FileSessionStore {
         }
         Ok(())
     }
+
+    /// A home sidecar without a transcript is not authority — a save that
+    /// never committed a message, or a transcript removed by hand — and
+    /// must not lock the key to a directory with no history. Removed under
+    /// the key's claim, and only while the transcript is absent; a home
+    /// beside a transcript is never touched here.
+    pub fn discard_orphan_home(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
+        if identity.persisted_key().is_none() {
+            return Ok(());
+        }
+        self.claim_key(identity)?;
+        match std::fs::metadata(self.layout.session_file(identity)) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(error(e)),
+        }
+        match std::fs::remove_file(self.layout.home_file(identity)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(error(format!("orphan home not removable: {e}"))),
+        }
+    }
 }
