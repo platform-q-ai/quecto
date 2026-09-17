@@ -112,7 +112,7 @@ pub(super) struct DispatchTestEnv {
     pub(super) session_key: String,
     /// The file store of `tmp`, shared with `sessions` so the context's
     /// `session_store` and its `list_sessions` handle see the same files.
-    pub(super) store: std::sync::Arc<dyn crate::application::sessions::ports::SessionStore>,
+    pub(super) store: super::dispatch_session_roster_tests::RigStore,
     /// The composed sessions handles built over `store` (#1970).
     pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
     pub(super) writer: tokio::io::Sink,
@@ -138,11 +138,12 @@ impl DispatchTestEnv {
         // The file store of `tmp`, the `list_sessions` handle, the active
         // session and the save transaction are one composed graph, so they
         // all see the same session files and the same state.
+        let store = super::dispatch_session_roster_tests::rig_store(tmp.path());
         let mut inputs = super::dispatch_session_roster_tests::loop_inputs(tmp.path(), "cli:test");
         inputs.durable_prefix = latch.clone();
         inputs.workflow_state = Some(workflow.clone());
-        let sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
-        let store = sessions.store.clone();
+        let sessions =
+            super::dispatch_session_roster_tests::composed_sessions_over(store.clone(), inputs);
         Self {
             tmp,
             latch,
@@ -192,10 +193,12 @@ impl DispatchTestEnv {
         self.session_key = session_key.into();
         let mut inputs =
             super::dispatch_session_roster_tests::loop_inputs(self.tmp.path(), &self.session_key);
-        inputs.store = Some(self.store.clone());
         inputs.durable_prefix = self.latch.clone();
         inputs.workflow_state = Some(self.workflow.clone());
-        self.sessions = super::dispatch_session_roster_tests::composed_sessions_from(inputs);
+        self.sessions = super::dispatch_session_roster_tests::composed_sessions_over(
+            self.store.clone(),
+            inputs,
+        );
     }
 
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {

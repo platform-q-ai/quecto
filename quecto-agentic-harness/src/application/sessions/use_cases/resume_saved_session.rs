@@ -23,8 +23,6 @@
 //! one write, so the snapshot and the spill key follow the target
 //! atomically. Every refusal precedes the key replacement and keeps the
 //! current session whole; children the fleet already settled stay settled.
-use std::sync::Arc;
-
 use super::clear_conversation::visible_message_count;
 use super::{DepartingChildren, SaveSession};
 use crate::application::sessions::active_session::ActiveSessionHandle;
@@ -33,9 +31,11 @@ use crate::application::sessions::dto::{
     StartupSessionOpened,
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
+use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::conversation_view::inject_system_prompt;
 use crate::domain::message::Message;
 use crate::domain::session::Session;
+use std::sync::Arc;
 
 pub struct ResumeSavedSession {
     state: ActiveSessionHandle,
@@ -44,7 +44,16 @@ pub struct ResumeSavedSession {
     children: Arc<DepartingChildren>,
     /// A `--no-session` loop: nothing is claimed, loaded or resumed.
     ephemeral: bool,
+    /// Scope admission (#2009) is mandatory: no loop resumes without it.
+    home: SessionHomeContext,
 }
+
+#[path = "resume_saved_session_admission.rs"]
+mod resume_saved_session_admission;
+use resume_saved_session_admission::{PendingClaim, admit_home};
+#[path = "resume_saved_session_startup.rs"]
+mod resume_saved_session_startup;
+use resume_saved_session_startup::{admit_at_startup, admit_new_at_startup};
 
 impl ResumeSavedSession {
     pub fn new(
@@ -53,6 +62,7 @@ impl ResumeSavedSession {
         store: Arc<dyn SessionStore>,
         children: Arc<DepartingChildren>,
         ephemeral: bool,
+        home: SessionHomeContext,
     ) -> Self {
         Self {
             state,
@@ -60,6 +70,7 @@ impl ResumeSavedSession {
             store,
             children,
             ephemeral,
+            home,
         }
     }
 
@@ -86,23 +97,19 @@ impl ResumeSavedSession {
             .save(messages, SaveTrigger::Routine)
             .await
             .map_err(ResumeSavedSessionError::Save)?;
+        let old_identity = self.state.read().await.identity().clone();
         self.store
             .claim(&target.identity)
             .map_err(ResumeSavedSessionError::Claim)?;
-        let loaded = match self.load_claimed(&target).await {
-            Ok(loaded) => loaded,
-            Err(err) => {
-                self.store.release(&target.identity);
-                return Err(err);
-            }
-        };
+        let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
+        claim.release = old_identity != target.identity;
+        let loaded = self.load_claimed(&target).await?;
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {
-            self.store.release(&target.identity);
             return Err(ResumeSavedSessionError::Refused(refused));
         }
-        let old_identity = self.state.read().await.identity().clone();
+        claim.release = false;
         if old_identity != target.identity {
             self.store.release(&old_identity);
         }
@@ -139,18 +146,19 @@ impl ResumeSavedSession {
         target: &ResumeTarget,
     ) -> Result<Session, ResumeSavedSessionError> {
         match self.store.load(&target.identity).await {
-            Ok(Some(session)) => Ok(session),
+            Ok(Some(session)) => {
+                admit_home(&self.home, &target.identity).await?;
+                Ok(session)
+            }
             Ok(None) => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
             Err(err) => Err(ResumeSavedSessionError::Load(err)),
         }
     }
 
     /// Open the session the loop was composed on, at startup: claim it
-    /// (#1460 — a key owned by another live process is refused before any
-    /// turn runs against it), load what the store holds, and let the
-    /// persisted watermark stand for it. An ephemeral run, or the ephemeral
-    /// identity, touches the store not at all. A load failure releases the
-    /// claim just taken.
+    /// (#1460), load what the store holds and admit its home (#2009), and
+    /// let the persisted watermark stand for it. An ephemeral run touches
+    /// the store not at all. A load failure releases the claim just taken.
     pub async fn open_at_startup(&self) -> Result<StartupSessionOpened, ResumeSavedSessionError> {
         let identity = self.state.read().await.identity().clone();
         let session = if self.ephemeral || identity.is_ephemeral() {
@@ -159,13 +167,22 @@ impl ResumeSavedSession {
             self.store
                 .claim(&identity)
                 .map_err(ResumeSavedSessionError::Claim)?;
-            match self.store.load(&identity).await {
-                Ok(session) => session.unwrap_or_else(|| Session::new(identity.clone())),
+            let mut claim = PendingClaim::new(self.store.clone(), identity.clone());
+            let session = match self.store.load(&identity).await {
+                Ok(Some(session)) => {
+                    admit_at_startup(&self.home, &identity).await?;
+                    session
+                }
+                Ok(None) => {
+                    admit_new_at_startup(&self.home, &identity).await?;
+                    Session::new(identity.clone())
+                }
                 Err(err) => {
-                    self.store.release(&identity);
                     return Err(ResumeSavedSessionError::Load(err));
                 }
-            }
+            };
+            claim.release = false;
+            session
         };
         self.state
             .write()

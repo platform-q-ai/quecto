@@ -1,6 +1,25 @@
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Serialize};
 
+/// Discovery scope of `list_sessions` (#2009) as spelled on the wire; the
+/// dispatch edge maps it onto the application's scope.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionListScopeCommand {
+    #[default]
+    Local,
+    Global,
+}
+
+impl From<SessionListScopeCommand> for crate::application::sessions::dto::SessionListScope {
+    fn from(scope: SessionListScopeCommand) -> Self {
+        match scope {
+            SessionListScopeCommand::Local => Self::Local,
+            SessionListScopeCommand::Global => Self::Global,
+        }
+    }
+}
+
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,6 +140,8 @@ pub enum AgentCommand {
     },
     /// Return persisted CLI sessions available for resume.
     ListSessions {
+        #[serde(default)]
+        scope: SessionListScopeCommand,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
@@ -352,7 +373,7 @@ impl AgentCommand {
             Self::PersistSession { id, .. } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
             Self::RefreshModels { id, .. } => id.as_deref(),
-            Self::ListSessions { id } => id.as_deref(),
+            Self::ListSessions { id, .. } => id.as_deref(),
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),

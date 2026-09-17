@@ -18,6 +18,7 @@ fn given_saved_uds_session(world: &mut QuectoWorld, key: String, count: usize) {
         .expect("no base dir — add 'Given a temp base directory'");
     let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let identity = SessionIdentity::from_persisted_key(key.as_str());
+    super::session_scope_steps::record_fixture_home(&base, identity.runtime_key());
     let mut session = Session::new(identity.clone());
     for i in 0..count {
         let content = format!("saved {}", i + 1);

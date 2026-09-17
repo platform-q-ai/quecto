@@ -11,7 +11,7 @@ async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
-    let mut h = super::tui_harness::TuiHarness::new().await;
+    let mut h = super::tui_harness::TuiHarness::sized(240, 40).await;
     h.set_git_repo(repo.clone());
     assert!(h.apply_branch(Some("main".to_string())));
 

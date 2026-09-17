@@ -367,6 +367,11 @@ async fn resume_session_success_loads_messages() {
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(
+        &fx.store,
+        saved.key.runtime_key(),
+    )
+    .await;
     fx.store.save(&saved).await.unwrap();
     {
         let mut ctx = fx.ctx();
@@ -386,6 +391,7 @@ async fn resume_updates_session_aware_tools() {
     let mut fx = Fixture::new();
     fx.set_agent(make_agent_with(Box::new(registry), None));
     let key = Session::build_key("cli", "saved");
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, &key).await;
     fx.store
         .save(&Session {
             key: id(key.clone()),
@@ -417,6 +423,11 @@ async fn resume_loads_chat_session_by_full_key() {
         workflow_run: None,
         subagent_roster: Vec::new(),
     };
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(
+        &fx.store,
+        saved.key.runtime_key(),
+    )
+    .await;
     fx.store.save(&saved).await.unwrap();
     {
         let mut ctx = fx.ctx();

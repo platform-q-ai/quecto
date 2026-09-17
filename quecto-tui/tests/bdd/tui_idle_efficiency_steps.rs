@@ -15,7 +15,8 @@ fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -
     }
     if world.tui_parity.is_none() {
         let rt = world.tui_parity_rt.as_ref().expect("runtime");
-        let h = rt.block_on(async { TuiHarness::new().await });
+        // Keep the branch visible even when the checkout's absolute path is long.
+        let h = rt.block_on(async { TuiHarness::sized(240, 40).await });
         world.tui_parity = Some(crate::TuiParityHarness(h));
     }
     f(&mut world.tui_parity.as_mut().expect("TUI harness").0)

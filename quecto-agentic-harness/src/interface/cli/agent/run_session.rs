@@ -36,7 +36,6 @@ pub(crate) fn run_agent_session(
     };
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
-        store: None,
         identity,
         ephemeral,
         // The one-shot run appends its prompt by id (below) rather than at

@@ -48,3 +48,5 @@ pub mod swarm;
 pub mod state_snapshot;
 
 pub mod attempt_diagnostics;
+
+pub mod session_home;

@@ -259,11 +259,23 @@ impl App {
                 }
             }
             "list_sessions" if success => {
-                if let Some(data) = data {
-                    self.open_resume_selector(&data);
+                self.handle_session_list_response(id.as_deref(), data);
+            }
+            "list_sessions" => {
+                if self
+                    .ac()
+                    .sessions
+                    .pending_list_id
+                    .as_deref()
+                    .is_some_and(|pending| Some(pending) == id.as_deref())
+                {
+                    // The picker opened for this answer; with no rows to
+                    // show it closes, so an empty overlay never lingers.
+                    self.ac_mut().sessions.pending_list_id = None;
+                    self.ac_mut().sessions.resume_selector = None;
+                    self.notify_response_error("Could not list sessions", error);
                 }
             }
-            "list_sessions" => self.notify_response_error("Could not list sessions", error),
             "get_tool_catalogue" if success => self.handle_get_tool_catalogue(id.as_deref(), data),
             "get_tool_catalogue" => {
                 if self.is_pending_tool_policy_catalogue_response(id.as_deref()) {

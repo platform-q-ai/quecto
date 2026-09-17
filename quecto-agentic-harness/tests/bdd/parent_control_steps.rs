@@ -428,7 +428,6 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             // A launcher-created child is launch-bound (#1937): ordinary
             // client churn must never end it, and it never persists.

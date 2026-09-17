@@ -1121,6 +1121,7 @@ fn given_model_exercises_spilled_memory(world: &mut QuectoWorld, final_text: Str
 #[given(expr = "a pre-existing session {string} with {int} messages")]
 fn given_pre_existing_session(world: &mut QuectoWorld, key: String, count: usize) {
     let base = base_path(world);
+    super::session_scope_steps::record_fixture_home(&base, &key);
     let sessions_dir = base.join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
 
@@ -1464,6 +1465,7 @@ fn then_session_contains_text(world: &mut QuectoWorld, key: String, text: String
 #[given(expr = "a pre-existing session {string} with tool call history for {string}")]
 fn given_session_with_tool_history(world: &mut QuectoWorld, key: String, tool_name: String) {
     let base = base_path(world);
+    super::session_scope_steps::record_fixture_home(&base, &key);
     let sessions_dir = base.join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
 

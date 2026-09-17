@@ -8,30 +8,41 @@
 //! presents the summaries. Nothing here forms a path or reads a directory.
 use std::sync::Arc;
 
-use crate::application::sessions::dto::SessionListQuery;
+use crate::application::sessions::dto::{ListSessionsRequest, ListSessionsResult};
 use crate::application::sessions::ports::SessionStore;
+use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::error::DomainError;
-use crate::domain::session::SessionSummary;
 
 /// The saved-session listing query over the session store port.
 pub struct ListSessions {
     store: Arc<dyn SessionStore>,
+    home: Option<SessionHomeContext>,
 }
+
+#[path = "list_sessions_discover.rs"]
+mod list_sessions_discover;
 
 impl ListSessions {
     pub fn new(store: Arc<dyn SessionStore>) -> Self {
-        Self { store }
+        Self { store, home: None }
     }
 
-    /// The summaries of the sessions `query` covers, newest first when the
-    /// store knows modification times. Summary-only: a listed session may
-    /// still fail a subsequent full load (see [`SessionStore::list`]); the
-    /// store's own error surfaces unchanged.
-    pub async fn execute(
+    pub fn with_home(mut self, home: SessionHomeContext) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    /// The sessions `request` covers, newest first when the store knows
+    /// modification times, each with its home and advisory eligibility;
+    /// resume rechecks admission under its claim. Summary-only: a listed
+    /// session may still fail a subsequent full load (see
+    /// [`SessionStore::list`]); the store's own error surfaces unchanged.
+    pub async fn discover(
         &self,
-        query: &SessionListQuery,
-    ) -> Result<Vec<SessionSummary>, DomainError> {
-        self.store.list(query).await
+        request: &ListSessionsRequest,
+    ) -> Result<ListSessionsResult, DomainError> {
+        let summaries = self.store.list(&request.query).await?;
+        Ok(list_sessions_discover::discover(self.home.as_ref(), summaries, request.scope).await)
     }
 }
 

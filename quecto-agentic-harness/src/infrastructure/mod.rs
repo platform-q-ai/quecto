@@ -38,3 +38,5 @@ mod issue_996_efficiency_tests;
 
 pub mod http;
 pub mod session_export;
+
+pub mod workspace;

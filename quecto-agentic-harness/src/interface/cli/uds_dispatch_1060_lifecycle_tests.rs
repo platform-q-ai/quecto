@@ -95,6 +95,7 @@ async fn resume_session_clears_previous_session_ref() {
 
     // Pre-save a DIFFERENT session to resume into.
     let key = Session::build_key("cli", "saved");
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, &key).await;
     fx.store
         .save(&Session {
             key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key),

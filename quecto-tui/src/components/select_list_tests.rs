@@ -162,3 +162,29 @@ fn unhandled_key_is_not_consumed_and_empty_enter_stays_pending() {
     assert!(list.handle_input(&Key::Enter));
     assert_eq!(list.take_result(), SelectResult::Pending);
 }
+
+#[test]
+fn set_max_visible_is_shared_by_render_window_and_hit_testing() {
+    let mut list = SelectList::new(make_items(&["A", "B", "C", "D", "E"]), 12);
+    list.set_max_visible(2);
+    let joined = list.render(40).join("\n");
+    assert!(joined.contains("A"));
+    assert!(joined.contains("B"));
+    assert!(!joined.contains("C"));
+    assert_eq!(list.visible_item(0).unwrap().value, "A");
+    assert_eq!(list.visible_item(1).unwrap().value, "B");
+    assert!(list.visible_item(2).is_none());
+
+    list.handle_input(&Key::Down);
+    list.handle_input(&Key::Down);
+    assert_eq!(list.selected_item().unwrap().value, "C");
+    assert_eq!(list.visible_item(0).unwrap().value, "B");
+    assert_eq!(list.visible_item(1).unwrap().value, "C");
+    assert!(list.visible_item(2).is_none());
+    let joined = list.render(40).join("\n");
+    assert!(joined.contains("C"));
+    assert!(!joined.contains("A"));
+
+    list.set_max_visible(0);
+    assert!(list.visible_item(0).is_none());
+}

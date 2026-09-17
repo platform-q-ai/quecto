@@ -621,8 +621,16 @@ fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld
         "the TUI architecture document must record that the sessions epic changed no session command"
     );
     assert!(
-        doc.contains("#1966") && doc.contains("no scope field"),
-        "the TUI architecture document must state the workspace seam is not implemented by the epic"
+        doc.contains("#2009")
+            && doc.contains("subsequent product slice")
+            && doc.contains("extends the typed session protocol")
+            && doc.contains("Local/Global presentation")
+            && doc.contains("No Git,")
+            && doc.contains("filesystem or launch eligibility policy belongs in the TUI")
+            && doc.contains("Cross-folder action")
+            && doc
+                .contains("execution and global metadata search are not part of this first slice"),
+        "the TUI architecture document must distinguish the later #2009 typed discovery slice from the unchanged epic and preserve backend policy ownership"
     );
 }
 
@@ -630,10 +638,12 @@ fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld
 fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
     let overlay = std::fs::read_to_string("../quecto-tui/src/components/select_overlay.rs")
         .expect("read quecto-tui select_overlay source");
+    let picker = std::fs::read_to_string("../quecto-tui/src/sessions/resume_picker.rs")
+        .expect("read quecto-tui resume_picker source");
     let theme = std::fs::read_to_string("../quecto-tui/src/components/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
-        overlay.contains("build_resume_selector_overlay")
+        picker.contains("build_select_overlay(")
             && overlay.contains('┌')
             && overlay.contains('│')
             && overlay.contains("apply_overlay_bg"),

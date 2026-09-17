@@ -10,6 +10,8 @@ use super::fixture_tests::Fixture;
 async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let mut fx = Fixture::new();
     let persisted_key = crate::domain::session::Session::build_key("cli", "default");
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, &persisted_key)
+        .await;
     fx.store
         .save(&Session {
             key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
@@ -36,6 +38,7 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     assert!(
         !super::dispatch_command(
             AgentCommand::ListSessions {
+                scope: Default::default(),
                 id: Some("resume-list".into()),
             },
             &mut ctx,
@@ -70,6 +73,7 @@ async fn write_legacy_session_file(
     tokio::fs::create_dir_all(path.parent().unwrap())
         .await
         .unwrap();
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, key).await;
     let snapshot = serde_json::json!({
         "type": "snapshot",
         "key": key,

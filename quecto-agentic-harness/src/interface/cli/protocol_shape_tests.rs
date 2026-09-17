@@ -594,7 +594,11 @@ fn core_command_type_names() {
         "get_subagents"
     );
     assert_eq!(
-        AgentCommand::ListSessions { id: None }.type_name(),
+        AgentCommand::ListSessions {
+            scope: Default::default(),
+            id: None
+        }
+        .type_name(),
         "list_sessions"
     );
     assert_eq!(
@@ -641,4 +645,30 @@ fn clear_history_command_serializes_without_id() {
     let j = round_trip(&cmd);
     assert_eq!(j["type"], "clear_history");
     assert!(j.get("id").is_none());
+}
+
+#[test]
+fn session_discovery_scope_is_local_by_default_and_accepts_only_known_scopes() {
+    let local: AgentCommand =
+        serde_json::from_value(serde_json::json!({"type":"list_sessions","id":"r1"})).unwrap();
+    assert_eq!(serde_json::to_value(&local).unwrap()["scope"], "local");
+    assert_eq!(local.id(), Some("r1"));
+    for scope in ["local", "global"] {
+        let command: AgentCommand =
+            serde_json::from_value(serde_json::json!({"type":"list_sessions","scope":scope}))
+                .unwrap();
+        assert_eq!(serde_json::to_value(command).unwrap()["scope"], scope);
+    }
+    for scope in [
+        serde_json::json!("other"),
+        serde_json::json!(null),
+        serde_json::json!(1),
+    ] {
+        assert!(
+            serde_json::from_value::<AgentCommand>(
+                serde_json::json!({"type":"list_sessions","scope":scope})
+            )
+            .is_err()
+        );
+    }
 }
