@@ -269,22 +269,33 @@ append_secret() {
   local value="$2"
   printf "export %s='%s'\n" "$1" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
 }
-for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY FIREWORKS_API_KEY; do
-  if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
+# Secrets are opt-in. QUECTO_SECRET_GRANTS is an explicit comma-separated
+# allowlist; without it no provider environment or host credential is copied.
+secret_grants="${QUECTO_SECRET_GRANTS:-}"
+secret_grant_allowed() {
+  local wanted="$1" grant
+  IFS=',' read -r -a grants <<<"$secret_grants"
+  for grant in "${grants[@]}"; do [ "$grant" = "$wanted" ] && return 0; done
+  return 1
+}
+IFS=',' read -r -a grants <<<"$secret_grants"
+for grant in "${grants[@]}"; do
+  case "$grant" in
+    ""|anthropic|ANTHROPIC_API_KEY|openai|OPENAI_API_KEY|openrouter|OPENROUTER_API_KEY|fireworks|FIREWORKS_API_KEY|github|GH_TOKEN|GITHUB_TOKEN) ;;
+    *) die "unknown QUECTO_SECRET_GRANTS entry: $grant" ;;
+  esac
 done
-# GitHub access for agents inside the environment (workflows need `gh` and
-# git-over-https pushes). A host keyring is unreachable from a container, so
-# the token is resolved host-side (`gh auth token`) and rides in via the same
-# 0600 secret file; git identity and the gh credential helper are non-secret
-# and travel as GIT_CONFIG_* env entries, so the host gitconfig (which may
-# carry LFS filters or keyring helpers the image lacks) is never mounted.
+for provider_and_key in anthropic:ANTHROPIC_API_KEY openai:OPENAI_API_KEY openrouter:OPENROUTER_API_KEY fireworks:FIREWORKS_API_KEY; do
+  provider="${provider_and_key%%:*}"; key="${provider_and_key#*:}"
+  if secret_grant_allowed "$provider" || secret_grant_allowed "$key"; then
+    if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
+  fi
+done
+# GitHub is explicit too; never invoke gh auth token (ambient host harvest).
 gh_token=""
-if command -v gh >/dev/null 2>&1; then
-  gh_token="$(gh auth token 2>/dev/null || true)"
-fi
-if [ -n "$gh_token" ]; then
-  append_secret GH_TOKEN "$gh_token"
-  append_secret GITHUB_TOKEN "$gh_token"
+if secret_grant_allowed github || secret_grant_allowed GH_TOKEN || secret_grant_allowed GITHUB_TOKEN; then
+  if [ -n "${GH_TOKEN:-}" ]; then gh_token="$GH_TOKEN"; append_secret GH_TOKEN "$GH_TOKEN"; fi
+  if [ -n "${GITHUB_TOKEN:-}" ]; then append_secret GITHUB_TOKEN "$GITHUB_TOKEN"; fi
 fi
 gcfg_i=0
 add_git_cfg() {

@@ -249,10 +249,18 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
 
         // Token is expired — try to refresh if we have a refresh token
         if cred.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
-            if let Some(ref refresh_token) = cred.refresh_token {
+            if cred.refresh_token.is_some() {
                 tracing::info!("refreshing expired OAuth token for {} (async)", provider);
 
-                // Dispatch to the correct refresh function based on provider
+                // Acquire the cross-process lease before any network I/O. The
+                // lease serializes rotating refresh tokens and keeps logout from
+                // racing a stale refresh write.
+                let Ok(Some(lease)) = store.begin_refresh(provider) else {
+                    return config_key.to_string();
+                };
+                let refresh_token = lease.credential().refresh_token.as_deref().unwrap_or("");
+
+                // Dispatch to the correct refresh function based on provider.
                 let refresh_result = match provider {
                     "openai" => {
                         crate::infrastructure::auth::oauth::refresh_openai_token(
@@ -278,7 +286,7 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
                 };
 
                 if let Some(token) =
-                    persist_refreshed_token(store, provider, refresh_token, refresh_result)
+                    persist_refreshed_token_with_lease(lease, provider, refresh_result)
                 {
                     return token;
                 }
@@ -289,22 +297,22 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
     config_key.to_string()
 }
 
-/// Process an OAuth token refresh result: build and persist the new credential.
+/// Persist a refresh result through an already-held cross-process lease.
 ///
-/// Returns `Some(access_token)` on success, `None` on failure (logged as warning).
-/// Shared by both sync and async refresh paths to avoid credential-building duplication.
-///
-/// `previous_refresh_token` is preserved when the server response omits
-/// `refresh_token` (valid per RFC 6749 §5.1 — the field is OPTIONAL).
-fn persist_refreshed_token(
-    store: &crate::infrastructure::auth::credential_store::CredentialStore,
+/// Returning the authoritative token on a superseded lease lets concurrent
+/// callers converge on the winner without overwriting a rotated token family.
+fn persist_refreshed_token_with_lease(
+    lease: crate::infrastructure::auth::credential_store::CredentialRefreshLease,
     provider: &str,
-    previous_refresh_token: &str,
     refresh_result: Result<
         crate::infrastructure::auth::oauth::OAuthTokenResponse,
         crate::domain::error::DomainError,
     >,
 ) -> Option<String> {
+    use crate::infrastructure::auth::credential_store::{
+        AuthMethod, Credential, RefreshLeaseOutcome,
+    };
+
     match refresh_result {
         Ok(token_resp) => {
             let expires_at = expires_at_with_margin(token_resp.expires_in);
@@ -317,28 +325,34 @@ fn persist_refreshed_token(
             };
             let effective_refresh = token_resp
                 .refresh_token
-                .unwrap_or_else(|| previous_refresh_token.to_string());
-            let new_cred = Credential {
+                .or_else(|| lease.credential().refresh_token.clone());
+            let Some(effective_refresh) = effective_refresh else {
+                tracing::warn!("OAuth refresh response omitted refresh token for {}", provider);
+                return None;
+            };
+            let refreshed = Credential {
                 provider: provider.to_string(),
-                token: token_resp.access_token.clone(),
-                method: crate::infrastructure::auth::credential_store::AuthMethod::OAuth,
+                token: token_resp.access_token,
+                method: AuthMethod::OAuth,
                 expires_at: Some(expires_at),
                 refresh_token: Some(effective_refresh),
                 account_id,
             };
-            // Rotation-aware persist: if another agent process refreshed
-            // concurrently (its rotated refresh token is already on disk),
-            // keep its credential instead of overwriting it (#1460 review).
-            match store.store_refreshed(new_cred, previous_refresh_token) {
-                Ok(authoritative) => Some(authoritative.token),
-                Err(e) => {
-                    tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
-                    Some(token_resp.access_token)
+            match lease.commit(refreshed) {
+                Ok(RefreshLeaseOutcome::Committed(credential))
+                | Ok(RefreshLeaseOutcome::Superseded(credential)) => Some(credential.token),
+                Ok(RefreshLeaseOutcome::Revoked) => {
+                    tracing::warn!("OAuth credential revoked during refresh for {}", provider);
+                    None
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to persist refreshed token for {}", provider);
+                    None
                 }
             }
         }
-        Err(e) => {
-            tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to refresh OAuth token for {}", provider);
             None
         }
     }
@@ -384,19 +398,23 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
         let provider_name = provider_name.to_string();
         let store = store.clone();
         Box::pin(async move {
-            let creds = store.load_snapshot().unwrap_or_default();
-            let cred = creds.get(&provider_name).ok_or_else(|| {
-                crate::domain::error::DomainError::Provider(format!(
-                    "no credential found for {}",
-                    provider_name
-                ))
-            })?;
-            let refresh_token = cred.refresh_token.as_ref().ok_or_else(|| {
-                crate::domain::error::DomainError::Provider(format!(
-                    "no refresh token for {}",
-                    provider_name
-                ))
-            })?;
+            let lease = store
+                .begin_refresh(&provider_name)?
+                .ok_or_else(|| {
+                    let creds = store.load_snapshot().unwrap_or_default();
+                    if creds.get(&provider_name).is_none() {
+                        crate::domain::error::DomainError::Provider(format!(
+                            "no credential found for {}",
+                            provider_name
+                        ))
+                    } else {
+                        crate::domain::error::DomainError::Provider(format!(
+                            "no refresh token for {}",
+                            provider_name
+                        ))
+                    }
+                })?;
+            let refresh_token = lease.credential().refresh_token.as_deref().unwrap_or("");
             let oauth_config =
                 crate::infrastructure::auth::oauth::OAuthConfig::for_provider(&provider_name)
                     .ok_or_else(|| {
@@ -430,14 +448,13 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
                 }
             };
 
-            let token =
-                persist_refreshed_token(&store, &provider_name, refresh_token, refresh_result)
-                    .ok_or_else(|| {
-                        crate::domain::error::DomainError::Provider(format!(
-                            "failed to refresh token for {}",
-                            provider_name
-                        ))
-                    })?;
+            let token = persist_refreshed_token_with_lease(lease, &provider_name, refresh_result)
+                .ok_or_else(|| {
+                    crate::domain::error::DomainError::Provider(format!(
+                        "failed to refresh token for {}",
+                        provider_name
+                    ))
+                })?;
 
             // Best-effort: push the refreshed credentials back to the runtime
             // manager so the shared Secret (and therefore newly spawned pods)

@@ -14,12 +14,14 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the inspect result"
-# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
-# only as a spelling of Podman, preventing accidental runtime substitution.
+# Every lifecycle operation performs the same affirmative local-rootless
+# preflight. Inspection must not silently become a host/Docker probe.
 [ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
 [ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do
@@ -35,8 +37,10 @@ done
 [ -n "$state_dir" ] || die "--state-dir is required"
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
 [ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
+# Affirmative environment-id allowlist: only runtime-minted path-safe IDs are
+# accepted before any retained state or runtime inspection is touched.
 case "$id" in
-*/* | *..*) die "invalid environment id: $id" ;;
+  *[!A-Za-z0-9_.-]*|.*|*-|*.) die "invalid environment id: $id" ;;
 esac
 env_dir="$state_dir/$id"
 [ -d "$env_dir" ] || die "unknown environment: $id"

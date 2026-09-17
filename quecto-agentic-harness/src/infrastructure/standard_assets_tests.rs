@@ -34,6 +34,59 @@ fn materialization_rejects_symlink_destination() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert!(!outside.path().join("Containerfile").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn materialization_rejects_symlink_parent_without_touching_target() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("standard-container")).unwrap();
+    symlink(outside.path(), root.path().join("standard-container/scripts")).unwrap();
+    let error = materialize_standard_assets(root.path()).unwrap_err();
+    assert!(matches!(error.raw_os_error(), Some(libc::ELOOP) | Some(libc::ENOTDIR)), "{error}");
+    assert!(!outside.path().join("runtime/create.sh").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn config_path_is_escaped_as_json_not_interpolated() {
+    let parent = tempfile::tempdir().unwrap();
+    let project = parent.path().join("project\"\\line\nfeed");
+    fs::create_dir(&project).unwrap();
+    let bundle = project.join(".quecto/containers");
+    materialize_standard_assets_for_root(&bundle, &project).unwrap();
+    let config = fs::read_to_string(bundle.join("standard-container/config.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&config).expect("expanded config remains JSON");
+    let create = parsed["container_configs"]["standard"]["create"][0].as_str().unwrap();
+    assert_eq!(create, format!("{}/scripts/runtime/create.sh", project.display()));
+    assert!(config.contains("\\\""), "quote must be escaped in JSON: {config}");
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_publishers_preserve_one_complete_asset_set() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let root = Arc::new(root);
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let root = Arc::clone(&root);
+        workers.push(std::thread::spawn(move || {
+            super::materialize_standard_assets(root.path()).unwrap()
+        }));
+    }
+    let created: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    assert_eq!(created.iter().map(Vec::len).sum::<usize>(), 6);
+    for asset in super::standard_assets() {
+        let path = root.path().join(asset.path);
+        assert!(path.is_file(), "missing published asset: {}", path.display());
+        assert_eq!(fs::read(path).unwrap().len(), if asset.path.ends_with("config.json") {
+            super::expanded_contents(asset, root.path()).unwrap().len()
+        } else { asset.contents.len() });
+    }
+}
+
 #[test]
 fn architecture_guard_rejects_unsafe_paths() {
     for path in ["", "/tmp/escape", "../escape", "a/../escape", "./file"] { assert!(super::safe_relative_path(path).is_err()); }

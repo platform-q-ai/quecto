@@ -22,7 +22,10 @@ command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
 [ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
-
+# Joins are lifecycle operations too: prove local rootless Podman before
+# touching retained environment state or starting a member.
+rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
 state_dir=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -69,6 +72,41 @@ for arg in "$@"; do
 done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
 
+# Sanitize a joining child's selected config into the create-time config
+# sidecar. Host paths are never passed through to podman exec; all joiners
+# receive the same deterministic read-only path as the creator.
+config_path=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in
+    --config) config_path="$arg" ;;
+  esac
+  case "$arg" in
+    --config=*) config_path="${arg#--config=}" ;;
+  esac
+  prev="$arg"
+done
+child_argv=("$@")
+config_mount_dir="/run/quecto/configs"
+if [ -n "$config_path" ]; then
+  [ -f "$config_path" ] || die "child --config $config_path does not exist"
+  jq -e . "$config_path" >/dev/null 2>&1 || die "child --config $config_path is not valid JSON"
+  config_source_dir="$env_dir/configs"
+  [ -d "$config_source_dir" ] || die "environment $id has no config sidecar"
+  config_file="$config_source_dir/join.json"
+  (umask 077 && jq -c . "$config_path" >"$config_file") || die "failed to sanitize child config"
+  chmod 600 "$config_file"
+  for ((i = 0; i < ${#child_argv[@]} - 1; i++)); do
+    if [ "${child_argv[i]}" = "--config" ]; then
+      child_argv[i+1]="$config_mount_dir/join.json"
+      break
+    fi
+    case "${child_argv[i]}" in
+      --config=*) child_argv[i]="--config=$config_mount_dir/join.json"; break ;;
+    esac
+  done
+fi
+
 workspace_path="$env_dir/workspace"
 workdir="$workspace_path/repo"
 [ -d "$workdir" ] || workdir="$workspace_path"
@@ -96,10 +134,10 @@ fi
 # session id (Podman may print an exec session id), so both branches discard stdout.
 if [ -f "$secret_env_file" ]; then
   "$cli" exec -d -w "$workdir" "${envs[@]}" \
-    "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
+    "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "${child_argv[@]}" >/dev/null
 else
   "$cli" exec -d -w "$workdir" "${envs[@]}" \
-    "$container" "$@" >/dev/null
+    "$container" "${child_argv[@]}" >/dev/null
 fi
 
 jq -cn --arg container "$container" --arg socket "$socket_path" \

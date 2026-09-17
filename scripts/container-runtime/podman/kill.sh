@@ -20,6 +20,10 @@ die() {
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
 [ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+# Stop and cleanup are lifecycle operations: revalidate local rootless Podman
+# before reading retained state or performing any destructive operation.
+rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
 
 state_dir=""
 op="kill"

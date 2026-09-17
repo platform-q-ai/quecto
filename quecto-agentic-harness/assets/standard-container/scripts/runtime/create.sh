@@ -85,6 +85,32 @@ approved_image="${QUECTO_PODMAN_APPROVED_IMAGE:-}"
 platform="${QUECTO_PODMAN_PLATFORM:-linux/$(uname -m)}"
 case "$platform" in linux/amd64|linux/arm64|linux/arm64/v8) ;; *) die "unsupported standard platform: $platform" ;; esac
 
+# A standard image is usable only with an operator-approved, immutable build
+# record. The record binds this exact image digest to the recipe, build
+# context, effective assets, and mount intent. Its hash is separately pinned
+# so replacing the record cannot widen policy.
+approval_record="${QUECTO_PODMAN_APPROVAL_RECORD:-}"
+[ -n "$approval_record" ] || die "standard runtime requires QUECTO_PODMAN_APPROVAL_RECORD"
+case "$approval_record" in /*) ;; *) die "approval record must be an absolute path" ;; esac
+[ -f "$approval_record" ] && [ ! -L "$approval_record" ] || die "approval record must be a regular file"
+[ -O "$approval_record" ] || die "approval record is not owned by the current user"
+approval_record_sha256="$(sha256sum "$approval_record" | awk '{print $1}')"
+approved_record_sha256="${QUECTO_PODMAN_APPROVED_RECORD_SHA256:-}"
+[ "$approval_record_sha256" = "$approved_record_sha256" ] || die "approval record hash is not approved"
+record_schema="$(jq -er '.schema' "$approval_record" 2>/dev/null)" || die "approval record is not valid JSON"
+[ "$record_schema" = "quecto.standard-image-approval.v1" ] || die "unsupported approval record schema"
+record_image="$(jq -er '.image_digest' "$approval_record" 2>/dev/null)" || die "approval record image_digest is missing"
+[ "$record_image" = "$image" ] || die "approval record image digest does not match requested image"
+for field in recipe context effective_assets mount_intent; do
+  jq -e --arg field "$field" '.[$field] | (type == "string" or type == "object" or type == "array")' "$approval_record" >/dev/null 2>&1 \
+    || die "approval record is missing $field"
+  hash_field="${field}_sha256"
+  expected="$(jq -cS --arg field "$field" '.[$field]' "$approval_record" | sha256sum | awk '{print $1}')"
+  actual="$(jq -er --arg field "$hash_field" '.[$field] | select(type == "string" and test("^[0-9a-fA-F]{64}$"))' "$approval_record" 2>/dev/null)" \
+    || die "approval record is missing valid $hash_field"
+  [ "$expected" = "$actual" ] || die "approval record $hash_field does not bind its $field"
+done
+
 # OAuth mediation is opt-in and must identify a dedicated, owner-controlled
 # credential directory. It is never inferred from the host home directory.
 oauth_store="${QUECTO_OAUTH_CREDENTIALS_DIR:-}"
@@ -116,6 +142,9 @@ for arg in "$@"; do
   --socket) socket_path="$arg" ;;
   --config) config_path="$arg" ;;
   esac
+  case "$arg" in
+  --config=*) config_path="${arg#--config=}" ;;
+  esac
   prev="$arg"
 done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
@@ -126,6 +155,7 @@ socket_dir="$(dirname "$socket_path")"
 # failed create would leak an unreported env dir forever.
 if [ -n "$config_path" ]; then
   [ -f "$config_path" ] || die "child --config $config_path does not exist"
+  jq -e . "$config_path" >/dev/null 2>&1 || die "child --config $config_path is not valid JSON"
 fi
 # Every die-able check precedes the environment mktemp below so a failed
 # create never leaks an unreported environment directory.
@@ -145,6 +175,27 @@ container="quecto-$environment_id"
 trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
 workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
+# Config is sanitized into the environment's pre-mounted sidecar. The child
+# never receives a host path (including a path below HOME); its argv is
+# rewritten to this deterministic, read-only container path.
+config_source_dir="$env_dir/configs"
+config_mount_dir="/run/quecto/configs"
+mkdir -m 700 "$config_source_dir"
+child_argv=("$@")
+if [ -n "$config_path" ]; then
+  config_file="$config_source_dir/create.json"
+  (umask 077 && jq -c . "$config_path" >"$config_file") || die "failed to sanitize child config"
+  chmod 600 "$config_file"
+  for ((i = 0; i < ${#child_argv[@]} - 1; i++)); do
+    if [ "${child_argv[i]}" = "--config" ]; then
+      child_argv[i+1]="$config_mount_dir/create.json"
+      break
+    fi
+    case "${child_argv[i]}" in
+      --config=*) child_argv[i]="--config=$config_mount_dir/create.json"; break ;;
+    esac
+  done
+fi
 # Private per-environment home prevents credential/config writes from reaching
 # the host and gives refresh coordination a dedicated state boundary.
 mkdir -m 700 "$env_dir/home"
@@ -181,6 +232,7 @@ mounts=(
   # HOME; OAuth state is mediated by an optional dedicated store rather than
   # exposing the host credential tree.
   -v "$env_dir/home:$HOME:rw"
+  -v "$config_source_dir:$config_mount_dir:ro"
 )
 if [ -n "$oauth_store" ]; then
   # Mount only the selected OAuth directory at a private, dedicated path;
@@ -189,9 +241,8 @@ if [ -n "$oauth_store" ]; then
   mounts+=(-v "$oauth_store:$oauth_mount:rw")
   envs_oauth=("-e" "QUECTO_OAUTH_CREDENTIALS_FILE=$oauth_mount/oauth-credentials.json")
 fi
-if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
-  mounts+=(-v "$config_path:$config_path:ro")
-fi
+# The host config path is deliberately never mounted: the normalized copy above
+# is the only configuration visible to the child.
 # Shared inference admission (#1679 P3): the authority's client directory is
 # identity-mounted so the child reaches the same private socket by path. The
 # capability is reported only when the mount is actually present; an
@@ -284,22 +335,37 @@ append_secret() {
   local value="$2"
   printf "export %s='%s'\n" "$1" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
 }
-for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY FIREWORKS_API_KEY; do
-  if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
+# Secrets are opt-in. The grant list is an explicit comma-separated allowlist;
+# without it no provider environment or host credential is copied into the box.
+secret_grants="${QUECTO_SECRET_GRANTS:-}"
+secret_grant_allowed() {
+  local wanted="$1" grant
+  IFS=',' read -r -a grants <<<"$secret_grants"
+  for grant in "${grants[@]}"; do
+    [ "$grant" = "$wanted" ] && return 0
+  done
+  return 1
+}
+IFS=',' read -r -a grants <<<"$secret_grants"
+for grant in "${grants[@]}"; do
+  case "$grant" in
+    ""|anthropic|ANTHROPIC_API_KEY|openai|OPENAI_API_KEY|openrouter|OPENROUTER_API_KEY|fireworks|FIREWORKS_API_KEY|github|GH_TOKEN|GITHUB_TOKEN) ;;
+    *) die "unknown QUECTO_SECRET_GRANTS entry: $grant" ;;
+  esac
 done
-# GitHub access for agents inside the environment (workflows need `gh` and
-# git-over-https pushes). A host keyring is unreachable from a container, so
-# the token is resolved host-side (`gh auth token`) and rides in via the same
-# 0600 secret file; git identity and the gh credential helper are non-secret
-# and travel as GIT_CONFIG_* env entries, so the host gitconfig (which may
-# carry LFS filters or keyring helpers the image lacks) is never mounted.
+for provider_and_key in anthropic:ANTHROPIC_API_KEY openai:OPENAI_API_KEY openrouter:OPENROUTER_API_KEY fireworks:FIREWORKS_API_KEY; do
+  provider="${provider_and_key%%:*}"
+  key="${provider_and_key#*:}"
+  if secret_grant_allowed "$provider" || secret_grant_allowed "$key"; then
+    if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
+  fi
+done
+# GitHub is explicit too. Never invoke `gh auth token`: that harvests an
+# ambient host credential not granted by the launch request.
 gh_token=""
-if command -v gh >/dev/null 2>&1; then
-  gh_token="$(gh auth token 2>/dev/null || true)"
-fi
-if [ -n "$gh_token" ]; then
-  append_secret GH_TOKEN "$gh_token"
-  append_secret GITHUB_TOKEN "$gh_token"
+if secret_grant_allowed github || secret_grant_allowed GH_TOKEN || secret_grant_allowed GITHUB_TOKEN; then
+  if [ -n "${GH_TOKEN:-}" ]; then gh_token="$GH_TOKEN"; append_secret GH_TOKEN "$GH_TOKEN"; fi
+  if [ -n "${GITHUB_TOKEN:-}" ]; then append_secret GITHUB_TOKEN "$GITHUB_TOKEN"; fi
 fi
 gcfg_i=0
 add_git_cfg() {
@@ -326,13 +392,13 @@ if [ -n "$secret_env_file" ]; then
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
-    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
+    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "${child_argv[@]}" >/dev/null
 else
   "$cli" run --pull=never --platform "$platform" -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
-    "$image" "$@" >/dev/null
+    "$image" "${child_argv[@]}" >/dev/null
 fi
 # ------------------------------------------------------------------------
 
@@ -356,7 +422,9 @@ jq -cn \
   --arg image "$image" \
   --arg container "$container" \
   --arg cli "$cli" \
+  --arg approval_record "$approval_record" \
+  --arg approval_record_sha256 "$approval_record_sha256" \
   --arg source "$source" \
   --arg repository "$repo" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, config_mount: $config_mount_dir, approval_record: $approval_record, approval_record_sha256: $approval_record_sha256, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

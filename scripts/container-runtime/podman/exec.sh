@@ -22,6 +22,10 @@ command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
 [ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+# Joins are lifecycle operations: revalidate the same local rootless engine
+# before touching retained state or starting a member.
+rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do

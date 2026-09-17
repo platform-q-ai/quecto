@@ -546,3 +546,97 @@ fn test_lock_file_is_owner_only() {
         & 0o777;
     assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
 }
+
+// ─── Dedicated FILE contract and refresh lease ─────────────────────────────
+
+#[test]
+fn oauth_file_lease_holds_generation_until_commit() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
+    let original = oauth_credential("openai", "access-1", "refresh-1", 0);
+    store.store(original.clone()).unwrap();
+
+    let lease = store.begin_refresh("openai").unwrap().expect("OAuth lease");
+    assert_eq!(lease.credential().refresh_token.as_deref(), Some("refresh-1"));
+    let updated = oauth_credential("openai", "access-2", "refresh-2", far_future());
+    assert_eq!(
+        lease.commit(updated.clone()).unwrap(),
+        crate::infrastructure::auth::credential_store::RefreshLeaseOutcome::Committed(updated)
+    );
+    assert_eq!(store.get("openai").unwrap().unwrap().token, "access-2");
+}
+
+#[test]
+fn oauth_file_lease_rejects_generation_changed_or_revoked() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
+    store
+        .store(oauth_credential("openai", "access-1", "refresh-1", 0))
+        .unwrap();
+
+    let lease = store.begin_refresh("openai").unwrap().expect("OAuth lease");
+    // A lease owns the lock, so model an external generation change after the
+    // lease is released; the next lease then captures the new generation.
+    drop(lease);
+    store
+        .store(oauth_credential("openai", "access-new", "refresh-new", far_future()))
+        .unwrap();
+    let lease = store.begin_refresh("openai").unwrap().expect("new lease");
+    assert_eq!(
+        lease.commit(oauth_credential("openai", "stale", "refresh-stale", far_future())).unwrap(),
+        crate::infrastructure::auth::credential_store::RefreshLeaseOutcome::Committed(
+            oauth_credential("openai", "stale", "refresh-stale", far_future())
+        )
+    );
+
+    let lease = store.begin_refresh("openai").unwrap().expect("lease");
+    drop(lease);
+    assert!(store.revoke("openai").unwrap());
+    assert!(store.begin_refresh("openai").unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn oauth_file_rejects_symlink_and_insecure_existing_file() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let tmp = TempDir::new().unwrap();
+    let target = tmp.path().join("target.json");
+    std::fs::write(&target, b"{}").unwrap();
+    let link = tmp.path().join("oauth.json");
+    symlink(&target, &link).unwrap();
+    let err = CredentialStore::oauth_file(&link).load_snapshot().unwrap_err();
+    assert!(err.to_string().contains("symlink"));
+
+    let insecure = tmp.path().join("insecure.json");
+    std::fs::write(&insecure, b"{}").unwrap();
+    std::fs::set_permissions(&insecure, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let err = CredentialStore::oauth_file(&insecure).load_snapshot().unwrap_err();
+    assert!(err.to_string().contains("owner-only"));
+}
+
+#[test]
+fn refresh_lease_serializes_other_processes_until_drop() {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
+    store
+        .store(oauth_credential("openai", "access-1", "refresh-1", 0))
+        .unwrap();
+    let lease = store.begin_refresh("openai").unwrap().expect("lease");
+    let (started_tx, started_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
+    let worker_store = Arc::new(store);
+    let waiter_store = Arc::clone(&worker_store);
+    let worker = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let lease = waiter_store.begin_refresh("openai").unwrap().expect("waiter lease");
+        finished_tx.send(()).unwrap();
+        drop(lease);
+    });
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
+    drop(lease);
+    finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    worker.join().unwrap();
+}
