@@ -638,8 +638,8 @@ fn mouse_global(world: &mut QuectoWorld) {
     let (y, line) = frame
         .lines()
         .enumerate()
-        .find(|(_, line)| line.contains("[Local] | Global"))
-        .expect("visible scope control");
+        .find(|(_, line)| line.contains("[Local]  Global"))
+        .unwrap_or_else(|| panic!("visible scope control in:\n{frame}"));
     let byte = line.find("Global").unwrap();
     let x = line[..byte].chars().count();
     drive(world, |h| {

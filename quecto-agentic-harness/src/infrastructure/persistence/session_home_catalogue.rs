@@ -252,8 +252,7 @@ impl FileSessionHomeCatalogue {
             return exact();
         };
         let Some(cached) = projection.get_mut(path) else {
-            // Unreachable by construction (the identity was just projected);
-            // observe exactly rather than publish nothing.
+            // Unreachable by construction (just projected): observe exactly.
             return exact();
         };
         let reusable = cached
@@ -381,6 +380,7 @@ fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
     }
     Ok(first)
 }
+/// A row without an entry (an exact fallback observation) is no mismatch.
 fn indexed_home_matches(
     records: &Records,
     identity: &SessionIdentity,
@@ -388,7 +388,7 @@ fn indexed_home_matches(
 ) -> bool {
     records
         .get(identity.runtime_key())
-        .is_some_and(|entry| match &entry.home {
+        .is_none_or(|entry| match &entry.home {
             Some(cached) => cached.scope.to_scope() == *home,
             None => true,
         })
