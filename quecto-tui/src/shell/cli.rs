@@ -2,6 +2,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+pub(crate) use super::agent_args::build_agent_args;
 pub(crate) use super::socket_path::validate_socket_path;
 #[cfg(test)]
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
@@ -235,43 +236,6 @@ async fn run_tui(flags: CliFlags) -> i32 {
     drop(child_watch);
 
     exit_code
-}
-
-pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
-    let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
-    if flags.persist {
-        args.push("--persist".to_string());
-    }
-    if flags.workflow {
-        args.push("--workflow".to_string());
-    }
-    if flags.workflow_disabled {
-        args.push("--no-workflow".to_string());
-    }
-    if flags.workflow_guards {
-        args.push("--workflow-guards".to_string());
-    }
-    if let Some(ref path) = flags.config_path {
-        args.push("--config".to_string());
-        args.push(path.to_string_lossy().to_string());
-    }
-    if let Some(ref prompt) = flags.system_prompt {
-        args.push("--system".to_string());
-        args.push(prompt.clone());
-    }
-    for tool in &flags.disable_tools {
-        args.push("--disable-tool".to_string());
-        args.push(tool.clone());
-    }
-    if let Some(ref model) = flags.model {
-        args.push("--model".to_string());
-        args.push(model.clone());
-    }
-    if let Some(ref effort) = flags.effort {
-        args.push("--effort".to_string());
-        args.push(effort.clone());
-    }
-    args
 }
 
 pub const AGENT_SOCKET_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);

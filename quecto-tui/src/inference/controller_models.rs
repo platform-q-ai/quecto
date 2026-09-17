@@ -138,6 +138,9 @@ impl App {
 #[path = "app_model_focus_1085_tests.rs"]
 mod app_model_focus_1085_tests;
 #[cfg(test)]
+#[path = "app_model_pin_tests.rs"]
+mod app_model_pin_tests;
+#[cfg(test)]
 #[path = "app_models_protocol_characterization_tests.rs"]
 mod app_models_protocol_characterization_tests;
 #[cfg(test)]
