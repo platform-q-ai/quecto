@@ -62,7 +62,7 @@ Feature: TUI app event routing and command behaviours
     And I accept the selected model
     Then a set model command is sent for "openai-api/gpt-5.6-luna" with persist "local"
     When the set model response reports the default persisted at "local" "/repo/.quecto/config.json"
-    Then the app notification includes "Model switched and pinned as this repo's default (/repo/.quecto/config.json)"
+    Then the app notification includes "Model switched and pinned as this repo's default (/repo/.quecto/config.json); live tool-policy overlays re-baseline next turn"
 
   @model-selector @issue-2024
   Scenario: A pin the harness refuses is reported with the remedy and no default is claimed

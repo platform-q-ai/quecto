@@ -172,14 +172,20 @@ pub struct PersistedDefault {
 
 impl PersistedDefault {
     /// The toast suffix: ` and pinned as this repo's default (<path>)` /
-    /// ` and pinned as the global default (<path>)`.
+    /// ` and pinned as the global default (<path>)`, closing with the one
+    /// consequence the user cannot see: a pin is a config edit, so the
+    /// harness re-applies the persisted tool policy on the next turn and
+    /// any live `set_tool_policy` overlay is re-baselined.
     pub fn describe(&self) -> String {
         let scope = match &*self.scope {
             "local" => "this repo's default",
             "global" => "the global default",
             other => other,
         };
-        format!(" and pinned as {scope} ({})", self.path)
+        format!(
+            " and pinned as {scope} ({}); live tool-policy overlays re-baseline next turn",
+            self.path
+        )
     }
 }
 

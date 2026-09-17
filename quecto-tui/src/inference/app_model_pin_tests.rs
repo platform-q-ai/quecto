@@ -55,7 +55,7 @@ async fn model_selector_tab_then_enter_sends_set_model_with_persist_and_the_toas
     let text = h.notification_messages().join("\n");
     assert!(
         text.contains(
-            "Model switched and pinned as this repo's default (/repo/.quecto/config.json)"
+            "Model switched and pinned as this repo's default (/repo/.quecto/config.json); live tool-policy overlays re-baseline next turn"
         ),
         "{text}"
     );

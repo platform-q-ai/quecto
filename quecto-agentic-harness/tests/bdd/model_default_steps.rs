@@ -81,7 +81,18 @@ fn given_sibling(world: &mut QuectoWorld, name: String) {
     std::fs::create_dir_all(sibling_dir(world)).expect("create sibling");
 }
 
-fn start_agent(world: &mut QuectoWorld, directory: PathBuf) {
+/// The explicit `--config` file of the scenario, beside the global one.
+fn explicit_config(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("explicit.json")
+}
+
+#[given(expr = "an explicit config file {string} copied from the global config file")]
+fn given_explicit_config(world: &mut QuectoWorld, name: String) {
+    assert_eq!(name, "explicit.json", "the explicit file is fixed by name");
+    std::fs::copy(global_config(world), explicit_config(world)).expect("copy the global config");
+}
+
+fn start_agent(world: &mut QuectoWorld, directory: PathBuf, explicit: Option<PathBuf>) {
     // A previous agent of the scenario is torn down first so its socket
     // and session are not what the next one attaches to.
     let started = world
@@ -99,6 +110,11 @@ fn start_agent(world: &mut QuectoWorld, directory: PathBuf) {
         .current_dir(&directory)
         .args(["agent", "--mode", "uds", "--no-session", "--socket"])
         .arg(&socket)
+        .args(
+            explicit
+                .iter()
+                .flat_map(|path| ["--config".as_ref(), path.as_os_str()]),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr)
@@ -139,13 +155,20 @@ fn start_agent(world: &mut QuectoWorld, directory: PathBuf) {
 #[when("a production UDS agent is started in the current directory")]
 fn when_start_in_cwd(world: &mut QuectoWorld) {
     let directory = cwd(world);
-    start_agent(world, directory);
+    start_agent(world, directory, None);
+}
+
+#[when("a production UDS agent is started in the current directory with that explicit config")]
+fn when_start_in_cwd_explicit(world: &mut QuectoWorld) {
+    let directory = cwd(world);
+    let explicit = explicit_config(world);
+    start_agent(world, directory, Some(explicit));
 }
 
 #[when("a production UDS agent is started in the sibling directory")]
 fn when_start_in_sibling(world: &mut QuectoWorld) {
     let directory = sibling_dir(world);
-    start_agent(world, directory);
+    start_agent(world, directory, None);
 }
 
 /// Send `command` and return the reply correlated by its id.
@@ -302,6 +325,29 @@ fn then_persisted_global(world: &mut QuectoWorld, scope: String, name: String) {
         expected.to_string_lossy().as_ref(),
         "{reply}"
     );
+}
+
+#[then(
+    expr = "the production agent's reply should report persisted scope {string} at the explicit config file"
+)]
+fn then_persisted_explicit(world: &mut QuectoWorld, scope: String) {
+    let expected = explicit_config(world);
+    let reply = last_reply(world);
+    assert_eq!(reply["data"]["persisted"]["scope"], scope, "{reply}");
+    assert_eq!(
+        reply["data"]["persisted"]["path"],
+        expected.to_string_lossy().as_ref(),
+        "{reply}"
+    );
+}
+
+#[then(expr = "the explicit config file should set {string} to {string}")]
+fn then_explicit_sets(world: &mut QuectoWorld, key_path: String, expected: String) {
+    let document = file_json(&explicit_config(world));
+    let value = key_path
+        .split('.')
+        .fold(&document, |current, segment| &current[segment]);
+    assert_eq!(value, &serde_json::Value::String(expected), "{document}");
 }
 
 #[then("the production agent's reply should report nothing persisted")]

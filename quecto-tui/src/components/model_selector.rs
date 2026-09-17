@@ -90,11 +90,13 @@ pub enum ModelDefaultAction {
     /// Switch this session only.
     #[default]
     Session,
-    /// Switch and record the model as this repository's default
-    /// (`./.quecto/config.json`).
+    /// Switch and record the model as this repository's default (the
+    /// repository overlay under the working directory).
     RepoDefault,
-    /// Switch and record the model as the global default
-    /// (`~/.quecto/config.json`).
+    /// Switch and record the model as the global default: the run's global
+    /// config, which is the `--config` file when the harness was started
+    /// with one. The TUI never names the file; the harness's reply does,
+    /// and the toast repeats it.
     GlobalDefault,
 }
 

@@ -236,7 +236,7 @@ fn persisted_default_parses_scope_and_path_and_describes_each_scope() {
     );
     assert_eq!(
         local.describe(),
-        " and pinned as this repo's default (/r/.quecto/config.json)"
+        " and pinned as this repo's default (/r/.quecto/config.json); live tool-policy overlays re-baseline next turn"
     );
     let global = parse_persisted_default(
         &serde_json::json!({"persisted": {"scope": "global", "path": "/h/.quecto/config.json"}}),
@@ -245,7 +245,7 @@ fn persisted_default_parses_scope_and_path_and_describes_each_scope() {
     .unwrap();
     assert_eq!(
         global.describe(),
-        " and pinned as the global default (/h/.quecto/config.json)"
+        " and pinned as the global default (/h/.quecto/config.json); live tool-policy overlays re-baseline next turn"
     );
 }
 

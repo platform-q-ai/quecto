@@ -58,6 +58,21 @@ Feature: Default model and effort per repository
     When a production UDS agent is started in the sibling directory
     Then the production agent's state should report model "openai-api/gpt-5.6-luna"
 
+  Scenario: Under an explicit --config, persist global writes that file and persist local is refused
+    Given an explicit config file "explicit.json" copied from the global config file
+    When a production UDS agent is started in the current directory with that explicit config
+    And the production agent is sent set_model "openai-api/gpt-5.6-luna" with persist "global"
+    Then the production agent's reply should succeed
+    And the production agent's reply should report persisted scope "global" at the explicit config file
+    And the explicit config file should set "agents.defaults.model" to "openai-api/gpt-5.6-luna"
+    And the global config file should be byte-identical to its previous content
+    And the production agent's state should report model "openai-api/gpt-5.6-luna"
+    When the production agent is sent set_effort "high" with persist "local"
+    Then the production agent's reply should fail
+    And the production agent's reply error should contain "no repo-local overlay"
+    And the current directory's ".quecto/config.json" should not exist
+    And the production agent's state should report effort "low"
+
   Scenario: set_effort with persist local writes the repository overlay
     When a production UDS agent is started in the current directory
     And the production agent is sent set_effort "high" with persist "local"
