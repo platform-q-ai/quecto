@@ -560,7 +560,8 @@ fn core_command_type_names() {
             id: None,
             model: Some("m".into()),
             provider: None,
-            model_id: None
+            model_id: None,
+            persist: None,
         }
         .type_name(),
         "set_model"

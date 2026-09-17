@@ -17,7 +17,9 @@ use crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
 use crate::infrastructure::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
+use crate::infrastructure::config::writer::defaults::ConfigDefaultsWriter;
 use crate::infrastructure::runtime_configuration::FileRuntimeConfiguration;
+use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
 use crate::interface::cli::catalogue_handles::{CatalogueHandles, RuntimeConfigurationInputs};
@@ -25,8 +27,9 @@ use crate::interface::cli::catalogue_handles::{CatalogueHandles, RuntimeConfigur
 /// The catalogue handles one loop holds, over the shared snapshot store of
 /// `base_dir`. With `runtime`, the reload use case watches the run's config
 /// file and `models.json` and rebuilds through the provider-runtime builder
-/// startup was injected with; without it (rigs, the `models` CLI) reload is
-/// unconfigured.
+/// startup was injected with, and `set_model`/`set_effort` can record a
+/// default into the run's config layers (#2024 S2); without it (rigs, the
+/// `models` CLI) reload is unconfigured and no default can be recorded.
 pub fn build_catalogue_handles(
     base_dir: &std::path::Path,
     runtime: Option<&RuntimeConfigurationInputs>,
@@ -36,14 +39,30 @@ pub fn build_catalogue_handles(
         inputs.clone(),
         snapshot_store_for(base_dir),
     ));
-    let effort = Arc::new(ChangeReasoningEffort::new(Arc::new(
-        PublishedEffortVocabulary::for_base_dir(base_dir),
-    )));
+    // One adapter serves both default-persistence ports: the record goes
+    // through the configuration capability's patch use case (never
+    // prompting — a session has no terminal to approve an overlay at).
+    let defaults = Arc::new(match runtime {
+        Some(runtime) => ConfigDefaultsWriter::new(
+            super::configuration::build_configuration_handles(&ConfigurationEnvironment {
+                base_dir: base_dir.to_path_buf(),
+                prompt_for_trust: false,
+            })
+            .patch,
+            runtime.selection.clone(),
+        ),
+        None => ConfigDefaultsWriter::unavailable(),
+    });
+    let effort = Arc::new(ChangeReasoningEffort::new(
+        Arc::new(PublishedEffortVocabulary::for_base_dir(base_dir)),
+        defaults.clone(),
+    ));
     let model = Arc::new(ChangeActiveModel::new(
         inputs,
         snapshot_store_for(base_dir),
         Arc::new(runtime_store_for(base_dir)),
         effort.clone(),
+        defaults,
     ));
     let refresh = Arc::new(RefreshCatalogueSources::new(
         Arc::new(FileRefreshInputs::new(base_dir)),

@@ -15,6 +15,7 @@ async fn set_effort_accepts_provider_vocabulary_and_rejects_invalid() {
                 AgentCommand::SetEffort {
                     id: Some("e1".into()),
                     effort: "xhigh".into(),
+                    persist: None,
                 },
                 &mut ctx,
             )
@@ -31,6 +32,7 @@ async fn set_effort_accepts_provider_vocabulary_and_rejects_invalid() {
                 AgentCommand::SetEffort {
                     id: Some("e2".into()),
                     effort: "none".into(),
+                    persist: None,
                 },
                 &mut ctx,
             )

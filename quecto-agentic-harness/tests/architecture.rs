@@ -422,6 +422,28 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "use_cases",
                     "ChangeReasoningEffort",
                 ] => true,
+                // The catalogue's default-persistence adapter (#2024 S2,
+                // `infrastructure/config/writer/defaults.rs`) records
+                // `agents.defaults.*` through the composed patch use case
+                // of the configuration capability — one write path, one
+                // set of guarantees — rather than a second patch cycle
+                // beside it. It holds the handle composition built and
+                // invokes it; the patch policy stays the use case's.
+                [
+                    "crate",
+                    "application",
+                    "configuration",
+                    "use_cases",
+                    "PatchConfiguration",
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "configuration",
+                    "dto",
+                    "ConfigLayer" | "ConfigPatch" | "ConfigSelection",
+                    ..,
+                ] => true,
                 [
                     "crate",
                     "application",
@@ -2563,6 +2585,28 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
                     "catalogue",
                     "use_cases",
                     "ChangeReasoningEffort",
+                ] => true,
+                // The catalogue's default-persistence adapter (#2024 S2,
+                // `infrastructure/config/writer/defaults.rs`) records
+                // `agents.defaults.*` through the composed patch use case
+                // of the configuration capability — one write path, one
+                // set of guarantees — rather than a second patch cycle
+                // beside it. It holds the handle composition built and
+                // invokes it; the patch policy stays the use case's.
+                [
+                    "crate",
+                    "application",
+                    "configuration",
+                    "use_cases",
+                    "PatchConfiguration",
+                ]
+                | [
+                    "crate",
+                    "application",
+                    "configuration",
+                    "dto",
+                    "ConfigLayer" | "ConfigPatch" | "ConfigSelection",
+                    ..,
                 ] => true,
                 [
                     "crate",

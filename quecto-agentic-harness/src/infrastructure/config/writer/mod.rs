@@ -3,8 +3,10 @@
 //! file, key order and unknown keys as the document carries them, a
 //! trailing newline) and atomically (tmp + fsync + rename through
 //! `atomic_write`). It serves the configuration capability's
-//! [`ConfigDocumentWriter`] port and the tool-policy persistence hook
-//! (`tool_policy`), which patches only `tools.policy.entries`.
+//! [`ConfigDocumentWriter`] port, the tool-policy persistence hook
+//! (`tool_policy`), which patches only `tools.policy.entries`, and the
+//! catalogue's default-persistence ports (`defaults`), which record
+//! `agents.defaults.model` / `effort` through the patch use case.
 //!
 //! A rename keeps a file whole but not an *update*: two patchers that read
 //! the same content both rename their own result in, and one's key is
@@ -23,6 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::application::configuration::ports::{ConfigDocumentWriter, DocumentLock};
 use crate::infrastructure::atomic_write::atomic_write;
 
+pub mod defaults;
 pub mod tool_policy;
 
 /// The mode a configuration file is created with: it may hold API keys.
