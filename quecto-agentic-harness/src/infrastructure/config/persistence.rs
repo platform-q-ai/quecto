@@ -4,10 +4,11 @@
 //! record under the quecto base directory. On a miss the adapter may ask
 //! an interactive user (stderr prompt, stdin answer) when composed to; the
 //! non-interactive path is `quecto config trust`, which records an
-//! approval through [`OverlayTrustStore::approve`].
-//!
-//! The record primitives are shared with the container-config overlay of
-//! `repo_local_container_config` (same JSON shape, separate file).
+//! approval through [`OverlayTrustStore::approve`]. Since #2024 S4a this
+//! one record also gates the `container_configs` an overlay contributes to
+//! container spawns; the retired `container-config-trust.json` of the
+//! former repo-local container mechanism is not read (its overlays are
+//! approved once more with `quecto config trust`).
 
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};

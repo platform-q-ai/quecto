@@ -199,6 +199,12 @@ pub struct AgentControlToolDeps {
     /// an explicit-model `effort` against; `None` in unit rigs.
     pub effort_control:
         Option<Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>>,
+    /// Composition's container-config selection (#2024 S4a): the spawn
+    /// tool's launch policy for `container: true`, over the launching
+    /// agent's checkout; `None` in unit rigs, which then refuse new
+    /// containers.
+    pub container_config_selection:
+        Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
 }
 
 pub struct AgentControlToolBuild {
@@ -235,6 +241,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path)
             .with_effort_control(deps.effort_control)
+            .with_container_config_selection(deps.container_config_selection)
             .with_owned_child_supervisor(deps.owned_child_supervisor)
             .with_harness_lifecycle(harness_lifecycle.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {

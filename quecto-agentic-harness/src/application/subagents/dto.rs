@@ -438,3 +438,143 @@ impl fmt::Display for FleetTeardownError {
 }
 
 impl std::error::Error for FleetTeardownError {}
+
+// ─── Container config selection at launch (#2024 S4a) ────────────────────────
+
+/// Where the container configs a launch selects from are read: the
+/// launching agent's own effective configuration (its base file with its
+/// checkout's trusted overlay merged in) or one explicit file the spawn
+/// call named, which replaces the layers as `--config` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerConfigSource {
+    LaunchingAgent,
+    Explicit(std::path::PathBuf),
+}
+
+/// One named container config as launch policy sees it: the argv sets a
+/// script-managed runtime runs, and whether `container: true` selects it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerLaunchConfig {
+    pub name: String,
+    pub default: bool,
+    pub create: Vec<String>,
+    pub cleanup: Vec<String>,
+    pub exec: Vec<String>,
+    pub kill: Vec<String>,
+    pub inspect: Vec<String>,
+}
+
+/// The container configs in effect for a source, sorted by name, and the
+/// layer diagnostics the configuration capability reported while
+/// resolving them (an untrusted or refused overlay that was not applied).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EffectiveContainerConfigSet {
+    pub configs: Vec<ContainerLaunchConfig>,
+    pub diagnostics: Vec<String>,
+}
+
+impl EffectiveContainerConfigSet {
+    /// The configured names, sorted.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.configs.iter().map(|c| c.name.clone()).collect();
+        names.sort_unstable();
+        names
+    }
+}
+
+/// Why the effective container configs of a source could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerConfigsError {
+    /// No launching-agent configuration was composed for this launcher and
+    /// the spawn call named no file.
+    NoSource,
+    /// The configuration could not be loaded or is invalid; the reason is
+    /// the configuration capability's own diagnostic, naming the file(s).
+    Invalid(String),
+}
+
+impl fmt::Display for ContainerConfigsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSource => {
+                f.write_str("container spawn requires --config so container_configs can be loaded")
+            }
+            Self::Invalid(reason) => f.write_str(reason),
+        }
+    }
+}
+
+impl std::error::Error for ContainerConfigsError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectContainerConfigRequest {
+    pub source: ContainerConfigSource,
+    /// `container_config: "<name>"`; `None` selects the labelled default.
+    pub name: Option<String>,
+}
+
+/// The config a new container launches with, and what the launcher should
+/// tell the operator about the layers it was read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedContainerConfig {
+    pub config: ContainerLaunchConfig,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectContainerConfigError {
+    /// The spawn call named a relative file: only an absolute, trusted
+    /// path may supply argv that this process will execute.
+    RelativeConfigPath(std::path::PathBuf),
+    Unavailable(ContainerConfigsError),
+    /// `container: true` with no entry labelled `"default": true`.
+    NoDefault {
+        available: Vec<String>,
+    },
+    Unknown {
+        name: String,
+        available: Vec<String>,
+    },
+    /// The selected entry cannot be run: `what` names the argv fault.
+    InvalidArgv {
+        name: String,
+        what: &'static str,
+    },
+}
+
+fn available(names: &[String]) -> String {
+    if names.is_empty() {
+        "none configured".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+impl fmt::Display for SelectContainerConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RelativeConfigPath(_) => {
+                f.write_str("container spawn requires an absolute trusted config path")
+            }
+            Self::Unavailable(error) => write!(f, "{error}"),
+            Self::NoDefault { available: names } => write!(
+                f,
+                "no container config is labeled \"default\": true (available container configs: {})",
+                available(names)
+            ),
+            Self::Unknown {
+                name,
+                available: names,
+            } => write!(
+                f,
+                "unknown container config '{name}' (available container configs: {})",
+                available(names)
+            ),
+            Self::InvalidArgv { what, .. } => {
+                write!(f, "invalid container_configs configuration: {what}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SelectContainerConfigError {}

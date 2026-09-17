@@ -205,6 +205,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         provider_runtime: None,
         tool_policy_persistence: None,
         configuration: None,
+        container_config_selection: None,
         stdin_is_tty: false,
         admission_context,
         parent_control,
@@ -369,6 +370,10 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: tool-policy persistence capability not composed\n");
         return None;
     };
+    let Some(build_container_config_selection) = flags.container_config_selection else {
+        stderr.push_str("agent: container-config selection capability not composed\n");
+        return None;
+    };
     if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
         return None;
     }
@@ -402,6 +407,10 @@ pub(crate) fn build_agent_from_config(
         provider_runtime: build_provider,
     };
     let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
+    // The spawn tool's container-config selection (#2024 S4a) is composed
+    // over this run's own selection: the working directory's trusted
+    // overlay, never the base directory, decides `container: true`.
+    let container_config_selection = build_container_config_selection(base_dir, selection);
     let ToolRegistryBuild {
         registry,
         retention,
@@ -421,6 +430,7 @@ pub(crate) fn build_agent_from_config(
         http_client: &http_client,
         web_fetch_tool,
         effort_control: catalogue.effort.clone(),
+        container_config_selection,
         flags,
         stderr,
         broadcast_tx,

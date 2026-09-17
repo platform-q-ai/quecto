@@ -22,6 +22,7 @@ fn bundled_native_registration_preserves_provider_ids() {
             swarm_context: None,
             parent_config_path: None,
             effort_control: None,
+            container_config_selection: None,
             owned_child_supervisor: std::sync::Arc::new(
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(
                 ),

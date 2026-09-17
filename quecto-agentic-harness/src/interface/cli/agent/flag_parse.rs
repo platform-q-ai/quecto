@@ -64,6 +64,10 @@ pub(crate) struct AgentFlags {
     /// Composition's configuration handles builder (#2024), from
     /// CliContext; the agent build resolves the effective config through it.
     pub(crate) configuration: Option<crate::interface::cli::ConfigurationHandlesBuilder>,
+    /// Composition's container-config selection builder (#2024 S4a), from
+    /// CliContext; the spawn tool selects container configs through it.
+    pub(crate) container_config_selection:
+        Option<crate::interface::cli::ContainerConfigSelectionBuilder>,
     /// Whether stdin is a terminal (from CliContext): the only case in which
     /// an unrecorded overlay may be offered for trust at startup.
     pub(crate) stdin_is_tty: bool,
@@ -89,6 +93,7 @@ impl AgentFlags {
         self.provider_runtime = ctx.provider_runtime;
         self.tool_policy_persistence = ctx.tool_policy_persistence;
         self.configuration = ctx.configuration;
+        self.container_config_selection = ctx.container_config_selection;
         self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }
 }

@@ -479,3 +479,23 @@ pub trait TeardownCompensation: Send + Sync {
     /// touches a live or in-flight row and never signals anything (#1938).
     fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<AgentUuid>>;
 }
+
+// ─── Container config selection at launch (#2024 S4a) ────────────────────────
+
+/// The container configs in effect for a launch, read from the
+/// configuration capability's *effective* configuration: for the launching
+/// agent, its base file with its checkout's trusted overlay merged in
+/// (entry-wise; an overlay default un-defaults the global entries); for an
+/// explicit file, that file alone. An untrusted or refused overlay is not
+/// applied and is reported in the set's diagnostics, never prompted for.
+/// Implemented by infrastructure over the configuration adapters;
+/// composition binds the launching agent's checkout.
+pub trait EffectiveContainerConfigs: Send + Sync {
+    fn effective_container_configs(
+        &self,
+        source: &crate::application::subagents::dto::ContainerConfigSource,
+    ) -> Result<
+        crate::application::subagents::dto::EffectiveContainerConfigSet,
+        crate::application::subagents::dto::ContainerConfigsError,
+    >;
+}

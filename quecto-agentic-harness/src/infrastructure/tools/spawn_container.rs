@@ -1,11 +1,14 @@
 use serde::Deserialize;
 use std::path::Path;
 
+use crate::application::subagents::dto::{
+    ContainerConfigSource, ContainerLaunchConfig, SelectContainerConfigRequest,
+};
+use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::subagent_launch::ParentEndpoint;
-use crate::infrastructure::config::{Config, ContainerConfig};
 use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
 };
@@ -49,11 +52,15 @@ fn require_admission_capability(
     }
 }
 
+/// `selection` is the composed container-config selection (#2024 S4a):
+/// launch policy over the launching agent's effective configuration for
+/// its checkout. A launcher composed without one refuses every new
+/// container before any script runs.
 pub(super) async fn spawn_prepared_child(
     config: &SubagentConfig,
     child: &ChildCommand<'_>,
     environments: &EnvironmentRegistry,
-    parent_config_path: Option<&Path>,
+    selection: Option<&SelectContainerConfig>,
 ) -> Result<PreparedChild, DomainError> {
     if child.swarm_context.is_some() && !matches!(config.container, ContainerSelection::Local) {
         return Err(DomainError::Tool("swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission".into()));
@@ -63,19 +70,45 @@ pub(super) async fn spawn_prepared_child(
         ContainerSelection::New {
             container_config, ..
         } => {
-            spawn_script_managed_child(
-                config,
-                child,
-                &load_container_config(config, parent_config_path, child.base_dir)?,
-                container_config,
-                environments,
-            )
-            .await
+            let selected = select_container_config(selection, config, container_config)?;
+            spawn_script_managed_child(config, child, &selected, environments).await
         }
         ContainerSelection::Existing { target } => {
             join_script_managed_child(child, environments, target).await
         }
     }
+}
+
+pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =
+    "container spawn requires a composed container-config selection; this launcher has none";
+
+/// The config a new container launches with: an explicit spawn `config`
+/// argument replaces the launching agent's layers (as `--config` does);
+/// otherwise the launching agent's own effective configuration — its base
+/// file with its checkout's trusted overlay — supplies the entries. The
+/// layer diagnostics (an untrusted or refused overlay that was not
+/// applied) reach the operator's stderr, as every other load reports them.
+fn select_container_config(
+    selection: Option<&SelectContainerConfig>,
+    config: &SubagentConfig,
+    name: &Option<String>,
+) -> Result<ContainerLaunchConfig, DomainError> {
+    let selection = selection
+        .ok_or_else(|| DomainError::Tool(NO_CONTAINER_CONFIG_SELECTION_COMPOSED.into()))?;
+    let source = match &config.config_path {
+        Some(path) => ContainerConfigSource::Explicit(path.clone()),
+        None => ContainerConfigSource::LaunchingAgent,
+    };
+    let selected = selection
+        .execute(&SelectContainerConfigRequest {
+            source,
+            name: name.clone(),
+        })
+        .map_err(|error| DomainError::Tool(error.to_string()))?;
+    if !selected.diagnostics.is_empty() {
+        eprintln!("{}", selected.diagnostics.join("\n"));
+    }
+    Ok(selected.config)
 }
 
 /// Join an existing committed environment (#1369 slice 2): resolve the target
@@ -322,85 +355,13 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     })
 }
 
-/// Resolve the trusted config file `container_configs` loads from: an explicit
-/// spawn `config` argument wins; without one the parent's own effective config
-/// path is used (#1369 follow-up), so `container: true` works without the
-/// caller hunting for the config location. Whichever path is chosen must be
-/// absolute — the trusted-path requirement is not relaxed by the fallback.
-fn container_config_load_error(e: crate::infrastructure::config::ConfigError) -> DomainError {
-    match e {
-        // ContainerConfigs errors already name the section — wrapping them
-        // again would stutter ("invalid container_configs configuration:
-        // invalid container_configs: ...").
-        e @ crate::infrastructure::config::ConfigError::ContainerConfigs(_) => {
-            DomainError::Tool(e.to_string())
-        }
-        e => DomainError::Tool(format!("invalid container_configs configuration: {e}")),
-    }
-}
-
-pub(super) fn load_container_config(
-    config: &SubagentConfig,
-    parent_config_path: Option<&Path>,
-    checkout: &Path,
-) -> Result<Config, DomainError> {
-    load_container_config_with_trust(config, parent_config_path, checkout, true)
-}
-
-pub(super) fn load_container_config_for_roster(
-    config: &SubagentConfig,
-    parent_config_path: Option<&Path>,
-    checkout: &Path,
-) -> Result<Config, DomainError> {
-    load_container_config_with_trust(config, parent_config_path, checkout, false)
-}
-
-fn load_container_config_with_trust(
-    config: &SubagentConfig,
-    parent_config_path: Option<&Path>,
-    checkout: &Path,
-    prompt_on_miss: bool,
-) -> Result<Config, DomainError> {
-    let cfg_path = config
-        .config_path
-        .as_deref()
-        .or(parent_config_path)
-        .ok_or_else(|| {
-            DomainError::Tool(
-                "container spawn requires --config so container_configs can be loaded".into(),
-            )
-        })?;
-    if !cfg_path.is_absolute() {
-        return Err(DomainError::Tool(
-            "container spawn requires an absolute trusted config path".into(),
-        ));
-    }
-    let global = Config::load(&cfg_path.to_string_lossy()).map_err(container_config_load_error)?;
-    let mut trust = if prompt_on_miss {
-        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::new()
-    } else {
-        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::read_only()
-    };
-    let effective = crate::infrastructure::repo_local_container_config::effective_container_configs_for_checkout(
-        global, checkout, &mut trust,
-    )
-    .map_err(container_config_load_error)?;
-    if !effective.diagnostics.is_empty() {
-        eprintln!("{}", effective.diagnostics.join("\n"));
-    }
-    Ok(effective.config)
-}
-
 async fn spawn_script_managed_child(
     config: &SubagentConfig,
     child: &ChildCommand<'_>,
-    cfg: &Config,
-    selected_config: &Option<String>,
+    container: &ContainerLaunchConfig,
     environments: &EnvironmentRegistry,
 ) -> Result<PreparedChild, DomainError> {
-    let config_name = container_config_name(selected_config, cfg)?;
-    let container = container_config(cfg, config_name)?;
-    validate_container_config(container)?;
+    let config_name = container.name.as_str();
     let environment_ref = environments.mint_ref();
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
@@ -555,59 +516,6 @@ fn parse_create_result(
     })
 }
 
-/// Sorted names of every configured container config, for error messages and
-/// the spawn tool's roster line: an agent that hits a selection error must be
-/// able to offer the real menu instead of dead-ending (#1410).
-pub(crate) fn container_config_names(cfg: &Config) -> Vec<String> {
-    let mut names: Vec<String> = cfg.container_configs.keys().cloned().collect();
-    names.sort_unstable();
-    names
-}
-
-fn enumerate_names(cfg: &Config) -> String {
-    let names = container_config_names(cfg);
-    if names.is_empty() {
-        "none configured".to_string()
-    } else {
-        names.join(", ")
-    }
-}
-
-fn container_config_name<'a>(
-    selected: &'a Option<String>,
-    cfg: &'a Config,
-) -> Result<&'a str, DomainError> {
-    if let Some(name) = selected.as_deref() {
-        return Ok(name);
-    }
-    // Config::load enforces exactly-one-default for non-empty maps, so the
-    // only way to arrive here without one is an empty map: container spawning
-    // was requested but no container configs are defined.
-    let mut defaults: Vec<&str> = cfg
-        .container_configs
-        .iter()
-        .filter(|(_, c)| c.default)
-        .map(|(name, _)| name.as_str())
-        .collect();
-    defaults.sort_unstable();
-    match defaults.as_slice() {
-        [only] => Ok(only),
-        _ => Err(DomainError::Tool(format!(
-            "no container config is labeled \"default\": true (available container configs: {})",
-            enumerate_names(cfg)
-        ))),
-    }
-}
-
-fn container_config<'a>(cfg: &'a Config, name: &str) -> Result<&'a ContainerConfig, DomainError> {
-    cfg.container_configs.get(name).ok_or_else(|| {
-        DomainError::Tool(format!(
-            "unknown container config '{name}' (available container configs: {})",
-            enumerate_names(cfg)
-        ))
-    })
-}
-
 /// The repository shown in listings and TUI chrome is whatever the create
 /// script truthfully reported in its result metadata (the config owns its
 /// source, #1410); sandbox configs report nothing and list as empty.
@@ -632,33 +540,6 @@ fn script_command(
     cmd.arg(binary);
     cmd.args(cli_args);
     cmd
-}
-
-fn validate_container_config(container: &ContainerConfig) -> Result<(), DomainError> {
-    if container.create.is_empty() {
-        return Err(DomainError::Tool(
-            "invalid container_configs configuration: missing create argv".into(),
-        ));
-    }
-    if container.cleanup.is_empty() {
-        return Err(DomainError::Tool(
-            "invalid container_configs configuration: missing cleanup argv".into(),
-        ));
-    }
-    if container
-        .create
-        .iter()
-        .chain(container.cleanup.iter())
-        .chain(container.exec.iter())
-        .chain(container.kill.iter())
-        .chain(container.inspect.iter())
-        .any(|s| unsafe_arg(s))
-    {
-        return Err(DomainError::Tool(
-            "invalid container_configs configuration: unsafe argv".into(),
-        ));
-    }
-    Ok(())
 }
 
 fn unsafe_arg(s: &str) -> bool {

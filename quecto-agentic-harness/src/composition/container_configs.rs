@@ -1,0 +1,94 @@
+//! Container config selection composition (#2024 S4a): the launch policy's
+//! `SelectContainerConfig` over the configuration capability's effective
+//! configuration for the launching agent's own selection — its base file
+//! with its *checkout's* trusted overlay merged in, never the quecto base
+//! directory — and, for a spawn call that names a file, that file alone.
+//! One overlay, one trust record: the loaders resolve through the same
+//! handles `quecto config get --effective` and the agent build use, with
+//! a never-prompting trust decision (a spawn runs on the dispatch loop,
+//! not a terminal), so an untrusted overlay travels as a diagnostic and
+//! `quecto config trust` is the one approval path.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+
+use crate::application::configuration::dto::ConfigSelection;
+use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::use_cases::SelectContainerConfig;
+use crate::infrastructure::config::container_configs::{
+    ContainerConfigsFromEffectiveConfig, ResolvedConfig,
+};
+use crate::interface::cli::configuration_handles::{
+    ConfigurationEnvironment, ConfigurationHandles,
+};
+
+/// The selection use case a launcher holds, over `launching_agent` (the
+/// launching agent's own configuration selection; `None` for a launcher
+/// composed without one) with trust recorded under `base_dir`.
+pub fn build_container_config_selection(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> Arc<SelectContainerConfig> {
+    Arc::new(SelectContainerConfig::new(
+        build_effective_container_configs(base_dir, launching_agent),
+    ))
+}
+
+/// The selection an agent run's spawn tool holds (#2024 S4a), over the
+/// run's own configuration selection — the layers the agent build
+/// resolved for its working directory — with trust under `base_dir`.
+/// `main` hands this builder to the CLI entry point; the agent build
+/// invokes it once beside the other capability builders.
+pub fn build_agent_container_config_selection(
+    base_dir: &Path,
+    selection: &ConfigSelection,
+) -> Arc<SelectContainerConfig> {
+    build_container_config_selection(base_dir, Some(selection.clone()))
+}
+
+/// The port adapter alone, for the contract suite.
+pub fn build_effective_container_configs(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> Arc<dyn EffectiveContainerConfigs> {
+    let handles = super::configuration::build_configuration_handles(&ConfigurationEnvironment {
+        base_dir: base_dir.to_path_buf(),
+        prompt_for_trust: false,
+    });
+    let launching_agent = launching_agent.map(|selection| {
+        let handles = handles.clone();
+        let loader: Arc<dyn Fn() -> Result<ResolvedConfig, String> + Send + Sync> =
+            Arc::new(move || resolve(&handles, &selection));
+        loader
+    });
+    let explicit: Arc<dyn Fn(&Path) -> Result<ResolvedConfig, String> + Send + Sync> =
+        Arc::new(move |path| resolve(&handles, &ConfigSelection::Explicit(path.to_path_buf())));
+    Arc::new(ContainerConfigsFromEffectiveConfig::new(
+        launching_agent,
+        explicit,
+    ))
+}
+
+/// The selection resolved and realized without environment overrides:
+/// `container_configs` has none, and a spawn must not depend on this
+/// process's `QUECTO_*` environment for the argv it executes.
+fn resolve(
+    handles: &ConfigurationHandles,
+    selection: &ConfigSelection,
+) -> Result<ResolvedConfig, String> {
+    let effective = handles
+        .resolve
+        .execute(selection)
+        .map_err(|error| error.to_string())?;
+    let diagnostics = effective.sources.diagnostics();
+    let config = (handles.realize)(effective.document, &HashMap::new())?;
+    Ok(ResolvedConfig {
+        config,
+        diagnostics,
+    })
+}
+
+#[cfg(test)]
+#[path = "container_configs_tests.rs"]
+mod tests;

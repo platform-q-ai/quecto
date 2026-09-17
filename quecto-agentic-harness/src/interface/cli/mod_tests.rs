@@ -34,6 +34,8 @@ fn test_composition() -> CliComposition {
         catalogue: crate::composition::catalogue::build_catalogue_handles,
         provider_runtime: crate::composition::runtime::build_agent_provider,
         tool_policy_persistence: crate::composition::tool_policy::build_tool_policy_persistence,
+        container_config_selection:
+            crate::composition::container_configs::build_agent_container_config_selection,
     }
 }
 

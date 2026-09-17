@@ -395,7 +395,12 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     // composition and only invoked here.
                     | "SettleDelegatedChild"
                     | "ChildSettlement"
-                    | "KillDelegatedAgent",
+                    | "KillDelegatedAgent"
+                    // The spawn tool (#2024 S4a) holds the composed
+                    // container-config selection and invokes it for every
+                    // new container; the config adapter implements its port
+                    // in the capability's launch vocabulary.
+                    | "SelectContainerConfig",
                     ..,
                 ]
                 | [
@@ -408,7 +413,12 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "CompensateFailedLaunchRequest"
                     | "FleetChildResult"
                     | "KillDelegatedAgentError"
-                    | "KillDelegatedAgentRequest",
+                    | "KillDelegatedAgentRequest"
+                    | "ContainerConfigSource"
+                    | "ContainerConfigsError"
+                    | "ContainerLaunchConfig"
+                    | "EffectiveContainerConfigSet"
+                    | "SelectContainerConfigRequest",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -2718,6 +2728,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     "OwnedChildTermination",
     "DelegatedAgentRegistry",
     "TeardownCompensation",
+    // Container config selection at launch (#2024 S4a): the launch
+    // policy's read of the configuration capability's effective container
+    // configs for the launching agent's checkout.
+    "EffectiveContainerConfigs",
 ];
 
 /// Application teardown code may name the domain, its own capability and

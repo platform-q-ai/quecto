@@ -200,13 +200,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         cli_args: &'b [std::ffi::OsString],
     ) -> LaunchFuture<'b, Result<Self::Prepared, DomainError>> {
         Box::pin(async move {
-            // The parent's own effective config (composition-plumbed CLI path,
-            // else the inherited runtime config) is the container-config
-            // fallback when the spawn call omits `config` (#1369 follow-up).
-            let parent_config = effective_config_path(
-                self.tool.parent_config_path.as_ref(),
-                inherited_runtime_config_path(),
-            );
             // Admission-enabled parents register the descendant before launch
             // and hand it the capability through a private sidecar (#1679 P3).
             let admission = crate::infrastructure::admission::process::current();
@@ -253,7 +246,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     admission_dir: admission_dir.as_deref(),
                 },
                 &self.tool.environment_registry,
-                parent_config.as_deref(),
+                self.tool.container_config_selection.as_deref(),
             )
             .await;
             if prepared.is_err() {

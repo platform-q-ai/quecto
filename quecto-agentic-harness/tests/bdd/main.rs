@@ -472,10 +472,6 @@ pub struct QuectoWorld {
     pub agent_cmd_last_command: Option<Arc<Mutex<String>>>,
     pub script_invocations: Arc<Mutex<Vec<serde_json::Value>>>,
     pub script_cleanup_targets: Arc<Mutex<Vec<String>>>,
-    /// Set by @serial scenarios that export QUECTO_RUNTIME_CONFIG_PATH so the
-    /// per-scenario Drop clears the process-wide var instead of leaking it
-    /// into later scenarios in the same bdd process.
-    pub restore_inherited_runtime_config: bool,
     /// Subagent spawn config for subagent scenarios
     pub subagent_config: Option<SubagentConfig>,
     /// Created subagent context
@@ -1425,6 +1421,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_discovery_steps;
 mod config_steps;
+mod container_mapping_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
 mod e2e_steps;
@@ -1789,10 +1786,6 @@ impl Drop for QuectoWorld {
                     .expect("run fixture process cleanup");
                 assert!(status.success(), "fixture process cleanup failed");
             }
-        }
-        if self.restore_inherited_runtime_config {
-            // SAFETY: the setting scenario is @serial and cucumber drops each world before the next serial scenario starts, so no concurrent env readers exist while the process-wide var is cleared.
-            unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };
         }
     }
 }
