@@ -86,6 +86,8 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
+| `--model <provider/model>` | Start the spawned agent (and every tab of this run) on this model, in memory only — nothing is written |
+| `--effort <level>` | Start the spawned agent on this reasoning-effort level, in memory only |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
 you can talk normally, then ask the model to select a workflow template when you
@@ -155,7 +157,7 @@ opens links natively, that help line is the single place to update first.
 
 | Command | Action |
 |---|---|
-| `/model` | Open the model selector |
+| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`) — the harness records it and the toast names the file |
 | `/model <name>` | Switch to a model directly |
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |

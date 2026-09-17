@@ -355,14 +355,17 @@ quecto config get agents.defaults.model            # one value, as JSON
 quecto config get --global tools.policy.entries    # one layer as written (--local for the overlay)
 quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes ./.quecto/config.json
 quecto config set --global agents.defaults.effort '"high"'       # writes ~/.quecto/config.json
+quecto config unset agents.defaults.model          # remove a key (--global for the global file)
 quecto config trust                                # approve ./.quecto/config.json's current content
 ```
 
 Values are JSON; a bare word that is not valid JSON is taken as a string, so
-`quecto config set agents.defaults.model gpt-5.5` reads naturally. `set`
-defaults to the repo-local overlay and refuses the global-only sections
-(`providers`, `admission`) there; it also refuses to patch an overlay whose
-current content is not trusted. See
+`quecto config set agents.defaults.model gpt-5.5` reads naturally. `set` and
+`unset` default to the repo-local overlay and refuse the global-only sections
+(`providers`, `admission`) there; they also refuse to patch an overlay whose
+current content is not trusted. `unset` of a key the layer does not set is an
+error naming the layer (setting a key to `null` in the overlay would override
+the global value, which is why removal is its own command). See
 [discovery and precedence](#configuration-discovery-and-precedence) for the
 merge rules and the writer's guarantees.
 
@@ -477,6 +480,23 @@ only on the touched line. A refused value leaves the file byte-identical.
 `set_tool_policy … persist` writes through the same path into the base file;
 an entry the trusted overlay already defines is refused (it would be shadowed
 on the next reload) with the `quecto config set` command to run instead.
+
+**Default model and effort per repository (#2024 S2).** `agents.defaults.model`
+and `agents.defaults.effort` in the overlay pin what every agent started in
+that directory starts on — `quecto agent`, a `quecto-tui` tab, a spawned local
+child — while a sibling repository keeps the global default. Pin one with
+`quecto config set agents.defaults.model '"provider/model"'`, from a running
+session with `set_model … "persist":"local"` (`"global"` for the global file;
+the same for `set_effort`), or in `quecto-tui`'s `/model` selector (Tab cycles
+*use for this session* / *use and pin as this repo's default* / *use and pin as
+the global default*). Every path goes through the writer above and is refused
+with the session unchanged when the overlay is untrusted or a symbolic link,
+when the run has an explicit `--config`, or for a bare model id (only
+`provider/model` is recorded). Verify with
+`quecto config get --effective agents.defaults.model` and `quecto status`; roll
+back with `quecto config unset agents.defaults.model`. `quecto agent --model`
+/ `--effort` and `quecto-tui --model` / `--effort` choose for one run without
+writing anything.
 
 A running agent re-reads the base file and the overlay (and, while an
 overlay exists, the trust record) before the next turn, `set_model` or a

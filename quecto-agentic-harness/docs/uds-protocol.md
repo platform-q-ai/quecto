@@ -684,14 +684,21 @@ Switch the active model at runtime. The new model takes effect on the next promp
 | `model` | string | option A | Qualified model name, e.g. `"anthropic/claude-sonnet-4-6"` |
 | `provider` | string | option B | Provider name (used with `modelId`) |
 | `modelId` | string | option B | Model ID within the provider |
+| `persist` | `"local"` \| `"global"` | no | Also record the model as the configured default of that layer (#2024 S2): `"local"` writes `agents.defaults.model` in the repository overlay `<cwd>/.quecto/config.json` (created if absent, trust recorded), `"global"` in `<base_dir>/config.json`. Absent: the switch is in-memory, as before. |
 
 You must provide either `model` OR both `provider` + `modelId`. Providing neither (or empty strings) returns an error.
+
+**Persisting a default.** The record goes through the same safe writer as `quecto config set` (exclusive hold, the file and the merged configuration validated before a byte is written, only the addressed key changed, `providers`/`admission` never touched) and happens *before* the switch is applied, so a refused record leaves the session unchanged: `success: false` with the writer's reason and remedy (an untrusted overlay → `run \`quecto config trust\` first`; a symbolic link at the overlay; a run started with an explicit `--config`, which has no overlay; a run without a reloadable configuration). Only a qualified `provider/model` id is recorded — a bare id is refused for persistence (`select it as provider/model`) — and the id recorded is the qualified one the switch resolved, so `provider` + `modelId` persists as `provider/modelId`. Any other `persist` value is an error before anything happens. A persisted default is read at startup: every *new* agent started in that directory (local) or anywhere (global) starts on it; other running sessions keep the model they have (a reload rebuilds providers, it does not re-read the default model).
 
 **Model routing:**
 - **Qualified names** (`provider/model`): Routed to the matching provider. If no provider matches the prefix, prompts will fail with `"no configured provider matches model prefix 'X'"` — but the agent stays alive and you can switch to a valid model
 - **Bare names** (`model`): Sent to the first configured provider, which may not support the model
 
-**Response:** `success: true` on valid input, `success: false` with an error message on validation failure.
+**Response:** `success: true` on valid input, `success: false` with an error message on validation failure. With `persist`, the data carries where the default landed beside the selection verdict:
+
+```json
+{"selection":{"status":"ok","provider":"openai-api","generation":3},"persisted":{"scope":"local","path":"/work/app/.quecto/config.json"}}
+```
 
 > **Important:** `set_model` only swaps a string — it performs no validation against the provider. Errors surface on the next `prompt`.
 
@@ -705,6 +712,10 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 {"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-6"}
 ```
 
+```json
+{"type":"set_model","id":"sm-3","model":"openai-api/gpt-5.6-luna","persist":"local"}
+```
+
 ---
 
 ### `set_effort`
@@ -716,6 +727,7 @@ Switch the session reasoning-effort level at runtime (#1067). Applied to every s
 | `type` | `"set_effort"` | yes | |
 | `id` | string | no | Correlation ID |
 | `effort` | string | yes | Effort level string |
+| `persist` | `"local"` \| `"global"` | no | Also record the level as `agents.defaults.effort` of that configuration layer (#2024 S2), with the same writer, ordering and refusals as `set_model`'s `persist`. The level is validated against the active model first; a refused record leaves the session unchanged. |
 
 **Response data (success):**
 
@@ -723,7 +735,9 @@ Switch the session reasoning-effort level at runtime (#1067). Applied to every s
 {"effort": "high"}
 ```
 
-**Error:** `success: false` with a message listing the valid levels for the active model.
+With `persist`: `{"effort":"high","persisted":{"scope":"global","path":"/home/u/.quecto/config.json"}}`.
+
+**Error:** `success: false` with a message listing the valid levels for the active model, or the writer's reason when the record was refused.
 
 **Example:**
 
