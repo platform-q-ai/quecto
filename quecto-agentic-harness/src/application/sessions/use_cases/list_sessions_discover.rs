@@ -1,0 +1,125 @@
+//! Query-local catalogue projection and Git discovery cache for listing.
+//! Resume still admits under its claim; observations here are advisory
+//! and live for one query only.
+use std::collections::HashMap;
+
+use crate::application::sessions::dto::{ListSessionsResult, ListedSession, SessionListScope};
+use crate::application::sessions::session_home::SessionHomeContext;
+use crate::domain::session::SessionSummary;
+use crate::domain::session_home::{SessionHome, SessionHomeScope};
+use crate::domain::session_identity::SessionIdentity;
+
+/// Catalogue rows keyed by runtime key; `None` when authority is unavailable.
+type CatalogueRows = Option<HashMap<String, SessionHomeScope>>;
+
+pub(super) async fn discover(
+    home: Option<&SessionHomeContext>,
+    summaries: Vec<SessionSummary>,
+    scope: SessionListScope,
+) -> ListSessionsResult {
+    let mut result = ListSessionsResult {
+        sessions: Vec::new(),
+        diagnostics: Vec::new(),
+        rebuilt: false,
+    };
+    let current = current_home(home, &mut result.diagnostics).await;
+    let rows = catalogue_rows(home, &mut result).await;
+    // Query-local observations only: resume still performs fresh admission under
+    // its claim. Cache failures too, and reuse the current canonical observation.
+    let mut observations = seed_observations(home, current.as_ref());
+    for summary in summaries {
+        let home_scope = match &rows {
+            Some(rows) => match rows.get(&summary.key) {
+                Some(scope) => scope.clone(),
+                // A store-listed record the strict catalogue rejected (a crash-
+                // truncated transcript): the authority is read exactly, as
+                // admission reads it, so listing and resume agree; only an
+                // authority that cannot be read is unavailable here.
+                None => exact_home(home, &summary.identity, &mut result.diagnostics),
+            },
+            None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
+        };
+        let local = matches!(
+            (&home_scope, &current),
+            (SessionHomeScope::Scoped(saved), Some(current)) if saved.group == current.group
+        );
+        if scope == SessionListScope::Global || local {
+            let resume_eligible =
+                resume_eligible(home, current.as_ref(), &home_scope, &mut observations).await;
+            result.sessions.push(ListedSession {
+                summary,
+                home: home_scope,
+                resume_eligible,
+            });
+        }
+    }
+    result
+}
+
+/// The exact, index-independent authority read of one record the derived
+/// catalogue has no row for.
+fn exact_home(
+    home: Option<&SessionHomeContext>,
+    identity: &SessionIdentity,
+    diagnostics: &mut Vec<String>,
+) -> SessionHomeScope {
+    let Some(context) = home else {
+        return SessionHomeScope::Unavailable("record not in catalogue".into());
+    };
+    match context.catalogue.read(identity) {
+        Ok(scope) => scope,
+        Err(error) => {
+            diagnostics.push(format!("record not in catalogue; home unreadable: {error}"));
+            SessionHomeScope::Unavailable("record not in catalogue".into())
+        }
+    }
+}
+
+async fn current_home(
+    home: Option<&SessionHomeContext>,
+    diagnostics: &mut Vec<String>,
+) -> Option<SessionHome> {
+    match home {
+        Some(context) => match context.current().await {
+            Ok(home) => Some(home),
+            Err(error) => {
+                diagnostics.push(error.to_string());
+                None
+            }
+        },
+        None => {
+            diagnostics.push("workspace discovery unavailable".into());
+            None
+        }
+    }
+}
+
+async fn catalogue_rows(
+    home: Option<&SessionHomeContext>,
+    result: &mut ListSessionsResult,
+) -> CatalogueRows {
+    match home {
+        Some(context) => match context.catalogue.list_async().await {
+            Ok(snapshot) => {
+                result.diagnostics.extend(snapshot.diagnostics);
+                result.rebuilt = snapshot.rebuilt;
+                Some(
+                    snapshot
+                        .entries
+                        .into_iter()
+                        .map(|(identity, home)| (identity.runtime_key().to_string(), home))
+                        .collect(),
+                )
+            }
+            Err(error) => {
+                result.diagnostics.push(error.to_string());
+                None
+            }
+        },
+        None => None,
+    }
+}
+
+#[path = "list_sessions_observations.rs"]
+mod list_sessions_observations;
+use list_sessions_observations::{resume_eligible, seed_observations};

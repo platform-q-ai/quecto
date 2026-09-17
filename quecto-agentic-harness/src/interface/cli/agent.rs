@@ -654,7 +654,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         system_prompt,
         socket_path,
         socket_override: None,
-        session_store_override: None,
         sessions,
         catalogue: build.catalogue,
         ext_registry: Some(build.ext_registry),

@@ -64,7 +64,7 @@ const TRANSACTION_OWNERS: &[(&str, &str, &str)] = &[
     (
         "ListSessions",
         "src/application/sessions/use_cases/list_sessions.rs",
-        "pub async fn execute(",
+        "pub async fn discover(",
     ),
     (
         "ReadHistory",
@@ -137,6 +137,15 @@ const TRANSACTION_OWNERS: &[(&str, &str, &str)] = &[
 /// exact: infrastructure adapters, the composition-side fleet adaptation,
 /// the application's own latch, and the two interface runtime adapters.
 pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
+    // #2009 capability-local ports retain one concrete adapter each.
+    (
+        "SessionHomeCatalogue",
+        &["src/infrastructure/persistence/session_home_catalogue.rs"],
+    ),
+    (
+        "WorkspaceDiscovery",
+        &["src/infrastructure/workspace/git_scope_discovery.rs"],
+    ),
     (
         "SessionStore",
         &["src/infrastructure/persistence/session_store.rs"],
@@ -191,19 +200,24 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
 /// the capability, composition, persistence, and the interface handle
 /// declarations the loop is composed over.
 const SESSION_STORE_HOLDERS: &[&str] = &[
+    // #2009 authority and derived catalogue share the composed store.
+    "src/infrastructure/persistence/session_home_catalogue.rs",
+    "src/infrastructure/persistence/session_store_home.rs",
     "src/application/sessions/ports.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/resume_saved_session.rs",
+    // #2009 admission holds the target's claim guard beside the owner.
+    "src/application/sessions/use_cases/resume_saved_session_admission.rs",
     "src/application/sessions/use_cases/save_session.rs",
+    // #2009 home acquisition runs on the save owner's existing path.
+    "src/application/sessions/use_cases/save_session_home.rs",
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/composition/active_session.rs",
+    // #2009 the home context is composed over the one file store.
+    "src/composition/session_home.rs",
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/session_store.rs",
-    // The dispatch test rig (a `cfg(test)`-declared module without the
-    // `_tests.rs` suffix) declares the store field of its env.
-    "src/interface/cli/uds_dispatch_test_env.rs",
-    "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 
@@ -458,10 +472,11 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     assert_eq!(
         handler_fns,
         set(&[
+            "src/interface/cli/uds_dispatch_session.rs::handle_list_sessions",
             "src/interface/cli/uds_dispatch_session.rs::handle_new_session",
             "src/interface/cli/uds_dispatch_session.rs::handle_resume_session",
         ]),
-        "the session handlers are exactly the two transition edges"
+        "the session handlers are exactly the discovery and two transition edges"
     );
 }
 

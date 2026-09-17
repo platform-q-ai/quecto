@@ -35,6 +35,7 @@ mod inference_admission_runtime_oauth;
 mod inference_admission_sse_observer;
 mod inference_admission_transport;
 mod issue_1193_completion;
+mod legacy_session_startup;
 mod repl_production;
 mod swarm_agent_loop;
 mod swarm_coordination;

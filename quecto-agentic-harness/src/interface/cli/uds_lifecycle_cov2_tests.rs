@@ -68,7 +68,6 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         system_prompt: "system".into(),
         socket_path,
         socket_override: None,
-        session_store_override: None,
         sessions: crate::composition::sessions::build_session_handles,
         catalogue: crate::composition::catalogue::build_catalogue_handles(base),
         ext_registry: None,

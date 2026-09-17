@@ -239,3 +239,21 @@ pub(super) async fn handle_rewind_to(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
+
+/// Discovery through the injected handle, never a store; wire scope mapped here.
+pub(super) async fn handle_list_sessions(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    scope: crate::interface::cli::protocol::SessionListScopeCommand,
+) {
+    let requested = crate::application::sessions::dto::SessionListScope::from(scope);
+    let event = match ctx.list_sessions.list(requested).await {
+        Ok(result) => {
+            let data = super::uds_dispatch_query::discovery_json(&result, scope);
+            AgentEvent::ok(id, type_name, Some(data))
+        }
+        Err(error) => AgentEvent::err(id, type_name, error.to_string()),
+    };
+    super::emit_response_or_frame_limit_error(ctx, id, type_name, event).await;
+}

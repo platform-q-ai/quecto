@@ -232,38 +232,65 @@ The system prompt (injected via `--system` flag) is preserved at `messages[0]`. 
 
 ### `list_sessions`
 
-Return every persisted session this UDS agent can resume, newest first. Owner: `ListSessions` (#1861, #1968).
+Discover persisted sessions, newest first. Owner: `ListSessions` (#1861,
+#1968, #2009). Listing is not authorization to restore a row.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"list_sessions"` | yes | |
 | `id` | string | no | Correlation ID |
+| `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
 
 **Response data:**
 
 ```json
 {
+  "scope": "local",
   "sessions": [
-    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000},
-    {"key":"cli:default","title":"(untitled)","messageCount":42,"updatedUnixSecs":1765920000,"updatedAt":1765920000}
-  ]
+    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000,"homeState":"scoped","executionPath":"/work/project","resumeEligible":true}
+  ],
+  "diagnostics": [],
+  "rebuilt": false
 }
 ```
 
-| Field | Type | Description |
+| Row field | Type | Description |
 |---|---|---|
-| `key` | string | The session key, passed as is to `resume_session` |
-| `title` | string | The session's first user message, trimmed and truncated for display; `(untitled)` when there is none |
+| `key` | string | Stable opaque identity, passed unchanged to `resume_session` |
+| `title` | string | First user message, bounded for display; `(untitled)` when absent |
 | `messageCount` | integer | Persisted user/assistant messages |
 | `updatedUnixSecs` | integer \| null | Last modification time in Unix seconds |
-| `updatedAt` | integer \| null | Same value as `updatedUnixSecs` (retained alias) |
+| `updatedAt` | integer \| null | Retained alias of `updatedUnixSecs` |
+| `homeState` | string | `scoped`, `legacy_unscoped`, or `unavailable` |
+| `executionPath` | string \| null | Safely rendered execution directory, not a shell command |
+| `resumeEligible` | boolean | Advisory same-execution-directory admission; resume rechecks authority |
 
-Both `chat-…` user-chat sessions and `cli:<name>` named sessions are listed; records that cannot be read or summarised are skipped rather than failing the list.
+Local scope groups the nearest Git repository and related worktrees using Git
+facts and canonical paths. Outside Git it matches the canonical exact folder.
+Grouped worktrees can have different execution directories and are not thereby
+eligible for restore. Global lists all saved identities, including legacy
+unassociated and unavailable-home records. Metadata search is not part of this
+slice. Malformed records and discovery/catalogue failures produce diagnostics;
+one bad record does not hide valid siblings. A malformed record's diagnostic
+names its file so it can be repaired, e.g.
+`cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6`. `rebuilt` reports derived catalogue
+recovery — an unreadable or version-incompatible index, with a diagnostic — not
+transcript modification: an absent index (first use) is built silently and an
+index superseded by newer authority (a routine autosave) is refreshed silently.
+The index (`home.catalogue`, version 2) records per-file stamps, home
+observations and listing summaries, never transcript content or digests: a
+process seeds from it and reads only records whose stamp changed, so the first
+`list_sessions` of a new harness process over a large, unchanged directory
+costs one `stat` per file (an index of the previous version is rebuilt once,
+reported as `rebuilt`). Exact-key resume does not rely on the catalogue.
 
-**Example:**
+The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
+Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse
+selects, and Escape cancels. Ctrl+G retains its existing global behavior.
+Cross-folder actions are unavailable until their implementing slices ship.
 
 ```json
-{"type":"list_sessions","id":"ls-1"}
+{"type":"list_sessions","id":"ls-1","scope":"global"}
 ```
 
 ---
@@ -284,6 +311,7 @@ Switch the active UDS conversation to a persisted session. The current session i
 - Invalid targets are rejected with `"session name must contain only alphanumeric, '-', or '_'"` (the same rules as `quecto agent --session`; no other prefix is admitted)
 - Missing sessions return `success: false` with `"session not found: <name>"`; a key another live harness holds open is refused with the ownership error. Every refusal keeps the current conversation in place. Known (#1995, open): when the missing or unloadable target *is* the key the loop already stands for, releasing the claim just taken also releases the loop's own claim on that key
 - Ephemeral loops (`--no-session`) refuse with `"cannot resume sessions in ephemeral mode"`
+- **Scope admission (#2009):** after the claim, the target's saved home is re-read and re-observed and refused with `"session resume unavailable: <disposition>; Cancel (open/fork/locate are unavailable)"` when it does not admit — a legacy record without a home (`legacy session requires explicit first association (unavailable)`), a session saved in another execution directory, a grouped worktree included (`session belongs to a different execution directory`), the same directory whose workspace group changed since the save (`session directory's workspace changed since it was saved (unavailable)`), or a home/workspace that cannot be observed (`session home or workspace is unavailable and needs validation or repair`). The claim taken on the target is released; the current conversation, identity and ownership are preserved. The startup open of the loop's own session applies the same rule, worded for the command line: `session '<key>' cannot start here: ...` names the composed key and the way out (`-s <name>`, `--no-session`; the transcript stays visible in the Global list; explicit association is #2014) and exits 1 — see `sessions.md`
 - Resuming the key the loop already stands for reloads it from disk in place: the key is unchanged (on success no departing key is released), the history and workflow run are restored from the record, and usage statistics restart; see the #1995 note above for the not-found path
 - **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, no child row re-created or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
 

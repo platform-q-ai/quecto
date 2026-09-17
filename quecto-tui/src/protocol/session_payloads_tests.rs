@@ -295,3 +295,16 @@ fn resumed_messages_skip_subagent_notes() {
         "the injected sub-agent note must not resume as a user message"
     );
 }
+
+#[test]
+fn discovery_metadata_is_safe_and_missing_admission_fails_closed() {
+    let rows = parse_resume_sessions(&json!({"sessions":[
+        {"key":"opaque", "title":"hello\u{1b}[31m", "executionPath":"/tmp/a\nother", "resumeEligible":true},
+        {"key":"legacy", "title":"old"}
+    ]}));
+    assert_eq!(rows[0].key, "opaque");
+    assert!(!rows[0].title.contains('\u{1b}'));
+    assert!(!rows[0].execution_dir.as_ref().unwrap().contains('\n'));
+    assert!(rows[0].resume_eligible);
+    assert!(!rows[1].resume_eligible);
+}

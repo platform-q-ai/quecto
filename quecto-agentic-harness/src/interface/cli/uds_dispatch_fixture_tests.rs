@@ -94,13 +94,16 @@ impl Fixture {
             self._tmp.path(),
             &self.session_key,
         );
-        inputs.store = Some(self.store.clone());
         inputs.ephemeral = self.ephemeral;
         inputs.system_prompt = self.system_prompt.clone();
         inputs.spill_store = self.spill_store.clone();
         inputs.durable_prefix = self.latch.clone();
         inputs.subagent_registry = self.subagent_registry.clone();
-        self.sessions = crate::composition::sessions::build_session_handles(inputs);
+        self.sessions =
+            crate::interface::cli::uds::dispatch_session_roster_tests::composed_sessions_over(
+                self.store.clone(),
+                inputs,
+            );
         self.sessions
             .active_session
             .try_write()

@@ -391,6 +391,8 @@ async fn explicit_detach_clears_killing_intent_and_session_switch_resets_it() {
         SubagentEntry::new("/tmp/live.sock".into(), 123),
     );
     fx.set_subagent_registry(registry);
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, "cli:another")
+        .await;
     fx.store
         .save(&crate::domain::session::Session {
             key: crate::domain::session_identity::SessionIdentity::from_persisted_key(

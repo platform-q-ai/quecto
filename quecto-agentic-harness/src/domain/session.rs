@@ -29,6 +29,9 @@ pub fn user_chat_key(secs: u64, uniq: u64) -> String {
 pub struct SessionSummary {
     /// Unique key, e.g. "cli:default".
     pub key: String,
+    /// The same key as the opaque identity the store listed it under, so
+    /// consumers address the record exactly without re-parsing `key`.
+    pub identity: SessionIdentity,
     /// Raw title datum — the session's first user message, trimmed (empty when
     /// none). Presentation (truncation, "(untitled)") is applied by the display
     /// layer, not by persistence.

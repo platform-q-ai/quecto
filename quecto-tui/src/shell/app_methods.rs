@@ -3,10 +3,7 @@ pub(super) use super::app_render_helpers::{
 };
 use super::app_selection::apply_selection_highlight;
 use super::*;
-use crate::components::select_list::route_overlay_key;
-use crate::components::select_overlay::{
-    build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
-};
+use crate::components::select_overlay::{build_rewind_selector_overlay, build_select_overlay};
 use crate::components::theme;
 use crate::protocol::session_payloads;
 use crate::shell::app_session_stats_text;
@@ -200,40 +197,15 @@ impl App {
         data: &serde_json::Value,
         manifest_path: &std::path::Path,
     ) {
-        let mut sessions = session_payloads::parse_resume_sessions(data);
-        // #1466 fix pass item 3: sessions, like workspaces, list most
-        // recently active first (unknown times sink to the bottom).
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
-        let empty_hint = if sessions.is_empty() {
-            if session_payloads::has_session_entries(data) {
-                Some("No resumable CLI sessions found.")
-            } else {
-                Some("No persisted sessions found.")
-            }
-        } else {
-            None
-        };
-        let session_items = sessions
-            .into_iter()
-            .map(|session| {
-                let when = session
-                    .updated_unix_secs
-                    .map(format_unix_minutes)
-                    .unwrap_or_else(|| "unknown time".to_string());
-                SelectItem {
-                    value: format!("session:{}", session.key),
-                    label: session.title,
-                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
-                }
-            })
-            .collect::<Vec<_>>();
-        self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
-    }
-
-    pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
-            self.apply_resume_selection(&choice);
-        }
+        // Presentation coordination is the sessions feature's: rows, IDs,
+        // safe copy and the eligible allowlist come back projected.
+        let rows = crate::sessions::resume_rows::ResumeRows::project(
+            session_payloads::parse_resume_sessions(data),
+            session_payloads::has_session_entries(data),
+            format_unix_minutes,
+        );
+        self.ac_mut().sessions.eligible_keys = rows.eligible_keys;
+        self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
@@ -500,8 +472,7 @@ impl App {
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
-            let (selector_lines, overlay_width) =
-                build_resume_selector_overlay(selector, width, height);
+            let (selector_lines, overlay_width) = selector.render_overlay(width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.ac_mut().rewind.selector {

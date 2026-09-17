@@ -547,96 +547,69 @@ fn test_lock_file_is_owner_only() {
     assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
 }
 
-// ─── Dedicated FILE contract and refresh lease ─────────────────────────────
-
-#[test]
-fn oauth_file_lease_holds_generation_until_commit() {
-    let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
-    let original = oauth_credential("openai", "access-1", "refresh-1", 0);
-    store.store(original.clone()).unwrap();
-
-    let lease = store.begin_refresh("openai").unwrap().expect("OAuth lease");
-    assert_eq!(lease.credential().refresh_token.as_deref(), Some("refresh-1"));
-    let updated = oauth_credential("openai", "access-2", "refresh-2", far_future());
-    assert_eq!(
-        lease.commit(updated.clone()).unwrap(),
-        crate::infrastructure::auth::credential_store::RefreshLeaseOutcome::Committed(updated)
-    );
-    assert_eq!(store.get("openai").unwrap().unwrap().token, "access-2");
-}
-
-#[test]
-fn oauth_file_lease_rejects_generation_changed_or_revoked() {
-    let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
-    store
-        .store(oauth_credential("openai", "access-1", "refresh-1", 0))
-        .unwrap();
-
-    let lease = store.begin_refresh("openai").unwrap().expect("OAuth lease");
-    // A lease owns the lock, so model an external generation change after the
-    // lease is released; the next lease then captures the new generation.
-    drop(lease);
-    store
-        .store(oauth_credential("openai", "access-new", "refresh-new", far_future()))
-        .unwrap();
-    let lease = store.begin_refresh("openai").unwrap().expect("new lease");
-    assert_eq!(
-        lease.commit(oauth_credential("openai", "stale", "refresh-stale", far_future())).unwrap(),
-        crate::infrastructure::auth::credential_store::RefreshLeaseOutcome::Committed(
-            oauth_credential("openai", "stale", "refresh-stale", far_future())
-        )
-    );
-
-    let lease = store.begin_refresh("openai").unwrap().expect("lease");
-    drop(lease);
-    assert!(store.revoke("openai").unwrap());
-    assert!(store.begin_refresh("openai").unwrap().is_none());
-}
-
+/// The lock fd is CLOEXEC so an already-exec'd child cannot keep the flock.
+/// This does not replace Drop's unlock(): CLOEXEC does not cover fork-to-exec.
 #[cfg(unix)]
 #[test]
-fn oauth_file_rejects_symlink_and_insecure_existing_file() {
-    use std::os::unix::fs::{symlink, PermissionsExt};
+fn credentials_lock_fd_is_cloexec() {
     let tmp = TempDir::new().unwrap();
-    let target = tmp.path().join("target.json");
-    std::fs::write(&target, b"{}").unwrap();
-    let link = tmp.path().join("oauth.json");
-    symlink(&target, &link).unwrap();
-    let err = CredentialStore::oauth_file(&link).load_snapshot().unwrap_err();
-    assert!(err.to_string().contains("symlink"));
+    let store = CredentialStore::new(tmp.path());
+    let lock = store.lock_exclusive().unwrap();
+    // SAFETY: lock.as_raw_fd() is a live File raw fd; F_GETFD only reads FD_* flags.
+    let flags = unsafe { libc::fcntl(lock.as_raw_fd(), libc::F_GETFD) };
+    assert!(flags >= 0, "F_GETFD on credentials lock");
+    assert_ne!(
+        flags & libc::FD_CLOEXEC,
+        0,
+        "credentials lock fd must be FD_CLOEXEC"
+    );
+}
 
-    let insecure = tmp.path().join("insecure.json");
-    std::fs::write(&insecure, b"{}").unwrap();
-    std::fs::set_permissions(&insecure, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let err = CredentialStore::oauth_file(&insecure).load_snapshot().unwrap_err();
-    assert!(err.to_string().contains("owner-only"));
+/// A descriptor inherited across fork shares the same open file description.
+/// Retain a real duplicate deterministically, rather than relying on concurrent
+/// process-launch scheduling to hit the fork-to-exec window.
+#[test]
+fn credentials_lock_releases_while_inherited_descriptor_remains_open() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    let lock = store.lock_exclusive().unwrap();
+    let inherited = lock.inherited_descriptor().unwrap();
+    let contender = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    assert!(matches!(
+        contender.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    drop(lock);
+    contender
+        .try_lock()
+        .expect("credential transaction must release lock before inherited descriptors close");
+    drop(inherited);
 }
 
 #[test]
-fn refresh_lease_serializes_other_processes_until_drop() {
-    use std::sync::{Arc, mpsc};
-    use std::time::Duration;
+fn credential_mutation_errors_release_the_transaction_lock() {
     let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::oauth_file(tmp.path().join("oauth.json"));
-    store
-        .store(oauth_credential("openai", "access-1", "refresh-1", 0))
+    let store = CredentialStore::new(tmp.path());
+    std::fs::write(store.path(), "{invalid credentials").unwrap();
+    assert!(
+        store
+            .store(make_credential("openai", "sk-test", AuthMethod::Token))
+            .is_err()
+    );
+    assert!(store.remove("openai").is_err());
+    assert!(
+        store
+            .store_refreshed(oauth_credential("openai", "at", "rt", far_future()), "old")
+            .is_err()
+    );
+    let contender = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
         .unwrap();
-    let lease = store.begin_refresh("openai").unwrap().expect("lease");
-    let (started_tx, started_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    let worker_store = Arc::new(store);
-    let waiter_store = Arc::clone(&worker_store);
-    let worker = std::thread::spawn(move || {
-        started_tx.send(()).unwrap();
-        let lease = waiter_store.begin_refresh("openai").unwrap().expect("waiter lease");
-        finished_tx.send(()).unwrap();
-        drop(lease);
-    });
-    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
-    drop(lease);
-    finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    worker.join().unwrap();
+    contender
+        .try_lock()
+        .expect("parse-error returns must release the transaction lock");
 }

@@ -42,11 +42,25 @@ quecto agent --mode uds -s my-project
 quecto agent -m "hello"
 ```
 
-When the agent starts, it claims and loads the session from disk (if it
-exists; a key another live harness holds open is refused at startup). All
-messages are appended to the session during the run. The session is saved
+When the agent starts, it claims the session key (a key another live harness
+holds open is refused at startup) and, if a transcript exists, loads it —
+provided its saved home admits the current execution directory (#2009, below).
+All messages are appended to the session during the run. The session is saved
 after each prompt completes, at every session transition, on an explicit
-`persist_session`, and once more on the ordinary exit of the loop.
+`persist_session`, and once more on the ordinary exit of the loop. A session
+that exits with nothing to save leaves no transcript and no home sidecar.
+
+**Legacy records are refused at startup, not claimed and loaded.** A transcript
+saved before workspace scoping has no `.home`; because history is never
+associated with a folder implicitly, `quecto agent -m hello` over a pre-existing
+`cli:default`, or `-s <name>` over a pre-existing named session, exits 1 with
+`session '<key>' cannot start here: it predates workspace scoping and has no
+home ...`. The text names the way out — start under a new name with `-s <name>`,
+or run `--no-session` — and the old transcript is preserved untouched and stays
+visible, unassociated, in the Global list of `/resume`. Explicit association of
+a legacy session with a folder is a later slice (#2014). The same wording covers
+a session saved in another execution directory (start it from there, or start a
+new name) and a home that is unavailable or whose workspace changed.
 
 ### Ephemeral
 
@@ -115,7 +129,7 @@ the architecture tests refuse a use case the docs do not name.
 
 | Use case | Catalogue | Triggered by | Owns |
 |----------|-----------|--------------|------|
-| `ListSessions` | #1861 | `list_sessions` | the saved-session query over `SessionStore` (every record, newest first) |
+| `ListSessions` | #1861 | `list_sessions` | local/global discovery over saved summaries and authoritative home metadata, newest first |
 | `ReadHistory` | #1856 | `get_messages`, connect-time snapshot, child transcript forwarding | stable-id cursor selection and chronological paging of the live, published or persisted transcript |
 | `RecoverMessage` | #1858 | `get_message` | full-copy recovery of a possibly collapsed message (ledger, then retention store), content ranges, tool-call arguments |
 | `SynchronizeTranscript` | #1857 | `sync` (idle loop and busy reader) | epoch/revision reconciliation, reset-or-delta selection |
@@ -142,6 +156,8 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery |
+| `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
 | `SessionExportPort` | `infrastructure/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
@@ -154,6 +170,95 @@ Declared only under `src/application/sessions/ports.rs` and
 | `DelegatedChildrenRoster` | `infrastructure/tools/delegated_roster.rs` | live delegated rows and roster replacement |
 | `SessionKeyPropagation` | `interface/cli/uds_session_switch_runtime.rs` | the agent loop and its session-aware tools adopt the new identity |
 | `SessionSwitchRuntime` | `interface/cli/uds_session_switch_runtime.rs` | effort reset, workflow reset/restore |
+
+### Home authority and recovery (#2009)
+
+`FileSessionStore` stores versioned optional home authority alongside each global
+transcript as a `.home` sidecar. Ordinary full and delta transcript saves preserve
+existing authority bytes, including unsupported or corrupt metadata. Only a new
+persistent identity can receive its initial home; existing legacy records are not
+automatically associated. Ephemeral runs write neither transcripts nor homes.
+
+A home exists only with a transcript. The home is recorded before the first
+transcript write (so no home failure can cost a transcript), and a save that
+then commits nothing — the empty exit of a `-s` run or a TUI tab that never
+spoke — removes the sidecar with the record it never wrote. A sidecar found
+without a transcript at startup (a save that never committed, a transcript
+removed by hand) is an orphan: it is discarded under the key's claim and the
+session starts new, so a name is never locked to a directory with no history
+and a stale home is never inherited by the first transcript written under the
+key. A home beside a transcript is authority and is never touched by this rule.
+
+The derived `home.catalogue` is discardable. Listing validates it against
+authoritative records and rebuilds by atomic replacement: an unparseable or
+version-incompatible index is recovery, reported once as `rebuilt` with a
+diagnostic; an index that never existed (first use, a fresh install) is built
+silently, and an index superseded by newer authority (a routine autosave) is
+refreshed silently. A failed replacement returns valid discovered rows with
+diagnostics, not a transcript rewrite. Orphan home files without committed
+transcripts are not rows.
+
+The index (`version` 2) holds no transcript content beyond each record's
+listing title (its first user message, capped) and no content digests.
+Per record, keyed by persisted key, it carries the transcript's file *stamp*
+(device, inode, length, mode, mtime, ctime), the `.home` sidecar's stamp with
+the decoded home observation, and the listing summary (title, message count)
+the store's walk validated at that stamp. A process seeds its in-memory
+projection and summary cache from a well-formed index once, then walks the
+directory: one `stat` per file, and only a record whose stamp differs (or is
+new) is read and strictly validated again — the same rule the in-process cache
+always applied, so a transcript rewritten in place with its length and mtime
+restored (new ctime) or replaced by a new inode is re-read. A cold process
+over thousands of unchanged transcripts therefore lists in the time of the
+walk, not of reading every transcript. The index is rewritten only after a
+rebuild or when an entry changed. An entry is never trusted beyond its stamp:
+a doctored entry can at most misreport a home or title in the listing, and
+exact-key reads and resume admission read the `.home` sidecar, never the
+index, so no entry can make a session resume-eligible. A store-listed record the strict catalogue has no row
+for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
+exactly, as admission reads it, and eligibility follows the domain rule, so the
+user's most recent session stays Local and resumable after a crash and listing
+never disagrees with exact-key admission; only an authority that cannot be read
+at all is `Unavailable("record not in catalogue")`, with a diagnostic. Exact-key
+admission reads authority independently of catalogue health.
+
+The store's summary scan admits only regular `<sanitized key>.json` files whose
+recorded key names that very file: a hand-renamed record, a symlink into the
+sessions directory, an unreadable or invalid file, or a file replaced while it
+was being read is skipped — deliberately, so no alias or foreign file can pose
+as a session — and every skip is a `tracing::warn!` naming the path and the
+reason, so nothing vanishes from the list silently.
+
+**Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
+found on PATH (resolved once, spawned by absolute path off the async executor,
+with the ambient `GIT_DIR`/`GIT_WORK_TREE`/`GIT_CEILING_DIRECTORIES` and config
+cleared so only the requested directory defines the scope). Without a usable
+`git` the adapter fails closed: discovery is observably unavailable, a new
+identity is saved without a `.home` (legacy-unscoped) and no saved home admits,
+so nothing is guessed as local or eligible. Discovery that fails for a new
+identity (no Git on PATH, a mount boundary the parent walk stops at, an
+unreadable current directory) never costs a transcript: the record is saved
+without a `.home` — legacy-unscoped, visible in Global — and the failure is a
+diagnostic.
+
+Outside a repository the adapter also checks that no ancestor of the execution
+directory carries a `.git` marker, up to (and not beyond) the filesystem the
+directory lives on — the same boundary git's own parent walk stops at — so a
+repository above a mount point (a bind-mounted subdirectory, a container volume)
+does not turn "not a repository" into an unavailable discovery.
+
+`SessionHomeContext` is an application observation collaborator, not another
+query/save/restore owner. `ListSessions`, `SaveSession` and `ResumeSavedSession`
+retain those responsibilities; it is composed once per loop over the one file
+store (`composition/session_home.rs`) and is mandatory for resume, so admission
+is never fail-open. The one eligibility rule is the domain's
+`SessionHome::admission`: the saved authority re-observed unchanged at its own
+directory, which must be the current execution directory in the same group —
+`HomeChanged` when the directory's group changed since the save,
+`DifferentExecutionDirectory` otherwise (a grouped worktree included). Resume
+admission rechecks it after ownership admission for both explicit resume and
+startup; a discovery group is not permission to execute history in another
+directory.
 
 ### DTOs and the active session
 
@@ -219,15 +324,18 @@ uniq)`, and the total persistence round-trip `from_persisted_key`. It has no
 scope field, no variant, no path conversion and no workspace behaviour, and
 this epic adds none.
 
-The seam for folder/workspace-scoped sessions is exactly this identity plus
-one repository-layout adapter: every port operation is keyed by
-`SessionIdentity`, and the only code that turns an identity into a path is
-`FlatSessionLayout` in `src/infrastructure/persistence/session_layout.rs`.
-Scoping sessions to a workspace therefore becomes a change to the domain
-identity and to that one adapter — not to any use case, controller, handle or
-client. The scoping issue itself (#1966) is untouched, still on hold, and
-nothing here implements or anticipates its behaviour: no scope field, no
-workspace variant, no persistence migration, no compatibility period.
+Folder-aware discovery (#2009, parent #2001) keeps `SessionIdentity` opaque
+and retains `FlatSessionLayout` and the global transcript store. Home metadata
+is separate from identity: repository/worktree grouping controls discovery,
+not the permission to restore history in a different execution directory.
+Canonical exact-folder identity applies outside Git; the nearest repository
+wins inside Git. Legacy records without home metadata remain unassociated.
+Invalid or unsupported home metadata is unavailable, never legacy-unscoped.
+
+The first discovery slice excludes metadata search and executable cross-folder
+actions. Open-original, fork, locate and first association belong to later
+children of #2001; discovery must never silently substitute history reuse for
+an unavailable action.
 
 ## Context management
 

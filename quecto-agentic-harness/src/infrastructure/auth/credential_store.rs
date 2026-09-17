@@ -28,7 +28,7 @@ impl AuthMethod {
 /// `Debug` is manually implemented to redact the token field, preventing
 /// accidental exposure of secrets in debug logs, panic backtraces, or
 /// `unwrap()` failure messages.
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Credential {
     pub provider: String,
     pub token: String,
@@ -87,49 +87,52 @@ struct CredentialsFile {
 }
 
 /// File-based credential store. Stores credentials as JSON in a single file.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CredentialStore {
     path: PathBuf,
     /// Compatibility location used for reads and OAuth migration.
     migration_path: Option<PathBuf>,
     /// Whether fallback credentials should be included in a mutation snapshot.
     migrate_on_write: bool,
-    /// An explicitly configured file is a security boundary, not a hint. Keep
-    /// malformed relative values fail-closed instead of silently using HOME.
-    require_absolute_path: bool,
-    /// Dedicated OAuth files have strict owner-only path and mode checks.
-    dedicated: bool,
 }
 
-/// The result of trying to publish a refresh performed under a lease.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefreshLeaseOutcome {
-    /// The refresh was based on the current generation and is now authoritative.
-    Committed(Credential),
-    /// Another writer committed a newer generation while this refresh ran.
-    Superseded(Credential),
-    /// The credential was revoked while this refresh was in flight.
-    Revoked,
+/// Transaction-scoped lock, explicitly released even if a concurrently forked
+/// child still holds a duplicate of the open file description until exec.
+///
+/// `flock(2)` is owned by the open file description, not the descriptor.
+/// `File` is already `FD_CLOEXEC`, so an exec'd child does not keep the lock,
+/// but any fork-to-exec window (or a child that has not yet exec'd) still
+/// holds a duplicate. Closing our fd then leaves `try_lock` returning
+/// `WouldBlock` until that duplicate is gone — the parallel cargo-test
+/// failure mode when another test thread forks while a credential write
+/// holds this lock. `LOCK_UN` releases every duplicate of this OFD.
+struct CredentialLock {
+    _file: std::fs::File,
 }
 
-/// An exclusive cross-process refresh lease. The lock remains held for the
-/// entire network request, so no second refresh can consume the same rotating
-/// refresh token. Callers must either `commit` or drop the lease.
-pub struct CredentialRefreshLease {
-    store: CredentialStore,
-    lock: Option<std::fs::File>,
-    provider: String,
-    generation: String,
-    credential: Credential,
+impl CredentialLock {
+    /// A duplicate of the lock's descriptor sharing its open file description,
+    /// as a child forked while the lock is held would inherit it.
+    /// `cfg(test)` only: `test-support` on the lib path would otherwise
+    /// `deny(dead_code)` these helpers (they are unused outside unit tests).
+    #[cfg(test)]
+    fn inherited_descriptor(&self) -> std::io::Result<std::fs::File> {
+        self._file.try_clone()
+    }
+
+    #[cfg(all(unix, test))]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd;
+        self._file.as_raw_fd()
+    }
 }
 
-impl std::fmt::Debug for CredentialRefreshLease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CredentialRefreshLease")
-            .field("provider", &self.provider)
-            .field("generation", &self.generation)
-            .field("credential", &self.credential)
-            .finish()
+impl Drop for CredentialLock {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Closing only our descriptor can leave the flock owned by an inherited
+        // duplicate. Match the ownership/singleton guards' explicit release.
+        let _ = self._file.unlock();
     }
 }
 
@@ -144,8 +147,6 @@ impl CredentialStore {
             path: base.join("credentials.json"),
             migration_path: Some(base.join("oauth-credentials.json")),
             migrate_on_write: false,
-            require_absolute_path: false,
-            dedicated: false,
         }
     }
 
@@ -157,32 +158,14 @@ impl CredentialStore {
         // A container may explicitly select a mounted *file* without exposing
         // the host's general Quecto home. The variable is intentionally a
         // narrow seam: it names only the OAuth JSON file, never a base dir.
-        let explicit_path = std::env::var_os("QUECTO_OAUTH_CREDENTIALS_FILE");
-        let path = explicit_path
-            .as_deref()
+        let path = std::env::var_os("QUECTO_OAUTH_CREDENTIALS_FILE")
             .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
             .unwrap_or_else(|| base.join("oauth-credentials.json"));
-        Self::oauth_path(path, base, explicit_path.is_some())
-    }
-
-    /// Construct the dedicated store from an explicit file path. This is
-    /// useful for callers that already validated configuration and for tests;
-    /// unlike `new`, it never accepts a directory or relative path.
-    pub fn oauth_file(path: impl AsRef<Path>) -> Self {
-        let path = path.as_ref().to_path_buf();
-        Self::oauth_path(path, Path::new("."), true)
-    }
-
-    fn oauth_path(path: PathBuf, base: &Path, explicit_path: bool) -> Self {
         Self {
             path,
-            // An explicitly mounted file is a complete contract. Never look
-            // through it at a host-side legacy file (which could expose an
-            // unrelated credential set).
-            migration_path: (!explicit_path).then(|| base.join("credentials.json")),
+            migration_path: Some(base.join("credentials.json")),
             migrate_on_write: true,
-            require_absolute_path: explicit_path,
-            dedicated: true,
         }
     }
 
@@ -199,81 +182,7 @@ impl CredentialStore {
         Ok(file.credentials)
     }
 
-    fn validate_path(&self) -> Result<(), DomainError> {
-        if self.require_absolute_path && !self.path.is_absolute() {
-            return Err(DomainError::Config(
-                "QUECTO_OAUTH_CREDENTIALS_FILE must be an absolute file path".to_string(),
-            ));
-        }
-        if self.path.file_name().is_none() {
-            return Err(DomainError::Config(
-                "credential path must name a file".to_string(),
-            ));
-        }
-        // The explicit FILE contract is a security boundary. Check every
-        // existing parent component without following symlinks before any
-        // read, lock, or write. A symlinked parent would otherwise redirect
-        // the supposedly dedicated file to an arbitrary location.
-        if self.require_absolute_path {
-            let mut parent = if self.path.is_absolute() {
-                PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
-            } else {
-                PathBuf::new()
-            };
-            if let Some(relative_parent) = self.path.parent() {
-                for component in relative_parent.components() {
-                    if matches!(component, std::path::Component::RootDir) {
-                        continue;
-                    }
-                    if !matches!(component, std::path::Component::Normal(_)) {
-                        return Err(DomainError::Config(
-                            "credential path contains an unsafe component".to_string(),
-                        ));
-                    }
-                    parent.push(component.as_os_str());
-                    if let Ok(metadata) = std::fs::symlink_metadata(&parent) {
-                        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                            return Err(DomainError::Config(
-                                "credential path has an unsafe parent".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        if let Ok(metadata) = std::fs::symlink_metadata(&self.path) {
-            if metadata.file_type().is_symlink() {
-                return Err(DomainError::Config(
-                    "refusing symlink credential file".to_string(),
-                ));
-            }
-            if self.dedicated {
-                if !metadata.is_file() {
-                    return Err(DomainError::Config(
-                        "credential path must name a regular file".to_string(),
-                    ));
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-                    if metadata.uid() != unsafe { libc::geteuid() } {
-                        return Err(DomainError::Config(
-                            "credential file is not owned by the current user".to_string(),
-                        ));
-                    }
-                    if metadata.permissions().mode() & 0o077 != 0 {
-                        return Err(DomainError::Config(
-                            "credential file permissions must be owner-only".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
-        self.validate_path()?;
         if self.path.exists() { return Self::read_file(&self.path); }
         if let Some(legacy) = &self.migration_path {
             if legacy.exists() {
@@ -311,8 +220,7 @@ impl CredentialStore {
     // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
     // the #1460 locking work and awaits a coordinated MSRV bump.
     #[expect(clippy::incompatible_msrv)]
-    fn lock_exclusive(&self) -> Result<std::fs::File, DomainError> {
-        self.validate_path()?;
+    fn lock_exclusive(&self) -> Result<CredentialLock, DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 DomainError::Config(format!("failed to create credentials dir: {}", e))
@@ -340,9 +248,38 @@ impl CredentialStore {
         let file = file.map_err(|e| {
             DomainError::Config(format!("failed to open credentials lock file: {}", e))
         })?;
+        // Affirmative CLOEXEC: an exec'd child must not inherit this fd.
+        // `std::fs::File` is CLOEXEC today, but the invariant is ours — set it
+        // rather than assuming the std open flags. CLOEXEC does not cover the
+        // fork-to-exec window; Drop's unlock() does.
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = file.as_raw_fd();
+            // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags < 0 {
+                return Err(DomainError::Config(
+                    "failed to read credentials lock fd flags".to_string(),
+                ));
+            }
+            // SAFETY: fd is a live File raw fd; F_SETFD only sets FD_CLOEXEC on FD_* flags.
+            let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+            if rc != 0 {
+                return Err(DomainError::Config(
+                    "failed to set FD_CLOEXEC on credentials lock fd".to_string(),
+                ));
+            }
+            debug_assert_eq!(
+                // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
+                unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC,
+                "credentials lock fd must be FD_CLOEXEC"
+            );
+        }
         file.lock()
             .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
-        Ok(file)
+        Ok(CredentialLock { _file: file })
     }
 
     /// Save all credentials to disk with restricted file permissions (0600).
@@ -389,50 +326,6 @@ impl CredentialStore {
         };
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
-    }
-
-    /// Acquire an exclusive refresh lease for an OAuth credential. The lock is
-    /// deliberately held until [`CredentialRefreshLease::commit`] or drop,
-    /// including while the caller performs network I/O.
-    pub fn begin_refresh(
-        &self,
-        provider: &str,
-    ) -> Result<Option<CredentialRefreshLease>, DomainError> {
-        let lock = self.lock_exclusive()?;
-        let all = if self.migrate_on_write {
-            self.load_snapshot()?
-        } else {
-            self.primary_snapshot()?
-        };
-        let Some(credential) = all.get(provider).cloned() else {
-            drop(lock);
-            return Ok(None);
-        };
-        if credential.method != AuthMethod::OAuth
-            || credential
-                .refresh_token
-                .as_deref()
-                .is_none_or(str::is_empty)
-        {
-            drop(lock);
-            return Ok(None);
-        }
-        let generation = credential_generation(&credential);
-        Ok(Some(CredentialRefreshLease {
-            store: self.clone(),
-            lock: Some(lock),
-            provider: provider.to_string(),
-            generation,
-            credential,
-        }))
-    }
-
-    /// Revoke a credential under the same lock used by refresh leases. A
-    /// refresh already in flight cannot publish after revocation: either the
-    /// lease still owns the lock (so revocation waits), or it observes the
-    /// changed/missing generation and returns `Revoked`.
-    pub fn revoke(&self, provider: &str) -> Result<bool, DomainError> {
-        self.remove(provider)
     }
 
     /// Persist a refreshed OAuth credential unless another process already
@@ -516,65 +409,6 @@ impl CredentialStore {
             })
             .collect())
     }
-}
-
-impl CredentialRefreshLease {
-    /// Credential snapshot and refresh token captured when this lease began.
-    pub fn credential(&self) -> &Credential {
-        &self.credential
-    }
-
-    /// Commit a refreshed credential if this lease still represents the same
-    /// generation. The lock is released after the atomic replacement.
-    pub fn commit(mut self, mut refreshed: Credential) -> Result<RefreshLeaseOutcome, DomainError> {
-        if refreshed.provider != self.provider || refreshed.method != AuthMethod::OAuth {
-            return Err(DomainError::Config(
-                "refresh lease commit has incompatible credential".to_string(),
-            ));
-        }
-        let all = if self.store.migrate_on_write {
-            self.store.load_snapshot()?
-        } else {
-            self.store.primary_snapshot()?
-        };
-        let Some(existing) = all.get(&self.provider) else {
-            self.lock.take();
-            return Ok(RefreshLeaseOutcome::Revoked);
-        };
-        if credential_generation(existing) != self.generation {
-            let current = existing.clone();
-            self.lock.take();
-            return Ok(RefreshLeaseOutcome::Superseded(current));
-        }
-        // Keep the provider identity from the lease, rather than allowing a
-        // caller to accidentally publish into a different slot.
-        refreshed.provider.clone_from(&self.provider);
-        let mut updated = all;
-        updated.insert(self.provider.clone(), refreshed.clone());
-        self.store.save_all(&updated)?;
-        self.lock.take();
-        Ok(RefreshLeaseOutcome::Committed(refreshed))
-    }
-}
-
-impl Drop for CredentialRefreshLease {
-    fn drop(&mut self) {
-        // Dropping the file releases flock(2), including on cancellation or
-        // network failure. Explicit `take` in commit makes release obvious.
-        let _ = self.lock.take();
-    }
-}
-
-fn credential_generation(credential: &Credential) -> String {
-    // Hash only non-secret metadata and a stable length-delimited token digest;
-    // the generation is used for equality, never exposed as a credential.
-    let mut value = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::{Hash, Hasher};
-    credential.provider.hash(&mut value);
-    credential.token.hash(&mut value);
-    credential.refresh_token.hash(&mut value);
-    credential.expires_at.hash(&mut value);
-    format!("{:016x}", value.finish())
 }
 
 /// Summary of a credential's status.

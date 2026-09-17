@@ -363,7 +363,13 @@ fn resume_selector_ignores_workspace_sort_rows_after_1596() {
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
     assert!(
-        app.ac().sessions.resume_selector.is_none(),
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count()
+            == 0,
         "workspace-only manifests no longer open resume selector rows"
     );
 }
@@ -388,7 +394,13 @@ fn resume_selector_ignores_workspace_snippet_rows_after_1596() {
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
     assert!(
-        app.ac().sessions.resume_selector.is_none(),
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count()
+            == 0,
         "workspace-only manifests no longer open resume selector rows"
     );
 }
@@ -416,7 +428,13 @@ fn resume_selector_ignores_workspace_age_rows_after_1596() {
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
     assert!(
-        app.ac().sessions.resume_selector.is_none(),
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count()
+            == 0,
         "workspace-only manifests no longer open resume selector rows"
     );
 }

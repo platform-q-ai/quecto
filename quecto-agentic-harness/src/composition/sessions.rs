@@ -38,14 +38,22 @@ pub fn build_retention_handles(base_dir: &std::path::Path) -> RetentionHandles {
     )))
 }
 
-/// The handles one loop holds, over the file store of `inputs.base_dir`
-/// unless the loop supplied a store (unit rigs and BDD fixtures).
-pub fn build_session_handles(mut inputs: SessionLoopInputs) -> SessionHandles {
-    let store: Arc<dyn SessionStore> = inputs
-        .store
-        .take()
-        .unwrap_or_else(|| Arc::new(build_file_session_store(&inputs.base_dir)));
-    let list_sessions = Arc::new(ListSessions::new(store.clone()));
+/// The handles one loop holds, over the file store of `inputs.base_dir`.
+pub fn build_session_handles(inputs: SessionLoopInputs) -> SessionHandles {
+    let store = Arc::new(build_file_session_store(&inputs.base_dir));
+    build_session_handles_over(store, inputs)
+}
+
+/// The handles one loop holds over `store` (a rig's own, or the one just
+/// built) and the home context (#2009) every session transaction admits
+/// under: mandatory, so no loop's resume admission is ever fail-open.
+pub fn build_session_handles_over(
+    store: Arc<FileSessionStore>,
+    inputs: SessionLoopInputs,
+) -> SessionHandles {
+    let home = super::session_home::build_session_home(store.clone());
+    let store: Arc<dyn SessionStore> = store;
+    let list_sessions = Arc::new(ListSessions::new(store.clone()).with_home(home.clone()));
     let export = super::session_report::build_session_export(&inputs.base_dir);
     super::active_session::assemble_session_handles(
         inputs,
@@ -53,6 +61,7 @@ pub fn build_session_handles(mut inputs: SessionLoopInputs) -> SessionHandles {
         Arc::new(ListSessionsController::new(list_sessions)),
         Some(export),
         build_fresh_session_identity(),
+        home,
     )
 }
 
