@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Reproducible Podman runtime smoke test. Does not install/build or fall back to Docker.
 set -euo pipefail
+export LC_ALL=C
 
 repo_root=$(git rev-parse --show-toplevel)
 : "${CONTAINER_RUNTIME_CONFIG:?Set CONTAINER_RUNTIME_CONFIG to an absolute config JSON path}"

@@ -214,7 +214,7 @@ impl CredentialStore {
         // existing parent component without following symlinks before any
         // read, lock, or write. A symlinked parent would otherwise redirect
         // the supposedly dedicated file to an arbitrary location.
-        if self.require_absolute_path {
+        if self.dedicated {
             let mut parent = if self.path.is_absolute() {
                 PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
             } else {
@@ -231,10 +231,36 @@ impl CredentialStore {
                         ));
                     }
                     parent.push(component.as_os_str());
-                    if let Ok(metadata) = std::fs::symlink_metadata(&parent) {
-                        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    let metadata = match std::fs::symlink_metadata(&parent) {
+                        Ok(metadata) => metadata,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                             return Err(DomainError::Config(
-                                "credential path has an unsafe parent".to_string(),
+                                "credential path parent does not exist".to_string(),
+                            ));
+                        }
+                        Err(_) => {
+                            return Err(DomainError::Config(
+                                "credential path parent cannot be inspected".to_string(),
+                            ));
+                        }
+                    };
+                    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                        return Err(DomainError::Config(
+                            "credential path has an unsafe parent".to_string(),
+                        ));
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mode = metadata.permissions().mode();
+                        // A sticky system directory such as /tmp is a safe
+                        // ancestor: other users cannot rename entries they
+                        // do not own. Every private ancestor must otherwise
+                        // be owned by us and deny group/other writes.
+                        let sticky_shared = mode & 0o1000 != 0 && mode & 0o002 != 0;
+                        if mode & 0o022 != 0 && !sticky_shared {
+                            return Err(DomainError::Config(
+                                "credential path parent must deny group/other writes".to_string(),
                             ));
                         }
                     }
@@ -256,6 +282,7 @@ impl CredentialStore {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                    // SAFETY: geteuid has no preconditions and only reads the process identity.
                     if metadata.uid() != unsafe { libc::geteuid() } {
                         return Err(DomainError::Config(
                             "credential file is not owned by the current user".to_string(),
@@ -274,13 +301,25 @@ impl CredentialStore {
 
     pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
         self.validate_path()?;
-        if self.path.exists() { return Self::read_file(&self.path); }
+        let mut credentials = if self.path.exists() {
+            Self::read_file(&self.path)?
+        } else {
+            HashMap::new()
+        };
+        // A migration is not complete merely because the dedicated file has
+        // been created: an older file may contain OAuth credentials for other
+        // providers. Merge those entries until the next mutation, while the
+        // dedicated file always wins for a provider already migrated.
         if let Some(legacy) = &self.migration_path {
             if legacy.exists() {
-                return Ok(Self::read_file(legacy)?.into_iter().filter(|(_, c)| c.method == AuthMethod::OAuth).collect());
+                for (provider, credential) in Self::read_file(legacy)? {
+                    if credential.method == AuthMethod::OAuth {
+                        credentials.entry(provider).or_insert(credential);
+                    }
+                }
             }
         }
-        Ok(HashMap::new())
+        Ok(credentials)
     }
 
     /// Snapshot used by mutations. It deliberately excludes compatibility
@@ -293,6 +332,17 @@ impl CredentialStore {
     /// Get the path to the credentials file.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether this store's own file contains a provider. Unlike `exists`,
+    /// this never consults a migration fallback and is used by revocation
+    /// callers that must distinguish two physical stores.
+    pub fn primary_exists(&self, provider: &str) -> Result<bool, DomainError> {
+        self.validate_path()?;
+        if !self.path.exists() {
+            return Ok(false);
+        }
+        Ok(Self::read_file(&self.path)?.contains_key(provider))
     }
 
     /// Path of the cross-process lock file guarding load-mutate-store cycles

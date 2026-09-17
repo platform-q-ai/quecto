@@ -7,21 +7,21 @@
 # Removes the environment's container (force) and its state directory,
 # after proving the directory resolves under the trusted state root.
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime-podman kill: %s\n' "$*" >&2; }
 die() {
   log "$@"
   exit 1
 }
-
-# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
-# only as a spelling of Podman, preventing accidental runtime substitution.
+# SECURITY: lifecycle calls are local rootless Podman only; reject every
+# remote service/socket/connection selector before touching retained state.
+for selector in CONTAINER_HOST CONTAINER_CONNECTION PODMAN_HOST PODMAN_CONNECTION DOCKER_HOST; do
+  [ -z "${!selector:-}" ] || die "remote Podman selector $selector is not permitted"
+done
 [ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
 cli=podman
-[ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
-# Every lifecycle operation performs the same affirmative local-rootless
-# preflight. Destructive operations must never fall back to Docker.
+command -v "$cli" >/dev/null 2>&1 || die "podman is required"
 rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
 [ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
 
@@ -43,19 +43,27 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+case "$state_dir" in /*) ;; *) die "--state-dir must be an absolute path" ;; esac
+[ -d "$state_dir" ] && [ ! -L "$state_dir" ] || die "state dir must be a real directory"
+[ -O "$state_dir" ] || die "state dir is not owned by the current user"
+[ "$(stat -c '%a' -- "$state_dir" 2>/dev/null)" = 700 ] || die "state dir must have mode 700"
 case "$op" in kill|cleanup) ;; *) die "unknown --op: $op" ;; esac
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
-[ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
-# Affirmative identifier allowlist prevents traversal and option injection.
-case "$id" in
-  *[!A-Za-z0-9_.-]*|.*|*-|*.) die "invalid environment id: $id" ;;
-esac
+# SECURITY: affirmative ASCII allowlist; IDs are names, never paths/options.
+# The historical denylist *[!A-Za-z0-9_.-]* is deliberately not used.
+if [[ "$id" =~ ^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$ ]]; then
+  : # affirmative strict ASCII identifier allowlist
+else
+  die "invalid environment id: $id"
+fi
 env_dir="$state_dir/$id"
-if [ ! -d "$env_dir" ]; then
+if [ ! -d "$env_dir" ] || [ -L "$env_dir" ]; then
   # Already gone (e.g. cleanup after a kill): succeed idempotently.
   printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log" 2>/dev/null || true
   exit 0
 fi
+[ -O "$env_dir" ] || die "environment is not owned by the current user: $id"
+[ "$(stat -c '%a' -- "$env_dir" 2>/dev/null)" = 700 ] || die "environment must have mode 700: $id"
 resolved="$(cd "$env_dir" && pwd -P)"
 root="$(cd "$state_dir" && pwd -P)"
 case "$resolved" in

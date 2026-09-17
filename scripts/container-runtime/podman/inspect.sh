@@ -6,6 +6,7 @@
 # Reports the container's truth post-mortem. Bounded by Quecto's 5s
 # inspect timeout, so only cheap Podman inspect calls happen here.
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime-podman inspect: %s\n' "$*" >&2; }
 die() {
@@ -14,17 +15,21 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the inspect result"
-# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
-# only as a spelling of Podman, preventing accidental runtime substitution.
-[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
-cli=podman
+require_local_rootless_podman() {
+  # SECURITY: the standard adapter is deliberately local-only.  Refuse every
+  # environment selector that can redirect Podman to a service, socket, or
+  # named connection; an empty value is the only local configuration.
+  for selector in CONTAINER_HOST CONTAINER_CONNECTION PODMAN_HOST PODMAN_CONNECTION DOCKER_HOST; do
+    [ -z "${!selector:-}" ] || die "remote Podman selector $selector is not permitted"
+  done
+  [ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
+  cli=podman
+  command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+  rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+  [ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
+}
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
-# Inspection is a lifecycle operation: require the same local rootless engine
-# before reading any retained environment metadata.
-rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
-[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
-
+require_local_rootless_podman
 state_dir=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -38,12 +43,16 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
-[ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
-case "$id" in
-*/* | *..*) die "invalid environment id: $id" ;;
-esac
+# SECURITY: strict ASCII allowlist; no path separators, whitespace, or options.
+if [[ "$id" =~ ^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$ ]]; then
+  : # affirmative strict ASCII identifier allowlist
+else
+  die "invalid environment id: $id"
+fi
 env_dir="$state_dir/$id"
-[ -d "$env_dir" ] || die "unknown environment: $id"
+[ -d "$env_dir" ] && [ ! -L "$env_dir" ] || die "environment must be a real directory: $id"
+[ -O "$env_dir" ] || die "environment is not owned by the current user: $id"
+[ "$(stat -c '%a' -- "$env_dir" 2>/dev/null)" = 700 ] || die "environment must have mode 700: $id"
 resolved="$(cd "$env_dir" && pwd -P)"
 root="$(cd "$state_dir" && pwd -P)"
 case "$resolved" in

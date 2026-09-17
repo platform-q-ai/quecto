@@ -595,18 +595,91 @@ performed.
 Provider API keys and GitHub access use a protected 0600 state file rather than
 argv or inspect metadata. `kill` and `cleanup` are the only destructive
 operations; operation and environment IDs are affirmative-allowlisted before
-state removal. The smoke prerequisite is intentionally non-destructive:
+state removal.
+
+### Provisioning an image approval record
+
+The standard adapter does not build or pull an image at launch. An operator
+must build the pinned `Containerfile`, inspect the resulting local image, and
+approve that exact image and its inputs. Keep the approval record outside the
+checkout (for example, under `$XDG_STATE_HOME/quecto/standard-image/`), owned by
+the invoking user, mode `0600`, and do not put credentials in it. The record is
+content-addressed by `QUECTO_PODMAN_APPROVED_RECORD_SHA256`; changing even one
+byte requires a new approval. Its required JSON shape is:
+
+```json
+{
+  "schema": "quecto.standard-image-approval.v1",
+  "image_digest": "localhost/quecto-standard@sha256:<64 hex digits>",
+  "platform": "linux/amd64",
+  "recipe": {"containerfile": "quecto-agentic-harness/assets/standard-container/Containerfile", "base_image": "debian:trixie-slim@sha256:<digest>"},
+  "context": {"checkout": "/absolute/path/to/quecto", "source_sha256": "<64 hex digits>"},
+  "effective_assets": ["standard-container/Containerfile", "standard-container/config.json", "standard-container/scripts/runtime/"],
+  "mount_intent": {"workspace": "rw", "socket_sidecar": "rw", "binary": "ro", "config": "ro", "home": "private-rw", "host_quecto": "never"},
+  "recipe_sha256": "<sha256 of canonical recipe value>",
+  "context_sha256": "<sha256 of canonical context value>",
+  "effective_assets_sha256": "<sha256 of canonical effective_assets value>",
+  "mount_intent_sha256": "<sha256 of canonical mount_intent value>"
+}
+```
+
+The four `*_sha256` values are SHA-256 of the corresponding value serialized
+with `jq -cS` (not hashes of the surrounding record). Provisioning is an
+explicit, reviewable operation; this example shows the order without making
+launch perform any build or pull:
+
+```bash
+set -euo pipefail
+checkout=/absolute/path/to/quecto
+record_dir="${XDG_STATE_HOME:-$HOME/.local/state}/quecto/standard-image"
+mkdir -p "$record_dir" && chmod 700 "$record_dir"
+podman build --pull=never -f "$checkout/quecto-agentic-harness/assets/standard-container/Containerfile" \
+  -t localhost/quecto-standard:approved "$checkout"
+image_id="$(podman image inspect --format '{{.Id}}' localhost/quecto-standard:approved)"
+image="localhost/quecto-standard@$image_id" # image_id is sha256:<64 hex digits>
+podman image exists "$image"
+base="$record_dir/approval.json.in"
+cat >"$base" <<EOF
+{"schema":"quecto.standard-image-approval.v1","image_digest":"$image","platform":"linux/$(uname -m)","recipe":{"containerfile":"$checkout/quecto-agentic-harness/assets/standard-container/Containerfile"},"context":{"checkout":"$checkout"},"effective_assets":["Containerfile","config.json","scripts/runtime"],"mount_intent":{"workspace":"rw","socket_sidecar":"rw","binary":"ro","config":"ro","home":"private-rw","host_quecto":"never"}}
+EOF
+for field in recipe context effective_assets mount_intent; do
+  hash="$(jq -cS --arg f "$field" '.[$f]' "$base" | sha256sum | awk '{print $1}')"
+  jq --arg f "${field}_sha256" --arg hash "$hash" '.[$f]=$hash' "$base" >"$base.next"
+  mv "$base.next" "$base"
+done
+mv "$base" "$record_dir/approval.json" && chmod 600 "$record_dir/approval.json"
+export QUECTO_PODMAN_IMAGE="$image"
+export QUECTO_PODMAN_APPROVED_IMAGE="$image"
+export QUECTO_PODMAN_APPROVAL_RECORD="$record_dir/approval.json"
+export QUECTO_PODMAN_APPROVED_RECORD_SHA256="$(sha256sum "$record_dir/approval.json" | awk '{print $1}')"
+```
+
+Review the record and environment values before use; the script validates the
+schema, exact digest, owner, record hash, and all four field bindings before it
+creates state. The image digest output and the approval-record hash above are
+illustrative outputs generated on the operator host, not repository defaults.
+
+### Safe rootless smoke check
+
+First run the intentionally non-destructive prerequisite. It checks Linux,
+local rootless Podman, and an absolute config path; it does not build, pull,
+create, mount credentials, or remove a container:
 
 ```bash
 CONTAINER_RUNTIME_CONFIG=/absolute/path/to/config.json \
   scripts/container-runtime/smoke.sh
 ```
 
+Exit 127 means Podman is missing; exit 125 means it is unavailable or not
+configured for the invoking user. Only after this succeeds, and only after the
+explicit image/record approval above, run the lifecycle matrix with a disposable
+workspace and dedicated state directory: create, join/exec, inspect, kill,
+cleanup, and repeated cleanup. Confirm forbidden-tool and selected-secret
+cases, then remove only the disposable state/container. Never use the host
+`$HOME/.quecto` directory as an OAuth mount, never pass secrets on argv, and do
+not substitute Docker, a remote Podman connection, or an implicit build/pull.
 CI does not provide a usable Podman host, so this repository does not claim an
-end-to-end smoke result. After the prerequisite passes on an operator Linux
-host, run the explicit approved image build and lifecycle matrix (create,
-join, inspect, kill, cleanup, repeated cleanup, admission, selected auth, and
-forbidden-tool checks). The embedded `container-runtime` DocsTool page gives
+end-to-end smoke result. The embedded `container-runtime` DocsTool page gives
 the binary-only installation, initialization, customization, isolation, and
 troubleshooting contract.
 

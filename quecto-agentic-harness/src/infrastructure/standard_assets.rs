@@ -115,6 +115,9 @@ fn open_directory_chain(path: &Path) -> io::Result<std::fs::File> {
     };
     // `start` is owned by the returned File. Components are accepted only from
     // the allowlist of Normal/CurDir; ParentDir would escape the descriptor.
+    // SAFETY: `start` came from `open_dir_fd` and is an owned, valid directory
+    // descriptor; transferring exactly one ownership to File prevents leaks.
+    // SAFETY: start is an owned valid directory descriptor transferred once.
     let mut current = unsafe { std::fs::File::from_raw_fd(start) };
     for component in components {
         let Component::Normal(name) = component else {
@@ -134,6 +137,9 @@ fn open_directory_chain(path: &Path) -> io::Result<std::fs::File> {
             }
             Err(error) => return Err(error),
         };
+        // SAFETY: `next` is returned by `open_dir_fd` with ownership and is
+        // transferred once into File for automatic close.
+        // SAFETY: `next` is an owned descriptor from open_dir_fd and is transferred once.
         current = unsafe { std::fs::File::from_raw_fd(next) };
     }
     Ok(current)
@@ -145,8 +151,14 @@ fn open_relative_directory_chain(parent: std::os::fd::RawFd, path: &Path) -> io:
     use std::os::unix::ffi::OsStrExt;
     use std::ffi::CString;
     let mut current = {
+        // SAFETY: `parent` is an open directory descriptor owned by the caller;
+        // dup creates an independent descriptor or returns a checked error.
+        // SAFETY: parent is an open directory descriptor; dup validates it and returns ownership.
         let fd = unsafe { libc::dup(parent) };
         if fd < 0 { return Err(io::Error::last_os_error()); }
+        // SAFETY: `fd` is the newly-owned descriptor returned by dup and is
+        // transferred exactly once to File.
+        // SAFETY: fd is newly owned from dup and transferred exactly once.
         unsafe { std::fs::File::from_raw_fd(fd) }
     };
     for component in path.components() {
@@ -163,6 +175,9 @@ fn open_relative_directory_chain(parent: std::os::fd::RawFd, path: &Path) -> io:
             }
             Err(error) => return Err(error),
         };
+        // SAFETY: `next` is returned by `open_dir_fd` with ownership and is
+        // transferred once into File for automatic close.
+        // SAFETY: `next` is an owned descriptor from open_dir_fd and is transferred once.
         current = unsafe { std::fs::File::from_raw_fd(next) };
     }
     Ok(current)
@@ -173,12 +188,16 @@ fn open_dir_fd(parent: std::os::fd::RawFd, name: &std::ffi::OsStr) -> io::Result
     use std::os::unix::ffi::OsStrExt;
     use std::ffi::CString;
     let name = CString::new(name.as_bytes()).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))?;
+    // SAFETY: `parent` is an open directory fd and `name` is a checked NUL-free
+    // path; flags prevent symlink traversal and the returned fd is checked.
+    // SAFETY: pointers are NUL-terminated C strings and flags enforce directory/no-follow.
     let fd = unsafe { libc::openat(parent, name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
     if fd < 0 { Err(io::Error::last_os_error()) } else { Ok(fd) }
 }
 
 #[cfg(unix)]
 fn mkdir_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr, mode: u32) -> io::Result<()> {
+    // SAFETY: parent is an open directory descriptor and name is NUL-terminated.
     let result = unsafe { libc::mkdirat(parent, name.as_ptr(), mode) };
     if result < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
 }
@@ -196,8 +215,10 @@ fn publish_new_atomic_at(parent: std::os::fd::RawFd, name: &std::ffi::OsStr, byt
     // Existing symlinks are an explicit refusal. The fstatat check is only a
     // diagnostic; linkat below remains the race-safe publication authority.
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: stat points to valid MaybeUninit storage; parent/name are validated.
     let stat_result = unsafe { libc::fstatat(parent, name.as_ptr(), stat.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW) };
     if stat_result == 0 {
+        // SAFETY: fstatat returned success, so the kernel initialized stat.
         let stat = unsafe { stat.assume_init() };
         if (stat.st_mode & libc::S_IFMT) == libc::S_IFLNK {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "refusing symlink asset destination"));
@@ -209,20 +230,25 @@ fn publish_new_atomic_at(parent: std::os::fd::RawFd, name: &std::ffi::OsStr, byt
 
     let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
     let temporary = CString::new(format!(".{}.quecto-{}-{}-{}", name.to_string_lossy(), std::process::id(), index, serial)).expect("generated temporary name has no NUL");
+    // SAFETY: temporary is NUL-terminated and O_EXCL/O_NOFOLLOW prevent substitution.
     let temp_fd: RawFd = unsafe { libc::openat(parent, temporary.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) };
     if temp_fd < 0 { return Err(io::Error::last_os_error()); }
+    // SAFETY: temp_fd is a newly-owned successful descriptor transferred once.
     let mut file = unsafe { std::fs::File::from_raw_fd(temp_fd) };
     let result = (|| {
         file.write_all(bytes)?;
         file.sync_all()?;
+        // SAFETY: file owns a valid descriptor for the temporary file.
         let chmod = unsafe { libc::fchmod(file.as_raw_fd(), mode) };
         if chmod < 0 { return Err(io::Error::last_os_error()); }
+        // SAFETY: both names are validated NUL-terminated strings and parent is open.
         let linked = unsafe { libc::linkat(parent, temporary.as_ptr(), parent, name.as_ptr(), 0) };
         if linked == 0 { Ok(true) }
         else if io::Error::last_os_error().raw_os_error() == Some(libc::EEXIST) { Ok(false) }
         else { Err(io::Error::last_os_error()) }
     })();
     drop(file);
+    // SAFETY: temporary is the file created above in the same open directory.
     unsafe { libc::unlinkat(parent, temporary.as_ptr(), 0); }
     result
 }

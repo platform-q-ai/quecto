@@ -120,6 +120,43 @@ fn test_auth_logout_nonexistent_is_noop() {
 }
 
 #[test]
+fn test_auth_logout_revokes_legacy_and_dedicated_oauth_copies() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let legacy = CredentialStore::new(tmp.path());
+    let oauth = CredentialStore::oauth(tmp.path());
+    legacy
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "legacy-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: None,
+            refresh_token: Some("legacy-refresh".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    oauth
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "dedicated-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: None,
+            refresh_token: Some("dedicated-refresh".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let out = run_with_output(args("auth logout --provider openai"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert!(out.stdout.contains("removed"));
+    assert!(legacy.get("openai").unwrap().is_none());
+    assert!(oauth.get("openai").unwrap().is_none());
+}
+
+#[test]
 fn test_auth_status_shows_credentials() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());

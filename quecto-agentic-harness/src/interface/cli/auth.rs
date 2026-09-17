@@ -36,8 +36,8 @@ pub(crate) fn cmd_auth_with_reader(
     }
     match args[0].as_str() {
         "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr, reader),
-        "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
-        "status" => cmd_auth_status(&base, stdout),
+        "logout" => auth_logout::cmd_auth_logout(&base, &args[1..], stdout, stderr),
+        "status" => auth_status::cmd_auth_status(&base, stdout),
         other => {
             stderr.push_str(&format!("auth: unknown subcommand '{}'\n", other));
             1
@@ -114,7 +114,7 @@ fn cmd_auth_login(
                 .push_str("auth login: --provider is required when using --device-code\n");
             return 1;
         };
-        return cmd_auth_login_device_code(ctx, &provider, &mut out);
+        return auth_device::cmd_auth_login_device_code(ctx, &provider, &mut out);
     }
 
     let provider = match resolve_provider_interactive(ctx, provider, &mut out, reader) {
@@ -620,147 +620,16 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
     0
 }
 
-/// Device code login flow for headless environments.
-fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
-    let config = match resolve_oauth_config(ctx, provider, "device code flow", out.stderr) {
-        Some(c) => c,
-        None => return 1,
-    };
 
-    if config.device_code_url.is_empty() {
-        out.stderr.push_str(&format!(
-            "auth login: device code flow is not supported for '{}' (use --oauth instead)\n",
-            provider
-        ));
-        return 1;
-    }
+#[path = "auth_device.rs"]
+pub(crate) mod auth_device;
 
-    let rt = match super::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
-            return 1;
-        }
-    };
-    match rt.block_on(crate::infrastructure::auth::oauth::request_device_code(
-        &config,
-    )) {
-        Ok(resp) => {
-            out.stdout.push_str(&format!(
-                "Go to: {}\nEnter code: {}\n\nWaiting for authorization...\n",
-                resp.verification_uri, resp.user_code
-            ));
-            0
-        }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: device code request failed: {}\n", e));
-            1
-        }
-    }
-}
+#[path = "auth_logout.rs"]
+pub(crate) mod auth_logout;
 
-fn cmd_auth_logout(
-    base: &std::path::Path,
-    args: &[String],
-    stdout: &mut String,
-    stderr: &mut String,
-) -> i32 {
-    let mut provider: Option<String> = None;
-    let mut i = 0;
+#[path = "auth_status.rs"]
+pub(crate) mod auth_status;
 
-    while i < args.len() {
-        match args[i].as_str() {
-            "--provider" => {
-                if i + 1 < args.len() {
-                    provider = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    stderr.push_str("auth logout: --provider requires a value\n");
-                    return 1;
-                }
-            }
-            other if other.starts_with("--") => {
-                stderr.push_str(&format!("auth logout: unknown flag '{}'\n", other));
-                return 1;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    let Some(provider) = provider else {
-        stderr.push_str("auth logout: --provider is required\n");
-        return 1;
-    };
-
-    // Select the store by the credential's declared auth method. OAuth must
-    // never be deleted from (or written to) the broad API-token store.
-    let oauth_store = CredentialStore::oauth(base);
-    let legacy_store = CredentialStore::new(base);
-    let oauth_exists = match oauth_store.get(&provider) {
-        Ok(value) => value.is_some(),
-        Err(e) => {
-            stderr.push_str(&format!("auth logout: failed to remove credential: {}\n", e));
-            return 1;
-        }
-    };
-    let store = if oauth_exists { oauth_store } else { legacy_store };
-    match store.remove(&provider) {
-        Ok(true) => {
-            stdout.push_str(&format!("Credential removed for {}\n", provider));
-            0
-        }
-        Ok(false) => {
-            stdout.push_str(&format!("no credential found for {}\n", provider));
-            0
-        }
-        Err(e) => {
-            stderr.push_str(&format!(
-                "auth logout: failed to remove credential: {}\n",
-                e
-            ));
-            1
-        }
-    }
-}
-
-fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
-    // Read both stores and let the narrow OAuth store win on duplicate provider
-    // names. This preserves visibility of legacy API tokens while preventing a
-    // migrated OAuth credential from being reported as an API token.
-    let legacy_store = CredentialStore::new(base);
-    let oauth_store = CredentialStore::oauth(base);
-    let mut statuses = match legacy_store.status_summary() {
-        Ok(value) => value,
-        Err(e) => {
-            stdout.push_str(&format!("failed to read credentials: {}\n", e));
-            return 1;
-        }
-    };
-    let oauth_statuses = match oauth_store.status_summary() {
-        Ok(value) => value,
-        Err(e) => {
-            stdout.push_str(&format!("failed to read OAuth credentials: {}\n", e));
-            return 1;
-        }
-    };
-    for oauth_status in oauth_statuses {
-        statuses.retain(|status| status.provider != oauth_status.provider);
-        statuses.push(oauth_status);
-    }
-    if statuses.is_empty() {
-        stdout.push_str("no credentials stored\n");
-    } else {
-        stdout.push_str("Credentials:\n");
-        for s in &statuses {
-            stdout.push_str(&format!("  {} ({}) — {}\n", s.provider, s.method, s.status));
-        }
-    }
-    0
-}
 
 #[cfg(test)]
 #[path = "auth_tests.rs"]

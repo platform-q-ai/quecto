@@ -99,6 +99,30 @@ fn load_snapshot_reports_malformed_credentials_json() {
 }
 
 #[test]
+fn explicit_oauth_file_requires_absolute_path_and_existing_private_parents() {
+    let relative = CredentialStore::oauth_file("oauth-credentials.json");
+    let err = relative
+        .load_snapshot()
+        .expect_err("the explicit FILE contract must reject relative paths");
+    assert!(err.to_string().contains("absolute file path"));
+
+    let root = TempDir::new().expect("tempdir");
+    let target = root.path().join("real-parent");
+    std::fs::create_dir(&target).expect("parent");
+    let link = root.path().join("linked-parent");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link).expect("symlink parent");
+    #[cfg(unix)]
+    {
+        let path = link.join("oauth.json");
+        let err = CredentialStore::oauth_file(path)
+            .load_snapshot()
+            .expect_err("the explicit FILE contract must reject symlinked parents");
+        assert!(err.to_string().contains("unsafe parent"));
+    }
+}
+
+#[test]
 fn save_all_reports_credentials_dir_creation_failure() {
     let dir = TempDir::new().expect("tempdir");
     // Make the would-be parent directory a regular file so create_dir_all fails.

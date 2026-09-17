@@ -8,6 +8,7 @@
 # in the same parent socket dir that create identity-mounted, so it is
 # reachable from the host without extra mounts.
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime-podman exec: %s\n' "$*" >&2; }
 die() {
@@ -16,15 +17,21 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
-# Every lifecycle operation performs the same affirmative local-rootless
-# preflight. A join must not silently diverge to a different runtime.
-[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
-cli=podman
+require_local_rootless_podman() {
+  # SECURITY: the standard adapter is deliberately local-only.  Refuse every
+  # environment selector that can redirect Podman to a service, socket, or
+  # named connection; an empty value is the only local configuration.
+  for selector in CONTAINER_HOST CONTAINER_CONNECTION PODMAN_HOST PODMAN_CONNECTION DOCKER_HOST; do
+    [ -z "${!selector:-}" ] || die "remote Podman selector $selector is not permitted"
+  done
+  [ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
+  cli=podman
+  command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+  rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+  [ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
+}
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
-rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
-[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
-
+require_local_rootless_podman
 state_dir=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -50,7 +57,9 @@ case "$id" in
   *[!A-Za-z0-9_.-]*|.*|*-|*.) die "invalid environment id: $id" ;;
 esac
 env_dir="$state_dir/$id"
-[ -d "$env_dir" ] || die "unknown environment: $id"
+[ -d "$env_dir" ] && [ ! -L "$env_dir" ] || die "environment must be a real directory: $id"
+[ -O "$env_dir" ] || die "environment is not owned by the current user: $id"
+[ "$(stat -c '%a' -- "$env_dir" 2>/dev/null)" = 700 ] || die "environment must have mode 700: $id"
 resolved="$(cd "$env_dir" && pwd -P)"
 root="$(cd "$state_dir" && pwd -P)"
 case "$resolved" in

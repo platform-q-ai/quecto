@@ -18,6 +18,7 @@
 # Runtime knowledge (Docker/Podman/devcontainer flags) belongs in these
 # scripts, never in Quecto's Rust code.
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime create: %s\n' "$*" >&2; }
 die() {
@@ -69,8 +70,17 @@ done
 # State-root hardening: create the root owner-only, and refuse to adopt a
 # pre-existing root owned by someone else (e.g. an attacker-planted directory
 # under a world-writable parent such as /var/tmp).
-mkdir -p -m 700 "$state_dir"
+# SECURITY: create/adopt only an absolute, owner-only real state root.
+case "$state_dir" in /*) ;; *) die "--state-dir must be an absolute path" ;; esac
+if [ -e "$state_dir" ] || [ -L "$state_dir" ]; then
+  [ -d "$state_dir" ] && [ ! -L "$state_dir" ] || die "state dir must be a real directory"
+  [ -O "$state_dir" ] || die "state dir is not owned by the current user"
+  [ "$(stat -c '%a' -- "$state_dir" 2>/dev/null)" = 700 ] || die "state dir must have mode 700"
+else
+  (umask 077 && mkdir -p -m 700 -- "$state_dir") || die "failed to create state dir"
+fi
 [ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
+[ ! -L "$state_dir" ] || die "state dir must not be a symlink"
 # Environment directories are minted with mktemp: unpredictable suffix, mode
 # 700, and a hard failure instead of silently reusing (or following a symlink
 # planted at) a pre-existing path.

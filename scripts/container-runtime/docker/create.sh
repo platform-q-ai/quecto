@@ -23,6 +23,7 @@
 #   - ~/.quecto (rw) with HOME preserved  — auth/sessions behave like a
 #     host child; isolation targets the PR workspace, not user identity
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime-podman create: %s\n' "$*" >&2; }
 die() {
@@ -31,36 +32,37 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
-# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
-# only as a spelling of Podman, preventing accidental runtime substitution.
-[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
-cli=podman
-[ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
-# Standard support is local rootless Linux only. Refuse rootful, remote, or
-# machine-backed engines before creating any state or launching a workload.
-rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
-[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
-
-# OAuth mediation is opt-in and must identify a dedicated, owner-controlled
-# credential directory. It is never inferred from the host home directory.
+# OAuth uses one explicit credential directory; retain the variable even on
+# this legacy Podman path so set -u cannot turn compatibility into a crash.
 oauth_store="${QUECTO_OAUTH_CREDENTIALS_DIR:-}"
 if [ -n "$oauth_store" ]; then
-  case "$oauth_store" in
-    /*) ;;
-    *) die "QUECTO_OAUTH_CREDENTIALS_DIR must be an absolute path" ;;
-  esac
-  [ -d "$oauth_store" ] || die "OAuth credential store is not a directory: $oauth_store"
-  [ -O "$oauth_store" ] || die "OAuth credential store is not owned by the current user"
-  oauth_real="$(realpath -m "$oauth_store")"
-  host_quecto_real="$(realpath -m "$HOME/.quecto")"
-  [ "$oauth_real" != "$host_quecto_real" ] || die "OAuth store must not be the host ~/.quecto directory"
-  case "$(basename "$oauth_real")" in
-    .quecto-oauth|quecto-credentials) ;;
-    *) die "OAuth store must be a dedicated .quecto-oauth or quecto-credentials directory" ;;
-  esac
+  case "$oauth_store" in /*) ;; *) die "QUECTO_OAUTH_CREDENTIALS_DIR must be absolute" ;; esac
+  [ -d "$oauth_store" ] && [ ! -L "$oauth_store" ] || die "OAuth credential store must be a real directory"
+  [ -O "$oauth_store" ] || die "OAuth credential store is not owned by current user"
 fi
-
+require_local_rootless_podman {
+  # SECURITY: the standard adapter is deliberately local-only.  Refuse every
+  # environment selector that can redirect Podman to a service, socket, or
+  # named connection; an empty value is the only local configuration.
+  for selector in CONTAINER_HOST CONTAINER_CONNECTION PODMAN_HOST PODMAN_CONNECTION DOCKER_HOST; do
+    [ -z "${!selector:-}" ] || die "remote Podman selector $selector is not permitted"
+  done
+  [ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
+  cli=podman
+  command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+  rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+  [ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
+}
+[ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
+require_local_rootless_podman
+# OAuth credentials use one explicit, dedicated directory contract. Never
+# infer or mount the host ~/.quecto tree.
+oauth_store="${QUECTO_OAUTH_CREDENTIALS_DIR:-}"
+if [ -n "$oauth_store" ]; then
+  case "$oauth_store" in /*) ;; *) die "QUECTO_OAUTH_CREDENTIALS_DIR must be absolute" ;; esac
+  [ -d "$oauth_store" ] && [ ! -L "$oauth_store" ] || die "OAuth credential store must be a real directory"
+  [ -O "$oauth_store" ] || die "OAuth credential store is not owned by current user"
+fi
 state_dir=""
 repo=""
 # Legacy environment variable retained for configuration compatibility; it does
@@ -124,8 +126,18 @@ if [ -n "$admission_dir" ]; then
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
 fi
 
-mkdir -p -m 700 "$state_dir"
+# SECURITY: state root is a private, real directory.  Never create through or
+# adopt a symlink, and never accept a shared/foreign root.
+case "$state_dir" in /*) ;; *) die "--state-dir must be an absolute path" ;; esac
+if [ -e "$state_dir" ] || [ -L "$state_dir" ]; then
+  [ -d "$state_dir" ] && [ ! -L "$state_dir" ] || die "state dir must be a real directory"
+  [ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
+  [ "$(stat -c '%a' -- "$state_dir" 2>/dev/null)" = 700 ] || die "state dir must have mode 700"
+else
+  (umask 077 && mkdir -p -m 700 -- "$state_dir") || die "failed to create state dir"
+fi
 [ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
+[ ! -L "$state_dir" ] || die "state dir must not be a symlink"
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
 environment_id="$(basename "$env_dir")"
 container="quecto-$environment_id"
@@ -281,7 +293,7 @@ secret_grant_allowed() {
 IFS=',' read -r -a grants <<<"$secret_grants"
 for grant in "${grants[@]}"; do
   case "$grant" in
-    ""|anthropic|ANTHROPIC_API_KEY|openai|OPENAI_API_KEY|openrouter|OPENROUTER_API_KEY|fireworks|FIREWORKS_API_KEY|github|GH_TOKEN|GITHUB_TOKEN) ;;
+    ""|anthropic|ANTHROPIC_API_KEY|openai|OPENAI_API_KEY|openrouter|OPENROUTER_API_KEY|fireworks|FIREWORKS_API_KEY|GH_TOKEN|GITHUB_TOKEN) ;;
     *) die "unknown QUECTO_SECRET_GRANTS entry: $grant" ;;
   esac
 done
@@ -293,9 +305,14 @@ for provider_and_key in anthropic:ANTHROPIC_API_KEY openai:OPENAI_API_KEY openro
 done
 # GitHub is explicit too; never invoke gh auth token (ambient host harvest).
 gh_token=""
-if secret_grant_allowed github || secret_grant_allowed GH_TOKEN || secret_grant_allowed GITHUB_TOKEN; then
-  if [ -n "${GH_TOKEN:-}" ]; then gh_token="$GH_TOKEN"; append_secret GH_TOKEN "$GH_TOKEN"; fi
-  if [ -n "${GITHUB_TOKEN:-}" ]; then append_secret GITHUB_TOKEN "$GITHUB_TOKEN"; fi
+# GH_TOKEN and GITHUB_TOKEN are separate grants.  A grant for one variable
+# must never silently disclose the other variable's ambient value.
+if secret_grant_allowed GH_TOKEN && [ -n "${GH_TOKEN:-}" ]; then
+  gh_token="$GH_TOKEN"
+  append_secret GH_TOKEN "$GH_TOKEN"
+fi
+if secret_grant_allowed GITHUB_TOKEN && [ -n "${GITHUB_TOKEN:-}" ]; then
+  append_secret GITHUB_TOKEN "$GITHUB_TOKEN"
 fi
 gcfg_i=0
 add_git_cfg() {

@@ -9,6 +9,7 @@
 # Host-local mode reports whether any recorded child process is still alive.
 # A real adapter replaces only the marked section (e.g. `docker inspect`).
 set -euo pipefail
+export LC_ALL=C
 
 log() { printf 'container-runtime inspect: %s\n' "$*" >&2; }
 die() {
@@ -30,15 +31,31 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+# SECURITY: retained state is trusted only when the root is an owner-only,
+# non-symlink directory. Never resolve an attacker-controlled root implicitly.
+case "$state_dir" in /*) ;; *) die "--state-dir must be an absolute path" ;; esac
+if [ -e "$state_dir" ] || [ -L "$state_dir" ]; then
+  [ -d "$state_dir" ] && [ ! -L "$state_dir" ] || die "state dir must be a real directory"
+  [ -O "$state_dir" ] || die "state dir is not owned by the current user"
+  [ "$(stat -c '%a' -- "$state_dir" 2>/dev/null)" = 700 ] || die "state dir must have mode 700"
+else
+  die "state dir does not exist"
+fi
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_ID:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 
 # Same trusted-root containment as kill.sh: reject path-shaped ids and prove
 # the environment directory resolves under the trusted state root before use.
-case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
-*/* | *..*) die "invalid environment id: $QUECTO_CONTAINER_ENVIRONMENT_ID" ;;
-esac
-env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
-[ -d "$env_dir" ] || die "unknown environment: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
+# SECURITY: affirmative ASCII allowlist; IDs are names, never paths/options.
+if [[ "$id" =~ ^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$ ]]; then
+  : # affirmative strict ASCII identifier allowlist
+else
+  die "invalid environment id: $id"
+fi
+env_dir="$state_dir/$id"
+[ -d "$env_dir" ] && [ ! -L "$env_dir" ] || die "environment must be a real directory: $id"
+[ -O "$env_dir" ] || die "environment is not owned by the current user: $id"
+[ "$(stat -c '%a' -- "$env_dir" 2>/dev/null)" = 700 ] || die "environment must have mode 700: $id"
 state_root="$(cd "$state_dir" && pwd -P)"
 env_real="$(cd "$env_dir" && pwd -P)"
 case "$env_real" in
