@@ -419,14 +419,19 @@ content has been approved: the approval is recorded by canonical path and
 SHA-256 in `<base_dir>/config-overlay-trust.json`. Approve it explicitly with
 `quecto config trust` from the project directory (an agent or a script can do
 this without a terminal), or answer the `[y/N]` prompt a one-shot
-`quecto agent` run offers from an interactive terminal (the answer is recorded
-only after the same checks `quecto config trust` applies). One content per
+`quecto agent` run offers from an interactive terminal — it prints the
+overlay (the first 4 KiB) before asking, and the answer is recorded only after
+the same checks `quecto config trust` applies. One content per
 path is trusted: editing the overlay by hand revokes its trust until it is
 approved again, and reverting to an earlier content does not restore it;
 `quecto config set` records trust for what it writes. An untrusted overlay is
-reported (which file, its hash, and the command to run) and **not** applied,
-so nothing in a repository you have not reviewed can change your agents'
-defaults. `quecto status` prints both files and the overlay's trust state:
+reported (which file, its hash, and the command to run — or, when
+`quecto config trust` would refuse it, why) and **not** applied, so nothing in
+a repository you have not reviewed can change your agents' defaults. The
+overlay must be a regular file: a symbolic link at `.quecto/config.json` is
+refused whatever it points at (trust is keyed by the file's identity, which a
+link would borrow from its target). `quecto status` prints both files and the
+overlay's trust state (`trusted`, `untrusted`, `refused` or `none`):
 
 ```
 $ quecto status
@@ -448,25 +453,42 @@ settings to `./.quecto/config.json` (`quecto config set …` writes them for
 you) and any `providers` or `admission` section to the global file.
 
 **Reading and writing.** `quecto config get [<dotted.path>]` prints the
-effective value (`--global` or `--local` print one layer as written);
-`quecto config set <dotted.path> <json-value>` writes the repo-local overlay
-(`--global` writes the global file). The writer patches the JSON document in
-place: only the addressed key changes, unknown keys and key order are kept,
-the file's own indentation is reused, the result is validated as a
-configuration before anything is written, and the write is atomic
-(tmp + fsync + rename) — a refused value leaves the file byte-identical.
+effective value (`--global` or `--local` print one layer as written).
+Secret-shaped values — keys named `api_key`, `apiKey`, `token`, `secret`,
+`password`, or ending in `_key`/`_token` — print as `"<redacted>"` unless you
+pass `--show-secrets`, because agents run this command and its output lands
+in model context and transcripts. `quecto config set <dotted.path>
+<json-value>` writes the repo-local overlay (`--global` writes the global
+file). The writer patches the JSON *document*: only the addressed key's value
+changes, every other key and the key order are kept, and the result is
+validated before anything is written — the file on its own and the effective
+configuration this directory would then load (global merged with the trusted
+overlay), so a change that is fine in one file but breaks the merge (an overlay
+container config that leaves no default) is refused rather than bricking the
+next run. The write is atomic (tmp + fsync + rename) and serialised per file
+on a sidecar `<file>.lock` (created beside the file on first use), so
+concurrent `config set`s never lose each other's keys. It does normalise
+layout: the file comes back as pretty-printed JSON in its own indentation
+(two spaces for a new or compact file) with LF line endings and one trailing
+newline, and numbers are re-rendered — a file already in that layout changes
+only on the touched line. A refused value leaves the file byte-identical.
 `set_tool_policy … persist` writes through the same path into the base file;
 an entry the trusted overlay already defines is refused (it would be shadowed
 on the next reload) with the `quecto config set` command to run instead.
 
-A running agent re-reads the base file, the overlay and the trust record
-before the next turn, `set_model` or a forced `reload`, so `quecto config
-trust`, a `config set`, or removing the overlay takes effect without a
-restart (a `config set` writes the overlay and then its trust record, so a
-reload that lands between the two applies the global file alone for that
-one turn and reports the overlay untrusted; the next reload applies it). A
-missing base file never triggers a reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for trust; run `quecto config
-trust` in the project directory and the next turn picks it up.
+A running agent re-reads the base file and the overlay (and the trust record,
+when an overlay existed when the run started) before the next turn,
+`set_model` or a forced `reload`, so `quecto config trust`, a `config set`,
+or removing the overlay is picked up without a restart. What a reload changes
+in the running loop is the providers and the tool policy; a new
+`agents.defaults.model` or `effort` in the files applies to the next run (use
+`set_model`/`set_effort` for the current one). A `config set` writes the
+overlay and then its trust record, so a reload that lands between the two
+applies the global file alone for that one turn and reports the overlay
+untrusted; the next reload applies it. A missing base file never triggers a
+reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for
+trust; run `quecto config trust` in the project directory and the next turn
+picks it up.
 
 **Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with
 `container: true` still loads `container_configs` from the base file plus the

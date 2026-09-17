@@ -70,8 +70,10 @@ quecto config get --effective # what a run here will actually use
 quecto status                 # both files, and whether the overlay is trusted
 ```
 
-`quecto config set --global …` edits the global file the same way: one key
-changes, everything else in the file stays as you wrote it. A pre-#2024
+`quecto config set --global …` edits the global file the same way: one key's
+value changes, every other key stays (the file is re-laid-out as pretty JSON).
+`quecto config get` hides API keys and tokens unless you pass
+`--show-secrets`. A pre-#2024
 `./config.json` in the working directory is no longer loaded — `quecto status`
 warns while one exists; move its settings to `./.quecto/config.json`. See the
 README's

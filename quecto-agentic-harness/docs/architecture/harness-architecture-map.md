@@ -219,11 +219,16 @@ the use case), validates each layer and the merge through the `ConfigValidator`
 port, and merges by the pure section-wise policy in `overlay_policy.rs`.
 `use_cases/patch_configuration.rs` is the safe writer: a dotted-path patch of
 the JSON document (never of the `Config` struct, so unknown keys and order
-survive), global-only keys refused for the overlay, an untrusted overlay never
-patched, the result validated before a byte is written, the write through the
-`ConfigDocumentWriter` port, and trust re-recorded for an overlay.
-`use_cases/read_configuration.rs` and `use_cases/trust_config_overlay.rs`
-serve `quecto config get` and `quecto config trust`.
+survive), global-only keys and a symbolic link refused for the overlay, an
+untrusted overlay never patched, the result validated before a byte is written
+— the layer alone, then the merge through `ResolveEffectiveConfig::preview`
+(an intra-capability use-case call; cross-capability calls go through ports)
+— the whole cycle under the writer port's exclusive hold (`DocumentLock`), the
+write through the `ConfigDocumentWriter` port, and trust recorded for the
+bytes the writer returned. `use_cases/read_configuration.rs` (secret-shaped
+leaves redacted unless revealed; `redaction.rs`) and
+`use_cases/trust_config_overlay.rs` serve `quecto config get` and
+`quecto config trust`.
 
 Infrastructure lives under `src/infrastructure/config/`: `loaders.rs` (the
 filesystem document store — a present-but-broken entry is an error, never
@@ -231,15 +236,19 @@ absence), `mapping.rs` (document → `Config` with every load-time validation,
 the env overrides, the validator adapter, `realize_config`),
 `persistence.rs` (the overlay trust record `<base_dir>/config-overlay-trust.json`,
 canonical path + sha256, shared primitives with the container-config overlay
-in `repo_local_container_config.rs`), and `writer/` (the JSON document writer:
-existing indentation kept, tmp + fsync + rename via `atomic_write`; plus the
-tool-policy persistence hook as a caller of it). The runtime-configuration
+in `repo_local_container_config.rs`; the interactive prompt shows the
+document, bounded), and `writer/` (the JSON document writer: existing
+indentation kept, tmp + fsync + rename via `atomic_write`, an exclusive
+`flock` on the sidecar `<file>.lock`; plus the tool-policy persistence hook
+as a caller of it, under the same lock). The runtime-configuration
 source (`src/infrastructure/runtime_configuration.rs`) rebuilds through a
 composition-supplied `ConfigLoader` and watches the overlay as well as the
 base file. Composition (`src/composition/configuration.rs`) builds the
-`ConfigurationHandles` (`src/interface/cli/configuration_handles.rs`) `main`
-hands the CLI through `CliComposition.configuration`, and the loader for
-reloads; the interface (`src/interface/cli/{config_cmd.rs, config_loading.rs,
+`ConfigurationHandles` (`src/interface/cli/configuration_handles.rs`,
+including the `realize` document → `Config` handle) `main` hands the CLI
+through `CliComposition.configuration`, and the loader for reloads (which
+watches the trust record only when an overlay existed at seed time); the
+interface (`src/interface/cli/{config_cmd.rs, config_loading.rs,
 commands.rs}`) parses `quecto config get|set|trust`, loads through the
 handles and presents the layer report in `quecto status`.
 
