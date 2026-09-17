@@ -63,7 +63,7 @@ fi
 
 state_dir=""
 repo=""
-image="${QUECTO_PODMAN_IMAGE:-quecto-box:local}"
+image="${QUECTO_PODMAN_IMAGE:-}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -89,6 +89,32 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+# This retained adapter is supported only with the same immutable, locally
+# approved image/build contract as the embedded standard asset. Never fall
+# back to a mutable tag or pull an image implicitly.
+[ -n "$image" ] || die "Podman standard runtime requires QUECTO_PODMAN_IMAGE"
+case "$image" in
+  *@sha256:????????????????????????????????????????????????????????????????) ;;
+  *) die "standard image must use an @sha256 digest" ;;
+esac
+approved_image="${QUECTO_PODMAN_APPROVED_IMAGE:-}"
+[ "$image" = "$approved_image" ] || die "image does not exactly match QUECTO_PODMAN_APPROVED_IMAGE"
+"$cli" image exists "$image" >/dev/null 2>&1 || die "approved image is not present locally"
+approval_record="${QUECTO_PODMAN_APPROVAL_RECORD:-}"
+[ -n "$approval_record" ] || die "standard runtime requires QUECTO_PODMAN_APPROVAL_RECORD"
+case "$approval_record" in /*) ;; *) die "approval record must be an absolute path" ;; esac
+[ -f "$approval_record" ] && [ ! -L "$approval_record" ] || die "approval record must be a regular file"
+[ -O "$approval_record" ] || die "approval record is not owned by current user"
+record_sha="$(sha256sum "$approval_record" | awk '{print $1}')"
+[ "$record_sha" = "${QUECTO_PODMAN_APPROVED_RECORD_SHA256:-}" ] || die "approval record hash is not approved"
+[ "$(jq -er '.schema' "$approval_record" 2>/dev/null)" = "quecto.standard-image-approval.v1" ] || die "unsupported approval record schema"
+[ "$(jq -er '.image_digest' "$approval_record" 2>/dev/null)" = "$image" ] || die "approval record image does not match image"
+for field in recipe context effective_assets mount_intent; do
+  jq -e --arg f "$field" '.[$f] | (type == "string" or type == "object" or type == "array")' "$approval_record" >/dev/null 2>&1 || die "approval record is missing $field"
+  expected="$(jq -cS --arg f "$field" '.[$f]' "$approval_record" | sha256sum | awk '{print $1}')"
+  actual="$(jq -er --arg f "${field}_sha256" '.[$f] | select(type == "string" and test("^[0-9a-fA-F]{64}$"))' "$approval_record" 2>/dev/null)" || die "approval record is missing ${field}_sha256"
+  [ "$expected" = "$actual" ] || die "approval record ${field}_sha256 does not bind its field"
+done
 [ "$#" -gt 0 ] || die "missing child command after --"
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_REF:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_REF must be set"
 
@@ -171,10 +197,31 @@ mounts=(
   -v "$env_dir/home:$HOME:rw"
 )
 if [ -n "$oauth_store" ]; then
-  mounts+=(-v "$oauth_store:$HOME/.quecto:rw")
+  # The dedicated FILE contract must be mounted at its own private path, never
+  # over the child's entire ~/.quecto tree.
+  oauth_mount="$env_dir/oauth"
+  mkdir -m 700 "$oauth_mount"
+  mounts+=(-v "$oauth_store:$oauth_mount:rw")
+  envs+=(-e "QUECTO_OAUTH_CREDENTIALS_FILE=$oauth_mount/oauth-credentials.json")
 fi
-if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
-  mounts+=(-v "$config_path:$config_path:ro")
+if [ -n "$config_path" ]; then
+  [ -f "$config_path" ] || die "child --config $config_path does not exist"
+  config_mount="$env_dir/config.json"
+  (umask 077 && jq -c . "$config_path" >"$config_mount") || die "child --config is not valid JSON"
+  chmod 600 "$config_mount"
+  mounts+=(-v "$config_mount:/run/quecto/config.json:ro")
+  child_argv=("$@")
+  for ((i = 0; i < ${#child_argv[@]} - 1; i++)); do
+    if [ "${child_argv[i]}" = "--config" ]; then
+      child_argv[i+1]="/run/quecto/config.json"
+      break
+    fi
+    case "${child_argv[i]}" in
+      --config=*) child_argv[i]="--config=/run/quecto/config.json"; break ;;
+    esac
+  done
+else
+  child_argv=("$@")
 fi
 # Shared inference admission (#1679 P3): the authority's client directory is
 # identity-mounted so the child reaches the same private socket by path. The
@@ -320,13 +367,13 @@ if [ -n "$secret_env_file" ]; then
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
-    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
+    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "${child_argv[@]}" >/dev/null
 else
   "$cli" run -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
-    "$image" "$@" >/dev/null
+    "$image" "${child_argv[@]}" >/dev/null
 fi
 # ------------------------------------------------------------------------
 
@@ -350,7 +397,9 @@ jq -cn \
   --arg image "$image" \
   --arg container "$container" \
   --arg cli "$cli" \
+  --arg approval_record "$approval_record" \
+  --arg approval_record_sha256 "$record_sha" \
   --arg source "$source" \
   --arg repository "$repo" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, approval_record: $approval_record, approval_record_sha256: $approval_record_sha256, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
