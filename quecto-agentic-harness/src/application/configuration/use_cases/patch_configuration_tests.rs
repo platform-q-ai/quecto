@@ -546,3 +546,86 @@ fn an_overlay_patch_may_add_a_non_default_container_config() {
             .contains("the document is not a JSON object")
     );
 }
+
+// ── unset (#2024 S2) ────────────────────────────────────────────────────────
+
+fn unset(layer: ConfigLayer, key_path: &str) -> ConfigUnset {
+    ConfigUnset {
+        selection: layered(),
+        layer,
+        key_path: key_path.into(),
+    }
+}
+
+#[test]
+fn unset_removes_only_the_addressed_key_and_re_records_overlay_trust() {
+    let content = r#"{"agents":{"defaults":{"model":"local","effort":"high"}},"zeta":"kept"}"#;
+    let store = MemoryStore::with(&[(OVERLAY, content)]);
+    let trust = FakeTrust::trusting(OVERLAY, content);
+    let receipt = use_case(store.clone(), trust.clone())
+        .unset(unset(ConfigLayer::Overlay, "agents.defaults.model"))
+        .unwrap();
+    assert_eq!(receipt.path, PathBuf::from(OVERLAY));
+    assert!(!receipt.created);
+    assert_eq!(
+        document(&store, OVERLAY),
+        json!({"agents":{"defaults":{"effort":"high"}},"zeta":"kept"})
+    );
+    let returned = store.returned.lock().unwrap().last().unwrap().clone();
+    assert!(
+        trust.is_approved(OVERLAY, &returned),
+        "trust re-recorded for the bytes written"
+    );
+    assert!(!trust.is_approved(OVERLAY, content.as_bytes()));
+}
+
+#[test]
+fn unset_of_a_key_the_layer_does_not_set_is_an_error_and_writes_nothing() {
+    let content = r#"{"agents":{"defaults":{"model":"global"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, content)]);
+    let use_case = use_case(store.clone(), Arc::new(FakeTrust::default()));
+    let error = use_case
+        .unset(unset(ConfigLayer::Global, "agents.defaults.effort"))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ConfigPatchError::NotSet {
+            path: PathBuf::from(GLOBAL),
+            key_path: "agents.defaults.effort".into(),
+        }
+    );
+    let message = error.to_string();
+    assert!(message.contains("agents.defaults.effort"), "{message}");
+    assert!(message.contains("not set"), "{message}");
+    assert_eq!(store.content(GLOBAL).unwrap(), content);
+    // A missing overlay sets nothing either.
+    let error = use_case
+        .unset(unset(ConfigLayer::Overlay, "agents.defaults.model"))
+        .unwrap_err();
+    assert!(matches!(error, ConfigPatchError::NotSet { .. }), "{error}");
+    assert!(store.content(OVERLAY).is_none());
+}
+
+#[test]
+fn unset_shares_the_patch_refusals() {
+    let store = MemoryStore::with(&[(OVERLAY, r#"{"agents":{"defaults":{"model":"theirs"}}}"#)]);
+    let use_case = use_case(store.clone(), Arc::new(FakeTrust::default()));
+    assert!(matches!(
+        use_case
+            .unset(unset(ConfigLayer::Overlay, "agents.defaults.model"))
+            .unwrap_err(),
+        ConfigPatchError::UntrustedOverlay { .. }
+    ));
+    assert!(matches!(
+        use_case
+            .unset(unset(ConfigLayer::Overlay, "providers.openai"))
+            .unwrap_err(),
+        ConfigPatchError::GlobalOnlyKey { .. }
+    ));
+    assert!(matches!(
+        use_case
+            .unset(unset(ConfigLayer::Global, "a..b"))
+            .unwrap_err(),
+        ConfigPatchError::InvalidKeyPath(_)
+    ));
+}
