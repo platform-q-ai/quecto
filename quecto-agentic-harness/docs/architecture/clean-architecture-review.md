@@ -157,7 +157,7 @@ Fresh static review at `43dfad9c` after moving to the chore branch; no tests run
 
 #### A4-01 — Model limits can diverge from selected runtime (priority: high; strengthens A3-02)
 
-**Evidence:** `src/interface/catalogue_runtime.rs:71-77` selects against the runtime aggregate, while `:93-109` independently reloads/publishes catalogue sources when reading model limits. These are distinct generation paths, not merely two names for the same aggregate. Actual consumers include startup agent construction (`src/interface/cli/agent.rs:402-407`) and model switching (`src/interface/cli/uds_dispatch_runtime.rs:33-54`). In the latter, catalogue selection is a status verdict rather than the operation that installs the provider; the independently refreshed limits still apply to the current agent runtime.
+**Evidence:** `src/interface/catalogue_runtime.rs:71-77` (since moved to `src/composition/runtime.rs`, #1849) selects against the runtime aggregate, while `:93-109` independently reloads/publishes catalogue sources when reading model limits. These are distinct generation paths, not merely two names for the same aggregate. Actual consumers include startup agent construction (`src/interface/cli/agent.rs:402-407`) and model switching (`src/interface/cli/uds_dispatch_runtime.rs:33-54`). In the latter, catalogue selection is a status verdict rather than the operation that installs the provider; the independently refreshed limits still apply to the current agent runtime.
 
 **Cost:** A disk edit between composition and limit lookup can supply newer context/output limits alongside an older selected runtime. The earlier publication concern therefore has consequential consumers, though no execution failure was reproduced.
 
@@ -167,7 +167,7 @@ Fresh static review at `43dfad9c` after moving to the chore branch; no tests run
 
 #### A4-02 — Reload observation and successful application share one checkpoint (priority: medium)
 
-**Evidence:** `src/infrastructure/reload.rs:80-90` advances observed fingerprints before rebuilding. `src/interface/cli/provider_reload.rs:90-97` retains the last-good runtime on rebuild failure but returns `Unchanged`; subsequent identical source observations do not trigger a rebuild.
+**Evidence:** `src/infrastructure/reload.rs:80-90` advances observed fingerprints before rebuilding. `src/application/catalogue/use_cases/reload_runtime_configuration.rs` (formerly `src/interface/cli/provider_reload.rs`, #1849) retains the last-good runtime on rebuild failure but reports a poll as `Unchanged`; subsequent identical source observations do not trigger a rebuild.
 
 **Cost:** A transient rebuild failure is not automatically retried until another detected edit or explicit forced reload. Last-good retention is sound, but observation is being treated as successful application. This is not evidence of data loss or permanent inability to reload.
 

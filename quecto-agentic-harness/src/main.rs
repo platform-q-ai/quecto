@@ -11,8 +11,11 @@ fn main() {
             sessions: quecto::composition::sessions::build_session_handles,
             retention: quecto::composition::sessions::build_retention_handles,
             fresh_session_identity: quecto::composition::sessions::build_fresh_session_identity,
-            config_selection: quecto::composition::configuration::build_select_config,
+            configuration: quecto::composition::configuration::build_configuration_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles,
+            provider_runtime: quecto::composition::runtime::build_agent_provider,
+            tool_policy_persistence:
+                quecto::composition::tool_policy::build_tool_policy_persistence,
         },
     ));
 }

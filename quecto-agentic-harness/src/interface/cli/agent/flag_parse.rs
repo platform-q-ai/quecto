@@ -54,6 +54,19 @@ pub(crate) struct AgentFlags {
     /// CliContext; startup effort admission and the spawn tool consume the
     /// change-reasoning-effort use case it builds.
     pub(crate) catalogue: Option<crate::interface::cli::CatalogueHandlesBuilder>,
+    /// Composition's provider-runtime builder (#1849), from CliContext;
+    /// startup composes the provider through it (reload rebuilds through
+    /// the catalogue handles' reload use case, over the same composition).
+    pub(crate) provider_runtime: Option<crate::interface::cli::ProviderRuntimeBuilder>,
+    /// Composition's tool-policy persistence builder (#1849), from
+    /// CliContext; the agent build installs its hook on the loop.
+    pub(crate) tool_policy_persistence: Option<crate::interface::cli::ToolPolicyPersistenceBuilder>,
+    /// Composition's configuration handles builder (#2024), from
+    /// CliContext; the agent build resolves the effective config through it.
+    pub(crate) configuration: Option<crate::interface::cli::ConfigurationHandlesBuilder>,
+    /// Whether stdin is a terminal (from CliContext): the only case in which
+    /// an unrecorded overlay may be offered for trust at startup.
+    pub(crate) stdin_is_tty: bool,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
@@ -73,6 +86,10 @@ impl AgentFlags {
         self.kill_tool = ctx.kill_tool;
         self.retention = ctx.retention;
         self.catalogue = ctx.catalogue;
+        self.provider_runtime = ctx.provider_runtime;
+        self.tool_policy_persistence = ctx.tool_policy_persistence;
+        self.configuration = ctx.configuration;
+        self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }
 }
 

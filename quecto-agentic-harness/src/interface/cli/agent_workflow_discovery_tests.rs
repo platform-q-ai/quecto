@@ -41,8 +41,14 @@ fn workflow_flags() -> AgentFlags {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -79,6 +85,7 @@ fn build(
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),

@@ -4,12 +4,13 @@ mod auth;
 pub mod catalogue_handles;
 mod commands;
 mod container;
+mod config_cmd;
 mod config_flag;
+mod config_loading;
+pub mod configuration_handles;
+mod help;
 mod models;
 pub mod protocol;
-pub mod provider_reload;
-#[cfg(test)]
-mod provider_reload_tests;
 pub mod uds;
 mod uds_admission_projection;
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub mod uds_cancel;
 mod uds_cancel_history;
 mod uds_control_forward;
 mod uds_delete_all_subagents;
+mod uds_dispatch_reload;
 pub mod uds_execution_state;
 mod uds_progress_forward;
 
@@ -200,7 +202,6 @@ pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
-mod uds_reload;
 pub mod uds_session;
 pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
@@ -229,7 +230,6 @@ use config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
 
 // Re-export public types for external consumers.
-pub use agent::build_agent_provider;
 
 /// Re-export for test access to OpenAI import params struct.
 pub use auth::auth_import::OpenAiImportParams;
@@ -325,15 +325,38 @@ pub type FreshSessionIdentityBuilder =
 
 /// Composition's builder of the catalogue handles (#1845): the controllers
 /// a dispatch loop answers the catalogue commands through, over the loop's
-/// base directory. Injected through the CLI context; the interface never
+/// base directory and, for an agent run, its reloadable configuration
+/// (#1849). Injected through the CLI context; the interface never
 /// constructs a catalogue use case.
-pub type CatalogueHandlesBuilder = fn(&std::path::Path) -> catalogue_handles::CatalogueHandles;
+pub type CatalogueHandlesBuilder = fn(
+    &std::path::Path,
+    Option<&catalogue_handles::RuntimeConfigurationInputs>,
+) -> catalogue_handles::CatalogueHandles;
 
-/// Composition's builder of the configuration-selection use case (#1966):
-/// which one file a run loads its configuration from. Injected through the
-/// CLI context; the interface never probes the filesystem for a config.
-pub type ConfigSelectionBuilder =
-    fn() -> std::sync::Arc<crate::application::configuration::use_cases::SelectConfig>;
+/// Composition's provider-runtime builder (#1849), the one type startup
+/// and reload share: injected through the CLI context; startup calls it and
+/// hands it on to the reload inputs, the interface never composes a
+/// provider.
+pub type ProviderRuntimeBuilder =
+    crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder;
+
+/// Composition's builder of the tool-policy persistence hook (#1849): the
+/// durable `set_tool_policy … persist` writer over the run's config file.
+/// Injected through the CLI context; the agent build installs it on the
+/// loop, the interface never constructs the writer.
+pub type ToolPolicyPersistenceBuilder = fn(
+    &std::path::Path,
+    &crate::application::configuration::dto::ConfigSources,
+)
+    -> crate::application::agent_loop::ToolPolicyPersistence;
+
+/// Composition's builder of the configuration handles (#1966, #2024):
+/// which files a run loads, the effective merge, and the one safe write
+/// path. Injected through the CLI context; the interface never probes or
+/// writes a config file itself.
+pub type ConfigurationHandlesBuilder = fn(
+    &configuration_handles::ConfigurationEnvironment,
+) -> configuration_handles::ConfigurationHandles;
 
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
@@ -376,33 +399,61 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
     /// chat run refuses to start without it.
     pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
-    /// Composition's configuration-selection builder (#1966). Supplied by
-    /// the binary's `main` through [`run`]'s [`CliComposition`]; any command
-    /// that loads configuration refuses to run without it.
-    pub config_selection: Option<ConfigSelectionBuilder>,
+    /// Composition's configuration handles builder (#1966, #2024).
+    /// Supplied by the binary's `main` through [`run`]'s
+    /// [`CliComposition`]; any command that loads or writes configuration
+    /// refuses to run without it.
+    pub configuration: Option<ConfigurationHandlesBuilder>,
     /// Composition's catalogue handles builder (#1845). Supplied by the
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
     pub catalogue: Option<CatalogueHandlesBuilder>,
+    /// Composition's provider-runtime builder (#1849). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
+    /// refuses to start without it.
+    pub provider_runtime: Option<ProviderRuntimeBuilder>,
+    /// Composition's tool-policy persistence builder (#1849). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
+    /// run refuses to start without it.
+    pub tool_policy_persistence: Option<ToolPolicyPersistenceBuilder>,
 }
 
 impl CliContext {
-    /// Select the config file (#1966): explicit override > `./config.json` in
-    /// the working directory > `<base_dir>/config.json`. A local file that is
-    /// present but unusable is an error, never a fallback. The working
-    /// directory is the one handed in (`run` supplies the process's; rigs
-    /// supply a hermetic one); without one nothing local is discovered.
-    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
-        let Some(select_config) = self.config_selection else {
-            return Err("configuration selection capability not composed".to_string());
+    /// The composed configuration handles (#2024). `prompt_for_trust`
+    /// lets an unrecorded overlay be offered to an interactive user; only
+    /// an agent run started from a terminal asks for it.
+    pub(crate) fn configuration_handles(
+        &self,
+        prompt_for_trust: bool,
+    ) -> Result<configuration_handles::ConfigurationHandles, String> {
+        let Some(build) = self.configuration else {
+            return Err("configuration capability not composed".to_string());
         };
-        select_config()
+        Ok(build(&configuration_handles::ConfigurationEnvironment {
+            base_dir: self.base_dir(),
+            prompt_for_trust,
+        }))
+    }
+
+    /// Select the config layers (#1966, #2024): an explicit override
+    /// replaces everything; otherwise `<base_dir>/config.json` with the
+    /// working directory's `.quecto/config.json` as the overlay candidate.
+    /// The working directory is the one handed in (`run` supplies the
+    /// process's; rigs supply a hermetic one); without one no overlay is
+    /// discovered.
+    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
+        // Both directories are compared by identity by the use case; the
+        // filesystem's canonical form (symlinked homes, relative base dirs)
+        // is what makes that comparison honest.
+        let canonical = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+        Ok(self
+            .configuration_handles(false)?
+            .select
             .execute(ConfigSelectionRequest {
                 explicit: self.config_path.clone(),
-                working_directory: self.cwd.clone(),
-                global: self.base_dir().join("config.json"),
-            })
-            .map_err(|error| error.to_string())
+                working_directory: self.cwd.clone().map(canonical),
+                global: canonical(self.base_dir()).join("config.json"),
+            }))
     }
 
     /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
@@ -426,8 +477,10 @@ pub struct CliComposition {
     pub sessions: SessionHandlesBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
-    pub config_selection: ConfigSelectionBuilder,
+    pub configuration: ConfigurationHandlesBuilder,
     pub catalogue: CatalogueHandlesBuilder,
+    pub provider_runtime: ProviderRuntimeBuilder,
+    pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -451,8 +504,10 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         sessions: Some(composition.sessions),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
-        config_selection: Some(composition.config_selection),
+        configuration: Some(composition.configuration),
         catalogue: Some(composition.catalogue),
+        provider_runtime: Some(composition.provider_runtime),
+        tool_policy_persistence: Some(composition.tool_policy_persistence),
         ..Default::default()
     };
 
@@ -526,22 +581,23 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
+            "config" => config_cmd::cmd_config(ctx, &args[2..], &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
             "admission-broker" => {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
             "help" | "--help" | "-h" => {
-                help_text(&mut stdout);
+                help::help_text(&mut stdout);
                 0
             }
             "version" | "--version" | "-v" => {
-                version_text(&mut stdout);
+                help::version_text(&mut stdout);
                 0
             }
             other => {
                 stderr.push_str(&format!("Unknown command: {other}\n"));
-                help_text(&mut stdout);
+                help::help_text(&mut stdout);
                 1
             }
         }
@@ -658,10 +714,12 @@ pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::
     Ok(runtime)
 }
 
+#[allow(dead_code)]
 fn version_text(out: &mut String) {
     out.push_str(&format!("quecto {}\n", env!("CARGO_PKG_VERSION")));
 }
 
+#[allow(dead_code)]
 fn help_text(out: &mut String) {
     out.push_str(&format!(
         "quecto - Personal AI Assistant v{}\n",

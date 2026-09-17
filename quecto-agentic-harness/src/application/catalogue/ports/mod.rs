@@ -8,6 +8,8 @@ pub mod effort_vocabulary;
 pub mod model_runtime;
 pub mod refresh;
 pub mod refresh_inputs;
+pub mod reload_runtime;
+pub mod runtime_configuration_source;
 pub mod runtime_snapshot;
 
 pub use catalogue_inputs::{CatalogueInputsLoader, LoadedCatalogueInputs};
@@ -20,4 +22,6 @@ pub use refresh::{
     RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort, RefreshableCatalogueSource,
 };
 pub use refresh_inputs::{LoadedRefreshInputs, RefreshInputsLoader};
+pub use reload_runtime::ReloadRuntime;
+pub use runtime_configuration_source::{ReloadedConfiguration, RuntimeConfigurationSource};
 pub use runtime_snapshot::RuntimeSnapshotSource;

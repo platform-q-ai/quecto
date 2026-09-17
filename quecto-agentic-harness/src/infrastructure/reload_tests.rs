@@ -1,4 +1,27 @@
+//! The reload gate's state machine (ADR-0002 AC6/AC7), formerly the
+//! `runtime_reload.feature` scenarios (#2017): a unit of infrastructure,
+//! not an entry-point behaviour.
 use super::*;
+
+fn file_with(dir: &tempfile::TempDir, name: &str, content: &str) -> PathBuf {
+    let path = dir.path().join(name);
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+/// Rewrite `path`, guaranteeing the mtime advances even on coarse-timestamp
+/// filesystems (the same-mtime same-length rewrite is the tolerated edge).
+fn rewrite_with_mtime_advance(path: &std::path::Path, content: &str) -> SystemTime {
+    let before = fs::metadata(path).and_then(|m| m.modified()).unwrap();
+    loop {
+        fs::write(path, content).unwrap();
+        let after = fs::metadata(path).and_then(|m| m.modified()).unwrap();
+        if after != before {
+            return after;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+}
 
 #[test]
 fn unseeded_source_reports_changed_then_stat_only_unchanged() {
@@ -13,64 +36,195 @@ fn unseeded_source_reports_changed_then_stat_only_unchanged() {
 }
 
 #[test]
-fn seeded_source_detects_content_change_and_runtime_reload_keeps_last_good_on_failure() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(tmp.path(), b"v1").unwrap();
-    let mut reload = RuntimeReload::new(vec![ReloadSource::new(tmp.path())]);
-    reload.seed("initial".to_string());
-    assert_eq!(
-        reload.poll(|| Ok("should not run".to_string())),
-        ReloadResult::Unchanged
-    );
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    std::fs::write(tmp.path(), b"v2-longer").unwrap();
-    assert_eq!(
-        reload.poll(|| Err("bad config".into())),
-        ReloadResult::Unchanged
-    );
-    assert_eq!(reload.last_good().map(String::as_str), Some("initial"));
-    assert_eq!(
-        reload.poll_forced(|| Ok("forced".to_string())),
-        ReloadResult::Reloaded("forced".to_string())
-    );
-    assert_eq!(reload.last_good().map(String::as_str), Some("forced"));
+fn seeded_source_with_no_edit_reports_unchanged_without_a_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut source = ReloadSource::new(file_with(&dir, "source.txt", "v1"));
+    source.seed();
+    assert_eq!(source.changed(), SourceChange::UnchangedNoRead);
 }
 
 #[test]
-fn record_reloaded_updates_last_good_for_multiple_value_types() {
-    let mut numbers = RuntimeReload::<i32>::new(vec![]);
-    assert_eq!(numbers.record_reloaded(7), ReloadResult::Reloaded(7));
-    assert_eq!(numbers.last_good(), Some(&7));
-
-    let mut unsigned = RuntimeReload::<u32>::new(vec![]);
-    assert_eq!(unsigned.record_reloaded(9), ReloadResult::Reloaded(9));
-    assert_eq!(unsigned.last_good(), Some(&9));
+fn seeded_source_detects_a_content_change_once_mtime_moves_and_hash_differs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::new(&path);
+    source.seed();
+    rewrite_with_mtime_advance(&path, "v2");
+    assert_eq!(source.changed(), SourceChange::Changed);
 }
 
+/// AC6b: a touch-only rewrite reports unchanged AND advances the mtime
+/// cache, so the following probe is a stat-only no-op.
 #[test]
-fn missing_source_is_fail_safe_unchanged_for_runtime_reload() {
-    let missing = tempfile::tempdir().unwrap().path().join("missing.json");
-    let mut source = ReloadSource::new(&missing);
+fn touched_but_identical_file_reports_unchanged_and_advances_the_mtime_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::new(&path);
+    source.seed();
+    let before = source.last_mtime().unwrap();
+    let touched = rewrite_with_mtime_advance(&path, "v1");
+    assert_eq!(source.changed(), SourceChange::Unchanged);
+    assert_ne!(source.last_mtime().unwrap(), before);
+    assert_eq!(source.last_mtime().unwrap(), touched);
+    assert_eq!(source.changed(), SourceChange::UnchangedNoRead);
+}
+
+/// AC7: a required file that goes missing is fail-safe — reported, cache
+/// untouched, no panic — so a save window or a deleted base config never
+/// rebuilds a session against defaults.
+#[test]
+fn missing_required_file_reports_missing_or_unreadable_and_keeps_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::new(&path);
+    source.seed();
+    let seeded = source.last_mtime();
+    assert!(seeded.is_some());
+    std::fs::remove_file(&path).unwrap();
     assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
-    let mut reload = RuntimeReload::new(vec![ReloadSource::new(missing)]);
-    reload.seed(7);
-    assert!(!reload.sources_changed());
-    assert_eq!(reload.poll(|| Ok(8)), ReloadResult::Unchanged);
-    assert_eq!(reload.last_good(), Some(&7));
+    assert_eq!(source.last_mtime(), seeded);
+}
+
+/// #2024: an optional source (the overlay, its trust record) that was seen
+/// and then removed is one change, after which it stays quiet until it
+/// reappears; one never seen is quiet.
+#[test]
+fn a_removed_optional_file_is_one_change_and_a_never_seen_file_is_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::optional(&path);
+    source.seed();
+    assert!(source.last_mtime().is_some());
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(source.changed(), SourceChange::Changed);
+    assert_eq!(source.last_mtime(), None);
+    assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
+
+    let mut never = ReloadSource::optional(dir.path().join("absent.txt"));
+    never.seed();
+    assert_eq!(never.changed(), SourceChange::MissingOrUnreadable);
+
+    std::fs::write(&path, "v2").unwrap();
+    assert_eq!(
+        source.changed(),
+        SourceChange::Changed,
+        "reappearing counts"
+    );
 }
 
 #[test]
-fn forced_reload_result_preserves_error_without_replacing_last_good() {
-    let mut reload: RuntimeReload<u32> = RuntimeReload::new(vec![]);
-    reload.seed(3);
-    let err = reload
-        .poll_forced_result(|| Err("syntax error".into()))
-        .unwrap_err();
-    assert_eq!(err, "syntax error");
-    assert_eq!(reload.last_good(), Some(&3));
+fn gate_with_no_edit_reports_no_change_after_seeding() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut gate = RuntimeReload::new(vec![ReloadSource::new(file_with(&dir, "a", "v1"))]);
+    gate.seed();
+    assert!(!gate.sources_changed());
+}
+
+#[test]
+fn gate_reports_a_change_once_then_not_again_until_the_next_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "a", "v1");
+    let mut gate = RuntimeReload::new(vec![ReloadSource::new(&path)]);
+    gate.seed();
+    rewrite_with_mtime_advance(&path, "broken");
+    assert!(gate.sources_changed());
+    // The fingerprint advanced with the probe: a rebuild failure of the
+    // edited file is not retried every turn until the file changes again.
+    assert!(!gate.sources_changed());
+    rewrite_with_mtime_advance(&path, "v2");
+    assert!(
+        gate.sources_changed(),
+        "a later fix is picked up (recovery)"
+    );
+}
+
+#[test]
+fn gate_watching_two_sources_reports_a_change_when_either_is_edited() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_with(&dir, "a.json", "a1");
+    let b = file_with(&dir, "b.json", "b1");
+    let mut gate = RuntimeReload::new(vec![ReloadSource::new(&a), ReloadSource::new(&b)]);
+    gate.seed();
+    assert!(!gate.sources_changed());
+    rewrite_with_mtime_advance(&b, "b2");
+    assert!(gate.sources_changed());
+    assert!(!gate.sources_changed());
+    rewrite_with_mtime_advance(&a, "a2");
+    assert!(gate.sources_changed());
+}
+
+/// Re-seeding after an edit (what a rebuild does before reading) consumes
+/// the pending change without reporting it.
+#[test]
+fn reseeding_after_an_edit_consumes_the_pending_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "a", "v1");
+    let mut gate = RuntimeReload::new(vec![ReloadSource::new(&path)]);
+    gate.seed();
+    rewrite_with_mtime_advance(&path, "v2");
+    gate.seed();
+    assert!(!gate.sources_changed());
+}
+
+#[test]
+fn missing_source_is_fail_safe_unchanged_for_the_gate() {
+    let missing = tempfile::tempdir().unwrap().path().join("missing.json");
+    let mut gate = RuntimeReload::new(vec![ReloadSource::new(missing)]);
+    gate.seed();
+    assert!(!gate.sources_changed());
 }
 
 #[test]
 fn hash_changes_with_content() {
     assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
+}
+
+/// #2024: the trust record is watched only while the overlay it gates
+/// exists — another repository's `config trust` is no change for a
+/// session without an overlay — but an overlay created mid-run brings the
+/// record into the watch on the spot, so a later `config trust` is a
+/// change.
+#[test]
+fn a_guarded_source_counts_only_while_its_guard_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = file_with(&dir, "trust.json", "{}");
+    let overlay = dir.path().join("overlay.json");
+    let mut source = ReloadSource::optional(&record).while_present(&overlay);
+    source.seed();
+    assert_eq!(
+        source.last_mtime(),
+        None,
+        "not fingerprinted while the guard is absent"
+    );
+    rewrite_with_mtime_advance(&record, "{\"other-repo\":1}");
+    assert_eq!(
+        source.changed(),
+        SourceChange::UnchangedNoRead,
+        "a record change is no change without the overlay"
+    );
+
+    std::fs::write(&overlay, "{}").unwrap();
+    let mut gate = RuntimeReload::new(vec![
+        ReloadSource::optional(&overlay),
+        ReloadSource::optional(&record).while_present(&overlay),
+    ]);
+    // The rebuild an overlay creation prompts re-seeds every source, the
+    // record included now that its guard exists.
+    gate.seed();
+    assert!(!gate.sources_changed());
+    rewrite_with_mtime_advance(&record, "{\"this-repo\":1}");
+    assert!(
+        gate.sources_changed(),
+        "trusting the new overlay is a change"
+    );
+    assert!(!gate.sources_changed());
+
+    // The guard going away silences the record again, and its return
+    // (with a record edited meanwhile) is reported.
+    std::fs::remove_file(&overlay).unwrap();
+    assert!(gate.sources_changed(), "the overlay's removal");
+    rewrite_with_mtime_advance(&record, "{\"meanwhile\":1}");
+    assert!(!gate.sources_changed(), "quiet without the overlay");
+    std::fs::write(&overlay, "{}").unwrap();
+    assert!(gate.sources_changed(), "the overlay's return");
 }

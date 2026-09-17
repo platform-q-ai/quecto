@@ -12,6 +12,7 @@ use super::*;
 //   4. Reads all response lines from `client_half` until the server closes.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::message::Role;
 use quecto::domain::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
@@ -22,8 +23,6 @@ use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::build_agent_provider;
-use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use wiremock::Request;
 
@@ -84,8 +83,11 @@ pub(crate) struct UdsAgentContext {
     pub(crate) workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
     pub(crate) workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
     pub(crate) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub(crate) provider_reload: quecto::interface::cli::provider_reload::ProviderReload,
-    pub(crate) provider_reload_inputs: ProviderReloadInputs,
+    /// The run's catalogue handles (#1849), composed over its reloadable
+    /// configuration at build time — before a scenario's later config edits,
+    /// as the CLI's agent build does — so `reload` and the pre-turn poll
+    /// see those edits as changes.
+    pub(crate) catalogue: quecto::interface::cli::catalogue_handles::CatalogueHandles,
 }
 
 /// Build the agent and session key from world state + config.
@@ -108,9 +110,19 @@ pub(crate) fn build_uds_agent(
     let http_client = reqwest::Client::new();
     let provider = build_agent_provider(&config, base, &http_client)
         .map_err(|e| format!("provider error: {e}"))?;
-    let provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs =
-        ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
+    let catalogue = quecto::composition::catalogue::build_catalogue_handles(
+        base,
+        Some(
+            &quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+                selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
+                    config_path,
+                ),
+                env_overrides,
+                http_client,
+                provider_runtime: build_agent_provider,
+            },
+        ),
+    );
 
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
@@ -195,17 +207,15 @@ pub(crate) fn build_uds_agent(
     };
     // The configured default effort is admitted for the startup model
     // through the composed use case, as the binary's startup does (#1848).
-    let startup_effort = quecto::composition::catalogue::build_catalogue_handles(base)
-        .effort
-        .admit(
-            &model,
-            config
-                .agents
-                .defaults
-                .effort
-                .as_deref()
-                .and_then(quecto::domain::provider::EffortLevel::parse),
-        );
+    let startup_effort = catalogue.effort.admit(
+        &model,
+        config
+            .agents
+            .defaults
+            .effort
+            .as_deref()
+            .and_then(quecto::domain::provider::EffortLevel::parse),
+    );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -250,8 +260,7 @@ pub(crate) fn build_uds_agent(
         workflow_state,
         workflow_config,
         broadcast_tx,
-        provider_reload,
-        provider_reload_inputs,
+        catalogue,
     })
 }
 
@@ -353,8 +362,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
         workflow_state,
         workflow_config,
         broadcast_tx: _,
-        mut provider_reload,
-        provider_reload_inputs,
+        catalogue,
     } = ctx;
 
     if world.uds_add_fireworks_before_loop {
@@ -433,7 +441,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             socket_path: socket_path_for_thread,
             socket_override: Some(server_tokio),
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
+            catalogue,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
@@ -442,8 +450,6 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             workflow_state,
             workflow_config,
             broadcast_tx: None,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: None,
         })
@@ -2125,8 +2131,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         workflow_state,
         workflow_config,
         broadcast_tx: _,
-        mut provider_reload,
-        provider_reload_inputs,
+        catalogue,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -2146,7 +2151,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
+            catalogue,
             ext_registry: Some(ext_registry),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
@@ -2155,8 +2160,6 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             workflow_state,
             workflow_config,
             broadcast_tx: None,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: None,
         })
@@ -2547,8 +2550,7 @@ fn mc_spawn_agent(
         workflow_state,
         workflow_config,
         broadcast_tx,
-        mut provider_reload,
-        provider_reload_inputs,
+        catalogue,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -2567,7 +2569,7 @@ fn mc_spawn_agent(
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
+            catalogue,
             ext_registry: Some(ext_registry),
             lifetime: if persist {
                 quecto::domain::harness_lifetime::HarnessLifetime::Persistent
@@ -2580,8 +2582,6 @@ fn mc_spawn_agent(
             workflow_state,
             workflow_config,
             broadcast_tx,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: None,
         })

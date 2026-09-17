@@ -10,7 +10,7 @@ fn write_models_json(dir: &std::path::Path, body: &str) {
 }
 
 fn compose(dir: &std::path::Path) {
-    crate::interface::catalogue_runtime::compose_and_publish_runtime(
+    crate::composition::runtime::compose_and_publish_runtime(
         &crate::infrastructure::config::Config::default(),
         dir,
         &reqwest::Client::new(),
@@ -19,7 +19,7 @@ fn compose(dir: &std::path::Path) {
 }
 
 fn selection_status(dir: &std::path::Path, model: &str) -> Option<serde_json::Value> {
-    let plan = crate::composition::catalogue::build_catalogue_handles(dir)
+    let plan = crate::composition::catalogue::build_catalogue_handles(dir, None)
         .model
         .plan(model);
     render_verdict(&plan.verdict)

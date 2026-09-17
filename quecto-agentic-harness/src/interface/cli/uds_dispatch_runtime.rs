@@ -30,7 +30,9 @@ pub(super) fn resolve_set_model_target(
 }
 
 pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
-    super::super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
+    // Reload runtime configuration (#1849): a provider added to the config
+    // since the last poll is selectable without a restart (ADR-0002).
+    super::super::uds_dispatch_reload::poll_reload(ctx).await;
     let resolved_model = match resolve_set_model_target(args.model, args.provider, args.model_id) {
         Ok(m) => m,
         Err(msg) => {

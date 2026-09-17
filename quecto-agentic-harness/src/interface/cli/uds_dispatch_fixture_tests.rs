@@ -40,9 +40,11 @@ pub(super) struct Fixture {
     /// free of live/durable skew.
     pub(super) system_prompt: String,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    pub(super) provider_reload_inputs:
-        Option<crate::interface::cli::provider_reload::ProviderReloadInputs>,
-    pub(super) provider_reload: Option<crate::interface::cli::provider_reload::ProviderReload>,
+    /// The run's reloadable configuration (#1849): `Some` composes the
+    /// reload use case over it and installs its tool-policy persistence on
+    /// the agent, as the CLI's agent build does.
+    pub(super) runtime_configuration:
+        Option<crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs>,
     /// The retention store paired with the active session (D9 #1978): the
     /// loop hands it to the sessions graph itself, never via the agent.
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
@@ -73,8 +75,7 @@ impl Fixture {
             ephemeral: false,
             system_prompt: String::new(),
             subagent_registry: None,
-            provider_reload_inputs: None,
-            provider_reload: None,
+            runtime_configuration: None,
             spill_store: None,
         };
         fixture.compose_sessions();
@@ -180,6 +181,24 @@ impl Fixture {
             &self.session_key,
             &self.messages,
         );
+        let catalogue = crate::composition::catalogue::build_catalogue_handles(
+            self._tmp.path(),
+            self.runtime_configuration.as_ref(),
+        );
+        // Durable persistence through composition's tool-policy seam, as
+        // the CLI's agent build installs it (#1849).
+        self.agent
+            .set_tool_policy_persistence(self.runtime_configuration.as_ref().map(|inputs| {
+                crate::composition::tool_policy::build_tool_policy_persistence(
+                    self._tmp.path(),
+                    &crate::application::configuration::dto::ConfigSources {
+                        base: inputs.selection.path().to_path_buf(),
+                        explicit: true,
+                        overlay: None,
+                        legacy_local: None,
+                    },
+                )
+            }));
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
@@ -205,16 +224,12 @@ impl Fixture {
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
-            provider_reload: self.provider_reload.as_mut(),
-            provider_reload_inputs: self.provider_reload_inputs.as_ref(),
             fleet_teardown: None,
             list_sessions: self.sessions.list_sessions.clone(),
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
             switch: self.sessions.switch.clone(),
-            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
-                self._tmp.path(),
-            ),
+            catalogue,
         }
     }
 }

@@ -69,7 +69,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         socket_path,
         socket_override: None,
         sessions: crate::composition::sessions::build_session_handles,
-        catalogue: crate::composition::catalogue::build_catalogue_handles(base),
+        catalogue: crate::composition::catalogue::build_catalogue_handles(base, None),
         ext_registry: None,
         lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
@@ -78,8 +78,6 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         parent_control: None,
         teardown_graph: None,
     }
@@ -267,12 +265,10 @@ async fn single_client_socket_override_serves_get_state() {
                     ext_registry: None,
                     subagent_registry: None,
                     workflow_state: None,
-                    provider_reload: None,
-                    provider_reload_inputs: None,
                 },
                 server_std,
                 &store,
-                &crate::composition::catalogue::build_catalogue_handles(dir.path()),
+                &crate::composition::catalogue::build_catalogue_handles(dir.path(), None),
             )
             .await
         })

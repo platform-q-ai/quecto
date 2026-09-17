@@ -410,8 +410,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             workflow_state,
             workflow_config,
             broadcast_tx: _,
-            mut provider_reload,
-            provider_reload_inputs,
+            catalogue,
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
@@ -427,7 +426,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
+            catalogue,
             ext_registry: Some(ext_registry),
             // A launcher-created child is launch-bound (#1937): ordinary
             // client churn must never end it, and it never persists.
@@ -438,8 +437,6 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             workflow_state,
             workflow_config,
             broadcast_tx: None,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: Some(ParentControlLaunch {
                 binding,
                 bind_deadline,

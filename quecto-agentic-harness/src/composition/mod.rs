@@ -5,12 +5,14 @@ pub mod environments;
 pub mod find;
 pub mod fleet_settlement;
 pub mod retention;
+pub mod runtime;
 pub mod session_home;
 pub mod session_report;
 pub mod sessions;
 pub mod subagent_lifecycle;
 pub mod subagent_teardown;
 pub mod subagent_termination;
+pub mod tool_policy;
 
 #[cfg(test)]
 mod find_tests;

@@ -41,12 +41,20 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/config_document_store.rs"]
+mod config_document_store;
+#[path = "contracts/config_document_writer.rs"]
+mod config_document_writer;
+#[path = "contracts/config_validator.rs"]
+mod config_validator;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
 #[path = "contracts/delegated_children_roster.rs"]
 mod delegated_children_roster;
+#[path = "contracts/document_lock.rs"]
+mod document_lock;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
 #[path = "contracts/effort_runtime.rs"]
@@ -73,8 +81,8 @@ mod llm_provider;
 mod loaded_catalogue_inputs;
 #[path = "contracts/loaded_refresh_inputs.rs"]
 mod loaded_refresh_inputs;
-#[path = "contracts/local_config_probe.rs"]
-mod local_config_probe;
+#[path = "contracts/overlay_trust_store.rs"]
+mod overlay_trust_store;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
 #[path = "contracts/refresh_inputs_loader.rs"]
@@ -83,10 +91,14 @@ mod refresh_inputs_loader;
 mod refresh_redaction_port;
 #[path = "contracts/refreshable_catalogue_source.rs"]
 mod refreshable_catalogue_source;
+#[path = "contracts/reload_runtime.rs"]
+mod reload_runtime;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
+#[path = "contracts/runtime_configuration_source.rs"]
+mod runtime_configuration_source;
 #[path = "contracts/runtime_snapshot_source.rs"]
 mod runtime_snapshot_source;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]

@@ -4,6 +4,7 @@
 //! Pattern mirrors `agent_935_clamp_tests.rs`. Kept in its own file for the
 //! 750-line source gate.
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 fn flags_for_wiring_test() -> AgentFlags {
@@ -35,8 +36,14 @@ fn flags_for_wiring_test() -> AgentFlags {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -60,8 +67,14 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     let flags = flags_for_wiring_test();
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent build should succeed");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_context_tokens(),
         100_000,

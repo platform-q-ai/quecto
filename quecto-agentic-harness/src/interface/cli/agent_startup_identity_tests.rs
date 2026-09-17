@@ -11,6 +11,10 @@ fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..Default::default()
     };
@@ -52,6 +56,10 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: None,
         ..Default::default()
     };
@@ -60,6 +68,55 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
     assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
     assert!(
         stderr.contains("fresh session identity generator not composed"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_agent_run_refuses_to_start_without_a_composed_provider_runtime() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        provider_runtime: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    let mut flags =
+        parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
+    flags.adopt_context(&ctx);
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        stderr.contains("agent: provider runtime capability not composed"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_agent_run_refuses_to_start_without_composed_tool_policy_persistence() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    let mut flags =
+        parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
+    flags.adopt_context(&ctx);
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        stderr.contains("agent: tool-policy persistence capability not composed"),
         "{stderr}"
     );
 }

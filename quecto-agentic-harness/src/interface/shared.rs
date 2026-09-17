@@ -1,6 +1,7 @@
 //! Shared utility functions used by CLI and REPL modules.
 
 use crate::infrastructure::auth::credential_store::Credential;
+use crate::infrastructure::auth::token_refresh::expires_at_with_margin;
 use std::collections::HashMap;
 
 /// Merge an optional user-provided system prompt.
@@ -148,21 +149,6 @@ pub use shared_workflow::register_workflow_tool_with_participation;
 ///
 /// The credential store snapshot takes priority over the config-file key.
 /// Expired credentials are ignored (falls back to config key).
-/// Safety margin (seconds) subtracted from OAuth `expires_in` when computing
-/// `expires_at`. Compensates for clock skew and network latency so tokens are
-/// refreshed before they actually expire on the server side.
-pub const OAUTH_EXPIRY_MARGIN_SECS: i64 = 300;
-
-/// Calculate `expires_at` timestamp with a consistent safety margin.
-///
-/// Returns `now + expires_in - OAUTH_EXPIRY_MARGIN_SECS`. Used by all
-/// credential storage paths (login, import, refresh) to ensure a uniform
-/// 5-minute buffer before server-side token expiration.
-pub fn expires_at_with_margin(expires_in: u64) -> i64 {
-    crate::infrastructure::time::unix_timestamp_secs() + expires_in as i64
-        - OAUTH_EXPIRY_MARGIN_SECS
-}
-
 /// Operates on a pre-loaded snapshot to avoid redundant file I/O.
 pub fn resolve_api_key(
     config_key: &str,

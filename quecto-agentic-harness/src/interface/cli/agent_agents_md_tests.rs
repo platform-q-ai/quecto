@@ -12,6 +12,10 @@ fn one_shot_startup_stops_on_invalid_agents_md_utf8() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
@@ -62,6 +66,10 @@ fn uds_startup_stops_on_invalid_agents_md_utf8_before_socket_loop() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
@@ -96,6 +104,10 @@ fn uds_startup_stops_on_agents_md_read_error_before_socket_loop() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };
@@ -129,6 +141,10 @@ fn one_shot_startup_stops_on_agents_md_read_error() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..CliContext::default()
     };

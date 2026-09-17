@@ -16,12 +16,13 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
     AgentRuntimeInputs {
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
-        refresh_fn: crate::interface::shared::make_oauth_refresh_fn(),
-        openai_oauth_factory: crate::interface::shared::make_provider_factory(
-            "openai",
-            None,
-            http_client.clone(),
-        ),
+        refresh_fn: crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn(),
+        openai_oauth_factory:
+            crate::infrastructure::providers::refresh_wiring::make_provider_factory(
+                "openai",
+                None,
+                http_client.clone(),
+            ),
         model_registry: crate::infrastructure::model_registry::ModelRegistry::load_from_path(
             &base_dir.join("models.json"),
         )
@@ -118,7 +119,7 @@ fn validate_oauth_base_url_rejects_malformed_configured_url() {
 fn build_registry_provider_skips_api_key_models_without_key() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model("custom", ProviderApi::OpenAiCompletions, AuthMode::ApiKey);
     m.base_url = Some("https://api.example.test/v1".to_string());
 
@@ -135,7 +136,7 @@ fn build_registry_provider_skips_api_key_models_without_key() {
 fn build_registry_provider_reports_unimplemented_google_protocol() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "google-custom",
         ProviderApi::GoogleGenerativeAi,
@@ -188,7 +189,7 @@ fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let client = reqwest::Client::new();
 
     let mut openai = model(
@@ -254,7 +255,7 @@ fn validate_oauth_base_url_accepts_canonical_host_with_path_and_registry_skips_o
 
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "custom-openai-oauth",
         ProviderApi::OpenAiCompletions,
@@ -412,7 +413,7 @@ fn build_agent_provider_rejects_remote_http_endpoint_unless_opted_in() {
 fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let client = reqwest::Client::new();
 
     let missing_provider = model(
@@ -449,7 +450,7 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_credential_is
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut token_credential = model(
         "token-credential",
         ProviderApi::OpenAiCompletions,
@@ -482,7 +483,7 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_oauth_token_i
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut token_credential = model(
         "empty-token-credential",
         ProviderApi::OpenAiCompletions,
@@ -515,7 +516,7 @@ fn build_registry_provider_openai_oauth_builds_refreshable_provider() {
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "custom-openai-oauth",
         ProviderApi::OpenAiCompletions,
@@ -551,7 +552,7 @@ fn build_registry_provider_xai_oauth_builds_openai_compatible_refreshable_provid
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "xai-custom",
         ProviderApi::OpenAiCompletions,
@@ -587,7 +588,7 @@ fn build_registry_provider_rejects_noncanonical_openai_oauth_base_url() {
             account_id: None,
         })
         .unwrap();
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "evil-openai-oauth",
         ProviderApi::OpenAiCompletions,
@@ -630,7 +631,7 @@ fn build_agent_provider_wraps_builtin_oauth_credentials() {
 fn build_registry_provider_skips_api_key_openai_models_without_base_url() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
     let mut m = model(
         "missing-base",
         ProviderApi::OpenAiCompletions,

@@ -56,7 +56,7 @@ fn outcomes_present_the_result_vocabulary_and_cap_the_list() {
     assert!(body.get("omitted_agents").is_none());
     assert_eq!(
         body.as_object().unwrap().keys().collect::<Vec<_>>(),
-        ["killed", "result", "target"],
+        ["target", "result", "killed"],
         "the vocabulary is exactly target/result/killed"
     );
 

@@ -100,8 +100,6 @@ pub(super) struct MultiClientArgs<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
-    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
     pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
@@ -181,8 +179,6 @@ pub(super) async fn multi_client_loop(
         workflow_state: wf_state,
         workflow_config: wf_config,
         broadcast_tx: pre_broadcast_tx,
-        provider_reload,
-        provider_reload_inputs,
         parent_control,
         teardown_graph,
     } = args;
@@ -363,8 +359,6 @@ pub(super) async fn multi_client_loop(
         notification_rx,
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
-        provider_reload,
-        provider_reload_inputs,
         fleet_teardown,
         list_sessions: sessions.list_sessions.clone(),
         save_session: sessions.save_session.clone(),

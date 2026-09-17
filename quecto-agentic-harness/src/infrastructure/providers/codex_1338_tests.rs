@@ -6,7 +6,7 @@
 // Nested under `codex_tests`, so `super::super` is the codex module itself.
 use super::super::*;
 
-/// `openai-oauth` routes here, not to `openai.rs` (`agent_provider.rs`
+/// `openai-oauth` routes here, not to `openai.rs` (`provider_runtime.rs`
 /// build_single_provider). A sub-agent note as a system message folded into
 /// `instructions` and never entered `input`, so the request ended on the
 /// parent's own assistant turn and the model just continued its previous

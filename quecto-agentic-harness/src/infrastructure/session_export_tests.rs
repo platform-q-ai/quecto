@@ -81,7 +81,7 @@ async fn an_export_writes_records_and_manifest_under_the_root_and_returns_the_re
     );
     assert_eq!(
         lines[1],
-        r#"{"content":"haystack","id":"spill-1","input_preview":"needle","kind":"spill","tokens":5,"tool":"grep"}"#
+        r#"{"kind":"spill","id":"spill-1","tool":"grep","input_preview":"needle","tokens":5,"content":"haystack"}"#
     );
     let mut hash = Sha256::new();
     hash.update(records.as_bytes());

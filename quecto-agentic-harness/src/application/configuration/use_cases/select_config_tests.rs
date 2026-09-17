@@ -1,32 +1,5 @@
 use super::*;
 use std::path::PathBuf;
-use std::sync::Mutex;
-
-/// Records every probed path and answers with a fixed presence.
-struct FakeProbe {
-    presence: LocalConfigPresence,
-    probed: Mutex<Vec<PathBuf>>,
-}
-
-impl FakeProbe {
-    fn answering(presence: LocalConfigPresence) -> Arc<Self> {
-        Arc::new(Self {
-            presence,
-            probed: Mutex::new(Vec::new()),
-        })
-    }
-
-    fn probed(&self) -> Vec<PathBuf> {
-        self.probed.lock().unwrap().clone()
-    }
-}
-
-impl LocalConfigProbe for FakeProbe {
-    fn probe(&self, path: &Path) -> LocalConfigPresence {
-        self.probed.lock().unwrap().push(path.to_path_buf());
-        self.presence.clone()
-    }
-}
 
 fn request(explicit: Option<&str>, cwd: Option<&str>) -> ConfigSelectionRequest {
     ConfigSelectionRequest {
@@ -37,94 +10,63 @@ fn request(explicit: Option<&str>, cwd: Option<&str>) -> ConfigSelectionRequest 
 }
 
 #[test]
-fn explicit_override_wins_without_probing_the_working_directory() {
-    let probe = FakeProbe::answering(LocalConfigPresence::RegularFile);
-    let selected = SelectConfig::new(probe.clone())
-        .execute(request(Some("/explicit.json"), Some("/work")))
-        .unwrap();
-    assert_eq!(selected, ConfigSelection::Explicit("/explicit.json".into()));
-    assert!(
-        probe.probed().is_empty(),
-        "explicit selection must not touch the cwd"
-    );
-}
-
-#[test]
-fn present_local_file_is_selected_and_only_the_cwd_itself_is_probed() {
-    let probe = FakeProbe::answering(LocalConfigPresence::RegularFile);
-    let selected = SelectConfig::new(probe.clone())
-        .execute(request(None, Some("/work/nested")))
-        .unwrap();
+fn an_explicit_override_replaces_both_layers() {
+    let selected = SelectConfig::new().execute(request(Some("/x/c.json"), Some("/work")));
     assert_eq!(
         selected,
-        ConfigSelection::WorkingDirectory("/work/nested/config.json".into())
-    );
-    assert_eq!(
-        probe.probed(),
-        vec![PathBuf::from("/work/nested/config.json")]
+        ConfigSelection::Explicit(PathBuf::from("/x/c.json"))
     );
 }
 
 #[test]
-fn absent_local_file_falls_back_to_global() {
-    let probe = FakeProbe::answering(LocalConfigPresence::Absent);
-    let selected = SelectConfig::new(probe)
-        .execute(request(None, Some("/work")))
-        .unwrap();
+fn the_working_directory_names_the_overlay_and_the_retired_local_file() {
+    let selected = SelectConfig::new().execute(request(None, Some("/work")));
     assert_eq!(
         selected,
-        ConfigSelection::Global("/home/u/.quecto/config.json".into())
+        ConfigSelection::Layered(ConfigLayers {
+            global: PathBuf::from("/home/u/.quecto/config.json"),
+            overlay: Some(PathBuf::from("/work/.quecto/config.json")),
+            legacy_local: Some(PathBuf::from("/work/config.json")),
+        })
     );
 }
 
 #[test]
-fn unknown_working_directory_falls_back_to_global_without_probing() {
-    let probe = FakeProbe::answering(LocalConfigPresence::RegularFile);
-    let selected = SelectConfig::new(probe.clone())
-        .execute(request(None, None))
-        .unwrap();
+fn without_a_working_directory_only_the_global_file_is_selected() {
+    let selected = SelectConfig::new().execute(request(None, None));
     assert_eq!(
         selected,
-        ConfigSelection::Global("/home/u/.quecto/config.json".into())
-    );
-    assert!(probe.probed().is_empty());
-}
-
-#[test]
-fn non_regular_local_entry_is_an_error_naming_the_path() {
-    let probe = FakeProbe::answering(LocalConfigPresence::NotRegularFile);
-    let error = SelectConfig::new(probe)
-        .execute(request(None, Some("/work")))
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ConfigSelectionError {
-            path: "/work/config.json".into(),
-            rejection: LocalConfigRejection::NotRegularFile,
-        }
+        ConfigSelection::Layered(ConfigLayers {
+            global: PathBuf::from("/home/u/.quecto/config.json"),
+            overlay: None,
+            legacy_local: None,
+        })
     );
 }
 
+/// A run from the base directory's parent (typically `$HOME`) or from the
+/// base directory itself must not see the global file as its own overlay
+/// or as a retired local file.
 #[test]
-fn unreadable_local_entry_is_an_error_not_a_fallback() {
-    let probe = FakeProbe::answering(LocalConfigPresence::Unreadable("permission denied".into()));
-    let error = SelectConfig::new(probe)
-        .execute(request(None, Some("/work")))
-        .unwrap_err();
+fn the_global_file_is_never_its_own_overlay_or_legacy_candidate() {
+    let selected = SelectConfig::new().execute(request(None, Some("/home/u")));
     assert_eq!(
-        error,
-        ConfigSelectionError {
-            path: "/work/config.json".into(),
-            rejection: LocalConfigRejection::Unreadable("permission denied".into()),
-        }
+        selected,
+        ConfigSelection::Layered(ConfigLayers {
+            global: PathBuf::from("/home/u/.quecto/config.json"),
+            overlay: None,
+            legacy_local: Some(PathBuf::from("/home/u/config.json")),
+        })
     );
-}
-
-#[test]
-fn debug_does_not_expose_the_probe() {
-    let probe = FakeProbe::answering(LocalConfigPresence::Absent);
+    let selected = SelectConfig::new().execute(request(None, Some("/home/u/.quecto")));
     assert_eq!(
-        format!("{:?}", SelectConfig::new(probe)),
-        "SelectConfig { .. }"
+        selected,
+        ConfigSelection::Layered(ConfigLayers {
+            global: PathBuf::from("/home/u/.quecto/config.json"),
+            overlay: Some(PathBuf::from("/home/u/.quecto/.quecto/config.json")),
+            legacy_local: None,
+        })
     );
+    let selected = SelectConfig::new().execute(request(None, Some("/home/u/src/../")));
+    assert_eq!(selected.overlay_path(), None, "normalised before comparing");
 }

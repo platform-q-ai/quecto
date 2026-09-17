@@ -261,7 +261,7 @@ fn missing_repo_local_config_leaves_global_without_diagnostics() {
 }
 
 #[test]
-fn approved_repo_local_without_default_is_rejected_before_merge() {
+fn approved_repo_local_without_default_extends_the_global_set() {
     let checkout = TempDir::new().unwrap();
     let dir = checkout.path().join(".quecto");
     std::fs::create_dir_all(&dir).unwrap();
@@ -273,15 +273,25 @@ fn approved_repo_local_without_default_is_rejected_before_merge() {
     let global = config_with("global-default", true, "/tmp/global-create");
     let mut trust = RecordingTrust::approving();
 
-    let err = effective_container_configs_for_checkout(global, checkout.path(), &mut trust)
-        .unwrap_err()
-        .to_string();
+    let effective =
+        effective_container_configs_for_checkout(global, checkout.path(), &mut trust).unwrap();
+    assert!(effective.config.container_configs["global-default"].default);
+    assert!(!effective.config.container_configs["local"].default);
 
+    // Without any default in the merged set the checkout is refused.
+    let mut trust = RecordingTrust::approving();
+    let err = effective_container_configs_for_checkout(
+        config_with("global-no-default", false, "/tmp/global-create"),
+        checkout.path(),
+        &mut trust,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("no container config"), "{err}");
 }
 
 #[test]
-fn approved_repo_local_with_multiple_defaults_is_rejected_before_merge() {
+fn approved_repo_local_with_multiple_defaults_is_rejected() {
     let checkout = TempDir::new().unwrap();
     let dir = checkout.path().join(".quecto");
     std::fs::create_dir_all(&dir).unwrap();

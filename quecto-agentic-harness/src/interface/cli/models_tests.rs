@@ -10,13 +10,17 @@ fn ctx_for(dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(dir.to_path_buf()),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     }
 }
 
 /// The composed refresh use case the command drives for `ctx`'s base dir.
 fn refresh_for(ctx: &CliContext) -> std::sync::Arc<RefreshCatalogueSources> {
-    crate::composition::catalogue::build_catalogue_handles(&ctx.base_dir()).refresh
+    crate::composition::catalogue::build_catalogue_handles(&ctx.base_dir(), None).refresh
 }
 
 #[test]

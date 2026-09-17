@@ -46,8 +46,14 @@ fn spawn_capable_flags() -> AgentFlags {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -65,6 +71,7 @@ fn test_926_spawn_capable_build_has_live_notification_rx_with_real_base_dir() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -102,6 +109,7 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
         base_dir: std::path::Path::new(""),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: std::path::Path::new(""),
@@ -139,6 +147,7 @@ async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),

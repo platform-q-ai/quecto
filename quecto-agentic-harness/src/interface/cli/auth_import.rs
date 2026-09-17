@@ -81,7 +81,7 @@ pub(super) fn import_anthropic(
             Ok(resp) => (
                 resp.access_token,
                 resp.refresh_token.unwrap_or_else(|| refresh.to_string()),
-                crate::interface::shared::expires_at_with_margin(resp.expires_in),
+                crate::infrastructure::auth::token_refresh::expires_at_with_margin(resp.expires_in),
             ),
             Err(e) => {
                 out.stderr.push_str(&format!(
@@ -95,7 +95,7 @@ pub(super) fn import_anthropic(
         (
             access.to_string(),
             refresh.to_string(),
-            expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS,
+            expires_s - crate::infrastructure::auth::token_refresh::OAUTH_EXPIRY_MARGIN_SECS,
         )
     };
 
@@ -175,7 +175,9 @@ pub(crate) fn import_openai(
                 (
                     resp.access_token,
                     resp.refresh_token.unwrap_or_else(|| refresh.to_string()),
-                    crate::interface::shared::expires_at_with_margin(resp.expires_in),
+                    crate::infrastructure::auth::token_refresh::expires_at_with_margin(
+                        resp.expires_in,
+                    ),
                     acct_id,
                 )
             }
@@ -192,7 +194,7 @@ pub(crate) fn import_openai(
         (
             access.to_string(),
             refresh.to_string(),
-            expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS,
+            expires_s - crate::infrastructure::auth::token_refresh::OAUTH_EXPIRY_MARGIN_SECS,
             acct_id,
         )
     };

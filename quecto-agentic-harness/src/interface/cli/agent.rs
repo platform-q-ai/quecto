@@ -1,11 +1,12 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::configuration::dto::ConfigSelection;
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 pub(crate) struct AgentOutput<'a> {
@@ -201,6 +202,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         kill_tool: None,
         retention: None,
         catalogue: None,
+        provider_runtime: None,
+        tool_policy_persistence: None,
+        configuration: None,
+        stdin_is_tty: false,
         admission_context,
         parent_control,
     };
@@ -252,14 +257,7 @@ pub(crate) fn cmd_agent(
             return 1;
         }
     };
-    let build = match build_agent_from_config(
-        &base_dir,
-        selection.path(),
-        selection.must_exist(),
-        &flags,
-        stderr,
-        None,
-    ) {
+    let build = match build_agent_from_config(&base_dir, &selection, &flags, stderr, None) {
         Some(r) => r,
         None => return 1,
     };
@@ -305,63 +303,83 @@ pub(crate) struct AgentBuildResult {
     pub subagent_registry: Option<SubagentRegistry>,
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
-    pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
     pub workspace: std::path::PathBuf,
 }
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
-    config_path: &std::path::Path,
-    config_must_exist: bool,
+    selection: &ConfigSelection,
     flags: &AgentFlags,
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    // An explicit --config or a selected working-directory config must exist;
-    // only a missing GLOBAL config falls back to zero-config defaults.
-    if let Some(msg) = super::selected_config_missing(config_path, config_must_exist) {
+    let config_path = selection.path();
+    // An explicit --config must exist; only a missing GLOBAL config falls
+    // back to zero-config defaults.
+    if let Some(msg) = super::selected_config_missing(config_path, selection.must_exist()) {
         stderr.push_str(&msg);
         stderr.push('\n');
         return None;
     }
-    // Zero-config: a missing default config file loads defaults (no onboarding step).
-    let env_overrides: HashMap<String, String> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("QUECTO_"))
-        .collect();
-    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
-        Ok(c) => c,
-        Err(e) => {
-            stderr.push_str(&format!(
-                "failed to load config {}: {}\n",
-                config_path.display(),
-                e
-            ));
+    // Zero-config: a missing default config file loads defaults (no
+    // onboarding step). The overlay (#2024) merges over it when trusted; a
+    // one-shot run from a terminal may be asked to trust it, a UDS or
+    // spawned run never prompts.
+    let env_overrides = super::config_loading::quecto_env_overrides();
+    let prompt_for_trust = !flags.uds_mode && !flags.spawned && flags.stdin_is_tty;
+    let Some(build_configuration) = flags.configuration else {
+        stderr.push_str("agent: configuration capability not composed\n");
+        return None;
+    };
+    let loaded = match super::config_loading::load_selected_config(
+        build_configuration,
+        base_dir,
+        selection,
+        prompt_for_trust,
+        &env_overrides,
+    ) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            stderr.push_str(&error);
+            stderr.push('\n');
             return None;
         }
     };
-    let config = config.with_admission_base_dir(base_dir);
+    for line in super::config_loading::layer_diagnostics(&loaded.sources) {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+    let config_sources = loaded.sources;
+    let config = loaded.config;
+    // The provider runtime (#1849): composed through the injected builder;
+    // the interface never constructs provider state itself. Checked before
+    // admission negotiation so a mis-composed binary fails without side
+    // effects (no sidecar bound, no client built).
+    let Some(build_provider) = flags.provider_runtime else {
+        stderr.push_str("agent: provider runtime capability not composed\n");
+        return None;
+    };
+    // The catalogue handles (#1845, #1848) are built once per run, after the
+    // provider, before the tools and the loop that consume them; the
+    // interface never constructs a catalogue use case.
+    let Some(build_catalogue) = flags.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return None;
+    };
+    let Some(build_tool_policy_persistence) = flags.tool_policy_persistence else {
+        stderr.push_str("agent: tool-policy persistence capability not composed\n");
+        return None;
+    };
     if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();
-    let provider = match build_agent_provider(&config, base_dir, &http_client) {
+    let provider = match build_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
             stderr.push_str(&format!("{}\n", msg));
             return None;
         }
     };
-    let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload_with_base(
-        config_path,
-        Some(base_dir.to_path_buf()),
-        provider.clone(),
-    );
-    let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(
-        config_path.to_path_buf(),
-        base_dir.to_path_buf(),
-        env_overrides.clone(),
-        http_client.clone(),
-    );
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
@@ -375,14 +393,15 @@ pub(crate) fn build_agent_from_config(
             config.tools.web.fetch.max_response_kb,
         )
     });
-    // The catalogue handles (#1845, #1848): built once per run, before the
-    // tools and the loop that consume them; the interface never constructs
-    // a catalogue use case.
-    let Some(build_catalogue) = flags.catalogue else {
-        stderr.push_str("agent: catalogue capability not composed\n");
-        return None;
+    // The run's reloadable configuration (#1849): the reload use case is
+    // seeded now, after the startup composition read the same files.
+    let runtime_inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+        selection: selection.clone(),
+        env_overrides: env_overrides.clone(),
+        http_client: http_client.clone(),
+        provider_runtime: build_provider,
     };
-    let catalogue = build_catalogue(base_dir);
+    let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
     let ToolRegistryBuild {
         registry,
         retention,
@@ -465,10 +484,16 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
-    let agent = super::swarm_composition::wire_agent(
+    let mut agent = super::swarm_composition::wire_agent(
         agent,
         crate::interface::tool_runtime::swarm_context(),
     );
+    // Durable `set_tool_policy … persist` writes into the run's config
+    // file through composition's persistence hook (#1849).
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(
+        base_dir,
+        &config_sources,
+    )));
     Some(AgentBuildResult {
         agent,
         catalogue,
@@ -481,8 +506,6 @@ pub(crate) fn build_agent_from_config(
         subagent_registry,
         harness_lifecycle,
         workflow_state,
-        provider_reload,
-        provider_reload_inputs,
         workspace,
     })
 }
@@ -585,8 +608,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
     let build = match build_agent_from_config(
         &base_dir,
-        selection.path(),
-        selection.must_exist(),
+        &selection,
         &flags,
         stderr,
         broadcast_tx.clone(),
@@ -641,7 +663,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     if !swarm_runtime::bind_socket(&socket_path, stderr) {
         return 1;
     }
-    let mut provider_reload = build.provider_reload;
     let retention = build.retention;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
@@ -664,8 +685,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,
-        provider_reload: Some(&mut provider_reload),
-        provider_reload_inputs: Some(&build.provider_reload_inputs),
         parent_control,
         teardown_graph: ctx.teardown_graph,
     });
@@ -677,14 +696,12 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
 #[path = "agent/admission_startup.rs"]
 mod admission_startup;
-#[path = "agent_provider.rs"]
-mod agent_provider;
-#[path = "agent/parent_control_startup.rs"]
-mod parent_control_startup;
-pub use agent_provider::build_agent_provider;
 #[cfg(test)]
 #[path = "agent_agents_md_tests.rs"]
 mod agents_md_tests;
+#[cfg(test)]
+#[path = "agent_build_tests.rs"]
+mod build_tests;
 #[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;
@@ -706,9 +723,8 @@ mod issue_926_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;
-#[cfg(test)]
-#[path = "agent_provider_1066_tests.rs"]
-mod provider_1066_tests;
+#[path = "agent/parent_control_startup.rs"]
+mod parent_control_startup;
 #[cfg(test)]
 #[path = "agent_startup_identity_tests.rs"]
 mod startup_identity_tests;

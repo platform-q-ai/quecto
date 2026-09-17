@@ -1,10 +1,16 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use crate::infrastructure::config::persistence::{
+    TrustRecord as TrustStore, record_parent_to_create as store_parent_to_create,
+};
+use crate::infrastructure::config::persistence::{
+    hex_sha256, read_record as read_store, write_record as write_store,
+};
 use crate::infrastructure::config::{Config, ConfigError, ContainerConfig};
 
 #[derive(Debug, Clone)]
@@ -66,13 +72,8 @@ impl PersistentRepoLocalContainerConfigTrust {
 impl RepoLocalContainerConfigTrust for PersistentRepoLocalContainerConfigTrust {
     fn decide(&mut self, identity: &RepoLocalConfigIdentity) -> TrustDecision {
         if let Some(store_path) = &self.store_path {
-            let store = read_store(store_path);
             let path = identity.path.to_string_lossy().to_string();
-            if store
-                .approved
-                .get(&path)
-                .is_some_and(|hashes| hashes.contains(&identity.content_hash))
-            {
+            if read_store(store_path).is_approved(&path, &identity.content_hash) {
                 return TrustDecision::Approved;
             }
         }
@@ -87,11 +88,10 @@ impl RepoLocalContainerConfigTrust for PersistentRepoLocalContainerConfigTrust {
             return;
         };
         let mut store = read_store(store_path);
-        store
-            .approved
-            .entry(identity.path.to_string_lossy().to_string())
-            .or_default()
-            .insert(identity.content_hash.clone());
+        store.approve(
+            identity.path.to_string_lossy().to_string(),
+            identity.content_hash.clone(),
+        );
         let _ = write_store(store_path, &store);
     }
 }
@@ -130,9 +130,13 @@ pub fn effective_container_configs_for_checkout(
         }),
         TrustDecision::Approved => {
             let local = load_repo_local_container_configs(&content)?;
+            // Entry-wise (#2024): a local entry need not claim the default;
+            // the exactly-one-default rule holds for the merged set.
+            let config = merge_container_configs(global, local);
+            validate_container_configs(&config.container_configs)?;
             trust.record_approved(&identity);
             Ok(EffectiveContainerConfigs {
-                config: merge_container_configs(global, local),
+                config,
                 diagnostics: Vec::new(),
             })
         }
@@ -158,7 +162,6 @@ fn load_repo_local_container_configs(
                 .into(),
         ));
     }
-    validate_container_configs(&local.container_configs)?;
     Ok(local.container_configs)
 }
 
@@ -198,37 +201,6 @@ fn merge_container_configs(mut global: Config, local: HashMap<String, ContainerC
     global
 }
 
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-struct TrustStore {
-    #[serde(default)]
-    approved: HashMap<String, BTreeSet<String>>,
-}
-
-fn read_store(path: &Path) -> TrustStore {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
-}
-
-/// The directory that must exist before writing `path`, or `None` when the
-/// path is a bare filename and no directory needs creating. Split out so the
-/// bare-filename case is testable without changing the process working
-/// directory, which is global and breaks tests running in parallel.
-fn store_parent_to_create(path: &Path) -> Option<&Path> {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => Some(parent),
-        _ => None,
-    }
-}
-
-fn write_store(path: &Path, store: &TrustStore) -> io::Result<()> {
-    if let Some(parent) = store_parent_to_create(path) {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, serde_json::to_vec_pretty(store)?)
-}
-
 fn prompt_approval(identity: &RepoLocalConfigIdentity) -> bool {
     if !io::stdin().is_terminal() {
         eprintln!(
@@ -259,11 +231,6 @@ fn absolutize(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
-}
-
-fn hex_sha256(content: &[u8]) -> String {
-    let digest = Sha256::digest(content);
-    format!("{digest:x}")
 }
 
 #[cfg(test)]

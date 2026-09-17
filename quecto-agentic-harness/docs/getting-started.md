@@ -52,11 +52,31 @@ quecto-tui
 
 ## Project-local configuration
 
-With no `--config`, quecto looks for `config.json` in the directory you launch
-it from before falling back to `~/.quecto/config.json`. One file is selected,
-never merged, and parent directories are not searched. A local file that exists
-but cannot be loaded is an error rather than a fallback, so trust a project's
-`config.json` before running quecto inside it. See the README's
+Your global settings live in `~/.quecto/config.json`. A project can carry a
+small overlay at `./.quecto/config.json` in the directory you launch quecto
+from; it is merged over the global file section by section (`agents.defaults`,
+`tools`, `workflow`, `container_configs`), so a repository never has to copy
+your providers, tool policy or admission settings — those sections are
+global-only and refused in an overlay. Parent directories are not searched.
+
+An overlay is applied only once you have approved its exact content, so a
+checked-out repository cannot change your defaults behind your back:
+
+```bash
+cd ~/src/app
+quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes and trusts ./.quecto/config.json
+quecto config trust           # approve an overlay someone else wrote, after reviewing it
+quecto config get --effective # what a run here will actually use
+quecto status                 # both files, and whether the overlay is trusted
+```
+
+`quecto config set --global …` edits the global file the same way: one key's
+value changes, every other key stays (the file is re-laid-out as pretty JSON).
+`quecto config get` hides API keys and tokens unless you pass
+`--show-secrets`. A pre-#2024
+`./config.json` in the working directory is no longer loaded — `quecto status`
+warns while one exists; move its settings to `./.quecto/config.json`. See the
+README's
 [Configuration discovery and precedence](../README.md#configuration-discovery-and-precedence).
 
 ## Next steps

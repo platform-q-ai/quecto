@@ -239,16 +239,20 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
         "idle",
     ));
     rows.push(serde_json::json!({"displayName": "malformed"}));
+    // The earlier harness's file is written with `key` first (the byte
+    // order this fixture always had): a file whose first key is not `type`
+    // is compacted, not appended to, by the next save, which is the
+    // migration the scenario asserts.
     let snapshot = serde_json::json!({
-        "type": "snapshot",
         "key": key,
         "messages": [
             {"role":"user","content":"persisted transcript survives restore"},
             {"role":"assistant","content":"persisted answer"},
             {"role":"assistant","content":"child worker-legacy-live reported: done"},
         ],
-        "workflow_run": {"template_id": "feature", "done": [true, true, false], "active_issue": null},
         "subagent_roster": rows,
+        "type": "snapshot",
+        "workflow_run": {"template_id": "feature", "done": [true, true, false], "active_issue": null},
     });
     std::fs::write(&path, format!("{snapshot}\n")).unwrap();
     let s = state(world);
@@ -314,8 +318,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             workflow_state,
             workflow_config,
             broadcast_tx,
-            mut provider_reload,
-            provider_reload_inputs,
+            catalogue,
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
@@ -331,7 +334,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
+            catalogue,
             ext_registry: Some(ext_registry),
             lifetime,
             notification_rx: None,
@@ -340,8 +343,6 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             workflow_state,
             workflow_config,
             broadcast_tx,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: Some(build_teardown_graph),
         })

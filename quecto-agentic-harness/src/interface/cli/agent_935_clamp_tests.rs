@@ -3,6 +3,7 @@
 //! configured `max_tokens` is clamped. Kept in its own file so neither this nor
 //! `agent_tests.rs` crosses the source line-count gate.
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 #[test]
@@ -50,13 +51,25 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent build should succeed");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_tokens(),
         65_536,

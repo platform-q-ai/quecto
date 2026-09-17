@@ -1,5 +1,5 @@
+use super::config_loading::{layer_diagnostics, load_selected_config, overlay_summary};
 use super::{CliContext, selected_config_missing};
-use crate::infrastructure::config::Config;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
     let selection = match ctx.config_selection() {
@@ -19,22 +19,47 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
         return 1;
     }
 
-    // Missing global config is not an error: quecto is zero-config (defaults apply).
-    let config = match Config::load(config_path.to_str().unwrap_or("")) {
-        Ok(c) => c,
-        Err(e) => {
-            stderr.push_str(&format!(
-                "failed to load config {}: {}\n",
-                config_path.display(),
-                e
-            ));
+    // Missing global config is not an error: quecto is zero-config (defaults
+    // apply). Status never prompts for overlay trust; it reports it.
+    let Some(build_configuration) = ctx.configuration else {
+        stderr.push_str("configuration capability not composed\n");
+        return 1;
+    };
+    let loaded = match load_selected_config(
+        build_configuration,
+        &ctx.base_dir(),
+        &selection,
+        false,
+        &Default::default(),
+    ) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
             return 1;
         }
     };
+    stdout.push_str(&format!(
+        "  Overlay:   {}\n",
+        overlay_summary(&loaded.sources)
+    ));
+    for line in layer_diagnostics(&loaded.sources) {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
 
+    let config = loaded.config;
     let ws = config.workspace_path();
     stdout.push_str(&format!("  Workspace: {}\n", ws));
     stdout.push_str(&format!("  Model:     {}\n", config.agents.defaults.model));
+    stdout.push_str(&format!(
+        "  Effort:    {}\n",
+        config
+            .agents
+            .defaults
+            .effort
+            .as_deref()
+            .unwrap_or("default")
+    ));
 
     // Provider availability
     let openai_status = if config.providers.openai.api_key.is_empty() {

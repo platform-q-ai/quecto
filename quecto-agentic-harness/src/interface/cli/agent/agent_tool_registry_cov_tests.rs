@@ -30,8 +30,14 @@ fn flags() -> AgentFlags {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -64,6 +70,7 @@ fn build_tool_registry_uses_empty_session_for_no_session() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -99,6 +106,7 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -136,6 +144,7 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -189,6 +198,7 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -241,6 +251,7 @@ fn build_tool_registry_registers_agent_control_tools_as_official_native() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -317,6 +328,7 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),
@@ -369,6 +381,7 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),

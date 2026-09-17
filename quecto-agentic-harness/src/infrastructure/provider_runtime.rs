@@ -3,8 +3,8 @@
 //! Implements the application's `ProviderRuntimeFactory` port: constructs the
 //! concrete execution adapters (OpenAI/Anthropic/compatible endpoints), applies
 //! OAuth wrapping, retry decoration, and router composition. This orchestration
-//! previously lived in `interface/cli/agent_provider.rs`; entry points now wire
-//! [`AgentRuntimeInputs`] and invoke the compose-provider-runtime use case.
+//! previously lived in the interface; `composition::runtime` now wires
+//! [`AgentRuntimeInputs`] and invokes the compose-provider-runtime use case.
 
 use std::collections::HashSet;
 use std::path::PathBuf;

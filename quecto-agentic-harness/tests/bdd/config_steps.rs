@@ -459,6 +459,7 @@ fn when_run_no_args(world: &mut QuectoWorld) {
 fn when_run_with_args(world: &mut QuectoWorld, args_str: String) {
     let mut args = vec!["quecto".to_string()];
     args.extend(shell_split(&args_str));
+    super::config_discovery_steps::snapshot_config_files(world);
     let output = cli::run_with_output(args, &world.cli_context);
     world.exit_code = output.exit_code;
     world.stdout = output.stdout;

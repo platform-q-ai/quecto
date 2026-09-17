@@ -17,8 +17,8 @@ pub fn harness_root() -> PathBuf {
 }
 
 /// The interface-level catalogue composition bridges slices 2/4 parked in
-/// `interface/cli`; slice 6 removes them (composition lives in the shared
-/// interface composition root, `interface/catalogue_runtime.rs`).
+/// `interface/cli`; slice 6 removes them (composition lives in
+/// `composition/runtime.rs` since #1849 PR 1).
 pub const LEGACY_BRIDGE_MODULES: [&str; 2] = [
     "src/interface/cli/catalogue_bridge.rs",
     "src/interface/cli/catalogue_refresh_bridge.rs",
