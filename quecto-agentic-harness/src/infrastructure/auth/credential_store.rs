@@ -115,8 +115,15 @@ impl CredentialStore {
     /// credentials. The old combined file is read once as a migration fallback.
     pub fn oauth(base_dir: impl AsRef<Path>) -> Self {
         let base = base_dir.as_ref();
+        // A container may explicitly select a mounted *file* without exposing
+        // the host's general Quecto home. The variable is intentionally a
+        // narrow seam: it names only the OAuth JSON file, never a base dir.
+        let path = std::env::var_os("QUECTO_OAUTH_CREDENTIALS_FILE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| base.join("oauth-credentials.json"));
         Self {
-            path: base.join("oauth-credentials.json"),
+            path,
             migration_path: Some(base.join("credentials.json")),
             migrate_on_write: true,
         }
