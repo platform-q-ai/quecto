@@ -19,6 +19,8 @@ pub struct FileSessionStore {
     summaries: std::sync::Arc<std::sync::Mutex<session_store_list::SummaryCache>>,
 }
 
+#[path = "session_store_catalogue.rs"]
+pub(super) mod session_store_catalogue;
 #[path = "session_store_home.rs"]
 pub(super) mod session_store_home;
 #[path = "session_store_list.rs"]
@@ -696,23 +698,3 @@ mod tests;
 #[cfg(test)]
 #[path = "session_store_workflow_tests.rs"]
 mod workflow_tests;
-
-/// Strict schema validation for catalogue publication, unlike crash-tolerant load.
-pub(super) fn validate_catalogue_record(bytes: &[u8]) -> Result<(), DomainError> {
-    if serde_json::from_slice::<SessionFile>(bytes).is_ok() {
-        return Ok(());
-    }
-    let mut records = serde_json::Deserializer::from_slice(bytes).into_iter::<SessionRecord>();
-    match records.next() {
-        Some(Ok(SessionRecord::Snapshot(_))) => (),
-        _ => {
-            return Err(DomainError::Session(
-                "catalogue requires a valid session snapshot".into(),
-            ));
-        }
-    }
-    for record in records {
-        record.map_err(|e| DomainError::Session(e.to_string()))?;
-    }
-    Ok(())
-}

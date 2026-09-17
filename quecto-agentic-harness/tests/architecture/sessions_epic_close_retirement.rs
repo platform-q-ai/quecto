@@ -56,7 +56,7 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[
     "src/application/agent_loop.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/infrastructure/persistence/session_store.rs",
-    "src/infrastructure/persistence/session_store_list.rs",
+    "src/infrastructure/persistence/session_store_list_scan.rs",
     "src/infrastructure/tools/recall.rs",
 ];
 

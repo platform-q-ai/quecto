@@ -80,6 +80,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/mod.rs",
     "src/application/sessions/use_cases/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
+    "src/application/sessions/use_cases/list_sessions_discover.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -549,7 +550,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/export_session_report.rs",
         180,
     ),
-    ("src/application/sessions/use_cases/list_sessions.rs", 123),
+    // #2009: query-local catalogue projection and Git discovery cache live in
+    // the helper; this owner is the listing query and remains decrease-only.
+    ("src/application/sessions/use_cases/list_sessions.rs", 67),
+    (
+        "src/application/sessions/use_cases/list_sessions_discover.rs",
+        142,
+    ),
     ("src/application/sessions/use_cases/read_history.rs", 90),
     ("src/application/sessions/use_cases/recover_message.rs", 140),
     (
@@ -620,8 +627,16 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/context_spill.rs", 377),
     ("src/infrastructure/persistence/session_layout.rs", 94),
     ("src/infrastructure/persistence/session_ownership.rs", 229),
-    ("src/infrastructure/persistence/session_store.rs", 709),
-    ("src/infrastructure/persistence/session_store_list.rs", 99),
+    ("src/infrastructure/persistence/session_store.rs", 700),
+    (
+        "src/infrastructure/persistence/session_store_catalogue.rs",
+        23,
+    ),
+    ("src/infrastructure/persistence/session_store_list.rs", 31),
+    (
+        "src/infrastructure/persistence/session_store_list_scan.rs",
+        110,
+    ),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),

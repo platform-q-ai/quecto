@@ -3,7 +3,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::application::sessions::dto::{ListSessionsRequest, SessionListScope};
 use crate::domain::session::Session;
+use crate::domain::session_home::SessionHomeScope;
 use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
 
 /// A store fake that records the queries it receives and answers with a
@@ -140,7 +142,6 @@ fn debug_does_not_print_the_store() {
 
 #[tokio::test]
 async fn local_discovery_without_workspace_facts_never_broadens_to_global() {
-    use crate::application::sessions::dto::{ListSessionsRequest, SessionListScope};
     let store = ScriptedStore::answering(Ok(vec![summary("chat-foreign", Some(1))]));
     let listed = ListSessions::new(store)
         .discover(&ListSessionsRequest {

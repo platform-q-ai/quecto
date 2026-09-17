@@ -6,22 +6,24 @@
 //! (allowlisted session files, summary-only reads, tolerant skipping of
 //! unreadable or malformed records, newest-first order); the interface
 //! presents the summaries. Nothing here forms a path or reads a directory.
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::application::sessions::dto::{
-    ListSessionsRequest, ListSessionsResult, ListedSession, SessionListQuery, SessionListScope,
+    ListSessionsRequest, ListSessionsResult, SessionListQuery,
 };
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::error::DomainError;
 use crate::domain::session::SessionSummary;
-use crate::domain::session_home::SessionHomeScope;
 
 /// The saved-session listing query over the session store port.
 pub struct ListSessions {
     store: Arc<dyn SessionStore>,
     home: Option<SessionHomeContext>,
 }
+
+#[path = "list_sessions_discover.rs"]
+mod list_sessions_discover;
 
 impl ListSessions {
     pub fn new(store: Arc<dyn SessionStore>) -> Self {
@@ -39,78 +41,7 @@ impl ListSessions {
         request: &ListSessionsRequest,
     ) -> Result<ListSessionsResult, DomainError> {
         let summaries = self.store.list(&request.query).await?;
-        let mut result = ListSessionsResult {
-            sessions: Vec::new(),
-            diagnostics: Vec::new(),
-            rebuilt: false,
-        };
-        let current = match &self.home {
-            Some(context) => match context.current() {
-                Ok(home) => Some(home),
-                Err(error) => {
-                    result.diagnostics.push(error.to_string());
-                    None
-                }
-            },
-            None => {
-                result
-                    .diagnostics
-                    .push("workspace discovery unavailable".into());
-                None
-            }
-        };
-        let mut catalogue_available = false;
-        let entries = match &self.home {
-            Some(context) => match context.catalogue.list_async().await {
-                Ok(snapshot) => {
-                    catalogue_available = true;
-                    result.diagnostics.extend(snapshot.diagnostics);
-                    result.rebuilt = snapshot.rebuilt;
-                    snapshot.entries
-                }
-                Err(error) => {
-                    result.diagnostics.push(error.to_string());
-                    Vec::new()
-                }
-            },
-            None => Vec::new(),
-        };
-        // Query-local observations only: resume still performs fresh admission under
-        // its claim. Cache failures too, and reuse the current canonical observation.
-        let mut observations = HashMap::new();
-        if let (Some(context), Some(current)) = (&self.home, &current) {
-            observations.insert(context.execution_dir.clone(), Some(current.clone()));
-            observations.insert(current.execution_dir.clone(), Some(current.clone()));
-        }
-        for summary in summaries {
-            let home = match entries
-                .iter()
-                .find(|(identity, _)| identity.runtime_key() == summary.key)
-            {
-                Some((_, home)) => home.clone(),
-                None if catalogue_available => continue,
-                None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
-            };
-            let local = matches!((&home, &current), (SessionHomeScope::Scoped(home), Some(current)) if home.group == current.group);
-            if request.scope == SessionListScope::Global || local {
-                let resume_eligible = match (&self.home, &current, &home) {
-                    (Some(context), Some(current), SessionHomeScope::Scoped(saved)) => observations
-                        .entry(saved.execution_dir.clone())
-                        .or_insert_with(|| context.discovery.discover(&saved.execution_dir).ok())
-                        .as_ref()
-                        .is_some_and(|observed| {
-                            observed == saved && observed.same_execution(current)
-                        }),
-                    _ => false,
-                };
-                result.sessions.push(ListedSession {
-                    summary,
-                    home,
-                    resume_eligible,
-                });
-            }
-        }
-        Ok(result)
+        Ok(list_sessions_discover::discover(self.home.as_ref(), summaries, request.scope).await)
     }
 
     /// The summaries of the sessions `query` covers, newest first when the

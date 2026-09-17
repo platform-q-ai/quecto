@@ -190,7 +190,7 @@ impl FileSessionHomeCatalogue {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let bytes = std::fs::read(path).map_err(error)?;
         let identity = identity_from_transcript(&bytes, path, &self.layout)?;
-        super::session_store::validate_catalogue_record(&bytes)?;
+        super::session_store::session_store_catalogue::validate_catalogue_record(&bytes)?;
         debug_assert_eq!(self.layout.session_file(&identity), *path);
         let after = stamp(path)?;
         if before == after {
