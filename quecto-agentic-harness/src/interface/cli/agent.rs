@@ -341,16 +341,18 @@ pub(crate) fn build_agent_from_config(
         }
     };
     let config = config.with_admission_base_dir(base_dir);
-    if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
-        return None;
-    }
-    let http_client = crate::interface::shared::build_http_client();
     // The provider runtime (#1849): composed through the injected builder;
-    // the interface never constructs provider state itself.
+    // the interface never constructs provider state itself. Checked before
+    // admission negotiation so a mis-composed binary fails without side
+    // effects (no sidecar bound, no client built).
     let Some(build_provider) = flags.provider_runtime else {
         stderr.push_str("agent: provider runtime capability not composed\n");
         return None;
     };
+    if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
+        return None;
+    }
+    let http_client = crate::interface::shared::build_http_client();
     let provider = match build_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
