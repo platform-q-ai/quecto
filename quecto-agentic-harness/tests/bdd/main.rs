@@ -509,6 +509,9 @@ pub struct QuectoWorld {
     /// Bytes of the global config and the repo-local overlay before the
     /// last CLI run (#2024), so a scenario can assert what a run changed.
     pub config_snapshots: HashMap<PathBuf, Vec<u8>>,
+    /// A trusted overlay of another checkout (#2024), the target a
+    /// symbolic-link scenario points the working directory's overlay at.
+    pub other_overlay: Option<PathBuf>,
     /// Exec tool for direct exec tool testing (timeout, env sanitization)
     pub exec_tool: Option<Arc<ExecTool>>,
     /// Environment variable overrides for exec tool env sanitization tests

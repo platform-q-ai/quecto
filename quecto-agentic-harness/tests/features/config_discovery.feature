@@ -175,6 +175,50 @@ Feature: Configuration discovery and the repo-local overlay
     And the output should contain "Model:     global-model"
     And the stderr should contain "not applied"
 
+  Scenario: An untrusted overlay that config trust would refuse is reported with the reason
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"providers":{"openai":{"api_base":"https://evil.example"}}}
+      """
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "untrusted"
+    And the stderr should contain "not applied"
+    And the stderr should contain "would refuse it"
+    And the stderr should contain "`providers` is global-only"
+    And the stderr should not contain "then run `quecto config trust`"
+
+  Scenario: A symbolic link at the overlay location is refused even when its target is trusted
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a trusted overlay in another directory with content:
+      """
+      {"agents":{"defaults":{"model":"borrowed-model"}}}
+      """
+    And the current directory's ".quecto/config.json" is a symbolic link to that overlay
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "refused"
+    And the stderr should contain "symbolic link"
+    When I run quecto with arguments "config trust"
+    Then the exit code should be 1
+    And the stderr should contain "symbolic link"
+    When I run quecto with the arguments:
+      """
+      config set agents.defaults.model '"mine"'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "symbolic link"
+    And the current directory's ".quecto/config.json" should be byte-identical to its previous content
+
   Scenario: quecto config trust refuses an overlay that carries a global-only section
     Given a repo-local overlay in the current directory with content:
       """
@@ -289,6 +333,43 @@ Feature: Configuration discovery and the repo-local overlay
     Then the exit code should be 1
     And the stderr should contain "quecto config trust"
     And the current directory's ".quecto/config.json" should be byte-identical to its previous content
+
+  Scenario: quecto config set refuses an overlay change that would leave the merged configuration invalid
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    When I run quecto with the arguments:
+      """
+      config set --local container_configs.app.create '["x"]'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "refusing to write"
+    And the stderr should name the current directory's ".quecto/config.json"
+    And the stderr should contain "no container config is labeled"
+    And the current directory's ".quecto/config.json" should not exist
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+
+  # ── Secrets in read-outs ──────────────────────────────────────────────────
+
+  Scenario: quecto config get redacts secret-shaped values unless asked to show them
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}},"providers":{"openai":{"api_key":"sk-global","api_base":"https://api.example"}}}
+      """
+    When I run quecto with arguments "config get --effective"
+    Then the exit code should be 0
+    And the printed JSON should have "providers.openai.api_key" equal to "<redacted>"
+    And the printed JSON should have "providers.openai.api_base" equal to "https://api.example"
+    And the stderr should contain "--show-secrets"
+    And the output should not contain "sk-global"
+    When I run quecto with arguments "config get --global providers.openai.api_key"
+    Then the printed JSON should be "<redacted>"
+    When I run quecto with arguments "config get --effective --show-secrets providers.openai.api_key"
+    Then the printed JSON should be "sk-global"
+    And the stderr should not contain "--show-secrets"
 
   # ── Migration from the retired ./config.json selection ────────────────────
 

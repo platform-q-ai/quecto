@@ -125,6 +125,44 @@ fn given_overlay_trusted_unchecked(world: &mut QuectoWorld) {
     .expect("write trust store");
 }
 
+/// An overlay of *another* checkout, approved through the real entry
+/// point, so a scenario can show that a link to it borrows nothing.
+#[given("a trusted overlay in another directory with content:")]
+fn given_other_trusted_overlay(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let content = step.docstring().expect("step should have a docstring");
+    ensure_temp_dir(world);
+    let other = cwd(world).join("other-checkout").join(OVERLAY_RELATIVE);
+    std::fs::create_dir_all(other.parent().unwrap()).expect("create other .quecto");
+    std::fs::write(&other, content).expect("write other overlay");
+    run_cli(
+        world,
+        vec![
+            "quecto".to_string(),
+            "config".to_string(),
+            "trust".to_string(),
+            "--path".to_string(),
+            other.to_string_lossy().into_owned(),
+        ],
+    );
+    assert_eq!(
+        world.exit_code, 0,
+        "trusting the other overlay: {}",
+        world.stderr
+    );
+    world.other_overlay = Some(other);
+}
+
+#[given(expr = "the current directory's {string} is a symbolic link to that overlay")]
+fn given_overlay_is_symlink(world: &mut QuectoWorld, name: String) {
+    let target = world
+        .other_overlay
+        .clone()
+        .expect("a trusted overlay in another directory comes first");
+    let link = cwd(world).join(name);
+    std::fs::create_dir_all(link.parent().unwrap()).expect("create .quecto");
+    std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+}
+
 #[when(expr = "I run quecto status with --config pointing at the current directory's {string}")]
 fn when_run_status_with_explicit_config(world: &mut QuectoWorld, name: String) {
     let explicit = cwd(world).join(name);
@@ -167,6 +205,15 @@ fn then_stderr_names_local(world: &mut QuectoWorld, name: String) {
     assert!(
         world.stderr.contains(&expected),
         "expected stderr to name {expected}, got: {}",
+        world.stderr
+    );
+}
+
+#[then(expr = "the stderr should not contain {string}")]
+fn then_stderr_not_contains(world: &mut QuectoWorld, unexpected: String) {
+    assert!(
+        !world.stderr.contains(&unexpected),
+        "expected stderr NOT to contain '{unexpected}', got: {}",
         world.stderr
     );
 }
@@ -214,6 +261,20 @@ fn then_local_unchanged(world: &mut QuectoWorld, name: String) {
     let path = cwd(world).join(&name);
     let now = std::fs::read(&path).expect("read local file");
     assert_eq!(now, previous_content(world, &path), "{name} changed");
+    if let Some(target) = &world.other_overlay {
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .expect("entry exists")
+                .file_type()
+                .is_symlink(),
+            "the link was not replaced by a file"
+        );
+        assert_eq!(
+            std::fs::read(target).expect("read target"),
+            now,
+            "the link's target was not written through"
+        );
+    }
 }
 
 #[then(
