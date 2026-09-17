@@ -277,8 +277,7 @@ fn refused_foreign_directory(world: &mut QuectoWorld) {
     use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
     let expected = ResumeDisposition::DifferentExecutionDirectory;
     assert_scope_refusal(world, expected.clone());
-    let error = serde_json::from_str::<serde_json::Value>(&world.stderr)
-        .unwrap()["error"]
+    let error = serde_json::from_str::<serde_json::Value>(&world.stderr).unwrap()["error"]
         .as_str()
         .expect("typed resume error string")
         .to_owned();
@@ -295,8 +294,7 @@ fn refused_corrupt_home(world: &mut QuectoWorld) {
     use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
     let expected = ResumeDisposition::Unavailable("corrupt authority".into());
     assert_scope_refusal(world, expected.clone());
-    let error = serde_json::from_str::<serde_json::Value>(&world.stderr)
-        .unwrap()["error"]
+    let error = serde_json::from_str::<serde_json::Value>(&world.stderr).unwrap()["error"]
         .as_str()
         .expect("typed resume error string")
         .to_owned();
