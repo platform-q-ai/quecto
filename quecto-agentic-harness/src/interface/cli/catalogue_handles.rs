@@ -32,11 +32,6 @@ pub struct CatalogueHandles {
     /// reload reports so) for a loop built without
     /// [`RuntimeConfigurationInputs`].
     pub reload: Arc<ReloadRuntimeConfiguration>,
-    /// The durable tool-policy persistence of the run's config file, for
-    /// the loop's `set_tool_policy … persist` (#1849): `None` for a loop
-    /// built without [`RuntimeConfigurationInputs`], which then persists
-    /// nothing. The interface installs it on the loop it builds.
-    pub tool_policy_persistence: Option<crate::application::agent_loop::ToolPolicyPersistence>,
 }
 
 impl std::fmt::Debug for CatalogueHandles {
@@ -47,23 +42,30 @@ impl std::fmt::Debug for CatalogueHandles {
             .field("model", &self.model)
             .field("refresh", &self.refresh)
             .field("reload", &self.reload)
-            .field(
-                "tool_policy_persistence",
-                &self.tool_policy_persistence.is_some(),
-            )
             .finish()
     }
 }
 
 /// The run's reloadable configuration (#1849), as the interface knows it
 /// at startup: the config file the run selected, the environment overrides
-/// it was loaded with and the HTTP client its providers share. Composition
-/// builds the reload use case over them.
-#[derive(Clone, Debug)]
+/// it was loaded with, the HTTP client its providers share and the injected
+/// provider-runtime builder startup composed through. Composition builds
+/// the reload use case over them.
+#[derive(Clone)]
 pub struct RuntimeConfigurationInputs {
     pub config_path: std::path::PathBuf,
     pub env_overrides: std::collections::HashMap<String, String>,
     pub http_client: reqwest::Client,
+    pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,
+}
+
+impl std::fmt::Debug for RuntimeConfigurationInputs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfigurationInputs")
+            .field("config_path", &self.config_path)
+            .field("env_overrides", &self.env_overrides)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The effort fields of a dispatch loop's state snapshot (#1848).

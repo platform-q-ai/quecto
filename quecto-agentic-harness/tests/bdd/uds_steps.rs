@@ -117,6 +117,7 @@ pub(crate) fn build_uds_agent(
                 config_path,
                 env_overrides,
                 http_client,
+                provider_runtime: build_agent_provider,
             },
         ),
     );

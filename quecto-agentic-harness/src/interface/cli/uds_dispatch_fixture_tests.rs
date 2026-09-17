@@ -185,8 +185,12 @@ impl Fixture {
             self._tmp.path(),
             self.runtime_configuration.as_ref(),
         );
+        // Durable persistence through composition's tool-policy seam, as
+        // the CLI's agent build installs it (#1849).
         self.agent
-            .set_tool_policy_persistence(catalogue.tool_policy_persistence.clone());
+            .set_tool_policy_persistence(self.runtime_configuration.as_ref().map(|inputs| {
+                crate::composition::tool_policy::build_tool_policy_persistence(&inputs.config_path)
+            }));
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),

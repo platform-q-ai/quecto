@@ -12,6 +12,7 @@ pub mod sessions;
 pub mod subagent_lifecycle;
 pub mod subagent_teardown;
 pub mod subagent_termination;
+pub mod tool_policy;
 
 #[cfg(test)]
 mod find_tests;

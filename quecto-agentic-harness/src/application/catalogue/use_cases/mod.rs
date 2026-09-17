@@ -11,4 +11,4 @@ pub use change_active_model::ChangeActiveModel;
 pub use change_reasoning_effort::ChangeReasoningEffort;
 pub use list_models::ListModels;
 pub use refresh_catalogue_sources::RefreshCatalogueSources;
-pub use reload_runtime_configuration::ReloadRuntimeConfiguration;
+pub use reload_runtime_configuration::{ReloadRuntimeConfiguration, ReloadStep};

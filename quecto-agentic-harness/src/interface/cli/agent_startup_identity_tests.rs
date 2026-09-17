@@ -12,6 +12,9 @@ fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         ..Default::default()
     };
@@ -54,6 +57,9 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         fresh_session_identity: None,
         ..Default::default()
     };

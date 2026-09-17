@@ -324,9 +324,9 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // #1721: a failure during this turn is dated at the generation known now.
     ctx.session
         .observe_control_generation(ctx.turn_control.control_generation());
-    // Reload runtime configuration (#1849): the pull-based poll before
-    // every prompt (ADR-0002); a failed rebuild keeps the last-good runtime.
-    ctx.catalogue.reload.execute_if_changed(ctx.agent);
+    // Reload runtime configuration (#1849): the pull-based poll before every
+    // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
+    super::uds_dispatch_reload::poll_reload(ctx).await;
     let cancel_rx = arm_prompt_cancel(
         ctx,
         matches!(streaming_behavior, Some(StreamingBehavior::Steer)),

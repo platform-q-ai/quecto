@@ -741,7 +741,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #1848: the adapter holds the change-reasoning-effort use case and
     // restores the startup effort through it (was 97).
     ("src/interface/cli/uds_session_switch_runtime.rs", 103),
-    ("src/interface/cli/uds.rs", 713),
+    ("src/interface/cli/uds.rs", 712),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 256),

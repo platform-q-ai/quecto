@@ -14,6 +14,8 @@ fn main() {
             config_selection: quecto::composition::configuration::build_select_config,
             catalogue: quecto::composition::catalogue::build_catalogue_handles,
             provider_runtime: quecto::composition::runtime::build_agent_provider,
+            tool_policy_persistence:
+                quecto::composition::tool_policy::build_tool_policy_persistence,
         },
     ));
 }

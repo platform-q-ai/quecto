@@ -202,6 +202,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         retention: None,
         catalogue: None,
         provider_runtime: None,
+        tool_policy_persistence: None,
         admission_context,
         parent_control,
     };
@@ -354,6 +355,10 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: catalogue capability not composed\n");
         return None;
     };
+    let Some(build_tool_policy_persistence) = flags.tool_policy_persistence else {
+        stderr.push_str("agent: tool-policy persistence capability not composed\n");
+        return None;
+    };
     if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
         return None;
     }
@@ -384,6 +389,7 @@ pub(crate) fn build_agent_from_config(
         config_path: config_path.to_path_buf(),
         env_overrides: env_overrides.clone(),
         http_client: http_client.clone(),
+        provider_runtime: build_provider,
     };
     let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
     let ToolRegistryBuild {
@@ -474,7 +480,7 @@ pub(crate) fn build_agent_from_config(
     );
     // Durable `set_tool_policy … persist` writes into the run's config
     // file through composition's persistence hook (#1849).
-    agent.set_tool_policy_persistence(catalogue.tool_policy_persistence.clone());
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(config_path)));
     Some(AgentBuildResult {
         agent,
         catalogue,

@@ -282,6 +282,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             config_path,
             env_overrides,
             http_client,
+            provider_runtime: build_agent_provider,
         };
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()));

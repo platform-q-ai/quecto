@@ -58,6 +58,9 @@ pub(crate) struct AgentFlags {
     /// startup composes the provider through it (reload rebuilds through
     /// the catalogue handles' reload use case, over the same composition).
     pub(crate) provider_runtime: Option<crate::interface::cli::ProviderRuntimeBuilder>,
+    /// Composition's tool-policy persistence builder (#1849), from
+    /// CliContext; the agent build installs its hook on the loop.
+    pub(crate) tool_policy_persistence: Option<crate::interface::cli::ToolPolicyPersistenceBuilder>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
@@ -78,6 +81,7 @@ impl AgentFlags {
         self.retention = ctx.retention;
         self.catalogue = ctx.catalogue;
         self.provider_runtime = ctx.provider_runtime;
+        self.tool_policy_persistence = ctx.tool_policy_persistence;
     }
 }
 

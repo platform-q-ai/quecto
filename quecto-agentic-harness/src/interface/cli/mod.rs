@@ -19,6 +19,7 @@ pub mod uds_cancel;
 mod uds_cancel_history;
 mod uds_control_forward;
 mod uds_delete_all_subagents;
+mod uds_dispatch_reload;
 pub mod uds_execution_state;
 mod uds_progress_forward;
 
@@ -327,18 +328,19 @@ pub type CatalogueHandlesBuilder = fn(
     Option<&catalogue_handles::RuntimeConfigurationInputs>,
 ) -> catalogue_handles::CatalogueHandles;
 
-/// Composition's provider-runtime builder (#1849): composes and publishes
-/// the provider runtime for a base directory and returns its routing
-/// provider. Injected through the CLI context; startup calls it (reload
-/// goes through the catalogue handles), the interface never composes a
+/// Composition's provider-runtime builder (#1849), the one type startup
+/// and reload share: injected through the CLI context; startup calls it and
+/// hands it on to the reload inputs, the interface never composes a
 /// provider.
 pub type ProviderRuntimeBuilder =
-    fn(
-        &crate::infrastructure::config::Config,
-        &std::path::Path,
-        &reqwest::Client,
-    )
-        -> Result<std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>, String>;
+    crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder;
+
+/// Composition's builder of the tool-policy persistence hook (#1849): the
+/// durable `set_tool_policy … persist` writer over the run's config file.
+/// Injected through the CLI context; the agent build installs it on the
+/// loop, the interface never constructs the writer.
+pub type ToolPolicyPersistenceBuilder =
+    fn(&std::path::Path) -> crate::application::agent_loop::ToolPolicyPersistence;
 
 /// Composition's builder of the configuration-selection use case (#1966):
 /// which one file a run loads its configuration from. Injected through the
@@ -399,6 +401,10 @@ pub struct CliContext {
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
     pub provider_runtime: Option<ProviderRuntimeBuilder>,
+    /// Composition's tool-policy persistence builder (#1849). Supplied by
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
+    /// run refuses to start without it.
+    pub tool_policy_persistence: Option<ToolPolicyPersistenceBuilder>,
 }
 
 impl CliContext {
@@ -444,6 +450,7 @@ pub struct CliComposition {
     pub config_selection: ConfigSelectionBuilder,
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
+    pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -470,6 +477,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         config_selection: Some(composition.config_selection),
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
+        tool_policy_persistence: Some(composition.tool_policy_persistence),
         ..Default::default()
     };
 

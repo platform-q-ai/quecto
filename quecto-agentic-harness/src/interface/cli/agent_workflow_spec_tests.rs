@@ -34,6 +34,9 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         admission_context: None,
         parent_control: None,
     }

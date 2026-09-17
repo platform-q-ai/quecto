@@ -1,8 +1,8 @@
 //! Catalogue composition (#1845, #1848, #1847, #1846, #1849): the catalogue
 //! use cases over the file-backed inputs loaders and the process-wide
 //! snapshot and runtime stores of one base directory, and the reload of a
-//! run's configuration files over the ADR-0002 gate and this layer's
-//! provider-runtime builder.
+//! run's configuration files over the ADR-0002 gate and the injected
+//! provider-runtime builder startup composed through.
 //! `main` hands [`build_catalogue_handles`] to the CLI entry point; the
 //! dispatch loop holds the controller it receives.
 
@@ -18,19 +18,15 @@ use crate::infrastructure::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
 use crate::infrastructure::runtime_configuration::FileRuntimeConfiguration;
-use crate::infrastructure::tool_policy_persistence::tool_policy_persistence_for;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
 use crate::interface::cli::catalogue_handles::{CatalogueHandles, RuntimeConfigurationInputs};
 
-use super::runtime::build_agent_provider;
-
 /// The catalogue handles one loop holds, over the shared snapshot store of
 /// `base_dir`. With `runtime`, the reload use case watches the run's config
-/// file and `models.json` and rebuilds through this layer's
-/// [`build_agent_provider`],
-/// and the loop persists tool policy into that config file; without it
-/// (rigs, the `models` CLI) reload is unconfigured and nothing persists.
+/// file and `models.json` and rebuilds through the provider-runtime builder
+/// startup was injected with; without it (rigs, the `models` CLI) reload is
+/// unconfigured.
 pub fn build_catalogue_handles(
     base_dir: &std::path::Path,
     runtime: Option<&RuntimeConfigurationInputs>,
@@ -60,20 +56,17 @@ pub fn build_catalogue_handles(
                 base_dir.to_path_buf(),
                 runtime.env_overrides.clone(),
                 runtime.http_client.clone(),
-                build_agent_provider,
+                runtime.provider_runtime,
             )))
         }
         None => ReloadRuntimeConfiguration::unconfigured(),
     });
-    let tool_policy_persistence =
-        runtime.map(|runtime| tool_policy_persistence_for(runtime.config_path.clone()));
     CatalogueHandles {
         list_models: Arc::new(ListModelsController::new(list_models)),
         effort,
         model,
         refresh,
         reload,
-        tool_policy_persistence,
     }
 }
 

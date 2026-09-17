@@ -1,7 +1,9 @@
 //! `ReloadRuntimeConfiguration` against fake ports: a forced reload always
 //! rebuilds and reports failure; a poll rebuilds only on change and keeps
 //! the last-good runtime silently on failure; a success applies provider
-//! and tool policy from one rebuilt configuration.
+//! and tool policy from one rebuilt configuration. The rebuild phase needs
+//! no runtime borrow, so a caller can run it off its scheduler and apply
+//! the step afterwards.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -230,4 +232,59 @@ fn a_successful_reload_applies_the_tool_policy_from_the_same_rebuild_and_reports
         runtime.policies[0].get("ghost"),
         Some(&ProfileAvailabilityScope::Child)
     );
+}
+
+/// The two phases compose: a rebuild step needs no runtime, and applying
+/// it later swaps exactly what the step carried — so an interface can run
+/// the rebuild off its scheduler and apply on the dispatch task.
+#[test]
+fn a_rebuild_step_is_applied_later_without_a_second_rebuild() {
+    let source = FakeSource::default().will_rebuild("v2", vec![]);
+    let uc = use_case(&source);
+    let step = uc.rebuild();
+    assert!(matches!(&step, ReloadStep::Ready(ready) if ready.provider.name() == "v2"));
+    assert_eq!(source.rebuild_calls(), 1);
+    let mut runtime = FakeRuntime::default();
+    assert!(runtime.providers.is_empty(), "nothing swapped before apply");
+    assert_eq!(
+        uc.apply(&mut runtime, step),
+        ReloadOutcome::Reloaded {
+            unknown_policy_tools: vec![]
+        }
+    );
+    assert_eq!(source.rebuild_calls(), 1);
+    assert_eq!(runtime.providers, vec!["v2"]);
+}
+
+#[test]
+fn rebuild_steps_carry_the_trigger_policy_for_failure_and_absence() {
+    let mut runtime = FakeRuntime::default();
+    let unconfigured = ReloadRuntimeConfiguration::unconfigured();
+    assert!(matches!(unconfigured.rebuild(), ReloadStep::NotConfigured));
+    assert!(matches!(
+        unconfigured.rebuild_if_changed(),
+        ReloadStep::NotConfigured
+    ));
+    assert_eq!(
+        unconfigured.apply(&mut runtime, ReloadStep::NotConfigured),
+        ReloadOutcome::NotConfigured
+    );
+
+    let forced = use_case(&FakeSource::default().will_fail("bad"));
+    let step = forced.rebuild();
+    assert!(matches!(&step, ReloadStep::Failed(error) if error == "bad"));
+    assert_eq!(
+        forced.apply(&mut runtime, step),
+        ReloadOutcome::Failed("bad".into())
+    );
+
+    let polled = use_case(&FakeSource::changing(true).will_fail("bad"));
+    assert!(matches!(polled.rebuild_if_changed(), ReloadStep::Unchanged));
+    let quiet = use_case(&FakeSource::changing(false));
+    assert!(matches!(quiet.rebuild_if_changed(), ReloadStep::Unchanged));
+    assert_eq!(
+        quiet.apply(&mut runtime, ReloadStep::Unchanged),
+        ReloadOutcome::Unchanged
+    );
+    assert!(runtime.providers.is_empty());
 }

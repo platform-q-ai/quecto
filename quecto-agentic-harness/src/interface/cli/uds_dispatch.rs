@@ -125,9 +125,9 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             .await
         }
         AgentCommand::Reload { .. } => {
-            // Reload runtime configuration (#1849): forced; the reply is
-            // the presenter's rendering of the use case's outcome.
-            let outcome = ctx.catalogue.reload.execute(ctx.agent);
+            // Reload runtime configuration (#1849): forced, rebuilt off the
+            // runtime; the reply is the presenter's rendering of the outcome.
+            let outcome = super::super::uds_dispatch_reload::force_reload(ctx).await;
             let ev = match crate::interface::uds::catalogue::reload_presenter::render(&outcome) {
                 Ok(()) => AgentEvent::ok(id.as_deref(), &type_name, None),
                 Err(error) => AgentEvent::err(id.as_deref(), &type_name, error),

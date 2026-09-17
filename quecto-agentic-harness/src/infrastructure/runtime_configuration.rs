@@ -2,7 +2,9 @@
 //! use case's source: the config file the run selected and the base
 //! directory's `models.json` behind the ADR-0002 change gate, rebuilt into
 //! a provider runtime plus the persisted tool-policy baseline by one
-//! `Config` read and the composition-supplied provider builder.
+//! `Config` read and the composition-supplied provider builder. The rebuild
+//! runs on the calling thread and blocks it: the caller (the interface's
+//! dispatch loop) runs the use case's rebuild phase off its async runtime.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,21 +15,22 @@ use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadSource, RuntimeReload};
 
-/// Composes and publishes the provider runtime for a config and base
-/// directory (composition's `build_agent_provider`); every rebuild goes
-/// through the same function startup did.
-pub type ProviderBuilder =
+/// Composition's provider-runtime builder (#1849): composes and publishes
+/// the provider runtime for a configuration and base directory and returns
+/// its routing provider. Defined once, here, so startup (through the CLI
+/// context's alias) and every reload (this source) are handed the same
+/// injected function; neither the interface nor this layer composes one.
+pub type ProviderRuntimeBuilder =
     fn(&Config, &Path, &reqwest::Client) -> Result<Arc<dyn LlmProvider>, String>;
 
-/// The inputs a rebuild composes from, owned so the rebuild can run on its
-/// own OS thread.
-#[derive(Clone)]
+/// The inputs a rebuild composes from; the builder is the one startup
+/// composed through, so every rebuild goes through the same function.
 struct RebuildInputs {
     config_path: PathBuf,
     base_dir: PathBuf,
     env_overrides: HashMap<String, String>,
     http_client: reqwest::Client,
-    build_provider: ProviderBuilder,
+    build_provider: ProviderRuntimeBuilder,
 }
 
 impl RebuildInputs {
@@ -65,7 +68,7 @@ impl FileRuntimeConfiguration {
         base_dir: PathBuf,
         env_overrides: HashMap<String, String>,
         http_client: reqwest::Client,
-        build_provider: ProviderBuilder,
+        build_provider: ProviderRuntimeBuilder,
     ) -> Self {
         let mut gate = RuntimeReload::new(vec![
             ReloadSource::new(config_path.clone()),
@@ -93,14 +96,11 @@ impl RuntimeConfigurationSource for FileRuntimeConfiguration {
     /// Fingerprints are observed before the read, so a change made after
     /// this rebuild is still detected and one made before it is consumed —
     /// a forced reload never prompts a second rebuild at the next poll
-    /// (fix (b), #1849). The composition runs on its own OS thread, off the
-    /// caller's async runtime, as startup composition does.
+    /// (fix (b), #1849). Blocks the calling thread for the read and the
+    /// composition.
     fn rebuild(&mut self) -> Result<ReloadedConfiguration, String> {
         self.gate.seed();
-        let inputs = self.inputs.clone();
-        std::thread::spawn(move || inputs.rebuild())
-            .join()
-            .map_err(|_| "provider reload worker panicked".to_string())?
+        self.inputs.rebuild()
     }
 }
 
