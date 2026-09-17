@@ -212,15 +212,19 @@ the global `<base_dir>/config.json` layered with the working directory's
 `.quecto/config.json` overlay candidate (and the retired `<cwd>/config.json`
 location, reported if present, never loaded).
 `use_cases/resolve_effective_config.rs` reads both layers through the
-`ConfigDocumentStore` port, gates the overlay through the `OverlayTrustStore`
+`ConfigDocumentStore` port (the overlay through its `read_overlay`, whose
+typed `OverlayDocument::Refused` carries the one overlay policy — no
+symbolic link below the working directory — as a reason the report,
+`config trust` and `config set` print), gates the overlay through the `OverlayTrustStore`
 port (untrusted: reported in the `ConfigSources` layer report, not applied),
 refuses the global-only sections (`providers`, `admission` — the rule lives in
 the use case), validates each layer and the merge through the `ConfigValidator`
 port, and merges by the pure section-wise policy in `overlay_policy.rs`.
 `use_cases/patch_configuration.rs` is the safe writer: a dotted-path patch of
 the JSON document (never of the `Config` struct, so unknown keys and order
-survive), global-only keys and a symbolic link refused for the overlay, an
-untrusted overlay never patched, the result validated before a byte is written
+survive), global-only keys and whatever the store refuses (a symbolic link
+on the way to the overlay — nothing is written through it) refused for the
+overlay, an untrusted overlay never patched, the result validated before a byte is written
 — the layer alone, then the merge through `ResolveEffectiveConfig::preview`
 (an intra-capability use-case call; cross-capability calls go through ports)
 — the whole cycle under the writer port's exclusive hold (`DocumentLock`), the
@@ -232,18 +236,22 @@ leaves redacted unless revealed; `redaction.rs`) and
 
 Infrastructure lives under `src/infrastructure/config/`: `loaders.rs` (the
 filesystem document store — a present-but-broken entry is an error, never
-absence), `mapping.rs` (document → `Config` with every load-time validation,
+absence; `read_overlay` refuses a symbolic link at `.quecto` or at the file,
+stated once), `mapping.rs` (document → `Config` with every load-time validation,
 the env overrides, the validator adapter, `realize_config`),
 `persistence.rs` (the overlay trust record `<base_dir>/config-overlay-trust.json`,
 canonical path + sha256, shared primitives with the container-config overlay
 in `repo_local_container_config.rs`; the interactive prompt shows the
 document, bounded), and `writer/` (the JSON document writer: existing
 indentation kept, tmp + fsync + rename via `atomic_write`, an exclusive
-`flock` on the sidecar `<file>.lock`; plus the tool-policy persistence hook
-as a caller of it, under the same lock). The runtime-configuration
-source (`src/infrastructure/runtime_configuration.rs`) rebuilds through a
+`flock` on `<base_dir>/locks/<sha256 of the document's canonical path>.lock`
+— never beside the document, so a refused write of a not-yet-existing
+overlay leaves the checkout clean; plus the tool-policy persistence hook as
+a caller of it, under the same lock). The runtime-configuration source
+(`src/infrastructure/runtime_configuration.rs`) rebuilds through a
 composition-supplied `ConfigLoader` and watches the overlay as well as the
-base file. Composition (`src/composition/configuration.rs`) builds the
+base file, and the trust record while the overlay exists
+(`ReloadSource::while_present`). Composition (`src/composition/configuration.rs`) builds the
 `ConfigurationHandles` (`src/interface/cli/configuration_handles.rs`,
 including the `realize` document → `Config` handle) `main` hands the CLI
 through `CliComposition.configuration`, and the loader for reloads (which

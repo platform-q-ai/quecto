@@ -428,9 +428,10 @@ approved again, and reverting to an earlier content does not restore it;
 reported (which file, its hash, and the command to run — or, when
 `quecto config trust` would refuse it, why) and **not** applied, so nothing in
 a repository you have not reviewed can change your agents' defaults. The
-overlay must be a regular file: a symbolic link at `.quecto/config.json` is
-refused whatever it points at (trust is keyed by the file's identity, which a
-link would borrow from its target). `quecto status` prints both files and the
+overlay must be a regular file in a regular `.quecto` directory: a symbolic
+link at `.quecto/config.json` *or* at `.quecto` itself is refused whatever it
+points at (trust is keyed by the file's identity, which a link would borrow
+from its target), and `quecto config set` never writes through one. `quecto status` prints both files and the
 overlay's trust state (`trusted`, `untrusted`, `refused` or `none`):
 
 ```
@@ -466,8 +467,9 @@ configuration this directory would then load (global merged with the trusted
 overlay), so a change that is fine in one file but breaks the merge (an overlay
 container config that leaves no default) is refused rather than bricking the
 next run. The write is atomic (tmp + fsync + rename) and serialised per file
-on a sidecar `<file>.lock` (created beside the file on first use), so
-concurrent `config set`s never lose each other's keys. It does normalise
+on a lock under `<base_dir>/locks/` (never beside the file, so a refused
+`config set` in a clean checkout creates nothing there — not even `.quecto/`),
+so concurrent `config set`s never lose each other's keys. It does normalise
 layout: the file comes back as pretty-printed JSON in its own indentation
 (two spaces for a new or compact file) with LF line endings and one trailing
 newline, and numbers are re-rendered — a file already in that layout changes
@@ -476,10 +478,10 @@ only on the touched line. A refused value leaves the file byte-identical.
 an entry the trusted overlay already defines is refused (it would be shadowed
 on the next reload) with the `quecto config set` command to run instead.
 
-A running agent re-reads the base file and the overlay (and the trust record,
-when an overlay existed when the run started) before the next turn,
-`set_model` or a forced `reload`, so `quecto config trust`, a `config set`,
-or removing the overlay is picked up without a restart. What a reload changes
+A running agent re-reads the base file and the overlay (and, while an
+overlay exists, the trust record) before the next turn, `set_model` or a
+forced `reload`, so `quecto config trust`, a `config set`, or creating or
+removing the overlay is picked up without a restart. What a reload changes
 in the running loop is the providers and the tool policy; a new
 `agents.defaults.model` or `effort` in the files applies to the next run (use
 `set_model`/`set_effort` for the current one). A `config set` writes the
