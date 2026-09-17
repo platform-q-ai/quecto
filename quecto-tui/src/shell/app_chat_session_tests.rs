@@ -127,9 +127,9 @@ async fn discovery_mouse_global_uses_full_frame_coordinates_with_panel() {
     let (y, line) = frame
         .lines()
         .enumerate()
-        .find(|(_, line)| line.contains("[Local]  Global"))
+        .find(|(_, line)| line.contains("[Local Folder]   All Folders"))
         .unwrap();
-    let x = line[..line.find("Global").unwrap()].chars().count();
+    let x = line[..line.find("All Folders").unwrap()].chars().count();
     h.press(Key::MousePress(x as u16, y as u16));
     assert_eq!(
         h.app_mut().ac().sessions.scope,

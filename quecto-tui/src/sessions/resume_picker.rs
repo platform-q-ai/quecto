@@ -19,7 +19,7 @@ pub enum ResumePickerEvent {
     Pending,
 }
 /// The three focusable sections, in Tab order after `Results`. The user-facing
-/// names (`Sessions`, `Local/Global`, `Search`) live in [`Focus::label`].
+/// names (`Sessions`, `Scope`, `Search`) live in [`Focus::label`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Scope,
@@ -30,18 +30,46 @@ impl Focus {
     fn label(self) -> &'static str {
         match self {
             Focus::Results => "Sessions",
-            Focus::Scope => "Local/Global",
+            Focus::Scope => "Scope",
             Focus::Query => "Search",
         }
     }
 }
-/// Content-relative columns of the scope switch's two labels, covering both
-/// renderings (`Scope: [Local]  Global` and `Scope:  Local  [Global]`) after the
-/// two-cell focus marker.
-const LOCAL_COLS: std::ops::RangeInclusive<usize> = 9..=15;
-const GLOBAL_COLS: std::ops::RangeInclusive<usize> = 17..=24;
-/// Content rows above the first result: title, scope, search, `Sessions`.
-const HEADER_ROWS: usize = 4;
+/// Scope switch text; the bracketed option is the active one. The labels are
+/// presentation only — the wire scope stays `local` / `global`.
+const SCOPE_LOCAL_FOLDER: &str = "Scope:   [Local Folder]   All Folders";
+const SCOPE_ALL_FOLDERS: &str = "Scope:    Local Folder   [All Folders]";
+/// Content-relative columns of the scope switch's two labels (brackets
+/// included) in both renderings, counted from after the two-cell focus marker.
+const LOCAL_FOLDER_COLS: std::ops::RangeInclusive<usize> = 11..=24;
+const ALL_FOLDERS_COLS: std::ops::RangeInclusive<usize> = 27..=39;
+/// Content rows above the first result: title, blank, scope, search, blank,
+/// `Sessions`. Very short terminals drop the two blank rows ([`Header`]).
+const HEADER_ROWS: usize = 6;
+/// List rows sit two cells deeper than the `Sessions` header's label.
+const LIST_INDENT: &str = "    ";
+/// The block indent of the details and footer rows.
+const BLOCK_INDENT: &str = "  ";
+/// Row positions of the header sections; `compact` drops the blank rows so a
+/// very short terminal still shows results.
+#[derive(Clone, Copy, Default)]
+struct Header {
+    compact: bool,
+}
+impl Header {
+    fn rows(self) -> usize {
+        HEADER_ROWS - 2 * usize::from(self.compact)
+    }
+    fn scope(self) -> usize {
+        2 - usize::from(self.compact)
+    }
+    fn search(self) -> usize {
+        self.scope() + 1
+    }
+    fn sessions(self) -> usize {
+        self.rows() - 1
+    }
+}
 /// Where a section marker goes: `▸ ` on the focused section, blank elsewhere.
 fn marker(focused: bool) -> String {
     if focused {
@@ -57,6 +85,7 @@ struct HitLayout {
     width: usize,
     height: usize,
     border: usize,
+    header: Header,
 }
 pub struct ResumePicker {
     list: SelectList,
@@ -194,25 +223,25 @@ impl ResumePicker {
         if (h.left..h.left + h.width).contains(&x) && (h.top..h.top + h.height).contains(&y) {
             let row = y - h.top;
             let col = x - h.left;
-            if row == h.border + 1 && col >= h.border * 2 {
+            if row == h.border + h.header.scope() && col >= h.border * 2 {
                 self.focus = Focus::Scope;
                 let col = col - h.border * 2;
-                return if LOCAL_COLS.contains(&col) {
+                return if LOCAL_FOLDER_COLS.contains(&col) {
                     self.change_scope(SessionListScope::Local)
-                } else if GLOBAL_COLS.contains(&col) {
+                } else if ALL_FOLDERS_COLS.contains(&col) {
                     self.change_scope(SessionListScope::Global)
                 } else {
                     ResumePickerEvent::Pending
                 };
             }
-            if row == h.border + 2 {
+            if row == h.border + h.header.search() {
                 self.focus = Focus::Query;
             }
-            if row == h.border + 3 {
+            if row == h.border + h.header.sessions() {
                 self.focus = Focus::Results;
             }
-            if row >= h.border + HEADER_ROWS {
-                let offset = row - (h.border + HEADER_ROWS);
+            if row >= h.border + h.header.rows() {
+                let offset = row - (h.border + h.header.rows());
                 if offset < self.result_rows
                     && let Some(id) = self
                         .list
@@ -236,8 +265,8 @@ impl ResumePicker {
     }
     pub fn render(&mut self, width: usize, height: usize) -> (Vec<String>, usize) {
         let scope = match self.scope {
-            SessionListScope::Local => "Scope: [Local]  Global",
-            SessionListScope::Global => "Scope:  Local  [Global]",
+            SessionListScope::Local => SCOPE_LOCAL_FOLDER,
+            SessionListScope::Global => SCOPE_ALL_FOLDERS,
         };
         let focus = self.focus;
         let cursor = if focus == Focus::Query { "▏" } else { "" };
@@ -255,30 +284,43 @@ impl ResumePicker {
         } else {
             SelectionStyle::Inactive
         });
+        // Budget before rendering: outer margins, borders, the header rows,
+        // footer, overflow indicator, wrapped selected details and the blank
+        // separator rows all consume rows. When the full header leaves fewer
+        // than two body rows, the header's blank rows go before any result does.
+        let border_rows = if width.saturating_sub(4) >= 6 { 2 } else { 0 };
+        let chrome = 4 + border_rows + 1;
+        let header = Header {
+            compact: height.saturating_sub(chrome + HEADER_ROWS) < 2,
+        };
+        let budget = height.saturating_sub(chrome + header.rows());
         let (lines, panel_width) = build_select_overlay(width, height, |content_width| {
-            let mut lines = vec![
-                "Resume session".into(),
-                format!("{}{scope}", marker(focus == Focus::Scope)),
-                format!(
-                    "{}Search: {}{cursor}",
+            let blank = || (!header.compact).then(String::new);
+            let mut lines: Vec<String> = [
+                Some("Resume session".into()),
+                blank(),
+                Some(format!("{}{scope}", marker(focus == Focus::Scope))),
+                Some(format!(
+                    "{}Search:  {}{cursor}",
                     marker(focus == Focus::Query),
                     self.query
-                ),
-                format!("{}Sessions", marker(focus == Focus::Results)),
-            ];
-            // Budget before rendering: outer margins, borders, the header rows,
-            // footer, overflow indicator and wrapped selected details all consume rows.
-            let border_rows = if width.saturating_sub(4) >= 6 { 2 } else { 0 };
-            let budget = height.saturating_sub(4 + border_rows + HEADER_ROWS + 1);
+                )),
+                blank(),
+                Some(format!("{}Sessions", marker(focus == Focus::Results))),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            debug_assert_eq!(lines.len(), header.rows());
+            let detail_width = content_width.saturating_sub(BLOCK_INDENT.len()).max(1);
             let details = self
                 .list
                 .selected_item()
                 .and_then(|item| item.description.as_deref())
-                .map(|description| crate::components::utils::wrap_text(description, content_width))
+                .map(|description| crate::components::utils::wrap_text(description, detail_width))
                 .unwrap_or_default();
-            let (result_rows, detail_rows, indicator) =
-                fit_result_window(budget, self.list.item_count(), details.len());
-            self.result_rows = result_rows;
+            let fit = fit_result_window(budget, self.list.item_count(), details.len());
+            self.result_rows = fit.result_rows;
             self.list.set_max_visible(self.result_rows);
             if self.result_rows > 0 {
                 if let Some(selected) = self.list.selected_item().map(|item| item.value.clone()) {
@@ -291,19 +333,28 @@ impl ResumePicker {
                         "selected identity must stay inside the fitted result window"
                     );
                 }
-                let mut rendered = self.list.render(content_width);
+                let list_width = content_width.saturating_sub(LIST_INDENT.len()).max(1);
+                let mut rendered = self.list.render(list_width);
                 // Same allocation used for scrolling and hit-testing: never let
                 // the overflow indicator steal a row the budget did not reserve.
-                rendered.truncate(self.result_rows + indicator);
-                lines.extend(rendered);
+                rendered.truncate(self.result_rows + fit.indicator);
+                lines.extend(rendered.iter().map(|row| format!("{LIST_INDENT}{row}")));
             }
-            lines.extend(details.into_iter().take(detail_rows));
-            // The full footer is 67 cells; narrower panels drop the key hints
-            // before the section names so the focus cue always survives.
-            lines.push(if content_width >= 67 {
-                format!("Tab: {footer} · ↑↓ · Enter open · Esc close")
+            lines.extend(std::iter::repeat_n(String::new(), fit.gap_before_details));
+            lines.extend(
+                details
+                    .into_iter()
+                    .take(fit.detail_rows)
+                    .map(|row| format!("{BLOCK_INDENT}{row}")),
+            );
+            lines.extend(std::iter::repeat_n(String::new(), fit.gap_before_footer));
+            // The full footer is 62 cells (two-cell indent included); narrower
+            // panels drop the key hints before the section names so the focus
+            // cue always survives.
+            lines.push(if content_width >= 62 {
+                format!("{BLOCK_INDENT}Tab: {footer} · ↑↓ · Enter open · Esc close")
             } else {
-                format!("Tab: {footer}")
+                format!("{BLOCK_INDENT}Tab: {footer}")
             });
             lines
         });
@@ -314,6 +365,7 @@ impl ResumePicker {
             width: panel_width,
             height: visible_height,
             border: usize::from(panel_width >= 6),
+            header,
         };
         (lines, panel_width)
     }
@@ -322,18 +374,38 @@ fn safe(text: &str) -> String {
     sanitize_truncate_chars_with_ellipsis(text, 512, "…")
 }
 
+/// Row allocation of the modal body below the `Sessions` header.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct ResultWindow {
+    pub(super) result_rows: usize,
+    pub(super) indicator: usize,
+    pub(super) detail_rows: usize,
+    /// Blank row between the list and the selected-row details (0 or 1).
+    pub(super) gap_before_details: usize,
+    /// Blank row between the body and the footer (0 or 1).
+    pub(super) gap_before_footer: usize,
+}
 /// Fit results into the modal body after scope/query/details/footer chrome.
 ///
 /// `budget` is rows remaining inside the overlay content area. The overflow
 /// indicator is reserved only when the window cannot show every item *and*
 /// a spare row exists (or can be stolen without dropping the last result).
-fn fit_result_window(budget: usize, item_count: usize, detail_len: usize) -> (usize, usize, usize) {
+/// Blank separator rows only ever take rows nothing else claimed, so short
+/// terminals lose the gaps before they lose a result: the details gap first
+/// keeps the list and the details apart, then the footer gap.
+pub(super) fn fit_result_window(
+    budget: usize,
+    item_count: usize,
+    detail_len: usize,
+) -> ResultWindow {
     if budget == 0 {
-        return (0, 0, 0);
+        return ResultWindow::default();
     }
     let detail_rows = detail_len.min(budget.saturating_sub(1));
     let leftover = budget - detail_rows;
-    let mut result_rows = leftover.min(12);
+    // A window never claims rows the list cannot fill (the empty placeholder
+    // needs one), so the separator rows land right under the last row.
+    let mut result_rows = leftover.min(12).min(item_count.max(1));
     let mut indicator = 0;
     if result_rows > 0 && item_count > result_rows {
         if leftover > result_rows {
@@ -343,6 +415,24 @@ fn fit_result_window(budget: usize, item_count: usize, detail_len: usize) -> (us
             indicator = 1;
         }
     }
-    debug_assert!(result_rows + indicator + detail_rows <= budget);
-    (result_rows, detail_rows, indicator)
+    let mut spare = budget - (result_rows + indicator + detail_rows);
+    let gap_before_details = usize::from(detail_rows > 0 && spare > 0);
+    spare -= gap_before_details;
+    let gap_before_footer = usize::from(spare > 0);
+    let fit = ResultWindow {
+        result_rows,
+        indicator,
+        detail_rows,
+        gap_before_details,
+        gap_before_footer,
+    };
+    debug_assert!(
+        fit.result_rows
+            + fit.indicator
+            + fit.detail_rows
+            + fit.gap_before_details
+            + fit.gap_before_footer
+            <= budget
+    );
+    fit
 }

@@ -65,13 +65,12 @@ fn scope_focus_and_query_cycle_with_title_only_filter() {
 fn empty_picker_scope_mouse_is_centered_and_visible() {
     let mut picker = ResumePicker::default();
     let (lines, width) = picker.render(100, 30);
-    assert!(
-        lines
-            .iter()
-            .any(|s| s.contains("Local") && s.contains("Global"))
-    );
-    let x = (100 - width) / 2 + column_of(&lines[2], "Global");
-    let y = (30 - lines.len()) / 2 + 2;
+    let scope_row = lines
+        .iter()
+        .position(|s| s.contains("Local Folder") && s.contains("All Folders"))
+        .unwrap();
+    let x = (100 - width) / 2 + column_of(&lines[scope_row], "All Folders");
+    let y = (30 - lines.len()) / 2 + scope_row;
     assert_eq!(
         picker.handle_input(&Key::MousePress(x as u16, y as u16)),
         ResumePickerEvent::ScopeChanged(SessionListScope::Global)
@@ -103,7 +102,9 @@ fn mouse_result_uses_visible_window_and_ignores_outside_clicks() {
     }
     let (lines, width) = picker.render(100, 40);
     let x = (100 - width) / 2 + 3;
-    let y = (40 - lines.len()) / 2 + 5; // border, title, scope, search, Sessions
+    // The first list row sits directly under the `Sessions` header.
+    let sessions = lines.iter().position(|l| l.contains("Sessions")).unwrap();
+    let y = (40 - lines.len()) / 2 + sessions + 1;
     assert_eq!(
         picker.handle_input(&Key::MousePress(0, 0)),
         ResumePickerEvent::Pending
@@ -150,7 +151,11 @@ fn selected_details_show_long_path_suffix_and_unavailable_actions() {
     assert!(text.contains("Locate unavailable"), "{text}");
     assert!(text.contains("Cancel"));
     let x = (180 - width) / 2 + 3;
-    let y = (40 - lines.len()) / 2 + 6; // details, immediately after the sole result
+    let details = lines
+        .iter()
+        .position(|l| l.contains("Locate unavailable"))
+        .unwrap();
+    let y = (40 - lines.len()) / 2 + details;
     assert_eq!(
         picker.handle_key(&Key::MousePress(x as u16, y as u16)),
         ResumePickerEvent::Pending
@@ -301,7 +306,7 @@ fn focus_marker_moves_between_sessions_scope_and_search() {
     let text = lines.join("\n");
     assert_eq!(marked(&lines).len(), 1, "{text}");
     assert!(
-        marked(&lines)[0].contains("▸ Scope: [Local]  Global"),
+        marked(&lines)[0].contains("▸ Scope:   [Local Folder]   All Folders"),
         "{text}"
     );
     assert!(
@@ -315,7 +320,7 @@ fn focus_marker_moves_between_sessions_scope_and_search() {
     let (lines, _) = picker.render(100, 30);
     let text = lines.join("\n");
     assert_eq!(marked(&lines).len(), 1, "{text}");
-    assert!(marked(&lines)[0].contains("▸ Search: x▏"), "{text}");
+    assert!(marked(&lines)[0].contains("▸ Search:  x▏"), "{text}");
     assert!(!text.contains("Query:"), "{text}");
 }
 
@@ -333,11 +338,11 @@ fn footer_names_sections_in_plain_words_and_highlights_the_focused_one() {
     let line = footer(&mut picker);
     assert_eq!(
         strip_ansi(&line).trim_matches(['│', ' ']),
-        "Tab: Sessions ▸ Local/Global ▸ Search · ↑↓ · Enter open · Esc close"
+        "Tab: Sessions ▸ Scope ▸ Search · ↑↓ · Enter open · Esc close"
     );
     assert!(line.contains("\x1b[36mSessions\x1b[0m"), "{line:?}");
     picker.handle_input(&Key::Tab);
-    assert!(footer(&mut picker).contains("\x1b[36mLocal/Global\x1b[0m"));
+    assert!(footer(&mut picker).contains("\x1b[36mScope\x1b[0m"));
     picker.handle_input(&Key::Tab);
     assert!(footer(&mut picker).contains("\x1b[36mSearch\x1b[0m"));
 }
@@ -349,14 +354,15 @@ fn scope_switch_clicks_land_on_the_rendered_labels() {
     let scope_row = lines.iter().position(|l| l.contains("Scope:")).unwrap();
     let left = (100 - width) / 2;
     let top = (30 - lines.len()) / 2;
-    let x = left + column_of(&lines[scope_row], "Global");
+    // Last cell of the inactive label.
+    let x = left + column_of(&lines[scope_row], "All Folders") + "All Folders".len() - 1;
     assert_eq!(
         picker.handle_input(&Key::MousePress(x as u16, (top + scope_row) as u16)),
         ResumePickerEvent::ScopeChanged(SessionListScope::Global)
     );
     let (lines, _) = picker.render(100, 30);
-    assert!(strip_ansi(&lines[scope_row]).contains("Scope:  Local  [Global]"));
-    let x = left + column_of(&lines[scope_row], "Local") + 4;
+    assert!(strip_ansi(&lines[scope_row]).contains("Scope:    Local Folder   [All Folders]"));
+    let x = left + column_of(&lines[scope_row], "Local Folder") + 4;
     assert_eq!(
         picker.handle_input(&Key::MousePress(x as u16, (top + scope_row) as u16)),
         ResumePickerEvent::ScopeChanged(SessionListScope::Local)
@@ -376,10 +382,177 @@ fn empty_list_keeps_its_placeholder_under_every_focus() {
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let sessions = plain.iter().position(|l| l.contains("Sessions")).unwrap();
         assert!(
-            plain[sessions + 1].contains("No items"),
+            plain[sessions + 1].starts_with("│       No items"),
             "{}",
             plain.join("\n")
         );
         picker.handle_input(&Key::Tab);
     }
+}
+
+/// Content rows as the terminal shows them: ANSI stripped, border and its
+/// one-cell padding removed, trailing padding trimmed.
+fn content_rows(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|l| strip_ansi(l))
+        .filter(|l| l.starts_with('│'))
+        .map(|l| {
+            l.trim_start_matches('│')
+                .strip_prefix(' ')
+                .unwrap_or_default()
+                .trim_end_matches([' ', '│'])
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn layout_separates_sections_with_blank_rows_and_indents_list_rows() {
+    let mut a = item("write a story about a cat");
+    a.description = Some("/home/swq/thoughts · 2026-09-17 14:57 (2 msgs) · Resume".into());
+    let mut b = item("whats in this repo?");
+    b.description = Some("/home/swq/thoughts · 2026-09-16".into());
+    let mut picker = ResumePicker::new(vec![a, b], SessionListScope::Local);
+    let (lines, _) = picker.render(100, 30);
+    let rows = content_rows(&lines);
+    assert_eq!(rows[0], "Resume session", "{rows:?}");
+    assert_eq!(rows[1], "", "{rows:?}");
+    assert_eq!(
+        rows[2], "  Scope:   [Local Folder]   All Folders",
+        "{rows:?}"
+    );
+    assert_eq!(rows[3], "  Search:", "{rows:?}");
+    assert_eq!(rows[4], "", "{rows:?}");
+    assert_eq!(rows[5], "▸ Sessions", "{rows:?}");
+    assert!(
+        rows[6].starts_with("    → write a story about a cat"),
+        "{rows:?}"
+    );
+    assert!(rows[7].starts_with("      whats in this repo?"), "{rows:?}");
+    assert_eq!(rows[8], "", "{rows:?}");
+    assert_eq!(
+        rows[9], "  /home/swq/thoughts · 2026-09-17 14:57 (2 msgs) · Resume",
+        "{rows:?}"
+    );
+    assert_eq!(rows[10], "", "{rows:?}");
+    assert_eq!(
+        rows[11], "  Tab: Sessions ▸ Scope ▸ Search · ↑↓ · Enter open · Esc close",
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 12, "{rows:?}");
+
+    picker.handle_input(&Key::Tab);
+    picker.handle_input(&Key::Right);
+    picker.sync_items(vec![]);
+    let (lines, _) = picker.render(100, 30);
+    let rows = content_rows(&lines);
+    assert_eq!(
+        rows[2], "▸ Scope:    Local Folder   [All Folders]",
+        "{rows:?}"
+    );
+    assert_eq!(rows[5], "  Sessions", "{rows:?}");
+    assert_eq!(rows[6], "      No items", "{rows:?}");
+    assert_eq!(rows[7], "", "{rows:?}");
+    assert_eq!(
+        rows[8], "  Tab: Sessions ▸ Scope ▸ Search · ↑↓ · Enter open · Esc close",
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 9, "{rows:?}");
+}
+
+#[test]
+fn short_terminals_drop_blank_rows_before_result_rows() {
+    use super::resume_picker::fit_result_window;
+    // Tall: results, both gaps and the details all fit.
+    let fit = fit_result_window(20, 2, 1);
+    assert_eq!((fit.result_rows, fit.indicator, fit.detail_rows), (2, 0, 1));
+    assert_eq!((fit.gap_before_details, fit.gap_before_footer), (1, 1));
+    // One spare row: the details gap survives, the footer gap goes.
+    let fit = fit_result_window(4, 2, 1);
+    assert_eq!((fit.gap_before_details, fit.gap_before_footer), (1, 0));
+    // No spare row: no gaps, every result row kept.
+    let fit = fit_result_window(3, 2, 1);
+    assert_eq!((fit.result_rows, fit.detail_rows), (2, 1));
+    assert_eq!((fit.gap_before_details, fit.gap_before_footer), (0, 0));
+    // Overflowing list: the indicator and results win over the gaps.
+    let fit = fit_result_window(5, 20, 1);
+    assert_eq!((fit.result_rows, fit.indicator, fit.detail_rows), (3, 1, 1));
+    assert_eq!((fit.gap_before_details, fit.gap_before_footer), (0, 0));
+    // No details: the only gap sits before the footer.
+    let fit = fit_result_window(3, 1, 0);
+    assert_eq!((fit.gap_before_details, fit.gap_before_footer), (0, 1));
+    assert_eq!(fit_result_window(0, 5, 3).result_rows, 0);
+
+    let items = (0..20).map(|i| item(&format!("ROW-{i:02}"))).collect();
+    let mut picker = ResumePicker::new(items, SessionListScope::Local);
+    let (lines, _) = picker.render(100, 18);
+    let rows = content_rows(&lines);
+    let sessions = rows.iter().position(|r| r == "▸ Sessions").unwrap();
+    let footer = rows.iter().position(|r| r.starts_with("  Tab:")).unwrap();
+    assert!(
+        rows[sessions + 1..footer].iter().all(|r| !r.is_empty()),
+        "{rows:?}"
+    );
+    assert!(rows.iter().any(|r| r.contains("ROW-01")), "{rows:?}");
+
+    // Very short: the header's blank rows go too, and the rows still hit-test.
+    let (lines, width) = picker.render(100, 12);
+    let rows = content_rows(&lines);
+    assert_eq!(
+        rows[1], "  Scope:   [Local Folder]   All Folders",
+        "{rows:?}"
+    );
+    assert_eq!(rows[2], "  Search:", "{rows:?}");
+    assert_eq!(rows[3], "▸ Sessions", "{rows:?}");
+    assert!(rows[4].contains("ROW-00"), "{rows:?}");
+    let x = (100 - width) / 2 + 3;
+    let y = (12 - lines.len()) / 2 + 1 + 4;
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::Selected("ROW-00".into())
+    );
+    let y = (12 - lines.len()) / 2 + 1 + 2;
+    picker.handle_input(&Key::MousePress(x as u16, y as u16));
+    let (lines, _) = picker.render(100, 12);
+    assert_eq!(content_rows(&lines)[2], "▸ Search:  ▏");
+}
+
+#[test]
+fn mouse_rows_track_the_rendered_layout() {
+    let mut picker = ResumePicker::new(vec![item("a"), item("b")], SessionListScope::Local);
+    let (lines, width) = picker.render(100, 30);
+    let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
+    let left = (100 - width) / 2;
+    let top = (30 - lines.len()) / 2;
+    let row = |needle: &str| top + plain.iter().position(|l| l.contains(needle)).unwrap();
+    let press = |p: &mut ResumePicker, x: usize, y: usize| {
+        p.handle_input(&Key::MousePress(x as u16, y as u16))
+    };
+    assert_eq!(
+        press(&mut picker, left + 3, row("Search:")),
+        ResumePickerEvent::Pending
+    );
+    let (lines, _) = picker.render(100, 30);
+    assert!(strip_ansi(&lines[row("Search:") - top]).contains("▸ Search:"));
+    assert_eq!(
+        press(&mut picker, left + 3, row("Sessions")),
+        ResumePickerEvent::Pending
+    );
+    let (lines, _) = picker.render(100, 30);
+    assert!(strip_ansi(&lines[row("Sessions") - top]).contains("▸ Sessions"));
+    assert_eq!(
+        press(&mut picker, left + 3, row("Sessions") + 2),
+        ResumePickerEvent::Selected("b".into())
+    );
+    // The blank row above the scope switch and the one under Search do nothing.
+    assert_eq!(
+        press(&mut picker, left + 3, row("Resume session") + 1),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(
+        press(&mut picker, left + 3, row("Search:") + 1),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(picker.selected_item().unwrap().value, "b");
 }

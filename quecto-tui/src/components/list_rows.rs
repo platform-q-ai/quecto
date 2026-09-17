@@ -57,7 +57,7 @@ pub enum DescriptionMode {
 /// keeps its row (the highlight is still the item Enter would open once the
 /// list is focused again) but draws a dim `→ ` and never accents the label,
 /// so a modal with several focusable sections (the resume picker's
-/// Sessions / Local/Global / Search) shows at a glance where ↑/↓ will act.
+/// Sessions / Scope / Search) shows at a glance where ↑/↓ will act.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionStyle {
     Active,

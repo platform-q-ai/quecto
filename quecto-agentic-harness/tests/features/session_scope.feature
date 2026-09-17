@@ -9,7 +9,7 @@ Feature: Folder-aware saved sessions through the production runtime
     Given saved production sessions in two different folders
     When the operator opens resume through the production socket and TUI
     Then only the local saved conversation is displayed
-    When the operator selects Global in the resume picker
+    When the operator selects All Folders in the resume picker
     Then both saved conversations are displayed with their execution folders
 
   Scenario: Exact global lookup cannot reuse a foreign conversation
@@ -28,7 +28,7 @@ Feature: Folder-aware saved sessions through the production runtime
     Given saved production sessions in two different folders
     And the foreign saved home metadata is corrupt
     When the operator opens resume with the active local conversation
-    And the operator selects Global in the resume picker
+    And the operator selects All Folders in the resume picker
     Then both saved conversations remain discoverable without repairing the corrupt home
     When the operator requests the foreign session by exact key
     Then the runtime refuses replacement as an unavailable-home scope error
@@ -42,7 +42,7 @@ Feature: Folder-aware saved sessions through the production runtime
     Given saved production sessions in two different folders
     And the foreign saved home metadata is absent
     When the operator opens resume through the production socket and TUI
-    And the operator selects Global in the resume picker
+    And the operator selects All Folders in the resume picker
     Then the foreign conversation is globally visible as unassociated
     When a fresh runtime attempts to start with the foreign session
     Then startup refuses without creating home metadata or changing the transcript
@@ -57,7 +57,7 @@ Feature: Folder-aware saved sessions through the production runtime
   Scenario: Mouse scope selection and Escape do not resume history
     Given saved production sessions in two different folders
     When the operator opens resume through the production socket and TUI
-    And the operator clicks Global in the resume picker
+    And the operator clicks All Folders in the resume picker
     Then both saved conversations are displayed with their execution folders
     When the operator cancels the resume picker
     Then no history replacement command is sent

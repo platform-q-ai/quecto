@@ -177,11 +177,11 @@ fn local_only(world: &mut QuectoWorld) {
     assert!(frame.contains("LOCAL-CONVERSATION"), "{frame}");
     assert!(!frame.contains("FOREIGN-CONVERSATION"), "{frame}");
     assert!(
-        frame.contains("Local") && frame.contains("Global"),
+        frame.contains("[Local Folder]") && frame.contains("All Folders"),
         "{frame}"
     );
 }
-#[when("the operator selects Global in the resume picker")]
+#[when("the operator selects All Folders in the resume picker")]
 fn global(world: &mut QuectoWorld) {
     drive(world, |h| {
         h.press(Key::Tab).press(Key::Enter);
@@ -632,15 +632,15 @@ fn catalogue_rebuilt(world: &mut QuectoWorld) {
     assert_eq!(catalogue["version"], 2);
 }
 
-#[when("the operator clicks Global in the resume picker")]
+#[when("the operator clicks All Folders in the resume picker")]
 fn mouse_global(world: &mut QuectoWorld) {
     let frame = drive(world, TuiHarness::full_frame);
     let (y, line) = frame
         .lines()
         .enumerate()
-        .find(|(_, line)| line.contains("[Local]  Global"))
+        .find(|(_, line)| line.contains("[Local Folder]   All Folders"))
         .unwrap_or_else(|| panic!("visible scope control in:\n{frame}"));
-    let byte = line.find("Global").unwrap();
+    let byte = line.find("All Folders").unwrap();
     let x = line[..byte].chars().count();
     drive(world, |h| {
         h.press(Key::MousePress(x as u16, y as u16));
