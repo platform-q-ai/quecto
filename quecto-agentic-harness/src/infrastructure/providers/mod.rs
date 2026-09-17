@@ -5,6 +5,7 @@ pub(crate) mod attempt_transport;
 pub mod codex;
 pub mod openai;
 pub mod openai_endpoint_router;
+pub mod refresh_wiring;
 pub mod refreshable;
 pub mod retry;
 pub mod router;

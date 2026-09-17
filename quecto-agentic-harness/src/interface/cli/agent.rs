@@ -201,6 +201,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         kill_tool: None,
         retention: None,
         catalogue: None,
+        provider_runtime: None,
         admission_context,
         parent_control,
     };
@@ -344,7 +345,13 @@ pub(crate) fn build_agent_from_config(
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();
-    let provider = match build_agent_provider(&config, base_dir, &http_client) {
+    // The provider runtime (#1849): composed through the injected builder;
+    // the interface never constructs provider state itself.
+    let Some(build_provider) = flags.provider_runtime else {
+        stderr.push_str("agent: provider runtime capability not composed\n");
+        return None;
+    };
+    let provider = match build_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
             stderr.push_str(&format!("{}\n", msg));
@@ -361,6 +368,7 @@ pub(crate) fn build_agent_from_config(
         base_dir.to_path_buf(),
         env_overrides.clone(),
         http_client.clone(),
+        build_provider,
     );
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -677,11 +685,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
 #[path = "agent/admission_startup.rs"]
 mod admission_startup;
-#[path = "agent_provider.rs"]
-mod agent_provider;
-#[path = "agent/parent_control_startup.rs"]
-mod parent_control_startup;
-pub use agent_provider::build_agent_provider;
 #[cfg(test)]
 #[path = "agent_agents_md_tests.rs"]
 mod agents_md_tests;
@@ -706,9 +709,8 @@ mod issue_926_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;
-#[cfg(test)]
-#[path = "agent_provider_1066_tests.rs"]
-mod provider_1066_tests;
+#[path = "agent/parent_control_startup.rs"]
+mod parent_control_startup;
 #[cfg(test)]
 #[path = "agent_startup_identity_tests.rs"]
 mod startup_identity_tests;

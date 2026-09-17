@@ -20,48 +20,6 @@ fn workflow_test_config() -> crate::domain::workflow::WorkflowConfig {
 }
 
 #[test]
-fn test_expires_at_with_margin_subtracts_300_seconds() {
-    let now = crate::infrastructure::time::unix_timestamp_secs();
-    let result = expires_at_with_margin(3600);
-    // Should be approximately now + 3600 - 300 = now + 3300
-    let expected = now + 3300;
-    assert!(
-        (result - expected).abs() <= 2,
-        "expected ~{}, got {} (diff: {})",
-        expected,
-        result,
-        (result - expected).abs()
-    );
-}
-
-#[test]
-fn test_expires_at_with_margin_short_expiry() {
-    let now = crate::infrastructure::time::unix_timestamp_secs();
-    let result = expires_at_with_margin(600);
-    let expected = now + 300;
-    assert!(
-        (result - expected).abs() <= 2,
-        "expected ~{}, got {}",
-        expected,
-        result
-    );
-}
-
-#[test]
-fn test_expires_at_with_margin_zero_expiry() {
-    let now = crate::infrastructure::time::unix_timestamp_secs();
-    let result = expires_at_with_margin(0);
-    // Should be now - 300 (already expired with margin)
-    let expected = now - 300;
-    assert!(
-        (result - expected).abs() <= 2,
-        "expected ~{}, got {}",
-        expected,
-        result
-    );
-}
-
-#[test]
 fn test_merge_prompts_user_only() {
     let result = merge_prompts(&Some("User prompt".to_string()));
     assert_eq!(result, "User prompt");
@@ -574,11 +532,6 @@ fn test_xdg_runtime_dir_or_temp_returns_path() {
 #[test]
 fn test_build_http_client_does_not_panic() {
     let _client = build_http_client();
-}
-// --- OAUTH_EXPIRY_MARGIN_SECS constant ---
-#[test]
-fn test_oauth_expiry_margin_is_five_minutes() {
-    assert_eq!(OAUTH_EXPIRY_MARGIN_SECS, 300);
 }
 // --- #1044/#1045/#1046: config context knobs thread into the loop ---
 // The knobs are AgentLoopConfig constructor fields (PR #1048 follow-up), so

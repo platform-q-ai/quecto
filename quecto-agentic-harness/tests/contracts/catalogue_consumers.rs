@@ -327,8 +327,12 @@ fn active_selection_and_agent_startup_observe_the_published_generation() {
             "models":[{"id":"gen-model","name":"Gen Model"}]}}}"#,
     );
     let config = quecto::infrastructure::config::Config::default();
-    quecto::interface::cli::build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
-        .expect("agent startup composes a runtime");
+    quecto::composition::runtime::build_agent_provider(
+        &config,
+        tmp.path(),
+        &reqwest::Client::new(),
+    )
+    .expect("agent startup composes a runtime");
     let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
         .current()
         .expect("startup published a runtime generation");

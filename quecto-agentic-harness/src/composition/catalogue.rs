@@ -55,6 +55,10 @@ mod tests;
 #[path = "catalogue_refresh_tests.rs"]
 mod refresh_tests;
 
+#[cfg(test)]
+#[path = "catalogue_resolve_tests.rs"]
+mod resolve_tests;
+
 /// The `list_models` wire response for `base_dir` as the composed loop
 /// would serve it: rigs and BDD steps that used to call the interface's
 /// `list_models_data` (retired, #1845) read through the same builder and presenter.

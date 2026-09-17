@@ -228,7 +228,6 @@ use config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
 
 // Re-export public types for external consumers.
-pub use agent::build_agent_provider;
 
 /// Re-export for test access to OpenAI import params struct.
 pub use auth::auth_import::OpenAiImportParams;
@@ -328,6 +327,18 @@ pub type FreshSessionIdentityBuilder =
 /// constructs a catalogue use case.
 pub type CatalogueHandlesBuilder = fn(&std::path::Path) -> catalogue_handles::CatalogueHandles;
 
+/// Composition's provider-runtime builder (#1849): composes and publishes
+/// the provider runtime for a base directory and returns its routing
+/// provider. Injected through the CLI context; startup and provider reload
+/// call it, the interface never composes a provider.
+pub type ProviderRuntimeBuilder =
+    fn(
+        &crate::infrastructure::config::Config,
+        &std::path::Path,
+        &reqwest::Client,
+    )
+        -> Result<std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>, String>;
+
 /// Composition's builder of the configuration-selection use case (#1966):
 /// which one file a run loads its configuration from. Injected through the
 /// CLI context; the interface never probes the filesystem for a config.
@@ -383,6 +394,10 @@ pub struct CliContext {
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
     pub catalogue: Option<CatalogueHandlesBuilder>,
+    /// Composition's provider-runtime builder (#1849). Supplied by the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
+    /// refuses to start without it.
+    pub provider_runtime: Option<ProviderRuntimeBuilder>,
 }
 
 impl CliContext {
@@ -427,6 +442,7 @@ pub struct CliComposition {
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub config_selection: ConfigSelectionBuilder,
     pub catalogue: CatalogueHandlesBuilder,
+    pub provider_runtime: ProviderRuntimeBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -452,6 +468,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         fresh_session_identity: Some(composition.fresh_session_identity),
         config_selection: Some(composition.config_selection),
         catalogue: Some(composition.catalogue),
+        provider_runtime: Some(composition.provider_runtime),
         ..Default::default()
     };
 

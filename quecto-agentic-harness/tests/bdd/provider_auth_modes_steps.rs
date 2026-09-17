@@ -1,7 +1,7 @@
 use super::*;
 
+use quecto::composition::runtime::build_agent_provider;
 use quecto::infrastructure::providers::retry::RetryingProvider;
-use quecto::interface::cli::build_agent_provider;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -118,8 +118,8 @@ fn given_registry_anthropic_api(world: &mut QuectoWorld, api_key: String) {
     // Only seed a placeholder when the var is unset — never clobber a real key.
     if let Some(name) = api_key.strip_prefix('$') {
         if !name.is_empty() && std::env::var(name).is_err() {
-            // SAFETY: BDD scenarios seed a deterministic placeholder for an
-            // otherwise-unset env var; the value is idempotent across scenarios.
+            // BDD scenarios seed a deterministic placeholder for an otherwise-unset
+            // SAFETY: env var; the value is idempotent across scenarios.
             unsafe { std::env::set_var(name, "sk-ant-env-placeholder") };
         }
     }

@@ -1,12 +1,9 @@
-//! Interface wiring for application-owned provider runtime composition
-//! (epic #1193, slice 3). Model selection, the catalogue reads and refresh
-//! moved to the catalogue capability's use cases (#1845, #1847, #1846);
-//! runtime composition follows in #1849.
-//!
-//! Until then this is the one interface module that sees both application
-//! use cases and infrastructure adapters: entry points (CLI startup,
-//! provider reload) call this function instead of constructing provider
-//! state themselves.
+//! Provider-runtime composition (#1849 PR 1; formerly the interface's
+//! `catalogue_runtime.rs` and `cli/agent_provider.rs`, epic #1193 slice 3):
+//! the one place that sees both the compose-provider-runtime use case and
+//! the infrastructure adapters it runs over. `main` hands
+//! [`build_agent_provider`] to the CLI; startup and provider reload call it
+//! instead of constructing provider state themselves.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -15,12 +12,16 @@ use crate::application::provider_runtime::{
     CatalogueRuntimeSnapshot, ComposeProviderRuntimeUseCase, CompositionPorts,
     RuntimeCompositionError,
 };
+use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};
 use crate::infrastructure::provider_runtime_admission::{
     AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate,
+};
+use crate::infrastructure::providers::refresh_wiring::{
+    make_oauth_refresh_fn, make_provider_factory,
 };
 
 /// Compose the concrete provider runtime for `base_dir` via the shared use
@@ -36,8 +37,8 @@ pub fn compose_and_publish_runtime(
     let inputs = AgentRuntimeInputs {
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
-        refresh_fn: crate::interface::shared::make_oauth_refresh_fn(),
-        openai_oauth_factory: crate::interface::shared::make_provider_factory(
+        refresh_fn: make_oauth_refresh_fn(),
+        openai_oauth_factory: make_provider_factory(
             "openai",
             openai_api_base(config),
             http_client.clone(),
@@ -100,10 +101,24 @@ fn openai_api_base(config: &Config) -> Option<String> {
     crate::infrastructure::provider_runtime::non_empty(config.providers.openai.api_base.clone())
 }
 
+/// Compose and publish the provider runtime for this base directory, then
+/// return its routing provider. The published runtime and catalogue always
+/// describe one coherent generation; a failed composition retains the
+/// previously published one.
+pub fn build_agent_provider(
+    config: &Config,
+    base_dir: &Path,
+    http_client: &reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, String> {
+    compose_and_publish_runtime(config, base_dir, http_client)
+        .map(|snapshot| snapshot.provider.clone())
+        .map_err(|error| error.error)
+}
+
 #[cfg(test)]
-#[cfg(test)]
-#[path = "catalogue_runtime_resolve_tests.rs"]
-mod resolve_tests;
-#[cfg(test)]
-#[path = "catalogue_runtime_tests.rs"]
+#[path = "runtime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_1066_tests.rs"]
+mod provider_1066_tests;

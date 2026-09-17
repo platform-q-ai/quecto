@@ -32,6 +32,7 @@ fn test_composition() -> CliComposition {
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         config_selection: crate::composition::configuration::build_select_config,
         catalogue: crate::composition::catalogue::build_catalogue_handles,
+        provider_runtime: crate::composition::runtime::build_agent_provider,
     }
 }
 
@@ -162,6 +163,7 @@ fn composed_context_prefers_the_working_directory_config() {
         cwd: Some(cwd.clone()),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);

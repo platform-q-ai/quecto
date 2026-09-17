@@ -6,7 +6,7 @@ Quecto's runtime model registry lives at `~/.quecto/models.json`. It is the user
 
 ## The file and how it is consumed
 
-`~/.quecto/models.json` is read by the `ModelRegistry` parser (`src/infrastructure/model_registry.rs`) and turned into runtime providers by `build_agent_provider` (`src/interface/cli/agent_provider.rs`). You do not need to touch either file to add a provider — editing `models.json` is sufficient.
+`~/.quecto/models.json` is read by the `ModelRegistry` parser (`src/infrastructure/model_registry.rs`) and turned into runtime providers by `build_agent_provider` (`src/composition/runtime.rs`, the composition layer's provider-runtime entry point that startup and reload share). You do not need to touch either file to add a provider — editing `models.json` is sufficient.
 
 **How hot reload works (mechanics):**
 

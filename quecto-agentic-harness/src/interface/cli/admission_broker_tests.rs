@@ -10,6 +10,7 @@ fn ctx(dir: &std::path::Path) -> CliContext {
         retention: Some(crate::composition::sessions::build_retention_handles),
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         ..CliContext::default()
     }
 }

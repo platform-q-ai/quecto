@@ -50,6 +50,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         admission_context: None,
         parent_control: None,
     };
