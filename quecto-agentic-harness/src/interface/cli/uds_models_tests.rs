@@ -1,4 +1,17 @@
-use super::refresh_models_data;
+use super::{UDS_REFRESH_BOUNDS, refresh_models_data};
+use crate::application::catalogue::dto::RefreshBounds;
+
+#[test]
+fn uds_refresh_waits_four_seconds_per_source_with_the_default_size_cap() {
+    assert_eq!(
+        UDS_REFRESH_BOUNDS.timeout,
+        std::time::Duration::from_secs(4)
+    );
+    assert_eq!(
+        UDS_REFRESH_BOUNDS.max_response_bytes,
+        RefreshBounds::default().max_response_bytes
+    );
+}
 use crate::composition::catalogue::list_models_wire_for;
 
 #[test]

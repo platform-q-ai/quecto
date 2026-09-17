@@ -13,6 +13,6 @@ pub use model_listing::{
     ListedModel, ListingDiagnostic, ModelCatalogueListing, ModelListingOutcome,
 };
 pub use refresh::{
-    CatalogueRefreshReport, RefreshBounds, RefreshSelection, SourceRefreshOutcome,
-    SourceRefreshStatus,
+    CatalogueRefreshReport, REGISTRY_FILE_SOURCE, RefreshBounds, RefreshSelection,
+    SourceRefreshOutcome, SourceRefreshStatus,
 };

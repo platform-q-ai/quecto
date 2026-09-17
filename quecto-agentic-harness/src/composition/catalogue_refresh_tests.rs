@@ -1,9 +1,10 @@
-//! Tests for the interface refresh composition (epic #1193, slice 4): real
+//! Tests for the composed refresh use case (epic #1193 slice 4, #1846): real
 //! discovery sources composed from `models.json`, refreshed over HTTP into
 //! source caches, published through the shared snapshot store.
 
 use crate::application::catalogue::dto::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The composed refresh use case for `dir`, as the loop and the CLI drive it.
 fn refresh_catalogue(
@@ -15,7 +16,6 @@ fn refresh_catalogue(
         .refresh
         .execute(selection, bounds)
 }
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn write_registry(dir: &std::path::Path, providers: serde_json::Value) {
     std::fs::write(

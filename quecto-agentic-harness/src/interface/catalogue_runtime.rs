@@ -101,8 +101,6 @@ fn openai_api_base(config: &Config) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "catalogue_runtime_refresh_tests.rs"]
-mod refresh_tests;
 #[cfg(test)]
 #[path = "catalogue_runtime_resolve_tests.rs"]
 mod resolve_tests;

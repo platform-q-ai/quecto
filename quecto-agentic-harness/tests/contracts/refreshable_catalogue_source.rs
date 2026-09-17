@@ -3,9 +3,9 @@
 //! access happens only inside `refresh` — ordinary loads stay network-free —
 //! and whose refresh honours the run's bounds and reports a typed outcome.
 
+use quecto::application::catalogue::dto::RefreshBounds;
 use quecto::application::ports::{
-    CatalogueSource, RefreshBounds, RefreshChange, RefreshContext, RefreshError,
-    RefreshableCatalogueSource,
+    CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource,
 };
 use quecto::domain::catalogue::SourceLayer;
 use quecto::infrastructure::catalogue_discovery::{

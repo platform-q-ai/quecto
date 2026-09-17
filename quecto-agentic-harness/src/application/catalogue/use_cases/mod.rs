@@ -9,4 +9,4 @@ pub mod refresh_catalogue_sources;
 pub use change_active_model::ChangeActiveModel;
 pub use change_reasoning_effort::ChangeReasoningEffort;
 pub use list_models::ListModels;
-pub use refresh_catalogue_sources::{REGISTRY_FILE_SOURCE, RefreshCatalogueSources};
+pub use refresh_catalogue_sources::RefreshCatalogueSources;

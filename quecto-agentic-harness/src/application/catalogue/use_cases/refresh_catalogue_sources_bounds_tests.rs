@@ -10,6 +10,7 @@ use super::tests::{
     entry, outcome, prepublish, run, use_case,
 };
 use super::*;
+use crate::application::catalogue::dto::REGISTRY_FILE_SOURCE;
 use crate::application::catalogue::ports::NoopRedaction;
 use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
 use crate::domain::catalogue::SourceLayer;
@@ -236,18 +237,27 @@ fn execute_loads_the_inputs_and_runs_the_refresh() {
         ]),
     ));
     let store = CatalogueSnapshotStore::empty();
+    let bounds = RefreshBounds {
+        timeout: Duration::from_secs(7),
+        max_response_bytes: 123,
+    };
     let report = RefreshCatalogueSources::new(
         Arc::new(StaticLoader {
             refreshables: vec![openrouter.clone()],
         }),
         store.clone(),
     )
-    .execute(&RefreshSelection::All, RefreshBounds::default());
+    .execute(&RefreshSelection::All, bounds);
     assert_eq!(
         outcome(&report, "openrouter").status,
         SourceRefreshStatus::Updated { models: 2 }
     );
     assert_eq!(openrouter.calls(), 1);
+    assert_eq!(
+        openrouter.observed_bounds(),
+        Some(bounds),
+        "execute forwards the caller's bounds to every source"
+    );
     assert_eq!(
         store.current().generation(),
         1,

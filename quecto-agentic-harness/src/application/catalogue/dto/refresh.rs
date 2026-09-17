@@ -2,6 +2,10 @@
 
 use std::time::Duration;
 
+/// Outcome-source id used when the catalogue file itself (rather than one
+/// provider) cannot be enumerated.
+pub const REGISTRY_FILE_SOURCE: &str = "models.json";
+
 use crate::application::catalogue::ResolvedCatalogue;
 
 /// Hard bounds every remote refresh runs under, so unattended refreshes can
@@ -12,13 +16,18 @@ pub struct RefreshBounds {
     pub max_response_bytes: u64,
 }
 
+impl RefreshBounds {
+    /// Default cap on one provider's listing response.
+    pub const DEFAULT_MAX_RESPONSE_BYTES: u64 = 5 * 1024 * 1024;
+}
+
 impl Default for RefreshBounds {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(30),
             // The pre-slice-4 discovery path allowed 5 MiB bodies; keep that
             // bound so no previously discoverable listing silently fails.
-            max_response_bytes: 5 * 1024 * 1024,
+            max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
         }
     }
 }

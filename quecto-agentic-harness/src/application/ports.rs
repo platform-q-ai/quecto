@@ -6,7 +6,6 @@
 //! through this one module makes the permitted surface explicit and lets
 //! `tests/architecture.rs` enforce it.
 
-pub use super::catalogue::dto::RefreshBounds;
 pub use super::catalogue::ports::{
     RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort, RefreshableCatalogueSource,
 };

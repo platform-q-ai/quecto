@@ -9,18 +9,14 @@
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
-    CatalogueRefreshReport, RefreshBounds, RefreshSelection, SourceRefreshOutcome,
-    SourceRefreshStatus,
+    CatalogueRefreshReport, REGISTRY_FILE_SOURCE, RefreshBounds, RefreshSelection,
+    SourceRefreshOutcome, SourceRefreshStatus,
 };
 use crate::application::catalogue::ports::{
     LoadedRefreshInputs, RefreshChange, RefreshContext, RefreshError, RefreshInputsLoader,
     RefreshRedactionPort, RefreshableCatalogueSource,
 };
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
-
-/// Outcome-source id used when the catalogue file itself (rather than one
-/// provider) cannot be enumerated.
-pub const REGISTRY_FILE_SOURCE: &str = "models.json";
 
 pub struct RefreshCatalogueSources {
     inputs: Arc<dyn RefreshInputsLoader>,

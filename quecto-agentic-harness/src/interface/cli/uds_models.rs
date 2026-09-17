@@ -20,21 +20,26 @@ pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
 /// `dispatch_fieldless_command`), so other UDS commands stay serviced while
 /// a refresh is in flight; the per-source budget is still kept tight so an
 /// unattended refresh converges quickly.
+/// Per-source budget of a `refresh_models` request: a client waits on the
+/// reply, so one slow provider must not hold the loop for the default 30 s.
+pub(super) const UDS_REFRESH_BOUNDS: crate::application::catalogue::dto::RefreshBounds =
+    crate::application::catalogue::dto::RefreshBounds {
+        timeout: std::time::Duration::from_secs(4),
+        max_response_bytes:
+            crate::application::catalogue::dto::RefreshBounds::DEFAULT_MAX_RESPONSE_BYTES,
+    };
+
 pub fn refresh_models_data(
     refresh: &crate::application::catalogue::use_cases::RefreshCatalogueSources,
     source: Option<&str>,
 ) -> serde_json::Value {
-    use crate::application::catalogue::dto::{RefreshBounds, RefreshSelection};
+    use crate::application::catalogue::dto::RefreshSelection;
     let selection = match source {
         Some(name) => RefreshSelection::Only(vec![name.to_string()]),
         None => RefreshSelection::All,
     };
-    let bounds = RefreshBounds {
-        timeout: std::time::Duration::from_secs(4),
-        ..RefreshBounds::default()
-    };
     crate::interface::uds::catalogue::refresh_presenter::render(
-        &refresh.execute(&selection, bounds),
+        &refresh.execute(&selection, UDS_REFRESH_BOUNDS),
     )
 }
 

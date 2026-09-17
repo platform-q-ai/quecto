@@ -8,8 +8,9 @@
 use std::time::Duration;
 
 use super::CliContext;
+use crate::application::catalogue::dto::REGISTRY_FILE_SOURCE;
 use crate::application::catalogue::dto::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
-use crate::application::catalogue::use_cases::{REGISTRY_FILE_SOURCE, RefreshCatalogueSources};
+use crate::application::catalogue::use_cases::RefreshCatalogueSources;
 
 pub fn cmd_models(
     ctx: &CliContext,

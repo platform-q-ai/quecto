@@ -118,6 +118,9 @@ impl FakeRefreshable {
     pub(super) fn calls(&self) -> usize {
         self.refresh_calls.load(Ordering::SeqCst)
     }
+    pub(super) fn observed_bounds(&self) -> Option<RefreshBounds> {
+        *self.observed_bounds.lock().unwrap()
+    }
 }
 
 impl CatalogueSource for FakeRefreshable {
