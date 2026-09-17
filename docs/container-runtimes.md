@@ -31,11 +31,13 @@ targets fail without guessing.
   auth it needs are baked into the config's own argv, and the parent's
   location or checkout is irrelevant. A config with no repository is a
   **sandbox**: empty workspace, fully valid.
-- `container_configs` load from a trusted config file: an explicit `config`
-  argument in the spawn call wins; when it is omitted, the spawn falls back
-  to the parent's own effective config path, so container spawns normally
-  need no `config` argument. Whichever path applies must be absolute; when
-  neither source exists the spawn fails with a clear error.
+- `container_configs` are read from the launching agent's **effective
+  configuration** (#2024): its global file with the trusted repo-local
+  overlay of its working directory merged in, resolved fresh at every spawn
+  — so container spawns normally need no `config` argument. An explicit
+  `config` argument in the spawn call replaces both layers (as `--config`
+  does) and must be an absolute path. To find the names in effect run
+  `quecto config get --effective container_configs`.
 
 A successful spawn returns a session-scoped environment reference
 (`environment_ref=C1`, `C2`, ...). Refs are minted once per session and
@@ -253,29 +255,60 @@ optional but needed for `mode: existing`, `kill_container`, and death
 diagnostics respectively. Missing, unknown, empty required, or unsafe
 (empty/NUL argument) configuration fails before any script runs, and
 selection errors enumerate the available config names so an agent can
-offer the menu. The spawn tool's description also carries the roster
-(`Available container configs: ...`) as a session-start snapshot.
+offer the menu. To see the names before spawning run
+`quecto config get --effective container_configs` (the spawn tool's
+description does not carry a roster; #2024 S4c restores one).
 
 The container config in effect when an environment is **created** is
 retained with the environment: later joins, kills, and inspects use the
 retained `exec`/`kill`/`inspect` argv even if the labeled default changes
 afterwards.
 
-Repo-local container config overlays may be declared in
-`<checkout>/.quecto/config.json` using the same `container_configs` shape.
-Because that file is repository-controlled, Quecto gates it centrally before
-any argv from it can be selected or executed. Trust is keyed by the
-canonicalized (or absolute fallback) file path plus the raw file SHA-256, and
-approval records are stored outside the repository under the user's Quecto
-state/home data. A changed file hash requires a fresh approval. Until trusted,
-repo-local entries are ignored visibly and global container configs remain
-usable; once trusted, repo-local entries extend the global set, same-name
-entries shadow global ones, and a repo-local default becomes the effective
-default. The spawn tool roster is a session-start snapshot: if a repo-local
-file appears or is approved later, spawn-time config loading still checks the
-current trust/config state, but the already-rendered roster text is not live
-reloaded. Container repository and auth semantics remain self-contained in the
-selected config argv; the parent's cwd or checkout never supplies them.
+### Binding a repository to a container config
+
+A repository says "my containers use config X" through its repo-local
+overlay `<checkout>/.quecto/config.json` — the same overlay every other
+section uses (see the `config` docs page and the harness README), with the
+same `container_configs` shape. The overlay merges **entry-wise** over the
+global file: a local entry with `"default": true` un-defaults every global
+entry, a same-name local entry shadows the global one, and other global
+entries stay selectable by name. The merged set must still carry exactly
+one default; a write that would break that is refused before it lands.
+
+**Preconditions**: a script set with absolute paths (the shipped adapter or
+your own), and the repository URL the container should clone.
+
+**Do** — from the checkout (writes the overlay and records its trust):
+
+```
+quecto config set --local container_configs.app '{"default":true,"create":["/abs/create.sh","--state-dir","/abs/state","--repo","https://github.com/org/app"],"cleanup":["/abs/cleanup.sh"],"exec":["/abs/exec.sh","--state-dir","/abs/state"],"kill":["/abs/kill.sh","--state-dir","/abs/state"],"inspect":["/abs/inspect.sh","--state-dir","/abs/state"]}'
+```
+
+Then, from an agent started in that checkout, `spawn` with
+`container: true` creates the container with `app`'s `create` argv; from
+any other directory the global default still applies.
+
+**Verify**: `quecto config get --effective container_configs` shows `app`
+as the one default; `quecto status` shows `Overlay: … (trusted)`; a spawn
+result names `environment_ref=C1` and `agent_cmd get_containers` lists the
+repository the create script reported.
+
+**Rollback**: `quecto config unset --local container_configs.app`, or
+delete `.quecto/config.json` to drop the whole overlay.
+
+**Trust**: the overlay is applied only when its exact content is recorded
+in `<base_dir>/config-overlay-trust.json` (canonical path + SHA-256).
+`quecto config set` records trust for what it writes; an overlay written
+by hand, or committed by someone else, needs `quecto config trust` from
+the checkout after review — an explicit, non-interactive command an agent
+can run. Until then the overlay contributes nothing to container spawns
+and the spawn prints the same stderr diagnostic as `quecto status`. There
+is no separate container trust record and no `[y/N]` prompt on the spawn
+path any more (the pre-#2024 `container-config-trust.json` is not read;
+approve such an overlay once with `quecto config trust`). Container
+repository and auth semantics remain self-contained in the selected
+config's argv; the parent's checkout supplies the *selection*, never the
+source.
 
 ## Endpoints and liveness (direct vs proxy)
 

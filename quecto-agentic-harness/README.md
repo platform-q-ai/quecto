@@ -355,6 +355,7 @@ quecto config get agents.defaults.model            # one value, as JSON
 quecto config get --global tools.policy.entries    # one layer as written (--local for the overlay)
 quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes ./.quecto/config.json
 quecto config set --global agents.defaults.effort '"high"'       # writes ~/.quecto/config.json
+quecto config unset agents.defaults.model          # remove one key (same layers; --global for the global file)
 quecto config trust                                # approve ./.quecto/config.json's current content
 ```
 
@@ -364,7 +365,9 @@ defaults to the repo-local overlay and refuses the global-only sections
 (`providers`, `admission`) there; it also refuses to patch an overlay whose
 current content is not trusted. See
 [discovery and precedence](#configuration-discovery-and-precedence) for the
-merge rules and the writer's guarantees.
+merge rules and the writer's guarantees. `unset` is the rollback of `set`:
+it removes exactly one key under the same validation and, for the overlay,
+re-records trust; a key that is not set is an error, not a silent no-op.
 
 ### First run — zero config
 
@@ -492,15 +495,18 @@ reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for
 trust; run `quecto config trust` in the project directory and the next turn
 picks it up.
 
-**Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with
-`container: true` still loads `container_configs` from the base file plus the
-*separate* repo-local container mechanism of
-[Container runtimes](../docs/container-runtimes.md), with its own trust record
-(`container-config-trust.json` under the state directory) and its own
-`[y/N]` prompt; `quecto config trust` does not approve container scripts for
-that path. S4 folds container spawning onto the effective configuration and
-this trust record. Until then, treat `container_configs` in an overlay as
-visible to `config get --effective` and `status` but not yet to `spawn`.
+**Container spawns read the effective configuration.** A `spawn` with
+`container: true` (or a named `container_config`) selects from the
+`container_configs` a run in the agent's working directory would load — the
+global file with the trusted overlay merged entry-wise, resolved fresh at
+every spawn — so a repository binds itself to a container config with
+`quecto config set --local container_configs.<name> '{"default":true,…}'`
+and rolls back with `quecto config unset --local container_configs.<name>`.
+There is no separate container trust record or `[y/N]` prompt: `quecto
+config trust` is the one approval, and an untrusted overlay contributes
+nothing (the spawn prints the same diagnostic as `status`). The pre-#2024
+`container-config-trust.json` is not read; approve such an overlay once with
+`quecto config trust`. See [Container runtimes](../docs/container-runtimes.md).
 
 Subagents: a locally spawned subagent inherits the parent's working directory
 and performs its own discovery there — the same global file and, when trusted,

@@ -240,9 +240,12 @@ absence; `read_overlay` refuses a symbolic link at `.quecto` or at the file,
 stated once), `mapping.rs` (document → `Config` with every load-time validation,
 the env overrides, the validator adapter, `realize_config`),
 `persistence.rs` (the overlay trust record `<base_dir>/config-overlay-trust.json`,
-canonical path + sha256, shared primitives with the container-config overlay
-in `repo_local_container_config.rs`; the interactive prompt shows the
-document, bounded), and `writer/` (the JSON document writer: existing
+canonical path + sha256 — since #2024 S4a the one record that also gates the
+`container_configs` a spawn selects from; the interactive prompt shows the
+document, bounded), `container_configs.rs` (the subagent capability's
+`EffectiveContainerConfigs` port over the effective configuration, bound by
+`composition/container_configs.rs` to the launching agent's own selection),
+and `writer/` (the JSON document writer: existing
 indentation kept, tmp + fsync + rename via `atomic_write`, an exclusive
 `flock` on `<base_dir>/locks/<sha256 of the document's canonical path>.lock`
 — never beside the document, so a refused write of a not-yet-existing

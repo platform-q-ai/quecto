@@ -209,7 +209,9 @@ Static, sampled review of tools, extensions, trust/security and subagent executi
 
 #### A5-03 — Trust persistence failures cannot be reported by the approval contract (priority: medium)
 
-**Evidence:** `src/infrastructure/repo_local_container_config.rs:79-96` separates approval from a non-fallible recording operation and discards write errors. `:207-211` maps unreadable/corrupt stores to empty; `write_store` writes directly rather than atomically replacing the file (`:225-230`).
+**Resolved by #2024 S4a:** the separate container trust store was retired; container spawns read the configuration capability's effective configuration and its one trust record, whose `approve` reports write errors.
+
+**Evidence (historical):** `src/infrastructure/repo_local_container_config.rs:79-96` separated approval from a non-fallible recording operation and discards write errors. `:207-211` maps unreadable/corrupt stores to empty; `write_store` writes directly rather than atomically replacing the file (`:225-230`).
 
 **Cost:** A user-approved invocation may proceed without remembered approval, causing repeated prompts and hiding storage problems. No unapproved execution bypass is demonstrated: the user has approved the content, and unreadable stored approval falls back conservatively.
 
