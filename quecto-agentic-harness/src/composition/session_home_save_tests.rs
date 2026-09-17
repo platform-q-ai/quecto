@@ -129,10 +129,12 @@ async fn unreadable_current_directory_is_observably_unavailable() {
     assert!(listed.diagnostics.iter().any(|d| d.contains("os error 2")));
 }
 
-/// M1: a crash-truncated transcript is listable by the tolerant store but
-/// rejected by the strict catalogue; it stays a Global row, never eligible.
+/// M1: a crash-truncated transcript is listable by the tolerant store but has
+/// no row in the strict catalogue; its authority is read exactly instead, as
+/// admission reads it, so the user's most recent session stays Local and
+/// resumable after a crash mid-append — listing and admission agree.
 #[tokio::test]
-async fn crash_truncated_transcript_is_listed_globally_as_not_in_catalogue() {
+async fn crash_truncated_transcript_is_listed_locally_from_exact_authority() {
     let temp = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(temp.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
@@ -158,6 +160,18 @@ async fn crash_truncated_transcript_is_listed_globally_as_not_in_catalogue() {
         summaries.iter().any(|s| s.key == truncated.runtime_key()),
         "the tolerant store lists the truncated record"
     );
+    assert!(
+        !context
+            .catalogue
+            .list()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|(identity, _)| *identity == truncated),
+        "the strict catalogue has no row for it"
+    );
+    let saved = context.catalogue.read(&truncated).unwrap();
+    assert!(matches!(saved, SessionHomeScope::Scoped(_)), "{saved:?}");
     for scope in [SessionListScope::Global, SessionListScope::Local] {
         let listed = ListSessions::new(store.clone())
             .with_home(context.clone())
@@ -170,17 +184,13 @@ async fn crash_truncated_transcript_is_listed_globally_as_not_in_catalogue() {
         let row = listed
             .sessions
             .iter()
-            .find(|row| row.summary.key == truncated.runtime_key());
-        if scope == SessionListScope::Global {
-            let row = row.expect("Global lists every saved identity");
-            assert_eq!(
-                row.home,
-                SessionHomeScope::Unavailable("record not in catalogue".into())
-            );
-            assert!(!row.resume_eligible);
-        } else {
-            assert!(row.is_none(), "an unavailable home is never local");
-        }
+            .find(|row| row.summary.key == truncated.runtime_key())
+            .expect("the exact authority read keeps the record in both views");
+        assert_eq!(row.home, saved);
+        assert!(
+            row.resume_eligible,
+            "listing agrees with exact-key admission"
+        );
         let intact_row = listed
             .sessions
             .iter()
@@ -188,4 +198,25 @@ async fn crash_truncated_transcript_is_listed_globally_as_not_in_catalogue() {
             .expect("one malformed record cannot hide valid sessions");
         assert!(intact_row.resume_eligible);
     }
+    // Corrupt authority behind a missing row is still unavailable, never
+    // legacy or eligible: the fallback broadens nothing.
+    std::fs::write(layout.home_file(&truncated), b"{broken").unwrap();
+    let listed = ListSessions::new(store.clone())
+        .with_home(context.clone())
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Global,
+        })
+        .await
+        .unwrap();
+    let row = listed
+        .sessions
+        .iter()
+        .find(|row| row.summary.key == truncated.runtime_key())
+        .unwrap();
+    assert!(
+        matches!(row.home, SessionHomeScope::Unavailable(_)),
+        "{row:?}"
+    );
+    assert!(!row.resume_eligible);
 }

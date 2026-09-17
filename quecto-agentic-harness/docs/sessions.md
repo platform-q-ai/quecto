@@ -195,9 +195,13 @@ or version-incompatible index is recovery, reported once as `rebuilt` with a
 diagnostic; an index superseded by newer authority (a routine autosave) is
 refreshed silently. A failed replacement returns valid discovered rows with
 diagnostics, not a transcript rewrite. Orphan home files without committed
-transcripts are not rows; a store-listed record the strict catalogue rejects (a
-crash-truncated transcript) stays a Global row with an unavailable home, never
-eligible. Exact-key admission reads authority independently of catalogue health.
+transcripts are not rows. A store-listed record the strict catalogue has no row
+for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
+exactly, as admission reads it, and eligibility follows the domain rule, so the
+user's most recent session stays Local and resumable after a crash and listing
+never disagrees with exact-key admission; only an authority that cannot be read
+at all is `Unavailable("record not in catalogue")`, with a diagnostic. Exact-key
+admission reads authority independently of catalogue health.
 
 **Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
 found on PATH (resolved once, spawned by absolute path off the async executor,

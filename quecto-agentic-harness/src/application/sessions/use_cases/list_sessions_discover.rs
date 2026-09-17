@@ -8,6 +8,7 @@ use crate::application::sessions::dto::{ListSessionsResult, ListedSession, Sessi
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::session::SessionSummary;
 use crate::domain::session_home::{HomeAdmission, SessionHome, SessionHomeScope};
+use crate::domain::session_identity::SessionIdentity;
 
 /// Catalogue rows keyed by runtime key; `None` when authority is unavailable.
 type CatalogueRows = Option<HashMap<String, SessionHomeScope>>;
@@ -29,12 +30,14 @@ pub(super) async fn discover(
     let mut observations = seed_observations(home, current.as_ref());
     for summary in summaries {
         let home_scope = match &rows {
-            // A store-listed record the strict catalogue rejected (a crash-
-            // truncated transcript) stays visible globally and never eligible.
-            Some(rows) => rows
-                .get(&summary.key)
-                .cloned()
-                .unwrap_or_else(|| SessionHomeScope::Unavailable("record not in catalogue".into())),
+            Some(rows) => match rows.get(&summary.key) {
+                Some(scope) => scope.clone(),
+                // A store-listed record the strict catalogue rejected (a crash-
+                // truncated transcript): the authority is read exactly, as
+                // admission reads it, so listing and resume agree; only an
+                // authority that cannot be read is unavailable here.
+                None => exact_home(home, &summary.key, &mut result.diagnostics),
+            },
             None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
         };
         let local = matches!(
@@ -52,6 +55,28 @@ pub(super) async fn discover(
         }
     }
     result
+}
+
+/// The exact, index-independent authority read of one record the derived
+/// catalogue has no row for.
+fn exact_home(
+    home: Option<&SessionHomeContext>,
+    key: &str,
+    diagnostics: &mut Vec<String>,
+) -> SessionHomeScope {
+    let Some(context) = home else {
+        return SessionHomeScope::Unavailable("record not in catalogue".into());
+    };
+    match context
+        .catalogue
+        .read(&SessionIdentity::from_persisted_key(key))
+    {
+        Ok(scope) => scope,
+        Err(error) => {
+            diagnostics.push(format!("record not in catalogue; home unreadable: {error}"));
+            SessionHomeScope::Unavailable("record not in catalogue".into())
+        }
+    }
 }
 
 async fn current_home(

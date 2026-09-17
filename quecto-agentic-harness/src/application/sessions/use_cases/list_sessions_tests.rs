@@ -196,7 +196,7 @@ fn observed_home(path: &Path) -> SessionHome {
 struct FixedCatalogue(Vec<(SessionIdentity, SessionHomeScope)>);
 impl SessionHomeCatalogue for FixedCatalogue {
     fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
-        panic!("listing must use summary catalogue")
+        panic!("listing reads exact authority only for records the catalogue has no row for")
     }
     fn record_new(&self, _: &SessionIdentity, _: &SessionHome) -> Result<(), DomainError> {
         panic!("listing must not mutate authority")
