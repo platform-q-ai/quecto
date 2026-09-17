@@ -1,11 +1,15 @@
-//! Configuration capability (#1966): which configuration file a run loads.
+//! Configuration capability (#1966, #2024): which files a run loads, how
+//! the repo-local overlay merges over the global file, and the one safe
+//! write path every configuration change goes through.
 //!
-//! The application owns the selection policy — explicit override, then the
-//! working directory's `config.json`, then the global file — and expresses
-//! the one filesystem fact it needs (is a local file present and usable?)
-//! as a capability-local port. Only composition constructs the use case;
-//! the interface holds an injected handle and presents the outcome.
+//! The application owns the policy — selection precedence, the overlay
+//! sections and the global-only ones, the merge, the single-path patch —
+//! and expresses what it needs of the outside world as capability-local
+//! ports: a document store, the validator, and the overlay trust decision.
+//! Only composition constructs the use cases; the interface holds injected
+//! handles and presents the outcomes.
 
 pub mod dto;
+pub mod overlay_policy;
 pub mod ports;
 pub mod use_cases;

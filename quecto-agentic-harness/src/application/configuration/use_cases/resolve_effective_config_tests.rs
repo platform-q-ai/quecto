@@ -1,0 +1,347 @@
+use super::*;
+use crate::application::configuration::dto::ConfigLayers;
+use crate::application::configuration::use_cases::fakes::{FakeTrust, FakeValidator, MemoryStore};
+use serde_json::json;
+use std::path::PathBuf;
+
+const GLOBAL: &str = "/home/u/.quecto/config.json";
+const OVERLAY: &str = "/work/.quecto/config.json";
+const LEGACY: &str = "/work/config.json";
+
+fn layered() -> ConfigSelection {
+    ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(GLOBAL),
+        overlay: Some(PathBuf::from(OVERLAY)),
+        legacy_local: Some(PathBuf::from(LEGACY)),
+    })
+}
+
+fn use_case(
+    store: Arc<MemoryStore>,
+    trust: Arc<FakeTrust>,
+) -> (ResolveEffectiveConfig, Arc<FakeValidator>) {
+    let validator = Arc::new(FakeValidator::default());
+    (
+        ResolveEffectiveConfig::new(store, validator.clone(), trust),
+        validator,
+    )
+}
+
+#[test]
+fn a_trusted_overlay_merges_over_the_global_file() {
+    let overlay = r#"{"agents":{"defaults":{"model":"local"}}}"#;
+    let store = MemoryStore::with(&[
+        (
+            GLOBAL,
+            r#"{"agents":{"defaults":{"model":"global","effort":"high"}},"providers":{"openai":{"api_key":"k"}}}"#,
+        ),
+        (OVERLAY, overlay),
+    ]);
+    let (resolve, validator) = use_case(store, FakeTrust::trusting(OVERLAY, overlay));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(
+        effective.document,
+        json!({"agents":{"defaults":{"model":"local","effort":"high"}},"providers":{"openai":{"api_key":"k"}}})
+    );
+    assert_eq!(
+        effective.sources,
+        ConfigSources {
+            base: PathBuf::from(GLOBAL),
+            explicit: false,
+            overlay: Some(OverlayReport {
+                path: PathBuf::from(OVERLAY),
+                state: OverlayState::Applied
+            }),
+            legacy_local: None,
+        }
+    );
+    assert_eq!(
+        effective.sources.applied_overlay(),
+        Some(&PathBuf::from(OVERLAY))
+    );
+    let validated = validator.validated.lock().unwrap();
+    assert_eq!(validated.len(), 2, "the overlay standalone, then the merge");
+    assert_eq!(
+        validated[0],
+        json!({"agents":{"defaults":{"model":"local"}}})
+    );
+}
+
+#[test]
+fn an_untrusted_overlay_is_reported_and_not_applied() {
+    let store = MemoryStore::with(&[
+        (GLOBAL, r#"{"agents":{"defaults":{"model":"global"}}}"#),
+        (OVERLAY, r#"{"agents":{"defaults":{"model":"local"}}}"#),
+    ]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(
+        effective.document,
+        json!({"agents":{"defaults":{"model":"global"}}})
+    );
+    assert_eq!(
+        effective.sources.overlay,
+        Some(OverlayReport {
+            path: PathBuf::from(OVERLAY),
+            state: OverlayState::Untrusted {
+                fingerprint: "fp-41".into()
+            }
+        })
+    );
+    assert_eq!(effective.sources.applied_overlay(), None);
+}
+
+#[test]
+fn an_untrusted_overlay_is_not_even_parsed() {
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, "{ not json")]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert!(matches!(
+        effective.sources.overlay.unwrap().state,
+        OverlayState::Untrusted { .. }
+    ));
+}
+
+#[test]
+fn an_absent_overlay_and_an_absent_global_file_yield_an_empty_document() {
+    let store = MemoryStore::with(&[]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(effective.document, json!({}));
+    assert_eq!(
+        effective.sources.overlay,
+        Some(OverlayReport {
+            path: PathBuf::from(OVERLAY),
+            state: OverlayState::Absent
+        })
+    );
+}
+
+#[test]
+fn a_trusted_overlay_with_a_global_only_key_is_refused_naming_the_key() {
+    for (content, key) in [
+        (r#"{"providers":{"openai":{"api_base":"x"}}}"#, "providers"),
+        (r#"{"admission":null}"#, "admission"),
+    ] {
+        let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+        let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
+        let error = resolve.execute(&layered()).unwrap_err();
+        assert_eq!(
+            error,
+            EffectiveConfigError::GlobalOnlyKey {
+                path: PathBuf::from(OVERLAY),
+                key: key.into()
+            }
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains(OVERLAY) && text.contains(&format!("`{key}` is global-only")),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_trusted_but_broken_overlay_is_an_error_naming_the_file() {
+    let content = "{ not json";
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
+    let error = resolve.execute(&layered()).unwrap_err();
+    assert!(
+        matches!(&error, EffectiveConfigError::Parse { path, .. } if path == Path::new(OVERLAY))
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with("failed to load config /work/.quecto/config.json")
+    );
+
+    let content = "[1]";
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
+    assert_eq!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::NotAnObject(PathBuf::from(OVERLAY))
+    );
+
+    let content = r#"{"agents":{"defaults":{"effort":"bogus"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
+    assert_eq!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Invalid {
+            path: PathBuf::from(OVERLAY),
+            reason: "invalid effort level 'bogus'".into()
+        }
+    );
+
+    let content = r#"{"container_scripts":{}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
+    assert!(matches!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Invalid { path, .. } if path == Path::new(OVERLAY)
+    ));
+}
+
+#[test]
+fn references_resolve_against_each_layers_own_file() {
+    let overlay = r#"{"workflow":{"marker":"?"}}"#;
+    let store = MemoryStore::with(&[
+        (
+            GLOBAL,
+            r#"{"workflow":{"marker":"?","auto_continue":true}}"#,
+        ),
+        (OVERLAY, overlay),
+    ]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, overlay));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(
+        effective.document["workflow"],
+        json!({"marker": OVERLAY, "auto_continue": true})
+    );
+}
+
+#[test]
+fn global_file_failures_are_errors_naming_the_global_file() {
+    let store = MemoryStore::with(&[(GLOBAL, "{ nope")]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    assert!(matches!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Parse { path, .. } if path == Path::new(GLOBAL)
+    ));
+
+    let mut store = MemoryStore::default();
+    store.broken.insert(PathBuf::from(GLOBAL));
+    let (resolve, _) = use_case(Arc::new(store), Arc::new(FakeTrust::default()));
+    let error = resolve.execute(&layered()).unwrap_err();
+    assert_eq!(
+        error,
+        EffectiveConfigError::Read {
+            path: PathBuf::from(GLOBAL),
+            reason: "permission denied".into()
+        }
+    );
+    assert!(error.to_string().contains("permission denied"));
+
+    let store = MemoryStore::with(&[(GLOBAL, r#"{"agents":{"defaults":{"effort":"bogus"}}}"#)]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    assert!(matches!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Invalid { path, .. } if path == Path::new(GLOBAL)
+    ));
+}
+
+#[test]
+fn a_present_unreadable_overlay_is_an_error_not_a_fallback() {
+    let mut store = MemoryStore::default();
+    store.broken.insert(PathBuf::from(OVERLAY));
+    let (resolve, _) = use_case(Arc::new(store), Arc::new(FakeTrust::default()));
+    assert!(matches!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Read { path, .. } if path == Path::new(OVERLAY)
+    ));
+}
+
+#[test]
+fn the_retired_local_file_is_reported_when_present_and_never_loaded() {
+    let store = MemoryStore::with(&[
+        (GLOBAL, r#"{"agents":{"defaults":{"model":"global"}}}"#),
+        (LEGACY, r#"{"agents":{"defaults":{"model":"legacy"}}}"#),
+    ]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(effective.document["agents"]["defaults"]["model"], "global");
+    assert_eq!(effective.sources.legacy_local, Some(PathBuf::from(LEGACY)));
+}
+
+#[test]
+fn without_an_overlay_location_only_the_global_file_loads() {
+    let store = MemoryStore::with(&[(GLOBAL, r#"{"agents":{}}"#)]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let selection = ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(GLOBAL),
+        overlay: None,
+        legacy_local: None,
+    });
+    let effective = resolve.execute(&selection).unwrap();
+    assert_eq!(effective.sources.overlay, None);
+    assert_eq!(effective.sources.legacy_local, None);
+}
+
+#[test]
+fn an_explicit_file_replaces_both_layers_and_must_exist() {
+    let store = MemoryStore::with(&[
+        (GLOBAL, r#"{"agents":{"defaults":{"model":"global"}}}"#),
+        (
+            "/x/c.json",
+            r#"{"agents":{"defaults":{"model":"explicit"}},"admission":null}"#,
+        ),
+    ]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let effective = resolve
+        .execute(&ConfigSelection::Explicit(PathBuf::from("/x/c.json")))
+        .unwrap();
+    assert_eq!(
+        effective.document["agents"]["defaults"]["model"],
+        "explicit"
+    );
+    assert_eq!(
+        effective.sources,
+        ConfigSources {
+            base: PathBuf::from("/x/c.json"),
+            explicit: true,
+            overlay: None,
+            legacy_local: None
+        }
+    );
+    let error = resolve
+        .execute(&ConfigSelection::Explicit(PathBuf::from("/x/missing.json")))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        EffectiveConfigError::Missing(PathBuf::from("/x/missing.json"))
+    );
+    assert_eq!(error.to_string(), "config not found: /x/missing.json");
+}
+
+#[test]
+fn error_display_names_the_file_for_every_variant() {
+    let path = PathBuf::from("/p/config.json");
+    for error in [
+        EffectiveConfigError::Read {
+            path: path.clone(),
+            reason: "r".into(),
+        },
+        EffectiveConfigError::Parse {
+            path: path.clone(),
+            reason: "r".into(),
+        },
+        EffectiveConfigError::NotAnObject(path.clone()),
+        EffectiveConfigError::GlobalOnlyKey {
+            path: path.clone(),
+            key: "k".into(),
+        },
+        EffectiveConfigError::Invalid {
+            path: path.clone(),
+            reason: "r".into(),
+        },
+    ] {
+        let text = error.to_string();
+        assert!(
+            text.starts_with("failed to load config /p/config.json"),
+            "{text}"
+        );
+    }
+    assert!(
+        format!(
+            "{:?}",
+            ResolveEffectiveConfig::new(
+                MemoryStore::with(&[]),
+                Arc::new(FakeValidator::default()),
+                Arc::new(FakeTrust::default())
+            )
+        )
+        .contains("ResolveEffectiveConfig")
+    );
+}
