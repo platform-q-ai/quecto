@@ -176,17 +176,27 @@ persistence in `src/infrastructure/auth/token_refresh.rs`; the composition in
 `build_agent_provider`).
 
 `main` hands composition's `build_agent_provider` to the CLI through
-`CliComposition`; agent startup (`src/interface/cli/agent.rs`) calls the
-injected builder and never constructs provider state itself (#1849 PR 1).
-Reloading a running session is the reload-runtime-configuration use case
+`CliComposition` as the one `ProviderRuntimeBuilder` type
+(`src/infrastructure/runtime_configuration.rs`, aliased by the CLI); agent
+startup (`src/interface/cli/agent.rs`) calls the injected builder, never
+constructs provider state itself (#1849 PR 1), and threads the same builder
+into the reload inputs. Reloading a running session is the
+reload-runtime-configuration use case
 (`src/application/catalogue/use_cases/reload_runtime_configuration.rs`,
 #1849 PR 2): forced by the UDS `reload` command, polled before every prompt
 and `set_model`, over the `RuntimeConfigurationSource` port that
 `src/infrastructure/runtime_configuration.rs` implements (the ADR-0002 gate
-in `src/infrastructure/reload.rs`, one `Config` read, the same builder) and
-the `ReloadRuntime` port the agent loop implements; composition builds it
-into `CatalogueHandles.reload` and the presenter in
+in `src/infrastructure/reload.rs`, one `Config` read, the injected builder)
+and the `ReloadRuntime` port the agent loop implements. The use case is two
+scheduler-free phases — `rebuild`/`rebuild_if_changed` yielding a
+`ReloadStep`, then `apply` — and `src/interface/cli/uds_dispatch_reload.rs`
+runs the rebuild under `tokio::task::spawn_blocking` so the current-thread
+UDS runtime keeps serving while it is in flight; composition builds the use
+case into `CatalogueHandles.reload` and the presenter in
 `src/interface/uds/catalogue/reload_presenter.rs` renders the outcome. The
+durable tool-policy persistence hook is its own composition seam
+(`src/composition/tool_policy.rs`, `CliComposition.tool_policy_persistence`),
+installed on the loop by the agent build. The
 composition publishes the routing provider and the catalogue as one
 generation into the per-directory stores; a failed composition retains the
 previously published generation.
