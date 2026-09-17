@@ -2,7 +2,9 @@
 
 use crate::components::component::Component;
 use crate::components::list_navigator::ListNavigator;
-use crate::components::list_rows::{DescriptionMode, ListRow, render_windowed};
+use crate::components::list_rows::{
+    DescriptionMode, ListRow, SelectionStyle, render_windowed_styled,
+};
 use crate::components::theme;
 use crate::shell::keys::Key;
 
@@ -25,6 +27,7 @@ pub struct SelectList {
     navigator: ListNavigator,
     max_visible: usize,
     result: SelectResult,
+    selection: SelectionStyle,
 }
 
 impl SelectList {
@@ -34,6 +37,7 @@ impl SelectList {
             navigator: ListNavigator::new(),
             max_visible,
             result: SelectResult::Pending,
+            selection: SelectionStyle::Active,
         }
     }
 
@@ -68,6 +72,12 @@ impl SelectList {
     /// Use the same navigation window for rendering and pointer hit testing.
     pub fn set_max_visible(&mut self, max_visible: usize) {
         self.max_visible = max_visible;
+    }
+
+    /// Draw the selection as owning focus (`Active`) or parked (`Inactive`,
+    /// dim marker, plain label) — the list itself never changes behaviour.
+    pub fn set_selection_style(&mut self, selection: SelectionStyle) {
+        self.selection = selection;
     }
 
     pub fn visible_item(&self, offset: usize) -> Option<&SelectItem> {
@@ -109,13 +119,14 @@ impl Component for SelectList {
 
         // Shared row renderer (#997): the alignment column covers the visible
         // window only, capped at 32 (#757) — see `DescriptionMode::AlignedWindow`.
-        lines.extend(render_windowed(
+        lines.extend(render_windowed_styled(
             &self.items,
             &self.navigator,
             self.max_visible,
             width,
             "",
             DescriptionMode::AlignedWindow { min_desc_width: 10 },
+            self.selection,
             |item| ListRow {
                 description: item.description.clone(),
                 ..ListRow::plain(item.label.clone())

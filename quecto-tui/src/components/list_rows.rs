@@ -53,6 +53,17 @@ pub enum DescriptionMode {
     AlignedCached { label_width: usize },
 }
 
+/// Whether the list currently owns keyboard focus. An `Inactive` selection
+/// keeps its row (the highlight is still the item Enter would open once the
+/// list is focused again) but draws a dim `→ ` and never accents the label,
+/// so a modal with several focusable sections (the resume picker's
+/// Sessions / Local/Global / Search) shows at a glance where ↑/↓ will act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionStyle {
+    Active,
+    Inactive,
+}
+
 /// Render the full list surface for `items`: window to the navigator's visible
 /// range, build each visible row with `to_row`, and emit the rows plus — when
 /// the window overflows — the dim `  (selected+1/total)` indicator line
@@ -74,6 +85,30 @@ pub fn render_windowed<T>(
     mode: DescriptionMode,
     to_row: impl Fn(&T) -> ListRow,
 ) -> Vec<String> {
+    render_windowed_styled(
+        items,
+        nav,
+        max_visible,
+        width,
+        indent,
+        mode,
+        SelectionStyle::Active,
+        to_row,
+    )
+}
+
+/// [`render_windowed`] with an explicit [`SelectionStyle`].
+#[expect(clippy::too_many_arguments, reason = "single shared entry point")]
+pub fn render_windowed_styled<T>(
+    items: &[T],
+    nav: &ListNavigator,
+    max_visible: usize,
+    width: usize,
+    indent: &str,
+    mode: DescriptionMode,
+    selection: SelectionStyle,
+    to_row: impl Fn(&T) -> ListRow,
+) -> Vec<String> {
     let range = nav.visible_range(items.len(), max_visible);
     let selected = nav.selected();
     let rows: Vec<ListRow> = items[range.clone()].iter().map(to_row).collect();
@@ -93,10 +128,14 @@ pub fn render_windowed<T>(
 
     for (offset, row) in rows.iter().enumerate() {
         let is_sel = range.start + offset == selected;
-        let prefix = if is_sel { "→ " } else { "  " };
+        let prefix = match (is_sel, selection) {
+            (false, _) => "  ".to_string(),
+            (true, SelectionStyle::Active) => "→ ".to_string(),
+            (true, SelectionStyle::Inactive) => theme::dim("→ "),
+        };
         let label = if row.dim_label {
             theme::dim(&row.label)
-        } else if is_sel {
+        } else if is_sel && selection == SelectionStyle::Active {
             theme::accent(&row.label)
         } else {
             row.label.clone()
