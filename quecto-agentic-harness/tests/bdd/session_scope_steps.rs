@@ -273,16 +273,37 @@ fn assert_scope_refusal(
 
 #[then("the runtime refuses replacement as a different-execution-directory scope error")]
 fn refused_foreign_directory(world: &mut QuectoWorld) {
+    use quecto::application::sessions::dto::ResumeSavedSessionError;
     use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
-    assert_scope_refusal(world, ResumeDisposition::DifferentExecutionDirectory);
+    let expected = ResumeDisposition::DifferentExecutionDirectory;
+    assert_scope_refusal(world, expected.clone());
+    let error = serde_json::from_str::<serde_json::Value>(&world.stderr)
+        .unwrap()["error"]
+        .as_str()
+        .expect("typed resume error string")
+        .to_owned();
+    assert_eq!(
+        error,
+        ResumeSavedSessionError::Scope(expected).to_string(),
+        "typed Scope(DifferentExecutionDirectory) refusal"
+    );
 }
 
 #[then("the runtime refuses replacement as an unavailable-home scope error")]
 fn refused_corrupt_home(world: &mut QuectoWorld) {
+    use quecto::application::sessions::dto::ResumeSavedSessionError;
     use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
-    assert_scope_refusal(
-        world,
-        ResumeDisposition::Unavailable("corrupt authority".into()),
+    let expected = ResumeDisposition::Unavailable("corrupt authority".into());
+    assert_scope_refusal(world, expected.clone());
+    let error = serde_json::from_str::<serde_json::Value>(&world.stderr)
+        .unwrap()["error"]
+        .as_str()
+        .expect("typed resume error string")
+        .to_owned();
+    assert_eq!(
+        error,
+        ResumeSavedSessionError::Scope(expected).to_string(),
+        "typed Scope(Unavailable(_)) refusal"
     );
 }
 
