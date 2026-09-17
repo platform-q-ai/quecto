@@ -1,7 +1,7 @@
 //! Headless device-code authentication flow.
 
 use super::{CliContext, Output};
-use super::auth::resolve_oauth_config;
+use super::resolve_oauth_config;
 use crate::interface::cli::build_tokio_runtime;
 
 /// Device code login flow for headless environments.
