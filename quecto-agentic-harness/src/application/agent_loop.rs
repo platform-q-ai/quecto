@@ -34,6 +34,8 @@ mod agent_loop_errors;
 pub(crate) mod agent_loop_preview;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
+#[path = "agent_loop_reload.rs"]
+mod agent_loop_reload;
 mod agent_loop_session;
 #[path = "agent_loop_spill.rs"]
 mod agent_loop_spill;

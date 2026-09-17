@@ -6,9 +6,6 @@ mod commands;
 mod config_flag;
 mod models;
 pub mod protocol;
-pub mod provider_reload;
-#[cfg(test)]
-mod provider_reload_tests;
 pub mod uds;
 mod uds_admission_projection;
 #[cfg(test)]
@@ -199,7 +196,6 @@ pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
-mod uds_reload;
 pub mod uds_session;
 pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
@@ -323,14 +319,19 @@ pub type FreshSessionIdentityBuilder =
 
 /// Composition's builder of the catalogue handles (#1845): the controllers
 /// a dispatch loop answers the catalogue commands through, over the loop's
-/// base directory. Injected through the CLI context; the interface never
+/// base directory and, for an agent run, its reloadable configuration
+/// (#1849). Injected through the CLI context; the interface never
 /// constructs a catalogue use case.
-pub type CatalogueHandlesBuilder = fn(&std::path::Path) -> catalogue_handles::CatalogueHandles;
+pub type CatalogueHandlesBuilder = fn(
+    &std::path::Path,
+    Option<&catalogue_handles::RuntimeConfigurationInputs>,
+) -> catalogue_handles::CatalogueHandles;
 
 /// Composition's provider-runtime builder (#1849): composes and publishes
 /// the provider runtime for a base directory and returns its routing
-/// provider. Injected through the CLI context; startup and provider reload
-/// call it, the interface never composes a provider.
+/// provider. Injected through the CLI context; startup calls it (reload
+/// goes through the catalogue handles), the interface never composes a
+/// provider.
 pub type ProviderRuntimeBuilder =
     fn(
         &crate::infrastructure::config::Config,

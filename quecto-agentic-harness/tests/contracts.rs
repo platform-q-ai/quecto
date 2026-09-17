@@ -83,10 +83,14 @@ mod refresh_inputs_loader;
 mod refresh_redaction_port;
 #[path = "contracts/refreshable_catalogue_source.rs"]
 mod refreshable_catalogue_source;
+#[path = "contracts/reload_runtime.rs"]
+mod reload_runtime;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
+#[path = "contracts/runtime_configuration_source.rs"]
+mod runtime_configuration_source;
 #[path = "contracts/runtime_snapshot_source.rs"]
 mod runtime_snapshot_source;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]

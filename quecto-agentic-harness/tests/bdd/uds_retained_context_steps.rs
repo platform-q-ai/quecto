@@ -184,7 +184,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             socket_path,
             socket_override: Some(server),
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base),
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base, None),
             ext_registry: None,
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
@@ -193,8 +193,6 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,
-            provider_reload: None,
-            provider_reload_inputs: None,
             parent_control: None,
             teardown_graph: None,
         })

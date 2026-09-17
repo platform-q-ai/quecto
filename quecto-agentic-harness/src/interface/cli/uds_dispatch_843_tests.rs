@@ -102,8 +102,6 @@ impl Fx {
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
-            provider_reload: None,
-            provider_reload_inputs: None,
             save_session,
             rewrite,
             switch: switch_handles_for(&self.session_key),

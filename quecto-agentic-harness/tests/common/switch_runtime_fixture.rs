@@ -134,7 +134,7 @@ pub fn runtime(session_key: &str) -> Runtime {
     .unwrap();
     let catalogue_dir = tempfile::TempDir::new().expect("catalogue dir");
     let effort =
-        quecto::composition::catalogue::build_catalogue_handles(catalogue_dir.path()).effort;
+        quecto::composition::catalogue::build_catalogue_handles(catalogue_dir.path(), None).effort;
     Runtime {
         agent,
         session: AgentSession::new("stub".into()),

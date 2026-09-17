@@ -59,6 +59,7 @@ const USE_CASES: &[&str] = &[
     "RecallContext",
     "RecoverMessage",
     "RefreshCatalogueSources",
+    "ReloadRuntimeConfiguration",
     "ResumeSavedSession",
     "RetainContext",
     "RewindConversation",

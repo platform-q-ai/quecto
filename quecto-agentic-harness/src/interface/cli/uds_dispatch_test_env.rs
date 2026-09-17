@@ -233,8 +233,6 @@ impl DispatchTestEnv {
             notification_rx: self.notification_rx.take(),
             workflow_state: Some(self.workflow.clone()),
             workflow_config: Some(workflow_test_config()),
-            provider_reload: None,
-            provider_reload_inputs: None,
             fleet_teardown: None,
             list_sessions: self.sessions.list_sessions.clone(),
             save_session: self.sessions.save_session.clone(),

@@ -80,6 +80,7 @@ fn build(
         base_dir: tmp.path(),
         effort_control: crate::composition::catalogue::build_catalogue_handles(
             std::path::Path::new("/nonexistent-catalogue"),
+            None,
         )
         .effort,
         config_path: tmp.path(),

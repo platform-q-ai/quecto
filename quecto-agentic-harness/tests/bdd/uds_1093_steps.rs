@@ -16,7 +16,6 @@ use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
 use std::future::Future;
@@ -278,14 +277,12 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         .expect("load config");
     let http_client = reqwest::Client::new();
     let provider = build_agent_provider(&config, base, &http_client).expect("provider");
-    let mut provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs = ProviderReloadInputs::new(
-        config_path,
-        base.to_path_buf(),
-        env_overrides,
-        http_client,
-        build_agent_provider,
-    );
+    let runtime_configuration =
+        quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+            config_path,
+            env_overrides,
+            http_client,
+        };
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
@@ -350,7 +347,10 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_path: socket_for_thread,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(
+                &base_for_thread,
+                Some(&runtime_configuration),
+            ),
             ext_registry: Some(ext_reg),
             lifetime: quecto::domain::harness_lifetime::HarnessLifetime::Persistent,
             notification_rx: None,
@@ -359,8 +359,6 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: None,
         })

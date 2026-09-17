@@ -745,5 +745,5 @@ pub(crate) fn list_handle(
 pub(crate) fn catalogue_handles(
     base: &std::path::Path,
 ) -> crate::interface::cli::catalogue_handles::CatalogueHandles {
-    crate::composition::catalogue::build_catalogue_handles(base)
+    crate::composition::catalogue::build_catalogue_handles(base, None)
 }

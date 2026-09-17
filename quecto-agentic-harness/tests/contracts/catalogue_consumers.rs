@@ -175,7 +175,7 @@ fn refresh_surfaces_share_one_operation_and_one_published_generation() {
         // The UDS refresh operation drives the one refresh use case.
         let base_dir = tmp.path().to_path_buf();
         let refresh = tokio::task::spawn_blocking(move || {
-            let handles = quecto::composition::catalogue::build_catalogue_handles(&base_dir);
+            let handles = quecto::composition::catalogue::build_catalogue_handles(&base_dir, None);
             quecto::interface::cli::uds_models::refresh_models_data(&handles.refresh, None)
         })
         .await
@@ -264,7 +264,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // same canonical vocabulary the listing does — not a per-surface one: the
     // view the dispatch loop presents comes from the composed use case over
     // the same published snapshot (#1848).
-    let handles = quecto::composition::catalogue::build_catalogue_handles(tmp.path());
+    let handles = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None);
     for qualified in [
         "anthropic-api/claude-opus-4-6",
         "openai-api/gpt-5.6-sol",
@@ -297,7 +297,7 @@ fn set_model_limits_and_selection_come_from_the_published_snapshot() {
             "models":[{"id":"limited-model","name":"Limited",
                        "maxTokens":50,"contextWindow":1234}]}}}"#,
     );
-    let limits = quecto::composition::catalogue::build_catalogue_handles(tmp.path())
+    let limits = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None)
         .model
         .plan("contractish/limited-model")
         .limits;
@@ -341,7 +341,7 @@ fn active_selection_and_agent_startup_observe_the_published_generation() {
         snapshot_store_for(tmp.path()).current().generation(),
         "runtime and catalogue stores publish one generation"
     );
-    let verdict = quecto::composition::catalogue::build_catalogue_handles(tmp.path())
+    let verdict = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None)
         .model
         .plan("contractish/gen-model")
         .verdict;

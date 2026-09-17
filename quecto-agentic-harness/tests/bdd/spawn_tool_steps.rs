@@ -29,7 +29,7 @@ fn given_spawn_tool_with_effort_control(world: &mut QuectoWorld) {
     )
     .expect("write models.json");
     let _ = quecto::composition::catalogue::list_models_wire_for(dir.path());
-    let handles = quecto::composition::catalogue::build_catalogue_handles(dir.path());
+    let handles = quecto::composition::catalogue::build_catalogue_handles(dir.path(), None);
     world.spawn_tool = Some(SpawnTool::new(vec![]).with_effort_control(Some(handles.effort)));
     world._spawn_tool_dir = Some(dir);
 }

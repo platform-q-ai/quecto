@@ -22,8 +22,6 @@ pub(super) struct SingleClientArgs<'a> {
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
-    pub(super) provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
-    pub(super) provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
 }
 
 pub(super) async fn single_client_loop(
@@ -42,8 +40,6 @@ pub(super) async fn single_client_loop(
         ext_registry,
         subagent_registry,
         workflow_state,
-        provider_reload,
-        provider_reload_inputs,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -99,8 +95,6 @@ pub(super) async fn single_client_loop(
             notification_rx: None,
             workflow_state: workflow_state.clone(),
             workflow_config: None,
-            provider_reload,
-            provider_reload_inputs,
             fleet_teardown: None,
             list_sessions: sessions.list_sessions.clone(),
             save_session: sessions.save_session.clone(),

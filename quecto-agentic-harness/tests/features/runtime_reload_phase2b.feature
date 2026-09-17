@@ -33,3 +33,15 @@ Feature: Provider reload wiring for models/providers (Phase 2b)
     And I send command "reload" with id "reload-1"
     And I close the UDS connection
     Then the agent output should contain a response command "reload" with success false
+
+  Scenario: explicit reload applies a provider added to the config and the next prompt routes through it
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the config default model is "fireworks/accounts/fireworks/models/glm-5p2"
+    And the config file will be updated to add a Fireworks provider before the UDS command loop
+    When I start the UDS agent with no session
+    And I send command "reload" with id "reload-1"
+    And I send prompt "use fireworks"
+    And I close the UDS connection
+    Then the agent output should contain a response command "reload" with success true
+    And the Fireworks provider should have received a chat completion request

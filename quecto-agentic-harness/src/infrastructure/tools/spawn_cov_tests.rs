@@ -110,7 +110,7 @@ fn parse_args_accepts_all_optional_spawn_fields() {
     // case over a published catalogue.
     let dir = tempfile::TempDir::new().unwrap();
     let _ = crate::composition::catalogue::list_models_wire_for(dir.path());
-    let effort = crate::composition::catalogue::build_catalogue_handles(dir.path()).effort;
+    let effort = crate::composition::catalogue::build_catalogue_handles(dir.path(), None).effort;
     let tool = SpawnTool::new(vec!["allowed".to_string()]).with_effort_control(Some(effort));
     let cfg = tool
         .parse_args(

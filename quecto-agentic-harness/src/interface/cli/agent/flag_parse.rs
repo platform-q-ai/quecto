@@ -55,8 +55,8 @@ pub(crate) struct AgentFlags {
     /// change-reasoning-effort use case it builds.
     pub(crate) catalogue: Option<crate::interface::cli::CatalogueHandlesBuilder>,
     /// Composition's provider-runtime builder (#1849), from CliContext;
-    /// startup composes the provider through it and provider reload keeps
-    /// it for every rebuild.
+    /// startup composes the provider through it (reload rebuilds through
+    /// the catalogue handles' reload use case, over the same composition).
     pub(crate) provider_runtime: Option<crate::interface::cli::ProviderRuntimeBuilder>,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.

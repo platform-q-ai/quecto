@@ -107,8 +107,6 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         parent_control: None,
         teardown_graph: None,
     }
@@ -146,7 +144,7 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
                 multi_args(dir.path()),
                 listener,
                 &store,
-                &crate::composition::catalogue::build_catalogue_handles(dir.path()),
+                &crate::composition::catalogue::build_catalogue_handles(dir.path(), None),
             )
             .await
         })
@@ -326,8 +324,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         notification_rx: None,
         workflow_state: None,
         workflow_config: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         save_session,
         rewrite,
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(

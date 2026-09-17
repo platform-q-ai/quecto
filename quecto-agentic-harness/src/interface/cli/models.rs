@@ -78,7 +78,7 @@ fn cmd_discover(
         stderr.push_str("models discover: catalogue capability not composed\n");
         return 1;
     };
-    let refresh = build_catalogue(&ctx.base_dir()).refresh;
+    let refresh = build_catalogue(&ctx.base_dir(), None).refresh;
     loop {
         match discover_once(&refresh, &provider) {
             Ok(DiscoverOutcome::Updated { models }) => stdout.push_str(&format!(

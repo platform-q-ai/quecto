@@ -22,9 +22,11 @@ pub mod provider_runtime_admission;
 pub mod providers;
 pub mod reload;
 pub mod repo_local_container_config;
+pub mod runtime_configuration;
 pub mod runtime_identity;
 pub mod security;
 pub mod time;
+pub mod tool_policy_persistence;
 pub mod tools;
 
 #[cfg(any(test, feature = "test-support"))]

@@ -17,7 +17,7 @@ fn ctx_for(dir: &std::path::Path) -> CliContext {
 
 /// The composed refresh use case the command drives for `ctx`'s base dir.
 fn refresh_for(ctx: &CliContext) -> std::sync::Arc<RefreshCatalogueSources> {
-    crate::composition::catalogue::build_catalogue_handles(&ctx.base_dir()).refresh
+    crate::composition::catalogue::build_catalogue_handles(&ctx.base_dir(), None).refresh
 }
 
 #[test]
