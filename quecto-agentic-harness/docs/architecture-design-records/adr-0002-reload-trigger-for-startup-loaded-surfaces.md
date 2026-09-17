@@ -70,4 +70,4 @@ the ADR-0002 trigger.
 
 - [Kernel boundary](../architecture/kernel-boundary.md)
 - [Models runtime extensible PRD](../prd/prd-models-runtime-extensible.md)
-- Implementation: `src/infrastructure/reload.rs`, `src/interface/cli/provider_reload.rs`
+- Implementation: the gate in `src/infrastructure/reload.rs`, driven by the reload-runtime-configuration use case `src/application/catalogue/use_cases/reload_runtime_configuration.rs` through the source adapter `src/infrastructure/runtime_configuration.rs` (#1849)

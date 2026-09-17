@@ -176,12 +176,20 @@ persistence in `src/infrastructure/auth/token_refresh.rs`; the composition in
 `build_agent_provider`).
 
 `main` hands composition's `build_agent_provider` to the CLI through
-`CliComposition`; agent startup (`src/interface/cli/agent.rs`) and provider
-reload (`src/interface/cli/provider_reload.rs`) call the injected builder and
-never construct provider state themselves (#1849 PR 1). The composition
-publishes the routing provider and the catalogue as one generation into the
-per-directory stores; a failed composition retains the previously published
-generation.
+`CliComposition`; agent startup (`src/interface/cli/agent.rs`) calls the
+injected builder and never constructs provider state itself (#1849 PR 1).
+Reloading a running session is the reload-runtime-configuration use case
+(`src/application/catalogue/use_cases/reload_runtime_configuration.rs`,
+#1849 PR 2): forced by the UDS `reload` command, polled before every prompt
+and `set_model`, over the `RuntimeConfigurationSource` port that
+`src/infrastructure/runtime_configuration.rs` implements (the ADR-0002 gate
+in `src/infrastructure/reload.rs`, one `Config` read, the same builder) and
+the `ReloadRuntime` port the agent loop implements; composition builds it
+into `CatalogueHandles.reload` and the presenter in
+`src/interface/uds/catalogue/reload_presenter.rs` renders the outcome. The
+composition publishes the routing provider and the catalogue as one
+generation into the per-directory stores; a failed composition retains the
+previously published generation.
 
 ## Baseline subsystem checks
 
