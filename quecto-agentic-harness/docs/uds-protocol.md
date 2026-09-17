@@ -274,8 +274,8 @@ slice. Malformed records and discovery/catalogue failures produce diagnostics;
 one bad record does not hide valid siblings. `rebuilt` reports derived catalogue
 recovery — an unreadable or version-incompatible index, with a diagnostic — not
 transcript modification: an absent index (first use) is built silently and an
-index superseded by newer authority (a routine autosave) is refreshed silently. Exact-key resume does not rely on
-the catalogue.
+index superseded by newer authority (a routine autosave) is refreshed silently.
+Exact-key resume does not rely on the catalogue.
 
 The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
 Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse

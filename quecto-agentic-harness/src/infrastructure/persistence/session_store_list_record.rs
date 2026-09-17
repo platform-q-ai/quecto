@@ -60,7 +60,7 @@ pub(super) fn summary_of(
         skipped(path, "session file changed while listing", &"retry");
         return None;
     }
-    let summary = summarize(header, identity, path);
+    let summary = summarize(header, identity, &before);
     cache
         .entries
         .insert(path.to_path_buf(), (before, summary.clone()));
@@ -78,7 +78,7 @@ fn skipped(path: &std::path::Path, why: &str, detail: &dyn std::fmt::Display) {
 fn summarize(
     header: SessionHeader<'_>,
     identity: SessionIdentity,
-    path: &std::path::Path,
+    stamp: &[u64],
 ) -> SessionSummary {
     SessionSummary {
         identity,
@@ -89,10 +89,8 @@ fn summarize(
             .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
             .count(),
         key: header.key.into_owned(),
-        updated_unix_secs: std::fs::metadata(path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs()),
+        // The mtime observed inside the validated window (stamp[4]), so the
+        // sort key can never come from a file replaced after the header read.
+        updated_unix_secs: Some(stamp[4]),
     }
 }

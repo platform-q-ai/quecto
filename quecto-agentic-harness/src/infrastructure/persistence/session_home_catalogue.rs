@@ -343,7 +343,12 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
         // the trusted projection: restart and externally changed indexes rebuild.
         let mut published = self.published.lock().map_err(error)?;
         let path = self.layout.home_catalogue_file();
-        let disk = std::fs::read(&path).ok();
+        // Only a missing index is "absent"; a read failure is recovery.
+        let disk = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => Some(format!("unreadable index: {e}").into_bytes()),
+        };
         if published
             .as_ref()
             .is_some_and(|previous| Some(previous) == disk.as_ref())

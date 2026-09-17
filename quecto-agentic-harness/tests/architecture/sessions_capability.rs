@@ -531,8 +531,7 @@ const SANITIZER_CALLERS: &[&str] = &[
 // active_session.rs 117→126 (the home context handed to save and resume),
 // composition/sessions.rs 61→70 (`build_session_handles_over`),
 // session_layout.rs 83→94 (the `.home` and `home.catalogue` paths),
-// session_store.rs 687→700 (the summary cache and the home/catalogue
-// submodules), uds_dispatch_session.rs 241→259 (`handle_list_sessions`),
+// uds_dispatch_session.rs 241→259 (`handle_list_sessions`),
 // controller.rs 36→42 (the typed scoped result). Every pin is the delivered
 // size, retains the 750-line cap and remains decrease-only.
 const LINE_CEILINGS: &[(&str, usize)] = &[
@@ -574,11 +573,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/use_cases/list_sessions.rs", 57),
     // R2-M1 reads the exact authority for a record the catalogue has no row
     // for; the query-local observation cache moved to its own helper so the
-    // projection stays under its ceiling (141 → 126) and the cache is pinned
+    // projection stays under its ceiling (141 → 125) and the cache is pinned
     // at its delivered size.
     (
         "src/application/sessions/use_cases/list_sessions_discover.rs",
-        126,
+        125,
     ),
     (
         "src/application/sessions/use_cases/list_sessions_observations.rs",
@@ -680,10 +679,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     ("src/infrastructure/persistence/session_store_list.rs", 31),
     // R2-L3: the per-record read (cached summary, header parse, layout
-    // check, every skip logged) is its own helper; the walk shrank 110 → 68.
+    // check, every skip logged) is its own helper; the walk shrank 110 → 62.
     (
         "src/infrastructure/persistence/session_store_list_scan.rs",
-        68,
+        62,
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
