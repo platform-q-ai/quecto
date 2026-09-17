@@ -54,9 +54,12 @@ pub struct ModelSwitched {
 /// before it is applied, so a refused record leaves the session as it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSwitchError {
-    /// The requested id is bare (`model`, not `provider/model`), so there
-    /// is no qualified id to record.
+    /// The requested id is not a `provider/model` reference, so there is
+    /// no qualified id to record.
     Unqualified { model: String },
+    /// The reference names a provider no configuration or catalogue source
+    /// knows; recorded, it would fail every later start's first prompt.
+    UnknownProvider { model: String, provider: String },
     /// The persistence adapter refused or failed; `reason` names the
     /// remedy.
     Persist {
@@ -71,8 +74,15 @@ impl std::fmt::Display for ModelSwitchError {
         match self {
             Self::Unqualified { model } => write!(
                 f,
-                "cannot persist `{model}` as a default: it is a bare id (a later start would \
-                 route it to the first configured provider); select it as provider/model"
+                "cannot persist `{model}` as a default: it is not a provider/model reference (a \
+                 bare id would route to the first configured provider on a later start); select \
+                 it as provider/model"
+            ),
+            Self::UnknownProvider { model, provider } => write!(
+                f,
+                "cannot persist `{model}` as a default: no configured provider or catalogue \
+                 source knows `{provider}`, so every later start here would fail; configure the \
+                 provider first or choose a listed provider/model"
             ),
             Self::Persist {
                 model,

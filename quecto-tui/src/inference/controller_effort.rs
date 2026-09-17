@@ -88,6 +88,8 @@ impl App {
     /// only a successful response switches it, so a rejected or failed
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
+        // The TUI offers no pin for effort (#2024 S2 pins the model from
+        // `/model`; effort defaults are the CLI's `quecto config set`).
         let cmd = Command::SetEffort {
             id: Some(self.ac().namespaced_id("se")),
             effort: effort.to_string(),
@@ -125,20 +127,7 @@ impl App {
             .footer
             .set_effort(Some(level.clone()));
         if self.ac().roster.active_agent_id.is_none() {
-            let pinned = data
-                .as_ref()
-                .and_then(|d| {
-                    crate::protocol::model_payloads::parse_persisted_default(
-                        d,
-                        &crate::components::ansi::sanitize_control,
-                    )
-                })
-                .map(|persisted| persisted.describe())
-                .unwrap_or_default();
-            self.notify(
-                &format!("Effort set to {level}{pinned}"),
-                NotifyLevel::Success,
-            );
+            self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
             self.ac_mut().inference.current_effort = Some(level);
         }
     }

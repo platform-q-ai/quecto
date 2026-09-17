@@ -49,14 +49,17 @@ impl std::fmt::Debug for CatalogueHandles {
 /// The run's reloadable configuration (#1849, #2024), as the interface
 /// knows it at startup: the config layers the run selected, the
 /// environment overrides it was loaded with, the HTTP client its providers
-/// share and the injected provider-runtime builder startup composed
-/// through. Composition builds the reload use case over them.
+/// share, the injected provider-runtime builder startup composed through,
+/// and the injected configuration-handles builder (#2024 S2) the
+/// default-persistence adapter records through. Composition builds the
+/// reload use case and the adapter over them.
 #[derive(Clone)]
 pub struct RuntimeConfigurationInputs {
     pub selection: crate::application::configuration::dto::ConfigSelection,
     pub env_overrides: std::collections::HashMap<String, String>,
     pub http_client: reqwest::Client,
     pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,
+    pub configuration: super::ConfigurationHandlesBuilder,
 }
 
 impl std::fmt::Debug for RuntimeConfigurationInputs {

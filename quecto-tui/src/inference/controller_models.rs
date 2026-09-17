@@ -31,9 +31,21 @@ impl App {
 
     /// `set_model` with the selector's action (#2024 S2): the persist scope
     /// rides on the command; the harness decides whether it can record it.
-    /// A pinned default is a session-level decision, so it is never routed
-    /// to a focused sub-agent's own connection — the master switches.
+    /// A pinned default is a decision about the master session and the
+    /// files it runs from, so it is never sent while a sub-agent is
+    /// focused: routing it to the child would record a default from the
+    /// wrong session, and sending it to the master would switch a session
+    /// the user is not looking at (#1085's guards then hide the reply).
+    /// Nothing is sent; the user is told to pin from the master session.
     pub(super) fn send_set_model_with(&mut self, model: &str, action: ModelDefaultAction) {
+        if self.ac().roster.active_agent_id.is_some() && action != ModelDefaultAction::Session {
+            self.notify(
+                "Pin a default from the master session: select it (Esc from the sub-agent), then \
+                 /model again — the focused sub-agent's model was not changed",
+                NotifyLevel::Error,
+            );
+            return;
+        }
         let cmd = Command::SetModel {
             id: Some(self.ac().namespaced_id("sm")),
             model: Some(model.to_string()),
@@ -41,7 +53,7 @@ impl App {
             model_id: None,
             persist: action.persist_scope().map(str::to_string),
         };
-        if self.ac().roster.active_agent_id.is_some() && action == ModelDefaultAction::Session {
+        if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for model changes yet",

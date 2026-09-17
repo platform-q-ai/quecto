@@ -472,6 +472,14 @@ fn tab_cycles_the_default_action_and_the_footer_names_it() {
     assert_eq!(sel.action(), ModelDefaultAction::RepoDefault);
     assert_eq!(sel.action().persist_scope(), Some("local"));
     assert!(plain(&mut sel).contains("pin as this repo's default"));
+    // The title carries the marker too: the footer can be clipped on a
+    // short terminal, the first row cannot.
+    let title = strip_ansi(&sel.render(80)[0]);
+    assert!(
+        title.contains("Select Model") && title.contains("pins this repo's default"),
+        "{title}"
+    );
+    assert!(!strip_ansi(&ModelSelector::new(None).render(80)[0]).contains("pins"));
 
     sel.handle_input(&Key::Tab);
     assert_eq!(sel.action(), ModelDefaultAction::GlobalDefault);

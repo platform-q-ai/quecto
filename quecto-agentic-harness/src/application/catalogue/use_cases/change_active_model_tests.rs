@@ -495,3 +495,44 @@ fn without_a_scope_nothing_is_recorded_and_execute_is_unchanged() {
     assert_eq!(switched.persisted, None);
     assert_eq!(rig.use_case.execute(&mut lp, "acme/m").persisted, None);
 }
+
+#[test]
+fn a_provider_the_published_catalogue_does_not_know_is_not_recorded_and_not_applied() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::default());
+    let rig = rig_persisting(
+        entries.clone(),
+        FakeRuntime::over(entries, 1),
+        persistence.clone(),
+    );
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        ..Default::default()
+    };
+    let error = rig
+        .use_case
+        .execute_with_default(&mut lp, "nobody/x", Some(DefaultScope::Local))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ModelSwitchError::UnknownProvider {
+            model: "nobody/x".into(),
+            provider: "nobody".into(),
+        }
+    );
+    assert!(error.to_string().contains("`nobody`"));
+    assert!(persistence.records.lock().unwrap().is_empty());
+    assert_eq!(lp.model, "old/model", "nothing applied");
+    // A known provider with an id the catalogue does not enumerate is
+    // recorded: open-router prefixes accept ids the catalogue cannot list.
+    let switched = rig
+        .use_case
+        .execute_with_default(&mut lp, "acme/unlisted", Some(DefaultScope::Local))
+        .unwrap();
+    assert!(matches!(
+        switched.plan.verdict,
+        ModelSelectionVerdict::Unknown { .. }
+    ));
+    assert_eq!(persistence.records.lock().unwrap()[0].2, "acme/unlisted");
+    assert_eq!(lp.model, "acme/unlisted");
+}

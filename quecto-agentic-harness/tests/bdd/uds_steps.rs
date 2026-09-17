@@ -120,6 +120,7 @@ pub(crate) fn build_uds_agent(
                 env_overrides,
                 http_client,
                 provider_runtime: build_agent_provider,
+                configuration: quecto::composition::configuration::build_configuration_handles,
             },
         ),
     );

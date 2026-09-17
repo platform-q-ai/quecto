@@ -132,6 +132,18 @@ impl ModelDefaultAction {
             Self::GlobalDefault => "Enter: use and pin as the global default",
         }
     }
+
+    /// The title-line marker of a pinning action: the title is the first
+    /// row and survives a short terminal that clips the footer, so a
+    /// selection that writes a file is never made without an on-screen
+    /// indication.
+    pub fn title_marker(self) -> Option<&'static str> {
+        match self {
+            Self::Session => None,
+            Self::RepoDefault => Some("pins this repo's default"),
+            Self::GlobalDefault => Some("pins the global default"),
+        }
+    }
 }
 
 /// Scrollable model selector with fuzzy search.
@@ -291,10 +303,15 @@ impl Component for ModelSelector {
     fn render(&mut self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
 
-        // Title.
+        // Title; a pinning action is marked here as well as in the footer.
+        let marker = self
+            .action
+            .title_marker()
+            .map(|marker| format!(" · {}", theme::bold(marker)))
+            .unwrap_or_default();
         lines.push(truncate_to_width(
             &format!(
-                "  {} {}",
+                "  {} {}{marker}",
                 theme::bold("Select Model"),
                 theme::dim("(type to filter)")
             ),

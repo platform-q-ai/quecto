@@ -95,10 +95,15 @@ impl ChangeActiveModel {
 
     /// Plan, record the model as the configured default of `persist` when
     /// asked, then apply. The recorded id is the qualified `provider/model`
-    /// the plan resolved; a bare id (which the catalogue cannot attribute
-    /// to a provider and a later start would route to the first
-    /// configured one) is not recorded, and neither it nor a record the
-    /// adapter refuses changes the session.
+    /// the plan resolved, and its provider must be one the generation just
+    /// published knows: a bare id (which a later start would route to the
+    /// first configured provider) and a provider no configuration names
+    /// (every later start in that directory would fail its first prompt)
+    /// are not recorded. The model itself need not be enumerated or
+    /// runnable now — open-router prefixes accept ids the catalogue cannot
+    /// list, and a credential may arrive later — so the verdict stays a
+    /// verdict. Neither a refused id nor a record the adapter refuses
+    /// changes the session.
     pub fn execute_with_default(
         &self,
         runtime: &mut dyn ModelRuntime,
@@ -109,7 +114,7 @@ impl ChangeActiveModel {
         let persisted = match persist {
             None => None,
             Some(scope) => {
-                let qualified = Self::qualified(&plan)?;
+                let qualified = self.qualified(&plan)?;
                 Some(
                     self.persistence
                         .persist_model(scope, &qualified)
@@ -142,13 +147,25 @@ impl ChangeActiveModel {
         }
     }
 
-    /// The `provider/model` id a plan stands for, if it names one.
-    fn qualified(plan: &ModelSwitchPlan) -> Result<String, ModelSwitchError> {
-        ModelRef::parse_qualified(&plan.model)
-            .map(|reference| reference.qualified_id())
-            .map_err(|_| ModelSwitchError::Unqualified {
+    /// The `provider/model` id a plan stands for, if it names one on a
+    /// provider the published catalogue knows.
+    fn qualified(&self, plan: &ModelSwitchPlan) -> Result<String, ModelSwitchError> {
+        let reference =
+            ModelRef::parse_qualified(&plan.model).map_err(|_| ModelSwitchError::Unqualified {
                 model: plan.model.clone(),
-            })
+            })?;
+        let snapshot = self.store.current();
+        let provider_known = snapshot
+            .entries()
+            .iter()
+            .any(|entry| &entry.provider.id == reference.provider());
+        if !provider_known {
+            return Err(ModelSwitchError::UnknownProvider {
+                model: plan.model.clone(),
+                provider: reference.provider().as_str().to_string(),
+            });
+        }
+        Ok(reference.qualified_id())
     }
 
     /// The published runtime's verdict on `reference` (#1573): known and

@@ -44,7 +44,7 @@ pub fn build_catalogue_handles(
     // prompting — a session has no terminal to approve an overlay at).
     let defaults = Arc::new(match runtime {
         Some(runtime) => ConfigDefaultsWriter::new(
-            super::configuration::build_configuration_handles(&ConfigurationEnvironment {
+            (runtime.configuration)(&ConfigurationEnvironment {
                 base_dir: base_dir.to_path_buf(),
                 prompt_for_trust: false,
             })

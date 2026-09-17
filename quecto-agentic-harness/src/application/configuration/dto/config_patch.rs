@@ -148,12 +148,12 @@ impl std::fmt::Display for ConfigPatchError {
             }
             Self::NotAnObject { path, at } if at.is_empty() => write!(
                 f,
-                "cannot set a key in {}: the document is not a JSON object",
+                "cannot address a key in {}: the document is not a JSON object",
                 path.display()
             ),
             Self::NotAnObject { path, at } => write!(
                 f,
-                "cannot set a key under `{at}` in {}: it is not a JSON object",
+                "cannot address a key under `{at}` in {}: it is not a JSON object",
                 path.display()
             ),
             Self::NotSet { path, key_path } => write!(

@@ -161,11 +161,6 @@ pub fn parse_refresh_outcomes(
     }
     lines
 }
-
-#[cfg(test)]
-#[path = "model_payloads_tests.rs"]
-mod tests;
-
 /// Where a `set_model` / `set_effort` recorded a default (#2024 S2): the
 /// reply's `persisted: {scope, path}`. Absent when the switch was in-memory
 /// only; a malformed object maps to `None` (the switch still happened).
@@ -203,3 +198,7 @@ pub fn parse_persisted_default(
         path: field("path")?,
     })
 }
+
+#[cfg(test)]
+#[path = "model_payloads_tests.rs"]
+mod tests;
