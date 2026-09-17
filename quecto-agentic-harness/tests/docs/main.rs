@@ -7,6 +7,7 @@
 mod common;
 
 mod container_runtime_docs;
+mod container_runtime_safety;
 mod repo_docs;
 mod repository_file_reader;
 mod workflow_config_refactor_template;

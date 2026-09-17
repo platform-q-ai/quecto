@@ -2,7 +2,7 @@
 # Official Podman adapter for the Quecto container-runtime contract: `create`.
 # Modeled on the host-local reference set at scripts/container-runtime/ (see
 # docs/container-runtimes.md for the contract). Verified manually against a
-# local Docker daemon; the CI-exercised default remains the host-local set.
+# local rootless Podman installation; the CI-exercised default remains the host-local set.
 #
 #   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
 # The repository is BAKED INTO the container config's own argv via --repo
@@ -12,7 +12,7 @@
 #              QUECTO_CONTAINER_ENVIRONMENT_REF
 #
 # Design: one container per environment; the child IS the container's main
-# process (docker's view of the container == the child's liveness). All
+# process (Podman's view of the container == the child's liveness). All
 # host paths the child needs are identity-mounted (same path inside and
 # outside), so the parent's --socket/--config CLI args need no rewriting
 # and the UDS socket the child binds appears directly on the host:
@@ -31,20 +31,39 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
-# Runtime CLI: rootless Podman by default. Membership of the `docker` group
-# is root-equivalent on the host (the daemon runs as root and has no policy
-# layer, so anything holding the socket can mount / and escalate), which is
-# exactly what an autonomous agent spawner must not hand out. Rootless
-# Podman runs the container as the invoking user with a user namespace, so
-# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
-# Docker stays a fallback for hosts without Podman.
+# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
+# only as a spelling of Podman, preventing accidental runtime substitution.
+[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
+# Standard support is local rootless Linux only. Refuse rootful, remote, or
+# machine-backed engines before creating any state or launching a workload.
+rootless="$($cli info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || die "Podman is not usable for this user"
+[ "$rootless" = "true" ] || die "standard runtime requires rootless Podman"
+
+# OAuth mediation is opt-in and must identify a dedicated, owner-controlled
+# credential directory. It is never inferred from the host home directory.
+oauth_store="${QUECTO_OAUTH_CREDENTIALS_DIR:-}"
+if [ -n "$oauth_store" ]; then
+  case "$oauth_store" in
+    /*) ;;
+    *) die "QUECTO_OAUTH_CREDENTIALS_DIR must be an absolute path" ;;
+  esac
+  [ -d "$oauth_store" ] || die "OAuth credential store is not a directory: $oauth_store"
+  [ -O "$oauth_store" ] || die "OAuth credential store is not owned by the current user"
+  oauth_real="$(realpath -m "$oauth_store")"
+  host_quecto_real="$(realpath -m "$HOME/.quecto")"
+  [ "$oauth_real" != "$host_quecto_real" ] || die "OAuth store must not be the host ~/.quecto directory"
+  case "$(basename "$oauth_real")" in
+    .quecto-oauth|quecto-credentials) ;;
+    *) die "OAuth store must be a dedicated .quecto-oauth or quecto-credentials directory" ;;
+  esac
+fi
 
 state_dir=""
 repo=""
-image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
+image="${QUECTO_PODMAN_IMAGE:-quecto-box:local}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -114,6 +133,14 @@ container="quecto-$environment_id"
 trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
 workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
+# Private per-environment home prevents credential/config writes from reaching
+# the host and gives refresh coordination a dedicated state boundary.
+mkdir -m 700 "$env_dir/home"
+mkdir -m 700 "$env_dir/home/.quecto"
+# The private home is the default for API-key/config state. OAuth is mounted
+# only when the caller explicitly selects a dedicated, owner-controlled store;
+# this preserves credentials.json's atomic replacement and lock coordination
+# without copying rotating tokens or exposing the host config tree.
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 
 # The clone source is this config's own --repo (#1410); no --repo → sandbox.
@@ -133,13 +160,19 @@ if [ -n "$repo" ]; then
   source="repo"
 fi
 
-# --- Runtime-specific section (Docker) ----------------------------------
+# --- Runtime-specific section (Podman) ----------------------------------
 mounts=(
   -v "$workspace_path:$workspace_path:rw"
   -v "$socket_dir:$socket_dir:rw"
   -v "$child_binary:$child_binary:ro"
-  -v "$HOME/.quecto:$HOME/.quecto:rw"
+  # Never expose the host credential/config tree. Use an environment-private
+  # HOME; OAuth state is mediated by an optional dedicated store rather than
+  # exposing the host credential tree.
+  -v "$env_dir/home:$HOME:rw"
 )
+if [ -n "$oauth_store" ]; then
+  mounts+=(-v "$oauth_store:$HOME/.quecto:rw")
+fi
 if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
   mounts+=(-v "$config_path:$config_path:ro")
 fi
@@ -164,7 +197,7 @@ if [ -n "$admission_dir" ]; then
     ;;
   "$real_quecto"/*)
     # An empty owner-only host directory bound read-only over the authority
-    # root hides journal/admin/token identically under Docker and Podman
+    # root hides journal/admin/token identically under Podman
     # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.
     mask_dir="$env_dir/admission-mask"
     mkdir -m 700 "$mask_dir"
@@ -175,10 +208,9 @@ if [ -n "$admission_dir" ]; then
   admission_capability="shared-directory-v1"
   printf '%s\n' "$admission_dir" >"$env_dir/admission-dir"
 fi
-# HOME is preserved and QUECTO_BASE_DIR is deliberately NOT overridden:
-# QUECTO_BASE_DIR is quecto's credentials/config home ($HOME/.quecto by
-# default). Overriding it inside the container detaches the child from the
-# identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
+# HOME points at the private per-environment mount above. The host's
+# QUECTO_BASE_DIR is intentionally not inherited: credentials and OAuth state
+# must remain inside this environment.
 # Member harness logs go to the container's journald stream. Without RUST_LOG
 # the redacting subscriber is a no-op and an environment that dies leaves no
 # trace of why (termination signal, teardown, socket close). The host can
@@ -187,13 +219,13 @@ envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000
-# to a subuid and every mounted file would look foreign); Docker already maps
+# to a subuid and every mounted file would look foreign); the rootless user namespace maps
 # container uids 1:1 to the host.
 run_as=(--user "$(id -u):$(id -g)")
 if [ "$cli" = podman ]; then
   run_as+=(--userns=keep-id)
 fi
-# --init puts a minimal init (catatonit under Podman, tini under Docker) at
+# --init puts a minimal init (catatonit) at
 # PID 1 with the child as its direct descendant. The child otherwise IS PID 1
 # and inherits two duties a normal binary does not perform: reaping orphaned
 # grandchildren (nested agents whose parent exited pile up as zombies) and
@@ -208,7 +240,7 @@ run_as+=(--init)
 # agent cannot even tear down cleanly, so the whole environment dies and
 # every member disconnects at once. Keep a fence, but a generous one;
 # QUECTO_CONTAINER_PIDS_LIMIT overrides it (-1 defers to the user slice).
-# `0` is refused: Docker reads it as "daemon default" and Podman ignores it
+# `0` is refused because it would disable the pid fence
 # (falling back to the 2048 this fence exists to replace).
 pids_limit="${QUECTO_CONTAINER_PIDS_LIMIT:-16384}"
 case "$pids_limit" in
@@ -219,11 +251,11 @@ run_as+=(--pids-limit "$pids_limit")
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
 # `run -e KEY=value` — that bakes them into the container config,
 # readable for the container's whole lifetime via `inspect` and
-# persisted in /var/lib/docker/containers/<id>/config.v2.json. Instead they
+# persisted in the runtime metadata store. Instead they
 # are written to a 0600 file in the 0700 state dir, identity-mounted ro, and
 # sourced by a bootstrap shell that `exec`s the child — so the child still
 # ends up as PID 1 with the keys in its environment, but the keys never
-# appear in the docker-side container config. (/proc/1/environ inside the
+# appear in the runtime container config. (/proc/1/environ inside the
 # container is unavoidable: joiners there already share $HOME/.quecto.)
 secret_env_file=""
 append_secret() {

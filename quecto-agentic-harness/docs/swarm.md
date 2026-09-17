@@ -455,7 +455,7 @@ stream. Under rootless Podman (journald driver) read them with
 environment id from `get_containers` (add `-f` to follow, `--since` to
 scope); under Docker use `docker logs quecto-env-<id>`. An environment that vanished also leaves a
 `kill.log` entry in the adapter's state root naming the operation that removed
-it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).
+it. See [Container runtimes](../../docs/container-runtimes.md#the-official-podman-adapter).
 
 The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
 contains supervisor command examples, receipt semantics, raw export and budget

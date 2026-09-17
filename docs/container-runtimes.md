@@ -553,156 +553,62 @@ their ancestor session; when such a descendant reports a script-managed direct
 socket, ancestors omit `socketPath` and live commands return a clear
 non-connectable-socket error instead of exposing the container-local path.
 
-## The official Docker/Podman adapter
+## The official Podman adapter
 
-Alongside the host-local reference set (which remains the CI-exercised
-default), the repository ships an official Docker/Podman adapter implementing
-the same contract (the directory keeps its historical `docker` name):
-
-- [`scripts/container-runtime/docker/create.sh`](../scripts/container-runtime/docker/create.sh)
-- [`scripts/container-runtime/docker/exec.sh`](../scripts/container-runtime/docker/exec.sh)
-- [`scripts/container-runtime/docker/inspect.sh`](../scripts/container-runtime/docker/inspect.sh)
-- [`scripts/container-runtime/docker/kill.sh`](../scripts/container-runtime/docker/kill.sh)
-
-The standard rootless Podman adapter has the same contract and lives beside
-this historical Docker adapter:
+The standard runtime is the **rootless Podman-only** adapter. It is selected with
+an explicit `container_configs` entry and never falls back to Docker, a host
+process, a remote Podman connection, or an implicit install/build. The
+versioned scripts are:
 
 - [`scripts/container-runtime/podman/create.sh`](../scripts/container-runtime/podman/create.sh)
 - [`scripts/container-runtime/podman/exec.sh`](../scripts/container-runtime/podman/exec.sh)
 - [`scripts/container-runtime/podman/inspect.sh`](../scripts/container-runtime/podman/inspect.sh)
 - [`scripts/container-runtime/podman/kill.sh`](../scripts/container-runtime/podman/kill.sh)
 
-Select it with a named `container_configs` entry (`"podman"`) and use
-`container_config: "podman"` when spawning. The swarm pool limit is 1–25
-members total, including the coordinator; idle and reserved members count.
-This orchestration limit is independent of Podman's process limit. The
-standard adapter's default `--pids-limit` is 16384 (`-1` delegates to the user
-slice and `0` is refused); threads count against the limit.
+The compatibility files under `scripts/container-runtime/docker/` are not a
+supported standard configuration; callers must not select them. Standard
+launch validates Linux, local rootless Podman, and an owner-controlled image
+before creating state. Missing or stale images fail closed. An image build is
+always an explicit, separately approved operator action.
+For compatibility with older configurations, the retained adapter paths are:
 
-Design properties:
+- `scripts/container-runtime/docker/create.sh`
+- `scripts/container-runtime/docker/exec.sh`
+- `scripts/container-runtime/docker/inspect.sh`
+- `scripts/container-runtime/docker/kill.sh`
 
-- **Rootless Podman by default, Docker as fallback.** Every script resolves
-  its CLI to `podman` when present, else `docker`; `QUECTO_CONTAINER_CLI`
-  overrides. Rootless Podman is the intended runtime for an autonomous
-  spawner: membership of the `docker` group is root-equivalent on the host
-  (the daemon runs as root with no policy layer, so anything holding the
-  socket can bind-mount `/` and escalate), whereas rootless Podman runs the
-  container as the invoking user inside a user namespace. `create.sh` runs
-  the child as the host uid/gid and, under Podman, adds `--userns=keep-id`
-  so the identity-mounted paths keep their ownership inside the container.
-  The `metadata.runtime` field reports whichever CLI was used.
-- **A real init at PID 1.** `create.sh` passes `--init` so a minimal init
-  (catatonit under Podman, tini under Docker) reaps orphaned grandchildren
-  and forwards signals. Without it the child is PID 1 itself: nested agents
-  whose parent exited accumulate as zombies, and `stop` hangs until the
-  SIGKILL escalation because PID 1 ignores an unhandled SIGTERM. The child
-  remains the container's liveness; the init exits when the child does.
-- **One container per environment, child as PID 1.** `create.sh` starts the
-  child as the container's main process, so Docker's view of the container is
-  exactly the child's liveness; `exec.sh` joins later members with
-  `docker exec` into the same container.
-- **Identity bind-mounts.** The per-environment workspace (rw), the parent's
-  socket dir (rw), the child binary (ro), the child's `--config` file (ro,
-  when outside `$HOME/.quecto`), and `$HOME/.quecto` (rw) are mounted at the
-  same path inside and outside, so the child's CLI args need no rewriting and
-  the UDS socket it binds appears directly on the host.
-- **`HOME` preserved, `QUECTO_BASE_DIR` never overridden.** `QUECTO_BASE_DIR`
-  is quecto's credentials/config home; overriding it inside the container
-  detaches the child from the identity-mounted `$HOME/.quecto` and breaks
-  OAuth providers. The scripts carry a comment warning against this.
-- **Image selection.** `--image <img>` on the create argv, or the
-  `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
-  (`quecto-box:local`).
-- **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;
-  `QUECTO_CONTAINER_PIDS_LIMIT` overrides, `-1` defers to the user slice,
-  `0` is refused). Threads count against the container's pid cgroup and the
-  runtime default of 2048 is exhausted by an in-container `cargo test`,
-  after which every fork fails and the environment dies with all its
-  members.
-- **Rollback and containment.** `create.sh` installs an ERR trap that removes
-  partial state and `docker rm -f`s any container it managed to start; every
-  destructive operation proves the environment id contains no path
-  separators and resolves under the trusted `--state-dir` root, mirroring the
-  host-local set. `kill.sh` serves `--op kill` / `--op cleanup` and logs each
-  operation to the state root. Under Podman it bounds the remove's grace to
-  one second (`--time 1`): Docker's `rm -f` kills immediately, Podman's would
-  otherwise wait the container's ten-second stop timeout, which does not fit
-  the parent's signal-driven exit budget.
-- **Strict JSON contract.** All stdout results are emitted with `jq`, exactly
-  matching the `create`/`exec`/`inspect` wire contracts above. `create.sh`
-  reports `metadata.checkout` (the members' working directory, which is the
-  swarm checkout root) so the supervising session can keep a swarm's
-  environment when its coordinator is lost (#1924).
-- **Member harness logs reach journald.** `create.sh` passes
-  `-e RUST_LOG=${RUST_LOG:-info}`; without it the member harness's
-  redacting subscriber is a no-op and an environment that dies leaves no
-  trace of why (termination signal, teardown, socket close). Set `RUST_LOG`
-  on the host before spawning to change the level for that environment. The
-  variable reaches the member harness only: the harness scrubs it (with the
-  `QUECTO_SWARM_*` identity) from every tool child it starts, so a member's
-  `cargo test` or other Rust programs keep their own logging defaults.
-  Under rootless Podman with its default `journald` log driver the
-  container's stdout/stderr land in the user journal, so read a member's
-  logs with:
+They are legacy path names only and do not enable Docker.
 
-  ```sh
-  journalctl --user CONTAINER_NAME=quecto-env-<id>
-  ```
+The adapter creates one container per environment with a real init, a strict
+JSON lifecycle contract, and an environment ID distinct from the session ref.
+Only the workspace, socket sidecar, exact binary (read-only), explicitly
+selected config (read-only), private environment home, and authorized admission
+client directory are mounted. The host `$HOME/.quecto` tree, authority
+journal/admin socket/token, host PID/network, Docker sockets, SSH agent, and
+unrelated credentials are never mounted. `QUECTO_OAUTH_CREDENTIALS_DIR` is an
+optional dedicated owner-controlled `.quecto-oauth` or `quecto-credentials`
+directory; when selected it is the narrow writable OAuth seam, preserving the
+credential store's atomic replacement and lock file. It is never inferred from
+or copied out of the host `$HOME/.quecto`, and API-key-only fallback is not
+performed.
 
-  where `env-<id>` is the environment id from `get_containers` (the
-  container is named `quecto-<environment_id>`). Add `-f` to follow, or
-  `--since`/`--until` around the time an environment was lost. Under Docker
-  (default `json-file` driver) read them with `docker logs quecto-env-<id>`
-  instead; a Podman configured with another driver likewise uses
-  `podman logs`. `kill.sh`
-  additionally logs every kill/cleanup it performs to `kill.log` in the
-  state root, which is the first place to look when an environment vanished.
-- **Host-side clone is transport-restricted.** The repo URL from the config's
-  own `--repo` argv is cloned on the host before any container exists, so
-  `create.sh` runs `git clone` under `GIT_ALLOW_PROTOCOL=file:https:ssh:git` —
-  command-running transports (`ext::…`) can never execute host commands
-  (PR #1401 review; config files travel, so the restriction stays).
-- **Provider API keys never enter the docker-side container config.**
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
-  `FIREWORKS_API_KEY` are written to a `0600` file in the `0700` state dir,
-  identity-mounted read-only, and sourced by a bootstrap `sh` that `exec`s
-  the child (which therefore still ends up as PID 1). Passing them with
-  `docker run -e` would persist them in the container config, readable via
-  `docker inspect` for the container's whole lifetime (PR #1401 review).
-  Requires `/bin/sh` in the image.
-- **GitHub access works inside the environment.** Agent workflows need `gh`
-  and git-over-https pushes, and a host keyring is unreachable from a
-  container. `create.sh` resolves the token host-side (`gh auth token`) and
-  ships it as `GH_TOKEN`/`GITHUB_TOKEN` through the same `0600` secret file;
-  git identity (global gitconfig only, for determinism) and the
-  `gh auth git-credential` helper travel as non-secret `GIT_CONFIG_*`
-  environment entries, so the host gitconfig — which may carry LFS filters or
-  keyring helpers the image lacks — is never mounted. `exec.sh` gives joiners
-  the identical contract (including sourcing the secret file). Requires `gh`
-  in the image for API/push use; everything else degrades gracefully when no
-  token is available.
+Provider API keys and GitHub access use a protected 0600 state file rather than
+argv or inspect metadata. `kill` and `cleanup` are the only destructive
+operations; operation and environment IDs are affirmative-allowlisted before
+state removal. The smoke prerequisite is intentionally non-destructive:
 
-A matching configuration:
-
-```json
-{
-  "container_configs": {
-    "docker": {
-        "default": true,
-        "create": ["/repo/scripts/container-runtime/docker/create.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--repo", "https://github.com/you/project"],
-        "exec": ["/repo/scripts/container-runtime/docker/exec.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
-        "inspect": ["/repo/scripts/container-runtime/docker/inspect.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
-        "kill": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "kill"],
-        "cleanup": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "cleanup"]
-    }
-  }
-}
+```bash
+CONTAINER_RUNTIME_CONFIG=/absolute/path/to/config.json \
+  scripts/container-runtime/smoke.sh
 ```
 
-CI has no container runtime, so the Docker/Podman adapter is not exercised by
-the CI BDD lanes; it is verified manually against local rootless Podman, and its
-shape (existence, fail-fast mode, contract needles, cross-links) is pinned
-by `quecto-agentic-harness/tests/docs/container_runtime_docs.rs`.
+CI does not provide a usable Podman host, so this repository does not claim an
+end-to-end smoke result. After the prerequisite passes on an operator Linux
+host, run the explicit approved image build and lifecycle matrix (create,
+join, inspect, kill, cleanup, repeated cleanup, admission, selected auth, and
+forbidden-tool checks). The embedded `container-runtime` DocsTool page gives
+the binary-only installation, initialization, customization, isolation, and
+troubleshooting contract.
 
 ## How to author another runtime adapter
 
@@ -749,3 +655,22 @@ Actual supported-runtime create/join/nested, cancellation and restart evidence i
 required in P3 before activation. Unsupported enabled transport must fail closed,
 not silently substitute an in-process or container-local budget. No multi-host
 coordination is promised.
+
+### Rootless Podman smoke check
+
+The adapter is Podman-only; it never falls back to Docker, installs software, or
+builds an image implicitly. On a host with Podman configured, run the prerequisite
+smoke check (it is intentionally non-destructive and does not claim container
+creation):
+
+```bash
+CONTAINER_RUNTIME_CONFIG=/absolute/path/to/config.json \
+  scripts/container-runtime/smoke.sh
+```
+
+The script prints the Podman version, config path, and repository root. Exit 127
+means Podman is missing; exit 125 means Podman is not usable for the invoking user.
+After it passes, exercise creation/join/exec/inspect/kill using the configured
+scripts. Keep credentials out of mounts: use a private container home and only
+explicitly mediated configuration/state paths. Do not mount the host
+`~/.quecto` directory wholesale.

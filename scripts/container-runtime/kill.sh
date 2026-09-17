@@ -68,8 +68,14 @@ if [ -f "$env_dir/children.jsonl" ]; then
   # long-lived environments; a real adapter kills the runtime container (a
   # stable handle) instead of raw pids.
   while IFS= read -r pid; do
-    kill -9 "$pid" 2>/dev/null || true
-  done < <(jq -r '.pid' "$env_dir/children.jsonl")
+    # Affirmative PID allowlist: malformed and privileged process IDs never
+    # reach kill(2), even when state metadata is corrupted or attacker-written.
+    case "$pid" in
+      ''|*[!0-9]*) continue ;;
+      0|1) continue ;;
+    esac
+    kill -9 -- "$pid" 2>/dev/null || true
+  done < <(jq -r 'select(type == "object" and (.pid | type == "number") and (.pid | floor == .) and .pid > 1) | .pid' "$env_dir/children.jsonl")
 fi
 if [ "$op" = "cleanup" ]; then
   # cleanup is terminal: remove the ENTIRE per-environment state directory so

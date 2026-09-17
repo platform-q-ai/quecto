@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Official Docker adapter for the Quecto container-runtime contract: `exec` (join).
+# Legacy-path Podman adapter for the Quecto container-runtime contract: `exec` (join).
 #   exec.sh --state-dir <dir> -- <child-binary> <child-args...>
 # Environment: QUECTO_CONTAINER_CONFIG, QUECTO_CONTAINER_ENVIRONMENT_ID
 #
@@ -9,29 +9,19 @@
 # reachable from the host without extra mounts.
 set -euo pipefail
 
-log() { printf 'container-runtime-docker exec: %s\n' "$*" >&2; }
+log() { printf 'container-runtime-podman exec: %s\n' "$*" >&2; }
 die() {
   log "$@"
   exit 1
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
-# Runtime CLI: rootless Podman by default. Membership of the `docker` group
-# is root-equivalent on the host (the daemon runs as root and has no policy
-# layer, so anything holding the socket can mount / and escalate), which is
-# exactly what an autonomous agent spawner must not hand out. Rootless
-# Podman runs the container as the invoking user with a user namespace, so
-# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
-# Docker stays a fallback for hosts without Podman.
-cli="${QUECTO_CONTAINER_CLI:-}"
-if [ -z "$cli" ]; then
-  if command -v podman >/dev/null 2>&1; then
-    cli=podman
-  elif command -v docker >/dev/null 2>&1; then
-    cli=docker
-  fi
-fi
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
+# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
+# only as a spelling of Podman, preventing accidental runtime substitution.
+[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
+cli=podman
+[ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do
@@ -87,7 +77,7 @@ envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWA
 # Joiners get the same environment contract as the creator: git identity +
 # gh credential helper as non-secret GIT_CONFIG_* entries, and the 0600
 # provider-env file (API keys + GH token) sourced by a bootstrap so secrets
-# never enter the docker-side exec config.
+# never enter the runtime exec config.
 gcfg_i=0
 add_git_cfg() {
   envs+=(-e "GIT_CONFIG_KEY_${gcfg_i}=$1" -e "GIT_CONFIG_VALUE_${gcfg_i}=$2")
@@ -103,7 +93,7 @@ if [ -f "$secret_env_file" ] && grep -q '^export GH_TOKEN=' "$secret_env_file"; 
 fi
 [ "$gcfg_i" -gt 0 ] && envs+=(-e "GIT_CONFIG_COUNT=$gcfg_i")
 # stdout is the strict JSON contract; `podman exec -d` prints the exec
-# session id (docker prints nothing), so both branches discard stdout.
+# session id (Podman may print an exec session id), so both branches discard stdout.
 if [ -f "$secret_env_file" ]; then
   "$cli" exec -d -w "$workdir" "${envs[@]}" \
     "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null

@@ -151,12 +151,13 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         "QUECTO_CONTAINER_ENVIRONMENT_REF",
         "QUECTO_BASE_DIR",
         "OAuth",
-        // Identity bind-mounts (same path inside and outside): workspace rw,
-        // socket dir rw, child binary ro, $HOME/.quecto rw with HOME kept.
+        // Least-privilege mounts: workspace/socket rw, binary ro, private
+        // per-environment HOME rw; the host credential tree is never mounted.
         "$workspace_path:$workspace_path:rw",
         "$socket_dir:$socket_dir:rw",
         "$child_binary:$child_binary:ro",
-        "$HOME/.quecto:$HOME/.quecto:rw",
+        "$env_dir/home:$HOME:rw",
+        "QUECTO_OAUTH_CREDENTIALS_DIR",
         // PR #1401 review: host-side clone of the agent-supplied repo URL must
         // whitelist git transports (no `ext::` command execution on the host).
         "GIT_ALLOW_PROTOCOL",
@@ -207,8 +208,8 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
     for script in [DOCKER_SCRIPTS[1], DOCKER_SCRIPTS[2], DOCKER_SCRIPTS[3]] {
         let content = read_workspace_file(script);
         assert!(
-            content.contains("*/* | *..*)"),
-            "{script} should contain the environment-id containment check"
+            content.contains("*[!A-Za-z0-9_.-]*") || content.contains("*/* | *..*)"),
+            "{script} should contain the affirmative environment-id allowlist"
         );
     }
 }
@@ -343,12 +344,16 @@ fn run_docker_create_with_fake_cli(rust_log: Option<&str>) -> (Vec<String>, serd
     fs::write(
         &fake_cli,
         format!(
-            "#!/usr/bin/env bash\nif [ \"$1\" = run ]; then printf '%s\\n' \"$@\" > '{}'; fi\nexit 0\n",
+            "#!/usr/bin/env bash\nif [ \"$1\" = info ]; then printf 'true\\n'; exit 0; fi\nif [ \"$1\" = run ]; then printf '%s\\n' \"$@\" > '{}'; fi\nexit 0\n",
             argv_log.display()
         ),
     )
     .unwrap();
     fs::set_permissions(&fake_cli, fs::Permissions::from_mode(0o700)).unwrap();
+    let fake_bin = dir.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let fake_podman = fake_bin.join("podman");
+    fs::copy(&fake_cli, &fake_podman).unwrap();
     let home = dir.path().join("home");
     fs::create_dir_all(home.join(".quecto")).unwrap();
     let socket_dir = dir.path().join("sockets");
@@ -361,7 +366,8 @@ fn run_docker_create_with_fake_cli(rust_log: Option<&str>) -> (Vec<String>, serd
         .arg(socket_dir.join("child.sock"))
         .env_remove("RUST_LOG")
         .env("HOME", &home)
-        .env("QUECTO_CONTAINER_CLI", &fake_cli)
+        .env_remove("QUECTO_CONTAINER_CLI")
+        .env("PATH", format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap_or_default()))
         .env("QUECTO_CONTAINER_ENVIRONMENT_REF", "C1");
     if let Some(level) = rust_log {
         command.env("RUST_LOG", level);

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Official Docker adapter for the Quecto container-runtime contract: `inspect`.
+# Official Podman adapter for the Quecto container-runtime contract: `inspect`.
 #   inspect.sh --state-dir <dir>
 # Environment: QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Reports the container's truth post-mortem. Bounded by Quecto's 5s
-# inspect timeout, so only cheap `podman`/`docker inspect` calls happen here.
+# inspect timeout, so only cheap Podman inspect calls happen here.
 set -euo pipefail
 
 log() { printf 'container-runtime-podman inspect: %s\n' "$*" >&2; }
@@ -14,16 +14,12 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the inspect result"
-# Runtime CLI: rootless Podman by default. Membership of the `docker` group
-# is root-equivalent on the host (the daemon runs as root and has no policy
-# layer, so anything holding the socket can mount / and escalate), which is
-# exactly what an autonomous agent spawner must not hand out. Rootless
-# Podman runs the container as the invoking user with a user namespace, so
-# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
-# Docker stays a fallback for hosts without Podman.
+# Runtime CLI: rootless Podman is mandatory. The explicit override is accepted
+# only as a spelling of Podman, preventing accidental runtime substitution.
+[ "$(uname -s)" = "Linux" ] || die "Podman runtime requires Linux"
 cli=podman
 [ -z "${QUECTO_CONTAINER_CLI:-}" ] || [ "${QUECTO_CONTAINER_CLI}" = podman ] || die "Podman-only adapter rejects QUECTO_CONTAINER_CLI"
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman is required"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do

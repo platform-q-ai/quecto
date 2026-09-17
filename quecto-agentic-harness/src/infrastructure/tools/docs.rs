@@ -58,8 +58,8 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         include_str!("../../../docs/docs-tool-embeds/models.md"),
     ),
     (
-        "podman",
-        include_str!("../../../docs/docs-tool-embeds/podman.md"),
+        "container-runtime",
+        include_str!("../../../docs/docs-tool-embeds/container-runtime.md"),
     ),
 ];
 
