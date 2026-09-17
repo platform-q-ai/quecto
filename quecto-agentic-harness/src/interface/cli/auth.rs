@@ -241,7 +241,7 @@ pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     out.stdout.clear();
 }
 
-fn resolve_oauth_config(
+pub(super) fn resolve_oauth_config(
     ctx: &CliContext,
     provider: &str,
     flow_name: &str,

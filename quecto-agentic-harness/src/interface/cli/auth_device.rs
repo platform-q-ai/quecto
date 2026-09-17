@@ -1,6 +1,8 @@
 //! Headless device-code authentication flow.
 
 use super::{CliContext, Output};
+use super::auth::resolve_oauth_config;
+use crate::interface::cli::build_tokio_runtime;
 
 /// Device code login flow for headless environments.
 pub(super) fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
@@ -17,7 +19,7 @@ pub(super) fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: 
         return 1;
     }
 
-    let rt = match super::build_tokio_runtime() {
+    let rt = match build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr

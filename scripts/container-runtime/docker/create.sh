@@ -32,15 +32,7 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
-# OAuth uses one explicit credential directory; retain the variable even on
-# this legacy Podman path so set -u cannot turn compatibility into a crash.
-oauth_store="${QUECTO_OAUTH_CREDENTIALS_DIR:-}"
-if [ -n "$oauth_store" ]; then
-  case "$oauth_store" in /*) ;; *) die "QUECTO_OAUTH_CREDENTIALS_DIR must be absolute" ;; esac
-  [ -d "$oauth_store" ] && [ ! -L "$oauth_store" ] || die "OAuth credential store must be a real directory"
-  [ -O "$oauth_store" ] || die "OAuth credential store is not owned by current user"
-fi
-require_local_rootless_podman {
+require_local_rootless_podman() {
   # SECURITY: the standard adapter is deliberately local-only.  Refuse every
   # environment selector that can redirect Podman to a service, socket, or
   # named connection; an empty value is the only local configuration.
