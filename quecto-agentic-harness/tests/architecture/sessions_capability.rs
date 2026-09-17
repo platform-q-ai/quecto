@@ -81,9 +81,12 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/list_sessions_discover.rs",
+    "src/application/sessions/use_cases/list_sessions_observations.rs",
     "src/application/sessions/use_cases/save_session_home.rs",
     "src/application/sessions/use_cases/resume_saved_session_admission.rs",
+    "src/application/sessions/use_cases/resume_saved_session_startup.rs",
     "src/application/sessions/dto/resume_disposition.rs",
+    "src/application/sessions/dto/startup_refusal.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -569,9 +572,17 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2009: query-local catalogue projection and Git discovery cache live in
     // the helper; this owner is the listing query and remains decrease-only.
     ("src/application/sessions/use_cases/list_sessions.rs", 57),
+    // R2-M1 reads the exact authority for a record the catalogue has no row
+    // for; the query-local observation cache moved to its own helper so the
+    // projection stays under its ceiling (141 → 126) and the cache is pinned
+    // at its delivered size.
     (
         "src/application/sessions/use_cases/list_sessions_discover.rs",
-        141,
+        126,
+    ),
+    (
+        "src/application/sessions/use_cases/list_sessions_observations.rs",
+        49,
     ),
     ("src/application/sessions/use_cases/read_history.rs", 90),
     ("src/application/sessions/use_cases/recover_message.rs", 140),
@@ -606,12 +617,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/resume_saved_session.rs",
         208,
     ),
+    // R2-H1/H2: startup admission (the actionable refusal, the orphan-home
+    // rule) is its own helper; the shared admission shrank 67 → 48.
     (
         "src/application/sessions/use_cases/resume_saved_session_admission.rs",
-        67,
+        48,
+    ),
+    (
+        "src/application/sessions/use_cases/resume_saved_session_startup.rs",
+        56,
     ),
     ("src/application/sessions/dto/resume_saved_session.rs", 123),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
+    ("src/application/sessions/dto/startup_refusal.rs", 40),
     // D9 #1978: retained context.
     ("src/application/sessions/use_cases/recall_context.rs", 80),
     ("src/application/sessions/use_cases/retain_context.rs", 118),
@@ -653,15 +671,23 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/context_spill.rs", 377),
     ("src/infrastructure/persistence/session_layout.rs", 94),
     ("src/infrastructure/persistence/session_ownership.rs", 229),
-    ("src/infrastructure/persistence/session_store.rs", 700),
+    // R2-H2: the empty-save delete moved beside the home sidecar it now
+    // removes (`session_store_home.rs`); the store is back at 687.
+    ("src/infrastructure/persistence/session_store.rs", 687),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,
     ),
     ("src/infrastructure/persistence/session_store_list.rs", 31),
+    // R2-L3: the per-record read (cached summary, header parse, layout
+    // check, every skip logged) is its own helper; the walk shrank 110 → 68.
     (
         "src/infrastructure/persistence/session_store_list_scan.rs",
-        110,
+        68,
+    ),
+    (
+        "src/infrastructure/persistence/session_store_list_record.rs",
+        98,
     ),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),

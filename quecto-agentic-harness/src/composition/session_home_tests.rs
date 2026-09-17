@@ -6,6 +6,7 @@ use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::dto::{
     ListSessionsRequest, ResumeSavedSessionError, SaveTrigger, SessionListQuery, SessionListScope,
+    StartupRefusal,
 };
 use crate::application::sessions::use_cases::{
     DepartingChildren, ListSessions, ResumeSavedSession, SaveSession,
@@ -128,10 +129,10 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
     assert!(
         matches!(
             refused,
-            ResumeSavedSessionError::StartupScope {
+            ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::DifferentExecutionDirectory,
                 ..
-            }
+            })
         ),
         "{refused:?}"
     );
@@ -142,10 +143,10 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
     assert!(
         matches!(
             refused,
-            ResumeSavedSessionError::StartupScope {
+            ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::LegacyUnscoped,
                 ..
-            }
+            })
         ),
         "{refused:?}"
     );

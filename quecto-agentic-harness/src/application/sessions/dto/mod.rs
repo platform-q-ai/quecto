@@ -15,6 +15,7 @@ pub mod rewind_conversation;
 pub mod save_session;
 pub mod session_report;
 pub mod start_fresh_conversation;
+pub mod startup_refusal;
 pub mod sync;
 
 pub use clear_conversation::{ClearConversationError, ClearedConversation};
@@ -37,6 +38,7 @@ pub use start_fresh_conversation::{
     FleetSettled, FleetSettlementOutcome, FreshConversationStarted, SessionTransition,
     SessionTransitionRefused, StartFreshConversationError,
 };
+pub use startup_refusal::StartupRefusal;
 pub use sync::{SyncRequest, TranscriptDelta, TranscriptReset, TranscriptSync};
 
 /// Which saved sessions a list query covers (#1861).

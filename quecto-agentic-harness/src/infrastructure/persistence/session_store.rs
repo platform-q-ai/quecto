@@ -83,25 +83,6 @@ impl FileSessionStore {
         .await
     }
 
-    /// An empty save is no session: the transcript goes, and with it the
-    /// home sidecar (#2009) — a home without a transcript is never
-    /// authority, and an ephemeral run leaves no durable metadata behind.
-    async fn delete_session_file_if_present(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Result<(), DomainError> {
-        match tokio::fs::remove_file(self.session_path(identity)).await {
-            Ok(()) => (),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => (),
-            Err(err) => {
-                return Err(DomainError::Session(format!(
-                    "failed to delete empty session: {err}"
-                )));
-            }
-        }
-        self.discard_orphan_home(identity)
-    }
-
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(self.layout.sessions_dir())
             .await

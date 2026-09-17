@@ -158,6 +158,23 @@ impl FileSessionStore {
         Ok(())
     }
 
+    /// An empty save is no session: the transcript goes, and with it the
+    /// home sidecar (#2009) — a home without a transcript is never authority.
+    pub(super) async fn delete_session_file_if_present(
+        &self,
+        identity: &SessionIdentity,
+    ) -> Result<(), DomainError> {
+        match tokio::fs::remove_file(self.session_path(identity)).await {
+            Ok(()) => self.discard_orphan_home(identity),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.discard_orphan_home(identity)
+            }
+            Err(e) => Err(DomainError::Session(format!(
+                "failed to delete empty session: {e}"
+            ))),
+        }
+    }
+
     /// A home sidecar without a transcript is not authority — a save that
     /// never committed a message, or a transcript removed by hand — and
     /// must not lock the key to a directory with no history. Removed under

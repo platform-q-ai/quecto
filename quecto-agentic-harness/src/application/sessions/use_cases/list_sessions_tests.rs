@@ -63,6 +63,7 @@ impl SessionStore for ScriptedStore {
 fn summary(key: &str, updated: Option<u64>) -> SessionSummary {
     SessionSummary {
         key: key.to_string(),
+        identity: SessionIdentity::from_persisted_key(key),
         title: format!("title of {key}"),
         message_count: 2,
         updated_unix_secs: updated,

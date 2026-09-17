@@ -46,6 +46,9 @@ impl SessionStore for RecordingStore {
             } else {
                 Ok(vec![SessionSummary {
                     key: "chat-1".into(),
+                    identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                        "chat-1",
+                    ),
                     title: "hi".into(),
                     message_count: 1,
                     updated_unix_secs: Some(1),

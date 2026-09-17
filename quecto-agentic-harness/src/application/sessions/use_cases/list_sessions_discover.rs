@@ -2,12 +2,11 @@
 //! Resume still admits under its claim; observations here are advisory
 //! and live for one query only.
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession, SessionListScope};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::session::SessionSummary;
-use crate::domain::session_home::{HomeAdmission, SessionHome, SessionHomeScope};
+use crate::domain::session_home::{SessionHome, SessionHomeScope};
 use crate::domain::session_identity::SessionIdentity;
 
 /// Catalogue rows keyed by runtime key; `None` when authority is unavailable.
@@ -36,7 +35,7 @@ pub(super) async fn discover(
                 // truncated transcript): the authority is read exactly, as
                 // admission reads it, so listing and resume agree; only an
                 // authority that cannot be read is unavailable here.
-                None => exact_home(home, &summary.key, &mut result.diagnostics),
+                None => exact_home(home, &summary.identity, &mut result.diagnostics),
             },
             None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
         };
@@ -61,16 +60,13 @@ pub(super) async fn discover(
 /// catalogue has no row for.
 fn exact_home(
     home: Option<&SessionHomeContext>,
-    key: &str,
+    identity: &SessionIdentity,
     diagnostics: &mut Vec<String>,
 ) -> SessionHomeScope {
     let Some(context) = home else {
         return SessionHomeScope::Unavailable("record not in catalogue".into());
     };
-    match context
-        .catalogue
-        .read(&SessionIdentity::from_persisted_key(key))
-    {
+    match context.catalogue.read(identity) {
         Ok(scope) => scope,
         Err(error) => {
             diagnostics.push(format!("record not in catalogue; home unreadable: {error}"));
@@ -124,43 +120,6 @@ async fn catalogue_rows(
     }
 }
 
-fn seed_observations(
-    context: Option<&SessionHomeContext>,
-    current: Option<&SessionHome>,
-) -> HashMap<PathBuf, Option<SessionHome>> {
-    let mut observations = HashMap::new();
-    if let (Some(context), Some(current)) = (context, current) {
-        if let Ok(execution_dir) = &context.execution_dir {
-            observations.insert(execution_dir.clone(), Some(current.clone()));
-        }
-        observations.insert(current.execution_dir.clone(), Some(current.clone()));
-    }
-    observations
-}
-
-/// Advisory eligibility by the one domain rule, over cached observations.
-async fn resume_eligible(
-    context: Option<&SessionHomeContext>,
-    current: Option<&SessionHome>,
-    home: &SessionHomeScope,
-    observations: &mut HashMap<PathBuf, Option<SessionHome>>,
-) -> bool {
-    let (Some(context), Some(current), SessionHomeScope::Scoped(saved)) = (context, current, home)
-    else {
-        return false;
-    };
-    if !observations.contains_key(&saved.execution_dir) {
-        let observed = context
-            .discovery
-            .discover_async(&saved.execution_dir)
-            .await
-            .ok();
-        observations.insert(saved.execution_dir.clone(), observed);
-    }
-    observations
-        .get(&saved.execution_dir)
-        .and_then(Option::as_ref)
-        .is_some_and(|observed| {
-            SessionHome::admission(saved, observed, current) == HomeAdmission::Eligible
-        })
-}
+#[path = "list_sessions_observations.rs"]
+mod list_sessions_observations;
+use list_sessions_observations::{resume_eligible, seed_observations};

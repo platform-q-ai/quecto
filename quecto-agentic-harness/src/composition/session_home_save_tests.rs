@@ -14,6 +14,9 @@ use crate::domain::{message::Message, session::Session};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use std::path::PathBuf;
 
+#[path = "session_home_orphan_tests.rs"]
+mod orphan_tests;
+
 fn save_in(
     identity: &SessionIdentity,
     store: Arc<FileSessionStore>,

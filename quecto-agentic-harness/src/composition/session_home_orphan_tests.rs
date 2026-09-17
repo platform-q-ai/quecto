@@ -3,7 +3,7 @@
 //! durable metadata, so its name is not locked to a directory with no
 //! history; an orphan sidecar found at startup is discarded, never
 //! inherited by the first transcript written under the key.
-use super::*;
+use super::super::*;
 use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::use_cases::{DepartingChildren, ResumeSavedSession, SaveSession};

@@ -10,6 +10,9 @@ fn discovery_preserves_identity_and_authoritative_admission() {
         sessions: vec![ListedSession {
             summary: SessionSummary {
                 key: "opaque:key".into(),
+                identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                    "opaque:key",
+                ),
                 title: "unsafe\u{1b}title".into(),
                 message_count: 2,
                 updated_unix_secs: Some(7),

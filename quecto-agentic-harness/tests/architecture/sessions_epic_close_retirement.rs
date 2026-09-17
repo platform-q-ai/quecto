@@ -56,7 +56,10 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[
     "src/application/agent_loop.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/infrastructure/persistence/session_store.rs",
-    "src/infrastructure/persistence/session_store_list_scan.rs",
+    // R2-L3: the per-record read (and its one conversion) moved out of the
+    // directory walk into `session_store_list_record.rs`; the walk itself
+    // no longer converts (the summary carries its identity).
+    "src/infrastructure/persistence/session_store_list_record.rs",
     "src/infrastructure/tools/recall.rs",
 ];
 
