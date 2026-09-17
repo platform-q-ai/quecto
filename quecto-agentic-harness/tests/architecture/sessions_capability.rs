@@ -81,6 +81,9 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/list_sessions_discover.rs",
+    "src/application/sessions/use_cases/save_session_home.rs",
+    "src/application/sessions/use_cases/resume_saved_session_admission.rs",
+    "src/application/sessions/dto/resume_disposition.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -514,8 +517,21 @@ const SANITIZER_CALLERS: &[&str] = &[
 
 /// Decrease-only line ceilings of the list/owner files (file, ceiling).
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
-// #2009: scoped discovery/admission extends existing owners; changed ceilings
-// pin their delivered size, retain the 750-line cap and remain decrease-only.
+// #2009: scoped discovery/admission extends existing owners. After the review
+// splits (list_sessions_discover, save_session_home, resume_saved_session_admission,
+// dto/resume_disposition, composition/session_home, uds_dispatch_discovery) the
+// owners that remain above master are: ports.rs 148→150 (the `session_home`
+// port module declaration), save_session.rs 268→282 (home context field, the
+// two prepare_home calls), resume_saved_session.rs 191→208 (mandatory home
+// context, admission under the claim guard at load and startup),
+// dto/resume_saved_session.rs 114→123 (the `Scope` refusal and its Display),
+// active_session.rs 117→126 (the home context handed to save and resume),
+// composition/sessions.rs 61→70 (`build_session_handles_over`),
+// session_layout.rs 83→94 (the `.home` and `home.catalogue` paths),
+// session_store.rs 687→700 (the summary cache and the home/catalogue
+// submodules), uds_dispatch_session.rs 241→259 (`handle_list_sessions`),
+// controller.rs 36→42 (the typed scoped result). Every pin is the delivered
+// size, retains the 750-line cap and remains decrease-only.
 const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/durable_prefix.rs", 42),
     // D7 #1976 folds the interface reset composition into `switch_to`
@@ -552,10 +568,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2009: query-local catalogue projection and Git discovery cache live in
     // the helper; this owner is the listing query and remains decrease-only.
-    ("src/application/sessions/use_cases/list_sessions.rs", 67),
+    ("src/application/sessions/use_cases/list_sessions.rs", 57),
     (
         "src/application/sessions/use_cases/list_sessions_discover.rs",
-        142,
+        141,
     ),
     ("src/application/sessions/use_cases/read_history.rs", 90),
     ("src/application/sessions/use_cases/recover_message.rs", 140),
@@ -563,7 +579,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/synchronize_transcript.rs",
         110,
     ),
-    ("src/application/sessions/use_cases/save_session.rs", 294),
+    ("src/application/sessions/use_cases/save_session.rs", 282),
+    (
+        "src/application/sessions/use_cases/save_session_home.rs",
+        38,
+    ),
     (
         "src/application/sessions/use_cases/clear_conversation.rs",
         105,
@@ -584,9 +604,14 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/application/sessions/use_cases/resume_saved_session.rs",
-        267,
+        208,
     ),
-    ("src/application/sessions/dto/resume_saved_session.rs", 143),
+    (
+        "src/application/sessions/use_cases/resume_saved_session_admission.rs",
+        67,
+    ),
+    ("src/application/sessions/dto/resume_saved_session.rs", 123),
+    ("src/application/sessions/dto/resume_disposition.rs", 30),
     // D9 #1978: retained context.
     ("src/application/sessions/use_cases/recall_context.rs", 80),
     ("src/application/sessions/use_cases/retain_context.rs", 118),
@@ -601,11 +626,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
     // before D8); D10 #1979 drops the raw-key conversion (was 119).
-    ("src/composition/active_session.rs", 137),
+    ("src/composition/active_session.rs", 126),
     ("src/composition/session_report.rs", 40),
     // D7 #1976 adds the fresh-identity generator builder (was 38 before D7);
     // D9 #1978 adds the retention store and graph builder (was 48 before D9).
-    ("src/composition/sessions.rs", 75),
+    ("src/composition/sessions.rs", 70),
+    ("src/composition/session_home.rs", 38),
     ("src/composition/fleet_settlement.rs", 39),
     (
         "src/infrastructure/persistence/session_snapshot_sources.rs",
@@ -642,8 +668,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/agent/run_session.rs", 130),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
-    // #2009 adds scoped query mapping; retain master's query extraction.
-    ("src/interface/cli/uds_dispatch_query.rs", 214),
+    // #2009: the discovery presenter is its own owner; the query extraction
+    // shrinks below master (was 187).
+    ("src/interface/cli/uds_dispatch_query.rs", 174),
+    ("src/interface/cli/uds_dispatch_discovery.rs", 50),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     ("src/interface/cli/uds_dispatch_session.rs", 259),
     ("src/interface/cli/uds_latest_report.rs", 85),
@@ -651,13 +679,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (was 305 before D9).
     // #1845 split the single-client loop out of uds_lifecycle (311 → 203);
     // the moved lines are ratcheted at their new home.
-    ("src/interface/cli/uds_lifecycle.rs", 203),
+    ("src/interface/cli/uds_lifecycle.rs", 193),
     ("src/interface/cli/uds_single_client.rs", 127),
     ("src/interface/cli/uds_multi.rs", 633),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
     // types the loop's identity and reads the key from the active session
     // (was 125).
-    ("src/interface/cli/uds_session_handles.rs", 123),
+    ("src/interface/cli/uds_session_handles.rs", 121),
     // D10 #1979: the tracker keeps no session key; the presenters, the
     // workflow-nudge descendant check and the agent loop's key accessor are
     // pinned at their D10 size.
@@ -675,7 +703,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 256),
     ("src/interface/cli/uds_sync.rs", 135),
-    ("src/interface/uds/sessions/controller.rs", 67),
+    ("src/interface/uds/sessions/controller.rs", 42),
     ("src/interface/uds/sessions/export_report_controller.rs", 45),
     ("src/interface/uds/sessions/read_history_controller.rs", 90),
     (

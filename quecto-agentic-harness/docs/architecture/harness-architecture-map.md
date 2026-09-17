@@ -99,9 +99,13 @@ Important invariants before Phase 4:
 `src/domain/session_identity.rs`, `src/domain/conversation_view.rs` and
 `src/domain/conversation_edit.rs`; the sessions capability in
 `src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
-`active_session.rs`, `conversation_ledger.rs`); persistence adapters in
-`src/infrastructure/persistence/` and `src/infrastructure/session_export.rs`;
-the graph in `src/composition/{sessions,active_session,session_report,
+`active_session.rs`, `conversation_ledger.rs`, `session_home.rs`); persistence
+adapters in `src/infrastructure/persistence/` and
+`src/infrastructure/session_export.rs`; workspace discovery adapters in
+`src/infrastructure/workspace/` (`git_scope_discovery.rs`,
+`filesystem_scope.rs` — the only production spawns of `git`, resolved on PATH
+once and run off the async executor); the graph in
+`src/composition/{sessions,session_home,active_session,session_report,
 retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
 and the session modules of `src/interface/cli/`.
 
@@ -138,9 +142,12 @@ The wire protocol was unchanged by epic #1968. Folder-aware discovery
 (#2009, parent #2001) extends the existing sessions query/save/resume owners;
 it does not change opaque `SessionIdentity` or the global `FlatSessionLayout`.
 Home metadata is separate from identity. Git-reported common-dir/worktree
-relationships and canonical paths define discovery grouping; identical group
-membership does not authorize restore in another execution directory.
-Cross-folder executors and metadata search are later slices, not #2009.
+relationships and canonical paths define discovery grouping; the one
+eligibility rule is the domain's `SessionHome::admission`, and identical group
+membership does not authorize restore in another execution directory. The
+home context is composed once per loop over the one file store and is
+mandatory for resume. Cross-folder executors and metadata search are later
+slices, not #2009.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a
