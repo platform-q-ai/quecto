@@ -137,14 +137,15 @@ fn subagents_embed_teaches_container_environments() {
         "Container spawning",
         "container: true",
         "container_config",
-        "Available container configs",
+        "config get --effective container_configs",
+        "config set --local container_configs",
         "sandbox",
         "\"mode\":\"existing\"",
         "environment_ref=C1",
         "get_containers",
         "kill_container",
         "absolute path",
-        "parent's own effective config path",
+        "effective configuration",
     ] {
         assert!(doc.contains(needle), "subagents embed misses {needle}");
     }

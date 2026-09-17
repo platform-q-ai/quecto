@@ -170,6 +170,9 @@ fn composed_context_layers_the_working_directory_overlay_over_the_global_config(
         base_dir: Some(tmp.path().to_path_buf()),
         cwd: Some(cwd.clone()),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(

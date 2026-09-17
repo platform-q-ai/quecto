@@ -17,7 +17,8 @@ use crate::application::configuration::dto::ConfigSelection;
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::infrastructure::config::container_configs::{
-    ContainerConfigsFromEffectiveConfig, ResolvedConfig,
+    ContainerConfigsFromEffectiveConfig, ExplicitConfigLoader, LaunchingAgentConfigLoader,
+    ResolvedConfig,
 };
 use crate::interface::cli::configuration_handles::{
     ConfigurationEnvironment, ConfigurationHandles,
@@ -56,13 +57,12 @@ pub fn build_effective_container_configs(
         base_dir: base_dir.to_path_buf(),
         prompt_for_trust: false,
     });
-    let launching_agent = launching_agent.map(|selection| {
+    let launching_agent: Option<LaunchingAgentConfigLoader> = launching_agent.map(|selection| {
         let handles = handles.clone();
-        let loader: Arc<dyn Fn() -> Result<ResolvedConfig, String> + Send + Sync> =
-            Arc::new(move || resolve(&handles, &selection));
+        let loader: LaunchingAgentConfigLoader = Arc::new(move || resolve(&handles, &selection));
         loader
     });
-    let explicit: Arc<dyn Fn(&Path) -> Result<ResolvedConfig, String> + Send + Sync> =
+    let explicit: ExplicitConfigLoader =
         Arc::new(move |path| resolve(&handles, &ConfigSelection::Explicit(path.to_path_buf())));
     Arc::new(ContainerConfigsFromEffectiveConfig::new(
         launching_agent,
