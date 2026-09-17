@@ -187,8 +187,10 @@ fn read_parse_and_write_failures_are_reported() {
             .unwrap_err(),
         ConfigPatchError::Parse { .. }
     ));
-    let mut store = MemoryStore::default();
-    store.fail_writes = true;
+    let store = MemoryStore {
+        fail_writes: true,
+        ..Default::default()
+    };
     let error = use_case(Arc::new(store), Arc::new(FakeTrust::default()))
         .execute(patch(ConfigLayer::Global, GLOBAL, "a", json!(1)))
         .unwrap_err();

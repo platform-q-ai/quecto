@@ -26,7 +26,8 @@ fn a_valid_overlay_is_approved_by_content() {
 
 #[test]
 fn nothing_that_would_not_apply_is_approved() {
-    let cases: [(&str, fn(&OverlayTrustError) -> bool); 5] = [
+    type Expectation = fn(&OverlayTrustError) -> bool;
+    let cases: [(&str, Expectation); 5] = [
         ("{ nope", |e| matches!(e, OverlayTrustError::Parse { .. })),
         ("[1]", |e| matches!(e, OverlayTrustError::NotAnObject(_))),
         (
