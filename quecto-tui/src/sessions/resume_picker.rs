@@ -298,7 +298,13 @@ impl ResumePicker {
                 lines.extend(rendered);
             }
             lines.extend(details.into_iter().take(detail_rows));
-            lines.push(format!("Tab: {footer} · ↑↓ · Enter open · Esc close"));
+            // The full footer is 67 cells; narrower panels drop the key hints
+            // before the section names so the focus cue always survives.
+            lines.push(if content_width >= 67 {
+                format!("Tab: {footer} · ↑↓ · Enter open · Esc close")
+            } else {
+                format!("Tab: {footer}")
+            });
             lines
         });
         let visible_height = lines.len().min(height.saturating_sub(4));

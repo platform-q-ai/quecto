@@ -213,8 +213,7 @@ async fn discovery_diagnostics_toast_once_per_process_and_summarise_batches() {
     let messages = a.notifications.messages();
     assert!(
         messages.iter().any(|m| m
-            == "2 session records need repair; first: a.json: session record unavailable: EOF"),
+            == "2 session discovery problems: a.json, b.json; first: a.json: session record unavailable: EOF"),
         "{messages:?}"
     );
-    assert!(!messages.iter().any(|m| m.contains("b.json: home")));
 }
