@@ -355,6 +355,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009) |
+| `sessions/discovery_diagnostics.rs` | `sessions` discovery-diagnostic toast policy: once per process, batches summarised (#2018) |
 | `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, eligible-key allowlist (#2009) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
