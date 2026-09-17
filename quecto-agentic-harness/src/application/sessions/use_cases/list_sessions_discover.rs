@@ -21,15 +21,14 @@ pub(super) async fn discover(
         rebuilt: false,
     };
     let current = current_home(home, &mut result.diagnostics);
-    let (catalogue_available, entries) = catalogue_entries(home, &mut result).await;
+    let entries = catalogue_entries(home, &mut result).await;
     // Query-local observations only: resume still performs fresh admission under
     // its claim. Cache failures too, and reuse the current canonical observation.
     let mut observations = seed_observations(home, current.as_ref());
     for summary in summaries {
         let Some(listed) = project_row(
             summary,
-            &entries,
-            catalogue_available,
+            entries.as_deref(),
             current.as_ref(),
             home,
             scope,
@@ -64,20 +63,20 @@ fn current_home(
 async fn catalogue_entries(
     home: Option<&SessionHomeContext>,
     result: &mut ListSessionsResult,
-) -> (bool, Vec<(SessionIdentity, SessionHomeScope)>) {
+) -> Option<Vec<(SessionIdentity, SessionHomeScope)>> {
     match home {
         Some(context) => match context.catalogue.list_async().await {
             Ok(snapshot) => {
                 result.diagnostics.extend(snapshot.diagnostics);
                 result.rebuilt = snapshot.rebuilt;
-                (true, snapshot.entries)
+                Some(snapshot.entries)
             }
             Err(error) => {
                 result.diagnostics.push(error.to_string());
-                (false, Vec::new())
+                None
             }
         },
-        None => (false, Vec::new()),
+        None => None,
     }
 }
 
@@ -95,19 +94,17 @@ fn seed_observations(
 
 fn project_row(
     summary: SessionSummary,
-    entries: &[(SessionIdentity, SessionHomeScope)],
-    catalogue_available: bool,
+    entries: Option<&[(SessionIdentity, SessionHomeScope)]>,
     current: Option<&SessionHome>,
     context: Option<&SessionHomeContext>,
     scope: SessionListScope,
     observations: &mut HashMap<PathBuf, Option<SessionHome>>,
 ) -> Option<ListedSession> {
-    let home = match entries
-        .iter()
-        .find(|(identity, _)| identity.runtime_key() == summary.key)
-    {
-        Some((_, home)) => home.clone(),
-        None if catalogue_available => return None,
+    let home = match entries {
+        Some(entries) => entries
+            .iter()
+            .find(|(identity, _)| identity.runtime_key() == summary.key)
+            .map(|(_, home)| home.clone())?,
         None => SessionHomeScope::Unavailable("authoritative home unavailable".into()),
     };
     let local = matches!(
