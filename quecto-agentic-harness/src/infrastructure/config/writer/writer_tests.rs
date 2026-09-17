@@ -88,3 +88,29 @@ fn an_unreadable_existing_entry_or_an_unwritable_location_fails_with_the_reason(
     std::fs::write(&blocker, "x").unwrap();
     assert!(write_document(&blocker.join("config.json"), &json!({})).is_err());
 }
+
+#[test]
+fn a_symlinked_config_is_written_through_the_link() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("dotfiles").join("quecto.json");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, "{}\n").unwrap();
+    let link = dir.path().join("config.json");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    write_document(&link, &json!({"a": 1})).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "{\n  \"a\": 1\n}\n"
+    );
+
+    let dangling = dir.path().join("dangling.json");
+    std::os::unix::fs::symlink(dir.path().join("missing.json"), &dangling).unwrap();
+    let error = write_document(&dangling, &json!({})).unwrap_err();
+    assert!(error.contains("symlink"), "{error}");
+}

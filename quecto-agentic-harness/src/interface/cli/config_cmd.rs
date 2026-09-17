@@ -11,7 +11,7 @@ use crate::application::configuration::dto::{
     OverlayTrustRequest,
 };
 
-const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config trust [--path <file>]\n";
+const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value)\n";
 
 pub(crate) fn cmd_config(
     ctx: &CliContext,
@@ -58,8 +58,13 @@ fn parse(args: &[String], scope_flags: &[&'static str], path_flag: bool) -> Resu
         path_flag: None,
     };
     let mut rest = args.iter();
+    let mut options_ended = false;
     while let Some(arg) = rest.next() {
-        if let Some(flag) = scope_flags.iter().find(|flag| **flag == arg.as_str()) {
+        if options_ended {
+            parsed.positionals.push(arg.clone());
+        } else if arg == "--" {
+            options_ended = true;
+        } else if let Some(flag) = scope_flags.iter().find(|flag| **flag == arg.as_str()) {
             if parsed.scope_flag.is_some() {
                 return Err(format!(
                     "only one of {} may be given\n{USAGE}",
@@ -72,7 +77,8 @@ fn parse(args: &[String], scope_flags: &[&'static str], path_flag: bool) -> Resu
                 .next()
                 .ok_or_else(|| format!("--path requires a file\n{USAGE}"))?;
             parsed.path_flag = Some(PathBuf::from(value));
-        } else if arg.starts_with('-') {
+        } else if arg.starts_with('-') && serde_json::from_str::<serde_json::Value>(arg).is_err() {
+            // A negative number is a value, not an option.
             return Err(format!("unknown option {arg}\n{USAGE}"));
         } else {
             parsed.positionals.push(arg.clone());

@@ -20,6 +20,27 @@ use serde_json::{Map, Value};
 /// Sections only the global file may define.
 pub const GLOBAL_ONLY_KEYS: &[&str] = &["providers", "admission"];
 
+/// Every top-level section the configuration schema knows. A file that
+/// carries none of them is not a quecto configuration.
+pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
+    "agents",
+    "providers",
+    "tools",
+    "workflow",
+    "container_configs",
+    "admission",
+];
+
+/// Whether `document` looks like a quecto configuration: a JSON object
+/// carrying at least one known top-level section.
+pub fn looks_like_config(document: &Value) -> bool {
+    document.as_object().is_some_and(|object| {
+        KNOWN_TOP_LEVEL_KEYS
+            .iter()
+            .any(|key| object.contains_key(*key))
+    })
+}
+
 /// The first global-only key an overlay document carries, if any.
 pub fn global_only_key(document: &Map<String, Value>) -> Option<&'static str> {
     GLOBAL_ONLY_KEYS

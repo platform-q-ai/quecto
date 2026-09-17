@@ -133,3 +133,11 @@ fn dotted_paths_read_and_write_through_objects_only() {
     let mut scalar = json!("nope");
     assert_eq!(set_path(&mut scalar, "a", json!(1)), Err(String::new()));
 }
+
+#[test]
+fn a_document_looks_like_a_config_only_with_a_known_section() {
+    assert!(looks_like_config(&json!({"agents":{}})));
+    assert!(looks_like_config(&json!({"custom":1,"workflow":{}})));
+    assert!(!looks_like_config(&json!({"name":"app"})));
+    assert!(!looks_like_config(&json!([])));
+}

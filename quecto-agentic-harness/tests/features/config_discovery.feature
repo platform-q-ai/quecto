@@ -308,3 +308,61 @@ Feature: Configuration discovery and the repo-local overlay
     And the stderr should contain "no longer loaded"
     And the stderr should name the current directory's "config.json"
     And the stderr should contain ".quecto/config.json"
+
+  Scenario: An unrelated config.json in the working directory is left alone
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a config file named "config.json" in the current directory with content:
+      """
+      {"name":"my-app","version":"1.0.0"}
+      """
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the output should not contain "no longer loaded"
+
+  Scenario: Running from the base directory's parent does not treat the global file as an overlay
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}},"providers":{"openai":{"api_key":"sk-global"}}}
+      """
+    And the current directory is the parent of the base directory
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the output should contain "Overlay:   none"
+    And the output should not contain "not trusted"
+
+  # ── Container configs ─────────────────────────────────────────────────────
+
+  Scenario: An overlay may add a container config without claiming the default
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"container_configs":{"shared":{"default":true,"create":["create.sh"],"cleanup":["cleanup.sh"]}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"container_configs":{"app":{"create":["app-create.sh"],"cleanup":["app-cleanup.sh"]}}}
+      """
+    And the repo-local overlay is trusted
+    When I run quecto with arguments "config get --effective container_configs"
+    Then the exit code should be 0
+    And the printed JSON should have "shared.default" set to true
+    And the printed JSON should have "app.create.0" equal to "app-create.sh"
+
+  Scenario: An overlay default un-defaults the global container config
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"container_configs":{"shared":{"default":true,"create":["create.sh"],"cleanup":["cleanup.sh"]}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"container_configs":{"app":{"default":true,"create":["app-create.sh"],"cleanup":["app-cleanup.sh"]}}}
+      """
+    And the repo-local overlay is trusted
+    When I run quecto with arguments "config get --effective container_configs"
+    Then the exit code should be 0
+    And the printed JSON should have "shared.default" set to false
+    And the printed JSON should have "app.default" set to true

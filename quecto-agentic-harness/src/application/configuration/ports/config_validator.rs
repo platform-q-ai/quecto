@@ -21,4 +21,10 @@ pub trait ConfigValidator: Send + Sync {
     /// Whether `document` round-trips through the configuration schema and
     /// every load-time validation; the error names what does not.
     fn validate(&self, document: &serde_json::Value) -> Result<(), String>;
+
+    /// Whether `document` is a valid *partial* configuration — one layer of
+    /// several: the schema and per-field rules apply, but rules that only
+    /// hold for a complete configuration (exactly one default container
+    /// config) are left to the merge.
+    fn validate_layer(&self, document: &serde_json::Value) -> Result<(), String>;
 }

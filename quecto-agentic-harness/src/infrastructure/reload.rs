@@ -67,10 +67,10 @@ impl ReloadSource {
     /// polls are stat-only no-ops.
     pub fn changed(&mut self) -> SourceChange {
         let Ok(metadata) = fs::metadata(&self.path) else {
-            return SourceChange::MissingOrUnreadable;
+            return self.vanished();
         };
         let Ok(mtime) = metadata.modified() else {
-            return SourceChange::MissingOrUnreadable;
+            return self.vanished();
         };
 
         let len = metadata.len();
@@ -90,6 +90,19 @@ impl ReloadSource {
         } else {
             self.last_hash = hash;
             SourceChange::Changed
+        }
+    }
+
+    /// A source that was present at the last observation and is missing
+    /// or unreadable now is a change (#2024: removing the repo-local
+    /// overlay must take effect); one that was never seen stays quiet.
+    fn vanished(&mut self) -> SourceChange {
+        if self.last_mtime.take().is_some() {
+            self.last_len = None;
+            self.last_hash = 0;
+            SourceChange::Changed
+        } else {
+            SourceChange::MissingOrUnreadable
         }
     }
 

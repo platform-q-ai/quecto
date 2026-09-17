@@ -51,6 +51,14 @@ fn the_overlay_summary_reports_each_state() {
         "none"
     );
     assert_eq!(overlay_summary(&sources(None, false)), "none");
+    let explicit = ConfigSources {
+        explicit: true,
+        ..sources(None, false)
+    };
+    assert_eq!(
+        overlay_summary(&explicit),
+        "none (--config replaces both layers)"
+    );
 }
 
 #[test]

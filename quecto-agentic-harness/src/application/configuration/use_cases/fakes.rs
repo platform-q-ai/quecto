@@ -89,6 +89,23 @@ impl ConfigValidator for FakeValidator {
     }
 
     fn validate(&self, document: &Value) -> Result<(), String> {
+        self.validate_layer(document)?;
+        // The complete-configuration rule: a non-empty container map needs
+        // exactly one default.
+        if let Some(map) = document.get("container_configs").and_then(Value::as_object)
+            && !map.is_empty()
+            && map
+                .values()
+                .filter(|entry| entry.get("default").and_then(Value::as_bool) == Some(true))
+                .count()
+                != 1
+        {
+            return Err("no container config is labeled \"default\": true".into());
+        }
+        Ok(())
+    }
+
+    fn validate_layer(&self, document: &Value) -> Result<(), String> {
         self.validated.lock().unwrap().push(document.clone());
         if document.pointer("/agents/defaults/effort") == Some(&Value::String("bogus".into())) {
             return Err("invalid effort level 'bogus'".into());
@@ -97,11 +114,14 @@ impl ConfigValidator for FakeValidator {
     }
 }
 
-/// Trust by exact (path, content) pairs; approvals are recorded.
+/// Trust by exact (path, content) pairs; approvals are recorded. With
+/// `consents`, an offer is accepted (the interactive adapter's "y").
 #[derive(Default)]
 pub struct FakeTrust {
     pub approved: Mutex<BTreeSet<(PathBuf, Vec<u8>)>>,
     pub fail_approve: bool,
+    pub consents: bool,
+    pub offered: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeTrust {
@@ -134,14 +154,18 @@ impl OverlayTrustStore for FakeTrust {
         }
     }
 
+    fn offer(&self, path: &Path, _fingerprint: &str) -> bool {
+        self.offered.lock().unwrap().push(path.to_path_buf());
+        self.consents
+    }
+
     fn approve(&self, path: &Path, content: &[u8]) -> Result<OverlayApproval, String> {
         if self.fail_approve {
             return Err("store unwritable".into());
         }
-        self.approved
-            .lock()
-            .unwrap()
-            .insert((path.to_path_buf(), content.to_vec()));
+        let mut approved = self.approved.lock().unwrap();
+        approved.retain(|(recorded, _)| recorded != path);
+        approved.insert((path.to_path_buf(), content.to_vec()));
         Ok(OverlayApproval {
             path: path.to_path_buf(),
             fingerprint: format!("fp-{}", content.len()),

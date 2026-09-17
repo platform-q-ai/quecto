@@ -7,7 +7,7 @@
 //! source.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::configuration::dto::ConfigSelection;
@@ -16,7 +16,9 @@ use crate::application::configuration::use_cases::{
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
 use crate::infrastructure::config::mapping::{ConfigValidatorAdapter, realize_config};
-use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
+use crate::infrastructure::config::persistence::{
+    PersistentOverlayTrustStore, TRUST_RECORD_FILE_NAME,
+};
 use crate::infrastructure::config::writer::JsonDocumentWriter;
 use crate::infrastructure::runtime_configuration::ConfigLoader;
 use crate::interface::cli::configuration_handles::{
@@ -69,8 +71,26 @@ pub fn build_config_loader(
             .resolve
             .execute(&selection)
             .map_err(|error| error.to_string())?;
+        // A reload has no terminal: an overlay that became untrusted (a
+        // hand edit mid-run) drops out of the effective configuration, and
+        // the operator's log is the only place that says so.
+        for line in crate::interface::cli::config_loading::layer_diagnostics(&effective.sources) {
+            tracing::warn!(target: "quecto::configuration", "{line}");
+        }
         realize_config(effective.document, &env_overrides, &base_dir)
     })
+}
+
+/// The files a reload must watch for `selection` (#2024): the base file,
+/// the overlay when one applies, and the overlay trust record (so
+/// `quecto config trust` takes effect on the next reload).
+pub fn watched_config_files(base_dir: &Path, selection: &ConfigSelection) -> Vec<PathBuf> {
+    let mut watched = vec![selection.path().to_path_buf()];
+    if let Some(overlay) = selection.overlay_path() {
+        watched.push(overlay.to_path_buf());
+        watched.push(base_dir.join(TRUST_RECORD_FILE_NAME));
+    }
+    watched
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ fn trust_is_by_canonical_path_and_exact_content_and_survives_a_restart() {
 }
 
 #[test]
-fn a_prompting_adapter_denies_without_a_terminal_and_records_nothing() {
+fn a_prompting_adapter_offers_nothing_without_a_terminal_and_records_nothing() {
     let base = TempDir::new().unwrap();
     let trust = PersistentOverlayTrustStore::for_base_dir(base.path(), true);
     let overlay = base.path().join("missing").join("config.json");
@@ -51,8 +51,35 @@ fn a_prompting_adapter_denies_without_a_terminal_and_records_nothing() {
         trust.decide(&overlay, b"{}"),
         OverlayTrust::Untrusted { .. }
     ));
+    assert!(!trust.offer(&overlay, "abc"));
     assert!(!trust.record_path().exists());
     assert!(!prompt_approval(&overlay, "abc"));
+    let silent = PersistentOverlayTrustStore::for_base_dir(base.path(), false);
+    assert!(!silent.offer(&overlay, "abc"));
+}
+
+#[test]
+fn an_approval_supersedes_the_previous_one_and_legacy_lists_read_their_last_entry() {
+    let base = TempDir::new().unwrap();
+    let trust = PersistentOverlayTrustStore::for_base_dir(base.path(), false);
+    let path = base.path().join("x.json");
+    trust.approve(&path, b"v1").unwrap();
+    trust.approve(&path, b"v2").unwrap();
+    assert_eq!(trust.decide(&path, b"v2"), OverlayTrust::Trusted);
+    assert!(
+        matches!(trust.decide(&path, b"v1"), OverlayTrust::Untrusted { .. }),
+        "reverting to earlier content does not restore trust"
+    );
+
+    let legacy = serde_json::json!({
+        "approved": { path.to_string_lossy(): [hex_sha256(b"old"), hex_sha256(b"new")] }
+    });
+    std::fs::write(trust.record_path(), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(trust.decide(&path, b"new"), OverlayTrust::Trusted);
+    assert!(matches!(
+        trust.decide(&path, b"old"),
+        OverlayTrust::Untrusted { .. }
+    ));
 }
 
 #[test]

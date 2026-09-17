@@ -35,7 +35,9 @@ pub enum ConfigSelection {
 
 /// The two-layer selection: the global file (may be absent) and the
 /// overlay candidate the working directory names (may be absent, and is
-/// applied only when trusted).
+/// applied only when trusted). Neither candidate is ever the global file
+/// itself (a run started from the base directory's parent would otherwise
+/// see its global file as an untrusted overlay of itself).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigLayers {
     /// `<base_dir>/config.json`.

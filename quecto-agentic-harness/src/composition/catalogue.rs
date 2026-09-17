@@ -6,7 +6,6 @@
 //! `main` hands [`build_catalogue_handles`] to the CLI entry point; the
 //! dispatch loop holds the controller it receives.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::catalogue::use_cases::{
@@ -52,10 +51,8 @@ pub fn build_catalogue_handles(
     ));
     let reload = Arc::new(match runtime {
         Some(runtime) => {
-            let mut watched = vec![runtime.selection.path().to_path_buf()];
-            watched.extend(runtime.selection.overlay_path().map(Path::to_path_buf));
             ReloadRuntimeConfiguration::new(Box::new(FileRuntimeConfiguration::seeded(
-                watched,
+                super::configuration::watched_config_files(base_dir, &runtime.selection),
                 base_dir.to_path_buf(),
                 super::configuration::build_config_loader(
                     base_dir,

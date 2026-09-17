@@ -29,6 +29,11 @@ impl ConfigDocumentWriter for JsonDocumentWriter {
 /// file atomically. An existing file keeps its mode; a new one is private
 /// to the user.
 pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<(), String> {
+    // A symlinked config (dotfiles) is written through the link: the rename
+    // would otherwise replace the link with a plain file and leave the
+    // linked copy stale.
+    let target = resolve_symlink(path)?;
+    let path = target.as_path();
     let existing = match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -37,6 +42,22 @@ pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<(), S
     let bytes = render(document, existing.as_deref());
     let mode = existing_mode(path).unwrap_or(NEW_CONFIG_MODE);
     atomic_write(path, &bytes, Some(mode)).map_err(|error| error.to_string())
+}
+
+/// The file a write lands in: the final target when `path` is a symlink
+/// (a dangling link is an error naming it), else `path` itself.
+fn resolve_symlink(path: &Path) -> Result<std::path::PathBuf, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            std::fs::canonicalize(path).map_err(|error| {
+                format!(
+                    "{} is a symlink that cannot be resolved: {error}",
+                    path.display()
+                )
+            })
+        }
+        _ => Ok(path.to_path_buf()),
+    }
 }
 
 /// Pretty-print with the indentation the existing file used (two spaces

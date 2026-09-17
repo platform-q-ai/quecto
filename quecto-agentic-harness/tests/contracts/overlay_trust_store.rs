@@ -42,6 +42,21 @@ fn an_approval_is_by_path_and_content_and_persists() {
 }
 
 #[test]
+fn a_non_interactive_adapter_never_consents_and_a_new_approval_supersedes_the_old() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(base.path());
+    let path = base.path().join("x.json");
+    assert!(!store.offer(&path, "abc"));
+    store.approve(&path, b"v1").unwrap();
+    store.approve(&path, b"v2").unwrap();
+    assert_eq!(store.decide(&path, b"v2"), OverlayTrust::Trusted);
+    assert!(matches!(
+        store.decide(&path, b"v1"),
+        OverlayTrust::Untrusted { .. }
+    ));
+}
+
+#[test]
 fn the_untrusted_fingerprint_is_the_one_an_approval_records() {
     let base = TempDir::new().unwrap();
     let store = under_test(base.path());

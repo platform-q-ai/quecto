@@ -24,6 +24,32 @@ fn validation_applies_every_load_time_rule() {
 }
 
 #[test]
+fn a_layer_may_add_a_non_default_container_config_but_keeps_every_other_rule() {
+    let validator = ConfigValidatorAdapter;
+    let layer = json!({"container_configs": {"a": {"create": ["x"]}}});
+    assert!(validator.validate_layer(&layer).is_ok());
+    assert!(
+        validator.validate(&layer).is_err(),
+        "the merge still needs a default"
+    );
+    assert!(
+        validator
+            .validate_layer(&json!({"agents": {"defaults": {"effort": "bogus"}}}))
+            .is_err()
+    );
+    assert!(
+        validator
+            .validate_layer(&json!({"agents": "junk"}))
+            .is_err()
+    );
+    assert!(
+        validator
+            .validate_layer(&json!({"admission": {"groups": {}}}))
+            .is_err()
+    );
+}
+
+#[test]
 fn resolution_rejects_retired_keys_and_resolves_step_references_against_the_file() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

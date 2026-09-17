@@ -51,6 +51,17 @@ impl Config {
         config.validated()
     }
 
+    /// One layer of a layered configuration (#2024): the schema and every
+    /// per-field rule apply, but "exactly one default container config"
+    /// only holds for the complete configuration, so a layer adding a
+    /// non-default entry is valid and the merge is checked in full.
+    pub fn layer_from_document(value: serde_json::Value) -> Result<Self, ConfigError> {
+        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        config.validate_effort()?;
+        config.validate_admission()?;
+        Ok(config)
+    }
+
     pub(super) fn validated(self) -> Result<Self, ConfigError> {
         self.validate_effort()?;
         self.validate_container_configs()?;
@@ -87,6 +98,12 @@ impl ConfigValidator for ConfigValidatorAdapter {
 
     fn validate(&self, document: &serde_json::Value) -> Result<(), String> {
         Config::from_document(document.clone())
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn validate_layer(&self, document: &serde_json::Value) -> Result<(), String> {
+        Config::layer_from_document(document.clone())
             .map(|_| ())
             .map_err(|error| error.to_string())
     }

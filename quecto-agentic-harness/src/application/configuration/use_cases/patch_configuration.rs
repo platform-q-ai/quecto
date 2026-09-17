@@ -84,7 +84,7 @@ impl PatchConfiguration {
                 at,
             }
         })?;
-        self.check(path, &document)?;
+        self.check(patch.target.layer, path, &document)?;
         self.writer
             .write(path, &document)
             .map_err(|reason| ConfigPatchError::Write {
@@ -118,10 +118,15 @@ impl PatchConfiguration {
         })
     }
 
-    /// The patched document must resolve and validate as a configuration
-    /// before anything is written. An overlay is validated standalone: every
-    /// section defaults, so a partial document is a valid one.
-    fn check(&self, path: &Path, document: &Value) -> Result<(), ConfigPatchError> {
+    /// The patched document must resolve and validate before anything is
+    /// written: the global file as a complete configuration, the overlay
+    /// as one layer (rules that only hold for the merge are the merge's).
+    fn check(
+        &self,
+        layer: ConfigLayer,
+        path: &Path,
+        document: &Value,
+    ) -> Result<(), ConfigPatchError> {
         let invalid = |reason| ConfigPatchError::Invalid {
             path: path.to_path_buf(),
             reason,
@@ -130,7 +135,11 @@ impl PatchConfiguration {
             .validator
             .resolve(document.clone(), path)
             .map_err(invalid)?;
-        self.validator.validate(&resolved).map_err(invalid)
+        match layer {
+            ConfigLayer::Global => self.validator.validate(&resolved),
+            ConfigLayer::Overlay => self.validator.validate_layer(&resolved),
+        }
+        .map_err(invalid)
     }
 }
 

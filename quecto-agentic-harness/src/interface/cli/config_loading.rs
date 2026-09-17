@@ -56,7 +56,7 @@ pub(crate) fn quecto_env_overrides() -> HashMap<String, String> {
 
 /// What the user should know about the layers, one line each: an overlay
 /// that was present but not applied, and a retired working-directory file.
-pub(crate) fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
+pub fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(overlay) = &sources.overlay
         && let OverlayState::Untrusted { fingerprint } = &overlay.state
@@ -88,6 +88,7 @@ pub(crate) fn overlay_summary(sources: &ConfigSources) -> String {
             OverlayState::Untrusted { .. } => format!("{} (untrusted)", report.path.display()),
             OverlayState::Absent => "none".to_string(),
         },
+        None if sources.explicit => "none (--config replaces both layers)".to_string(),
         None => "none".to_string(),
     }
 }

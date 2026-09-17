@@ -261,7 +261,13 @@ fn then_global_differs_on_one_line(world: &mut QuectoWorld, needle: String) {
 fn json_at<'a>(document: &'a serde_json::Value, key_path: &str) -> &'a serde_json::Value {
     key_path
         .split('.')
-        .try_fold(document, |current, segment| current.get(segment))
+        .try_fold(document, |current, segment| {
+            segment
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| current.get(index))
+                .or_else(|| current.get(segment))
+        })
         .unwrap_or_else(|| panic!("no `{key_path}` in {document}"))
 }
 
@@ -301,6 +307,27 @@ fn then_printed_json_has(world: &mut QuectoWorld, key_path: String, expected: St
         json_at(&document, &key_path),
         &serde_json::Value::String(expected)
     );
+}
+
+#[then(expr = "the printed JSON should have {string} set to {word}")]
+fn then_printed_json_has_literal(world: &mut QuectoWorld, key_path: String, expected: String) {
+    let document = printed_json(world);
+    let expected: serde_json::Value = serde_json::from_str(&expected).expect("a JSON literal");
+    assert_eq!(json_at(&document, &key_path), &expected);
+}
+
+/// The `$HOME` case: the global file is `<home>/.quecto/config.json` and
+/// the run starts in `<home>`, where `<cwd>/.quecto/config.json` *is* the
+/// global file. Built under the scenario's temp dir, never under `/tmp`.
+#[given("the current directory is the parent of the base directory")]
+fn given_cwd_is_base_parent(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let home = base_path(world).join("home");
+    let quecto_dir = home.join(".quecto");
+    std::fs::create_dir_all(&quecto_dir).expect("create .quecto");
+    std::fs::copy(global_config(world), quecto_dir.join("config.json")).expect("copy global");
+    world.cli_context.base_dir = Some(quecto_dir);
+    world.cli_context.cwd = Some(home);
 }
 
 #[then(expr = "the printed JSON should be {string}")]

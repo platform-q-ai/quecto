@@ -66,7 +66,7 @@ fn an_empty_reconciliation_writes_nothing() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_path = tmp.path().join("config.json");
     std::fs::write(&config_path, "{}").unwrap();
-    tool_policy_persistence_for(config_path.clone())(&empty_reconciliation()).unwrap();
+    tool_policy_persistence_for(config_path.clone(), None)(&empty_reconciliation()).unwrap();
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{}");
 }
 
@@ -76,7 +76,7 @@ fn the_composed_hook_patches_only_the_policy_entries_of_its_file() {
     let config_path = tmp.path().join("config.json");
     let original = "{\n  \"custom\": \"kept\",\n  \"tools\": {\n    \"policy\": {\n      \"entries\": {\n        \"native:docs\": {\n          \"scope\": \"parent\"\n        }\n      }\n    }\n  }\n}\n";
     std::fs::write(&config_path, original).unwrap();
-    let persist = tool_policy_persistence_for(config_path.clone());
+    let persist = tool_policy_persistence_for(config_path.clone(), None);
     persist(&applied("native:bash", ProfileAvailabilityScope::Child)).unwrap();
     let written = std::fs::read_to_string(&config_path).unwrap();
     assert!(
@@ -102,7 +102,7 @@ fn the_composed_hook_patches_only_the_policy_entries_of_its_file() {
 fn the_composed_hook_creates_a_missing_file_with_only_the_entries() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_path = tmp.path().join("config.json");
-    let persist = tool_policy_persistence_for(config_path.clone());
+    let persist = tool_policy_persistence_for(config_path.clone(), None);
     persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap();
     let parsed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
@@ -117,7 +117,7 @@ fn the_composed_hook_reports_a_malformed_config_file_and_leaves_it_alone() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_path = tmp.path().join("config.json");
     std::fs::write(&config_path, "{ not json").unwrap();
-    let persist = tool_policy_persistence_for(config_path.clone());
+    let persist = tool_policy_persistence_for(config_path.clone(), None);
     let error = persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap_err();
     assert!(error.contains("tool policy persistence"), "{error}");
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{ not json");
@@ -130,10 +130,15 @@ fn a_non_object_on_the_way_to_the_entries_is_refused() {
     std::fs::write(&config_path, r#"{"tools":{"policy":"junk"}}"#).unwrap();
     let error = persist_tool_policy_results(
         &config_path,
+        None,
         &applied("native:bash", ProfileAvailabilityScope::Both),
     )
     .unwrap_err();
     assert!(error.contains("not a JSON object"), "{error}");
+    assert!(
+        error.contains(&config_path.display().to_string()),
+        "{error}"
+    );
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
         r#"{"tools":{"policy":"junk"}}"#
@@ -141,6 +146,7 @@ fn a_non_object_on_the_way_to_the_entries_is_refused() {
     assert!(
         persist_tool_policy_results(
             Path::new("/nonexistent/dir/config.json"),
+            None,
             &applied("native:bash", ProfileAvailabilityScope::Both)
         )
         .is_err()
@@ -154,8 +160,46 @@ fn an_unreadable_config_entry_is_reported() {
     std::fs::create_dir(&directory).unwrap();
     let error = persist_tool_policy_results(
         &directory,
+        None,
         &applied("native:bash", ProfileAvailabilityScope::Both),
     )
     .unwrap_err();
     assert!(error.contains("tool policy persistence"), "{error}");
+}
+
+#[test]
+fn an_entry_the_overlay_defines_is_refused_naming_the_overlay_and_the_remedy() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.json");
+    std::fs::write(&config_path, "{}").unwrap();
+    let overlay = tmp.path().join("repo").join(".quecto").join("config.json");
+    std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
+    std::fs::write(
+        &overlay,
+        r#"{"tools":{"policy":{"entries":{"native:bash":{"scope":"parent"}}}}}"#,
+    )
+    .unwrap();
+    let persist = tool_policy_persistence_for(config_path.clone(), Some(overlay.clone()));
+    let error = persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap_err();
+    assert!(error.contains(&overlay.display().to_string()), "{error}");
+    assert!(
+        error.contains("quecto config set tools.policy.entries.native:bash"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        "{}",
+        "nothing written"
+    );
+
+    persist(&applied("native:docs", ProfileAvailabilityScope::Both)).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        parsed["tools"]["policy"]["entries"]["native:docs"]["scope"],
+        "both"
+    );
+
+    std::fs::remove_file(&overlay).unwrap();
+    persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap();
 }

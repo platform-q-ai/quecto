@@ -5,7 +5,7 @@ pub mod catalogue_handles;
 mod commands;
 mod config_cmd;
 mod config_flag;
-mod config_loading;
+pub mod config_loading;
 pub mod configuration_handles;
 mod help;
 mod models;
@@ -344,7 +344,7 @@ pub type ProviderRuntimeBuilder =
 /// Injected through the CLI context; the agent build installs it on the
 /// loop, the interface never constructs the writer.
 pub type ToolPolicyPersistenceBuilder =
-    fn(&std::path::Path) -> crate::application::agent_loop::ToolPolicyPersistence;
+    fn(&ConfigSelection) -> crate::application::agent_loop::ToolPolicyPersistence;
 
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write

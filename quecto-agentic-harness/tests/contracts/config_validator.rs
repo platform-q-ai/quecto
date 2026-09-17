@@ -63,3 +63,17 @@ fn resolution_rejects_retired_keys_and_resolves_references_against_the_file() {
         "references resolve against the document's own directory"
     );
 }
+
+#[test]
+fn a_layer_may_omit_the_default_container_config_the_complete_configuration_needs() {
+    let validator = under_test();
+    let layer = serde_json::json!({"container_configs": {"a": {"create": ["x"]}}});
+    assert!(validator.validate_layer(&layer).is_ok());
+    assert!(validator.validate(&layer).is_err());
+    assert!(
+        validator
+            .validate_layer(&serde_json::json!({"agents": {"defaults": {"effort": "bogus"}}}))
+            .is_err(),
+        "per-field rules still apply to a layer"
+    );
+}

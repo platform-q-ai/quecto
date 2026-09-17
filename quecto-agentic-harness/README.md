@@ -418,12 +418,14 @@ content has been approved: the approval is recorded by canonical path and
 SHA-256 in `<base_dir>/config-overlay-trust.json`. Approve it explicitly with
 `quecto config trust` from the project directory (an agent or a script can do
 this without a terminal), or answer the `[y/N]` prompt a one-shot
-`quecto agent` run offers from an interactive terminal. Editing the overlay by
-hand revokes its trust until it is approved again; `quecto config set` records
-trust for what it writes. An untrusted overlay is reported (which file, its
-hash, and the command to run) and **not** applied, so nothing in a repository
-you have not reviewed can change your agents' defaults or run container
-scripts. `quecto status` prints both files and the overlay's trust state:
+`quecto agent` run offers from an interactive terminal (the answer is recorded
+only after the same checks `quecto config trust` applies). One content per
+path is trusted: editing the overlay by hand revokes its trust until it is
+approved again, and reverting to an earlier content does not restore it;
+`quecto config set` records trust for what it writes. An untrusted overlay is
+reported (which file, its hash, and the command to run) and **not** applied,
+so nothing in a repository you have not reviewed can change your agents'
+defaults. `quecto status` prints both files and the overlay's trust state:
 
 ```
 $ quecto status
@@ -438,7 +440,9 @@ quecto Status
 
 **Migration.** Until #2024 a `./config.json` directly in the working directory
 *replaced* the global file. That selection is retired: such a file is no longer
-loaded, and `quecto status` warns while it exists. Move its repo-specific
+loaded, and `quecto status` warns while one that looks like a quecto
+configuration (a JSON object with a known section) exists — an unrelated
+`config.json` at a project root is left alone. Move its repo-specific
 settings to `./.quecto/config.json` (`quecto config set …` writes them for
 you) and any `providers` or `admission` section to the global file.
 
@@ -450,15 +454,32 @@ place: only the addressed key changes, unknown keys and key order are kept,
 the file's own indentation is reused, the result is validated as a
 configuration before anything is written, and the write is atomic
 (tmp + fsync + rename) — a refused value leaves the file byte-identical.
-`set_tool_policy … persist` writes through the same path.
+`set_tool_policy … persist` writes through the same path into the base file;
+an entry the trusted overlay already defines is refused (it would be shadowed
+on the next reload) with the `quecto config set` command to run instead.
+
+A running agent re-reads the base file, the overlay and the trust record
+before the next turn, `set_model` or a forced `reload`, so `quecto config
+trust`, a `config set`, or removing the overlay takes effect without a
+restart. `quecto-tui` sessions never prompt for trust; run `quecto config
+trust` in the project directory and the next turn picks it up.
+
+**Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with
+`container: true` still loads `container_configs` from the base file plus the
+*separate* repo-local container mechanism of
+[Container runtimes](../docs/container-runtimes.md), with its own trust record
+(`container-config-trust.json` under the state directory) and its own
+`[y/N]` prompt; `quecto config trust` does not approve container scripts for
+that path. S4 folds container spawning onto the effective configuration and
+this trust record. Until then, treat `container_configs` in an overlay as
+visible to `config get --effective` and `status` but not yet to `spawn`.
 
 Subagents: a locally spawned subagent inherits the parent's working directory
 and performs its own discovery there — the same global file and, when trusted,
 the same overlay. A parent's explicit `--config` is *not* forwarded to local
 children (pass `config` in the spawn call, or set
 `QUECTO_RUNTIME_CONFIG_PATH`, to pin a child's file). Container subagents are
-handed the parent's selected base file explicitly (the overlay is not
-forwarded into containers yet — #2024 S4). `QUECTO_RUNTIME_CONFIG_PATH` is a
+handed the parent's selected base file explicitly. `QUECTO_RUNTIME_CONFIG_PATH` is a
 child-launch mechanism only: it is the `--config` given to spawned children
 when neither the spawn call nor (for containers) the parent supplies one; it
 does not affect the launching process's own selection above.

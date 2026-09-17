@@ -29,14 +29,39 @@ impl SelectConfig {
             return ConfigSelection::Explicit(explicit);
         }
         let working_directory = request.working_directory.as_deref().map(Path::to_path_buf);
-        ConfigSelection::Layered(ConfigLayers {
-            global: request.global,
-            overlay: working_directory
+        let candidate = |relative: &str| {
+            working_directory
                 .as_ref()
-                .map(|cwd| cwd.join(OVERLAY_RELATIVE_PATH)),
-            legacy_local: working_directory.map(|cwd| cwd.join(LEGACY_LOCAL_FILE_NAME)),
+                .map(|cwd| cwd.join(relative))
+                .filter(|candidate| !same_file(candidate, &request.global))
+        };
+        ConfigSelection::Layered(ConfigLayers {
+            overlay: candidate(OVERLAY_RELATIVE_PATH),
+            legacy_local: candidate(LEGACY_LOCAL_FILE_NAME),
+            global: request.global,
         })
     }
+}
+
+/// Lexical identity after normalising `.` and `..` components: the global
+/// file is never its own overlay or its own retired local file.
+fn same_file(a: &Path, b: &Path) -> bool {
+    normalise(a) == normalise(b)
+}
+
+fn normalise(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

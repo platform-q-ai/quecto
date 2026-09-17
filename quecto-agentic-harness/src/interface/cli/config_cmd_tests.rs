@@ -99,11 +99,21 @@ fn a_bare_word_value_is_taken_as_a_string_and_json_values_as_json() {
         "42",
     ]);
     assert_eq!(code, 0, "{stderr}");
-    let (_, stdout, _) = rig.run(&["config", "get", "--global", "agents.defaults"]);
+    let (code, _, stderr) = rig.run(&[
+        "config",
+        "set",
+        "--global",
+        "agents.defaults.temperature",
+        "-1",
+    ]);
+    assert_eq!(code, 0, "a negative number is a value: {stderr}");
+    let (code, _, stderr) = rig.run(&["config", "set", "--global", "--", "custom", "-2"]);
+    assert_eq!(code, 0, "-- ends the options: {stderr}");
+    let (_, stdout, _) = rig.run(&["config", "get", "--global"]);
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         value,
-        serde_json::json!({"model":"gpt-5.5","max_tokens":42})
+        serde_json::json!({"agents":{"defaults":{"model":"gpt-5.5","max_tokens":42,"temperature":-1}},"custom":-2})
     );
     assert!(
         !rig.overlay().exists(),

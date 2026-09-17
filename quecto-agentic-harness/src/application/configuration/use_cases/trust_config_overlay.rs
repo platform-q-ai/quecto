@@ -65,7 +65,7 @@ impl TrustConfigOverlay {
             reason,
         };
         let resolved = self.validator.resolve(value, path).map_err(invalid)?;
-        self.validator.validate(&resolved).map_err(invalid)?;
+        self.validator.validate_layer(&resolved).map_err(invalid)?;
         self.trust
             .approve(path, &bytes)
             .map_err(|reason| OverlayTrustError::Store {

@@ -9,7 +9,7 @@
 //! The record primitives are shared with the container-config overlay of
 //! `repo_local_container_config` (same JSON shape, separate file).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -47,16 +47,16 @@ impl OverlayTrustStore for PersistentOverlayTrustStore {
         let identity = canonical_identity(path);
         let fingerprint = hex_sha256(content);
         if read_record(&self.record_path).is_approved(&identity, &fingerprint) {
-            return OverlayTrust::Trusted;
+            OverlayTrust::Trusted
+        } else {
+            OverlayTrust::Untrusted { fingerprint }
         }
-        if self.prompt_on_miss && prompt_approval(path, &fingerprint) {
-            let mut record = read_record(&self.record_path);
-            record.approve(identity, fingerprint.clone());
-            if write_record(&self.record_path, &record).is_ok() {
-                return OverlayTrust::Trusted;
-            }
-        }
-        OverlayTrust::Untrusted { fingerprint }
+    }
+
+    /// Consent only: the caller validates the overlay and records the
+    /// approval, so a "y" on a broken overlay trusts nothing.
+    fn offer(&self, path: &Path, fingerprint: &str) -> bool {
+        self.prompt_on_miss && prompt_approval(path, fingerprint)
     }
 
     fn approve(&self, path: &Path, content: &[u8]) -> Result<OverlayApproval, String> {
@@ -106,25 +106,43 @@ fn prompt_approval(path: &Path, fingerprint: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Approved content hashes per canonical path.
+/// The one approved content hash per canonical path. A hand edit revokes
+/// trust, and reverting to an earlier content does not restore it: only
+/// the content approved last is trusted. Records written before #2024
+/// held a list of hashes per path; those read as "the last one listed".
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TrustRecord {
     #[serde(default)]
-    pub(crate) approved: HashMap<String, BTreeSet<String>>,
+    pub(crate) approved: HashMap<String, Fingerprint>,
+}
+
+/// One fingerprint, accepting the pre-#2024 list shape on read.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Fingerprint {
+    One(String),
+    Legacy(Vec<String>),
+}
+
+impl Fingerprint {
+    fn matches(&self, fingerprint: &str) -> bool {
+        match self {
+            Self::One(one) => one == fingerprint,
+            Self::Legacy(list) => list.last().map(String::as_str) == Some(fingerprint),
+        }
+    }
 }
 
 impl TrustRecord {
     pub(crate) fn is_approved(&self, identity: &str, fingerprint: &str) -> bool {
         self.approved
             .get(identity)
-            .is_some_and(|hashes| hashes.contains(fingerprint))
+            .is_some_and(|recorded| recorded.matches(fingerprint))
     }
 
     pub(crate) fn approve(&mut self, identity: String, fingerprint: String) {
         self.approved
-            .entry(identity)
-            .or_default()
-            .insert(fingerprint);
+            .insert(identity, Fingerprint::One(fingerprint));
     }
 }
 
@@ -148,11 +166,17 @@ pub(crate) fn record_parent_to_create(path: &Path) -> Option<&Path> {
     }
 }
 
+/// Atomic, so a crash mid-write cannot leave a partial record (which would
+/// read as "nothing trusted" — safe, but silently).
 pub(crate) fn write_record(path: &Path, record: &TrustRecord) -> io::Result<()> {
     if let Some(parent) = record_parent_to_create(path) {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, serde_json::to_vec_pretty(record)?)
+    crate::infrastructure::atomic_write::atomic_write(
+        path,
+        &serde_json::to_vec_pretty(record)?,
+        Some(0o600),
+    )
 }
 
 pub(crate) fn hex_sha256(content: &[u8]) -> String {

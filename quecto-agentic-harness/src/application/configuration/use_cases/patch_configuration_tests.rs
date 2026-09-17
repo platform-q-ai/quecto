@@ -331,3 +331,40 @@ fn debug_and_display_are_informative() {
             .contains("agents.defaults.model")
     );
 }
+
+#[test]
+fn an_overlay_patch_may_add_a_non_default_container_config() {
+    let store = MemoryStore::with(&[]);
+    use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "container_configs.h",
+            json!({"create":["b"]}),
+        ))
+        .unwrap();
+    assert_eq!(
+        document(&store, OVERLAY),
+        json!({"container_configs":{"h":{"create":["b"]}}})
+    );
+    let error = use_case(store, Arc::new(FakeTrust::default()))
+        .execute(patch(
+            ConfigLayer::Global,
+            GLOBAL,
+            "container_configs.h",
+            json!({"create":["b"]}),
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(error, ConfigPatchError::Invalid { .. }),
+        "the global file is complete: {error}"
+    );
+    let root = ConfigPatchError::NotAnObject {
+        path: PathBuf::from(GLOBAL),
+        at: String::new(),
+    };
+    assert!(
+        root.to_string()
+            .contains("the document is not a JSON object")
+    );
+}

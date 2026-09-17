@@ -2,6 +2,7 @@ use super::*;
 use crate::application::configuration::dto::{
     ConfigLayers, ConfigSelectionRequest, OverlayTrustRequest,
 };
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn env(base_dir: &Path) -> ConfigurationEnvironment {
@@ -72,4 +73,27 @@ fn the_loader_reports_a_broken_selected_file() {
     );
     let error = loader().unwrap_err();
     assert!(error.contains(&explicit.display().to_string()), "{error}");
+}
+
+#[test]
+fn a_reload_watches_the_base_file_the_overlay_and_the_trust_record() {
+    let base = Path::new("/home/u/.quecto");
+    let layered = ConfigSelection::Layered(ConfigLayers {
+        global: base.join("config.json"),
+        overlay: Some(PathBuf::from("/work/.quecto/config.json")),
+        legacy_local: None,
+    });
+    assert_eq!(
+        watched_config_files(base, &layered),
+        vec![
+            base.join("config.json"),
+            PathBuf::from("/work/.quecto/config.json"),
+            base.join("config-overlay-trust.json"),
+        ]
+    );
+    let explicit = ConfigSelection::Explicit(PathBuf::from("/x/c.json"));
+    assert_eq!(
+        watched_config_files(base, &explicit),
+        vec![PathBuf::from("/x/c.json")]
+    );
 }

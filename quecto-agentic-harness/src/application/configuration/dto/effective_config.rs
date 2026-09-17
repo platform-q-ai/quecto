@@ -72,9 +72,16 @@ pub enum EffectiveConfigError {
         path: PathBuf,
         key: String,
     },
-    /// The document (one layer, or the merge) fails schema validation.
+    /// One layer fails schema validation on its own.
     Invalid {
         path: PathBuf,
+        reason: String,
+    },
+    /// Each layer is valid but the overlay merged over the global file is
+    /// not; both files are named because either may need the fix.
+    InvalidMerge {
+        global: PathBuf,
+        overlay: PathBuf,
         reason: String,
     },
 }
@@ -106,6 +113,16 @@ impl std::fmt::Display for EffectiveConfigError {
             Self::Invalid { path, reason } => {
                 write!(f, "failed to load config {}: {reason}", path.display())
             }
+            Self::InvalidMerge {
+                global,
+                overlay,
+                reason,
+            } => write!(
+                f,
+                "failed to load config {} merged over {}: {reason}",
+                overlay.display(),
+                global.display()
+            ),
         }
     }
 }
