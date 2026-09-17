@@ -1,10 +1,21 @@
-//! Tests for the interface refresh composition (epic #1193, slice 4): real
+//! Tests for the composed refresh use case (epic #1193 slice 4, #1846): real
 //! discovery sources composed from `models.json`, refreshed over HTTP into
 //! source caches, published through the shared snapshot store.
 
-use super::*;
+use crate::application::catalogue::dto::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// The composed refresh use case for `dir`, as the loop and the CLI drive it.
+fn refresh_catalogue(
+    dir: &std::path::Path,
+    selection: &RefreshSelection,
+    bounds: RefreshBounds,
+) -> crate::application::catalogue::dto::CatalogueRefreshReport {
+    crate::composition::catalogue::build_catalogue_handles(dir)
+        .refresh
+        .execute(selection, bounds)
+}
 
 fn write_registry(dir: &std::path::Path, providers: serde_json::Value) {
     std::fs::write(
@@ -188,32 +199,4 @@ fn malformed_registry_is_one_failed_outcome() {
         SourceRefreshStatus::Failed { .. }
     ));
     assert!(report.resolved.is_none());
-}
-
-#[test]
-fn describe_outcome_covers_every_status() {
-    let cases = [
-        (SourceRefreshStatus::Updated { models: 3 }, "discovered 3"),
-        (SourceRefreshStatus::Unchanged { models: 3 }, "unchanged"),
-        (
-            SourceRefreshStatus::Unsupported {
-                reason: "no listing".to_string(),
-            },
-            "not refreshable",
-        ),
-        (
-            SourceRefreshStatus::Failed {
-                reason: "boom".to_string(),
-            },
-            "failed (boom)",
-        ),
-        (SourceRefreshStatus::Cancelled, "cancelled"),
-    ];
-    for (status, expected) in cases {
-        let line = describe_outcome(&SourceRefreshOutcome {
-            source: "s".to_string(),
-            status,
-        });
-        assert!(line.contains(expected), "got: {line}");
-    }
 }

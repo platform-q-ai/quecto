@@ -9,8 +9,14 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn ctx_for(dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(dir.to_path_buf()),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         ..Default::default()
     }
+}
+
+/// The composed refresh use case the command drives for `ctx`'s base dir.
+fn refresh_for(ctx: &CliContext) -> std::sync::Arc<RefreshCatalogueSources> {
+    crate::composition::catalogue::build_catalogue_handles(&ctx.base_dir()).refresh
 }
 
 #[test]
@@ -185,14 +191,15 @@ fn discover_rejects_unsafe_base_urls_without_leaking_url_secrets() {
             "must end at an OpenAI-compatible /v1 endpoint",
         ),
     ] {
-        let err = discover_once(&ctx, provider).expect_err("unsafe URL must be rejected");
+        let err =
+            discover_once(&refresh_for(&ctx), provider).expect_err("unsafe URL must be rejected");
         assert!(
             err.contains(expected),
             "{provider} error should contain {expected:?}, got: {err}"
         );
     }
     for provider in ["credentialed", "query", "fragment"] {
-        let err = discover_once(&ctx, provider).unwrap_err();
+        let err = discover_once(&refresh_for(&ctx), provider).unwrap_err();
         assert!(
             !err.contains("user:pass"),
             "error leaked credentials: {err}"
@@ -221,10 +228,10 @@ fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
     .unwrap();
     let ctx = ctx_for(tmp.path());
 
-    let err = discover_once(&ctx, "oauthy").unwrap_err();
+    let err = discover_once(&refresh_for(&ctx), "oauthy").unwrap_err();
     assert!(err.contains("oauth"), "unexpected error: {err}");
 
-    let err = discover_once(&ctx, "anthropic-api").unwrap_err();
+    let err = discover_once(&refresh_for(&ctx), "anthropic-api").unwrap_err();
     assert!(
         err.contains("model listing"),
         "unsupported reason must be actionable: {err}"
@@ -241,10 +248,16 @@ fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
         .to_string(),
     )
     .unwrap();
-    let err = discover_once(&ctx, "broken").unwrap_err();
+    let err = discover_once(&refresh_for(&ctx), "broken").unwrap_err();
+    // The registry-file failure surfaces through the `models.json` outcome
+    // fallback, never as a confusing "no outcome for 'broken'".
     assert!(
-        err.contains("refresh reported no outcome") || err.to_lowercase().contains("parse"),
-        "unexpected error: {err}"
+        !err.contains("refresh reported no outcome"),
+        "the models.json outcome must be surfaced: {err}"
+    );
+    assert!(
+        err.contains("failed to parse models registry"),
+        "the fallback carries the parse failure: {err}"
     );
 }
 

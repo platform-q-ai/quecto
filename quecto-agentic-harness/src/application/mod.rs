@@ -7,7 +7,6 @@ pub mod agent_loop_test_support;
 mod agent_usage;
 pub mod audit;
 pub mod catalogue;
-pub mod catalogue_refresh;
 pub mod configuration;
 pub mod context;
 pub mod context_pruning;

@@ -1,14 +1,16 @@
-//! Catalogue composition (#1845): the list use case over the file-backed
-//! inputs loader and the process-wide snapshot store of one base directory.
+//! Catalogue composition (#1845, #1848, #1847, #1846): the catalogue use
+//! cases over the file-backed inputs loaders and the process-wide snapshot
+//! and runtime stores of one base directory.
 //! `main` hands [`build_catalogue_handles`] to the CLI entry point; the
 //! dispatch loop holds the controller it receives.
 
 use std::sync::Arc;
 
 use crate::application::catalogue::use_cases::{
-    ChangeActiveModel, ChangeReasoningEffort, ListModels,
+    ChangeActiveModel, ChangeReasoningEffort, ListModels, RefreshCatalogueSources,
 };
 use crate::infrastructure::catalogue_inputs::FileCatalogueInputs;
+use crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
 use crate::infrastructure::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
@@ -33,16 +35,25 @@ pub fn build_catalogue_handles(base_dir: &std::path::Path) -> CatalogueHandles {
         Arc::new(runtime_store_for(base_dir)),
         effort.clone(),
     ));
+    let refresh = Arc::new(RefreshCatalogueSources::new(
+        Arc::new(FileRefreshInputs::new(base_dir)),
+        snapshot_store_for(base_dir),
+    ));
     CatalogueHandles {
         list_models: Arc::new(ListModelsController::new(list_models)),
         effort,
         model,
+        refresh,
     }
 }
 
 #[cfg(test)]
 #[path = "catalogue_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "catalogue_refresh_tests.rs"]
+mod refresh_tests;
 
 /// The `list_models` wire response for `base_dir` as the composed loop
 /// would serve it: rigs and BDD steps that used to call the interface's

@@ -5,9 +5,14 @@
 pub mod active_model;
 pub mod effort;
 pub mod model_listing;
+pub mod refresh;
 
 pub use active_model::{ModelLimits, ModelSelectionVerdict, ModelSwitchPlan, ModelSwitched};
 pub use effort::{EffortChangeError, EffortChangeOutcome, EffortChangeRequest};
 pub use model_listing::{
     ListedModel, ListingDiagnostic, ModelCatalogueListing, ModelListingOutcome,
+};
+pub use refresh::{
+    CatalogueRefreshReport, REGISTRY_FILE_SOURCE, RefreshBounds, RefreshSelection,
+    SourceRefreshOutcome, SourceRefreshStatus,
 };

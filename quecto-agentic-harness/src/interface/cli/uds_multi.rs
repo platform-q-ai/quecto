@@ -71,7 +71,6 @@ impl Drop for BusyGuard {
 
 pub(super) struct MultiClientArgs<'a> {
     pub agent: AgentLoopImpl,
-    pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
     pub messages: Vec<Message>,
     pub model: String,
@@ -169,7 +168,6 @@ pub(super) async fn multi_client_loop(
 ) -> i32 {
     let MultiClientArgs {
         mut agent,
-        base_dir,
         workspace,
         mut messages,
         model,
@@ -344,7 +342,6 @@ pub(super) async fn multi_client_loop(
         // Multi-client replies stream via broadcast; each client's writer
         // task re-frames per its own negotiated connection mode (#1059).
         wire_mode: super::uds_wire::ConnectionWireMode::legacy(),
-        base_dir,
         agent: &mut agent,
         messages: &mut messages,
         sessions: session_reads.clone(),

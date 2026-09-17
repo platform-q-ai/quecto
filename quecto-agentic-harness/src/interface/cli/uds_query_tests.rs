@@ -169,7 +169,6 @@ impl Fx {
         crate::interface::cli::uds::DispatchCtx {
             execution_state: self.execution_state.clone(),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
-            base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_over(

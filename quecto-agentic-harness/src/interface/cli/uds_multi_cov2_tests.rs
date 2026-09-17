@@ -94,7 +94,6 @@ fn make_agent() -> AgentLoopImpl {
 fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
     MultiClientArgs {
         agent: make_agent(),
-        base_dir: base,
         workspace: base,
         messages: vec![Message::user("seed")],
         model: "stub".into(),
@@ -297,7 +296,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
-        base_dir: dir.path(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

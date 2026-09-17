@@ -260,7 +260,6 @@ async fn single_client_socket_override_serves_get_state() {
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
-                    base_dir: dir.path(),
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),

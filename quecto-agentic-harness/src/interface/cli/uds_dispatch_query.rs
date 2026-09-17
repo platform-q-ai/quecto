@@ -153,10 +153,10 @@ pub(super) async fn dispatch_fieldless_command(
     // stays responsive (slice-4 review). `reqwest::blocking` is also only
     // safe off the async runtime's core threads.
     if let AgentCommand::RefreshModels { source, .. } = cmd {
-        let base_dir = ctx.base_dir.to_path_buf();
+        let refresh = ctx.catalogue.refresh.clone();
         let source = source.clone();
         let result = tokio::task::spawn_blocking(move || {
-            super::super::uds_models::refresh_models_data(&base_dir, source.as_deref())
+            super::super::uds_models::refresh_models_data(&refresh, source.as_deref())
         })
         .await;
         let event = match result {

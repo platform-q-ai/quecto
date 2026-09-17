@@ -142,7 +142,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         single_client_loop(
             SingleClientArgs {
                 agent,
-                base_dir,
                 workspace,
                 messages,
                 model,
@@ -173,7 +172,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,
-                base_dir,
                 workspace,
                 messages,
                 model,

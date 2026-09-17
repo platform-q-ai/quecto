@@ -1,4 +1,17 @@
-use super::refresh_models_data;
+use super::{UDS_REFRESH_BOUNDS, refresh_models_data};
+use crate::application::catalogue::dto::RefreshBounds;
+
+#[test]
+fn uds_refresh_waits_four_seconds_per_source_with_the_default_size_cap() {
+    assert_eq!(
+        UDS_REFRESH_BOUNDS.timeout,
+        std::time::Duration::from_secs(4)
+    );
+    assert_eq!(
+        UDS_REFRESH_BOUNDS.max_response_bytes,
+        RefreshBounds::default().max_response_bytes
+    );
+}
 use crate::composition::catalogue::list_models_wire_for;
 
 #[test]
@@ -136,9 +149,14 @@ fn refresh_models_data_reports_per_source_outcomes_on_the_wire() {
         .unwrap();
 
         let base_dir = tmp.path().to_path_buf();
-        let data = tokio::task::spawn_blocking(move || refresh_models_data(&base_dir, None))
-            .await
-            .unwrap();
+        let data = tokio::task::spawn_blocking(move || {
+            refresh_models_data(
+                &crate::composition::catalogue::build_catalogue_handles(&base_dir).refresh,
+                None,
+            )
+        })
+        .await
+        .unwrap();
 
         let outcomes = data["outcomes"].as_array().expect("outcomes array");
         let by_source = |source: &str| {
@@ -166,7 +184,10 @@ fn refresh_models_data_reports_per_source_outcomes_on_the_wire() {
         // A subset refresh touches only the named source.
         let base_dir = tmp.path().to_path_buf();
         let data = tokio::task::spawn_blocking(move || {
-            refresh_models_data(&base_dir, Some("anthropic-api"))
+            refresh_models_data(
+                &crate::composition::catalogue::build_catalogue_handles(&base_dir).refresh,
+                Some("anthropic-api"),
+            )
         })
         .await
         .unwrap();

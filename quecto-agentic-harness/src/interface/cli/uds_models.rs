@@ -14,54 +14,33 @@ pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
     )
 }
 
-/// UDS `refresh_models` operation (epic #1193, slice 4): drive the one
-/// application refresh use case and render per-source outcomes on the wire.
-/// The dispatch loop runs this on a blocking worker thread (see
+/// UDS `refresh_models` (epic #1193 slice 4, #1846): drive the composed
+/// refresh use case and render per-source outcomes on the wire. The
+/// dispatch loop runs this on a blocking worker thread (see
 /// `dispatch_fieldless_command`), so other UDS commands stay serviced while
 /// a refresh is in flight; the per-source budget is still kept tight so an
 /// unattended refresh converges quickly.
-pub fn refresh_models_data(base_dir: &std::path::Path, source: Option<&str>) -> serde_json::Value {
-    use crate::application::catalogue_refresh::{
-        RefreshBounds, RefreshSelection, SourceRefreshStatus,
+/// Per-source budget of a `refresh_models` request: a client waits on the
+/// reply, so one slow provider must not hold the loop for the default 30 s.
+pub(super) const UDS_REFRESH_BOUNDS: crate::application::catalogue::dto::RefreshBounds =
+    crate::application::catalogue::dto::RefreshBounds {
+        timeout: std::time::Duration::from_secs(4),
+        max_response_bytes:
+            crate::application::catalogue::dto::RefreshBounds::DEFAULT_MAX_RESPONSE_BYTES,
     };
+
+pub fn refresh_models_data(
+    refresh: &crate::application::catalogue::use_cases::RefreshCatalogueSources,
+    source: Option<&str>,
+) -> serde_json::Value {
+    use crate::application::catalogue::dto::RefreshSelection;
     let selection = match source {
         Some(name) => RefreshSelection::Only(vec![name.to_string()]),
         None => RefreshSelection::All,
     };
-    let bounds = RefreshBounds {
-        timeout: std::time::Duration::from_secs(4),
-        ..RefreshBounds::default()
-    };
-    let report =
-        crate::interface::catalogue_runtime::refresh_catalogue(base_dir, &selection, bounds);
-    let outcomes: Vec<serde_json::Value> = report
-        .outcomes
-        .iter()
-        .map(|outcome| {
-            let (status, models, reason) = match &outcome.status {
-                SourceRefreshStatus::Updated { models } => ("updated", Some(*models), None),
-                SourceRefreshStatus::Unchanged { models } => ("unchanged", Some(*models), None),
-                SourceRefreshStatus::Unsupported { reason } => {
-                    ("unsupported", None, Some(reason.clone()))
-                }
-                SourceRefreshStatus::Failed { reason } => ("failed", None, Some(reason.clone())),
-                SourceRefreshStatus::Cancelled => ("cancelled", None, None),
-            };
-            serde_json::json!({
-                "source": outcome.source,
-                "status": status,
-                "models": models,
-                "reason": reason,
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "outcomes": outcomes,
-        "generation": report
-            .resolved
-            .as_ref()
-            .map(|resolved| resolved.snapshot.generation()),
-    })
+    crate::interface::uds::catalogue::refresh_presenter::render(
+        &refresh.execute(&selection, UDS_REFRESH_BOUNDS),
+    )
 }
 
 #[cfg(test)]
