@@ -1,11 +1,12 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::configuration::dto::ConfigSelection;
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 pub(crate) struct AgentOutput<'a> {
@@ -203,6 +204,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         catalogue: None,
         provider_runtime: None,
         tool_policy_persistence: None,
+        configuration: None,
+        stdin_is_tty: false,
         admission_context,
         parent_control,
     };
@@ -254,14 +257,7 @@ pub(crate) fn cmd_agent(
             return 1;
         }
     };
-    let build = match build_agent_from_config(
-        &base_dir,
-        selection.path(),
-        selection.must_exist(),
-        &flags,
-        stderr,
-        None,
-    ) {
+    let build = match build_agent_from_config(&base_dir, &selection, &flags, stderr, None) {
         Some(r) => r,
         None => return 1,
     };
@@ -311,35 +307,48 @@ pub(crate) struct AgentBuildResult {
 }
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
-    config_path: &std::path::Path,
-    config_must_exist: bool,
+    selection: &ConfigSelection,
     flags: &AgentFlags,
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    // An explicit --config or a selected working-directory config must exist;
-    // only a missing GLOBAL config falls back to zero-config defaults.
-    if let Some(msg) = super::selected_config_missing(config_path, config_must_exist) {
+    let config_path = selection.path();
+    // An explicit --config must exist; only a missing GLOBAL config falls
+    // back to zero-config defaults.
+    if let Some(msg) = super::selected_config_missing(config_path, selection.must_exist()) {
         stderr.push_str(&msg);
         stderr.push('\n');
         return None;
     }
-    // Zero-config: a missing default config file loads defaults (no onboarding step).
-    let env_overrides: HashMap<String, String> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("QUECTO_"))
-        .collect();
-    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
-        Ok(c) => c,
-        Err(e) => {
-            stderr.push_str(&format!(
-                "failed to load config {}: {}\n",
-                config_path.display(),
-                e
-            ));
+    // Zero-config: a missing default config file loads defaults (no
+    // onboarding step). The overlay (#2024) merges over it when trusted; a
+    // one-shot run from a terminal may be asked to trust it, a UDS or
+    // spawned run never prompts.
+    let env_overrides = super::config_loading::quecto_env_overrides();
+    let prompt_for_trust = !flags.uds_mode && !flags.spawned && flags.stdin_is_tty;
+    let Some(build_configuration) = flags.configuration else {
+        stderr.push_str("agent: configuration capability not composed\n");
+        return None;
+    };
+    let loaded = match super::config_loading::load_selected_config(
+        build_configuration,
+        base_dir,
+        selection,
+        prompt_for_trust,
+        &env_overrides,
+    ) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            stderr.push_str(&error);
+            stderr.push('\n');
             return None;
         }
     };
-    let config = config.with_admission_base_dir(base_dir);
+    for line in super::config_loading::layer_diagnostics(&loaded.sources) {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+    let config = loaded.config;
     // The provider runtime (#1849): composed through the injected builder;
     // the interface never constructs provider state itself. Checked before
     // admission negotiation so a mis-composed binary fails without side
@@ -386,7 +395,7 @@ pub(crate) fn build_agent_from_config(
     // The run's reloadable configuration (#1849): the reload use case is
     // seeded now, after the startup composition read the same files.
     let runtime_inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
-        config_path: config_path.to_path_buf(),
+        selection: selection.clone(),
         env_overrides: env_overrides.clone(),
         http_client: http_client.clone(),
         provider_runtime: build_provider,
@@ -595,8 +604,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     };
     let build = match build_agent_from_config(
         &base_dir,
-        selection.path(),
-        selection.must_exist(),
+        &selection,
         &flags,
         stderr,
         broadcast_tx.clone(),
@@ -722,3 +730,18 @@ mod workflow_discovery_tests;
 #[cfg(test)]
 #[path = "agent_workflow_spec_tests.rs"]
 mod workflow_spec_tests;
+
+/// The selection a test hands the build path for a file at `path`: explicit
+/// (must exist) or the global layer with no overlay candidate.
+#[cfg(test)]
+pub(crate) fn selection_for_test(path: &std::path::Path, must_exist: bool) -> ConfigSelection {
+    if must_exist {
+        ConfigSelection::Explicit(path.to_path_buf())
+    } else {
+        ConfigSelection::Layered(crate::application::configuration::dto::ConfigLayers {
+            global: path.to_path_buf(),
+            overlay: None,
+            legacy_local: None,
+        })
+    }
+}

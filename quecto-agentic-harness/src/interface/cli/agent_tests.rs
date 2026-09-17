@@ -16,7 +16,7 @@ fn default_ctx() -> CliContext {
     CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
-        config_selection: Some(crate::composition::configuration::build_select_config),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -439,10 +439,18 @@ fn test_build_agent_from_config_no_config_file() {
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_none());
     assert!(stderr.contains("no LLM providers configured"));
 }
@@ -482,12 +490,20 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
     // must error "config not found", not silently fall back to defaults.
     let missing = tmp.path().join("nope.json");
-    let result = build_agent_from_config(tmp.path(), &missing, true, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&missing, true),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_none());
     assert!(stderr.contains("config not found"), "stderr: {stderr}");
 }
@@ -528,10 +544,18 @@ fn test_build_agent_from_config_invalid_json() {
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_none());
     assert!(stderr.contains("failed to load config"));
 }
@@ -576,10 +600,18 @@ fn test_build_agent_from_config_no_providers() {
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_none());
     assert!(stderr.contains("no LLM providers"));
 }
@@ -624,10 +656,18 @@ fn test_build_agent_from_config_with_model_override() {
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 

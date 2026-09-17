@@ -41,6 +41,12 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/config_document_store.rs"]
+mod config_document_store;
+#[path = "contracts/config_document_writer.rs"]
+mod config_document_writer;
+#[path = "contracts/config_validator.rs"]
+mod config_validator;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
@@ -73,8 +79,8 @@ mod llm_provider;
 mod loaded_catalogue_inputs;
 #[path = "contracts/loaded_refresh_inputs.rs"]
 mod loaded_refresh_inputs;
-#[path = "contracts/local_config_probe.rs"]
-mod local_config_probe;
+#[path = "contracts/overlay_trust_store.rs"]
+mod overlay_trust_store;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
 #[path = "contracts/refresh_inputs_loader.rs"]

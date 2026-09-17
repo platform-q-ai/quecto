@@ -61,6 +61,12 @@ pub(crate) struct AgentFlags {
     /// Composition's tool-policy persistence builder (#1849), from
     /// CliContext; the agent build installs its hook on the loop.
     pub(crate) tool_policy_persistence: Option<crate::interface::cli::ToolPolicyPersistenceBuilder>,
+    /// Composition's configuration handles builder (#2024), from
+    /// CliContext; the agent build resolves the effective config through it.
+    pub(crate) configuration: Option<crate::interface::cli::ConfigurationHandlesBuilder>,
+    /// Whether stdin is a terminal (from CliContext): the only case in which
+    /// an unrecorded overlay may be offered for trust at startup.
+    pub(crate) stdin_is_tty: bool,
     /// `--admission-context <file>`: descendant capability sidecar written by
     /// the parent (#1679 P3). The child binds it before announcing readiness.
     pub(crate) admission_context: Option<std::path::PathBuf>,
@@ -82,6 +88,8 @@ impl AgentFlags {
         self.catalogue = ctx.catalogue;
         self.provider_runtime = ctx.provider_runtime;
         self.tool_policy_persistence = ctx.tool_policy_persistence;
+        self.configuration = ctx.configuration;
+        self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }
 }
 

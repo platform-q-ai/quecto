@@ -56,11 +56,19 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent build should succeed");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_tokens(),
         65_536,

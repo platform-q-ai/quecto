@@ -48,7 +48,7 @@ fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
         base_dir: Some(base_dir.to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
-        config_selection: Some(crate::composition::configuration::build_select_config),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -98,6 +98,8 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         tool_policy_persistence: Some(build_tool_policy_persistence),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -693,7 +695,13 @@ fn test_build_agent_from_config_with_workspace_path() {
     let flags = test_flags(Some("hi"), None, None);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
@@ -709,7 +717,13 @@ fn test_build_agent_from_config_with_max_iterations() {
     flags.max_iterations = Some(7);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
