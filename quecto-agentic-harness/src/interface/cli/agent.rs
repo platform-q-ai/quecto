@@ -696,6 +696,9 @@ mod admission_startup;
 #[path = "agent_agents_md_tests.rs"]
 mod agents_md_tests;
 #[cfg(test)]
+#[path = "agent_build_tests.rs"]
+mod build_tests;
+#[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;
 #[cfg(test)]

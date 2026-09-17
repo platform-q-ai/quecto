@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::interface::cli::{CliContext, run_with_output};
 
-fn args(s: &str) -> Vec<String> {
+pub(super) fn args(s: &str) -> Vec<String> {
     let mut v = vec!["quecto".to_string()];
     if !s.is_empty() {
         v.extend(s.split_whitespace().map(String::from));
@@ -43,7 +43,7 @@ fn session_dir_entries_reads_real_entries() {
 /// Helper: write a minimal config with a fake OpenAI key.
 /// A CLI context over `base_dir` carrying composition's sessions and
 /// retained-context builders, as `main` supplies them.
-fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
+pub(super) fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(base_dir.to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
@@ -725,38 +725,4 @@ fn test_build_agent_from_config_with_max_iterations() {
         None,
     );
     assert!(result.is_some(), "stderr: {}", stderr);
-}
-
-// ===================================================================
-// Agent with anthropic provider config
-// ===================================================================
-
-#[test]
-fn test_agent_with_anthropic_provider_reaches_session() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"anthropic":{"api_key":"sk-ant-fake-key"}}}"#,
-    )
-    .unwrap();
-    let ctx = composed_ctx(tmp.path());
-    let out = run_with_output(args("agent -m test-anthropic"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
-    assert!(!out.stderr.contains("no LLM providers"));
-}
-
-#[test]
-fn test_agent_with_both_providers_reaches_session() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-openai-fake"},"anthropic":{"api_key":"sk-ant-fake"}}}"#,
-    )
-    .unwrap();
-    let ctx = composed_ctx(tmp.path());
-    let out = run_with_output(args("agent -m test-both"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
-    assert!(!out.stderr.contains("no LLM providers"));
 }
