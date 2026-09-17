@@ -92,7 +92,7 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     assert!(!catalogue.list().unwrap().rebuilt);
     std::fs::write(
         layout.home_catalogue_file(),
-        br#"{"version":2,"records":{}}"#,
+        br#"{"version":3,"records":{}}"#,
     )
     .unwrap();
     let recovered = catalogue.list().unwrap();
@@ -101,7 +101,7 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
         recovered
             .diagnostics
             .iter()
-            .any(|d| d.contains("version 2 unsupported"))
+            .any(|d| d.contains("version 3 unsupported"))
     );
     assert_eq!(snapshot.entries, recovered.entries);
     assert!(!catalogue.list().unwrap().rebuilt);
@@ -368,7 +368,7 @@ async fn concurrent_saves_and_catalogue_publication_recover_to_complete_authorit
     assert!(store.load(&identity).await.unwrap().is_some());
     let disk: serde_json::Value =
         serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
-    assert_eq!(disk["version"], 1);
+    assert_eq!(disk["version"], 2);
 }
 
 #[cfg(feature = "test-support")]
@@ -426,14 +426,19 @@ async fn concurrent_home_replacement_keeps_published_observation_consistent() {
         let rows = catalogue.list_async().await.unwrap();
         let index: serde_json::Value =
             serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
-        let bytes: Vec<u8> =
-            serde_json::from_value(index["records"]["home:chat-home-race"].clone()).unwrap();
+        // The published entry is written from the row's own observation:
+        // either nothing was cached (the sidecar moved under the read) or
+        // the cached scope is the row's, never a mix of two versions.
+        let cached = &index["records"]["chat-home-race"]["home"];
+        let kind = cached["scope"]["kind"].as_str();
         match &rows.entries[0].1 {
             SessionHomeScope::Scoped(observed) => {
                 assert_eq!(observed, &home());
-                assert!(serde_json::from_slice::<serde_json::Value>(&bytes).is_ok());
+                assert!(cached.is_null() || kind == Some("scoped"), "{index}");
             }
-            SessionHomeScope::Unavailable(_) => assert_eq!(bytes, b"{broken"),
+            SessionHomeScope::Unavailable(_) => {
+                assert!(cached.is_null() || kind == Some("unavailable"), "{index}");
+            }
             SessionHomeScope::LegacyUnscoped => panic!("atomic replacement cannot remove home"),
         }
     }
@@ -590,4 +595,144 @@ fn corrupt_legacy_transcript_diagnostic_names_the_record_file() {
         "{diagnostic}"
     );
     assert!(diagnostic.contains("line "), "{diagnostic}");
+}
+
+/// A new process (a new adapter over the same directory, as every TUI tab is)
+/// must list a large, unchanged directory from the persisted index alone:
+/// one `stat` per file, no transcript read. Only a record that changed since
+/// the index was written is read again.
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn cold_process_lists_from_the_persisted_index_without_reading_transcripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let count = 2_000;
+    let identities: Vec<SessionIdentity> = (0..count)
+        .map(|n| SessionIdentity::from_persisted_key(format!("chat-cold-{n:04}")))
+        .collect();
+    for identity in &identities {
+        store.record_new_home(identity, &home()).unwrap();
+        store.save(&session(identity.clone())).await.unwrap();
+    }
+    let warm = FileSessionHomeCatalogue::with_store(store.clone());
+    let first = warm.list().unwrap();
+    assert_eq!(first.entries.len(), count);
+    assert_eq!(
+        warm.transcript_reads(),
+        count,
+        "a fresh index reads each once"
+    );
+    let index = std::fs::read(layout.home_catalogue_file()).unwrap();
+    assert!(!warm.list().unwrap().rebuilt);
+    assert_eq!(
+        std::fs::read(layout.home_catalogue_file()).unwrap(),
+        index,
+        "an unchanged directory must not rewrite the index"
+    );
+    drop(warm);
+    let cold =
+        FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout.clone())));
+    let started = std::time::Instant::now();
+    let listed = cold.list().unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(listed.entries, first.entries);
+    assert!(!listed.rebuilt);
+    assert!(listed.diagnostics.is_empty(), "{:?}", listed.diagnostics);
+    assert_eq!(
+        cold.transcript_reads(),
+        0,
+        "a valid persisted index seeds the cold projection: no transcript read"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "cold listing over {count} records took {elapsed:?}"
+    );
+    let mut changed = session(identities[7].clone());
+    changed
+        .messages
+        .push(Message::user("appended after the index"));
+    store.save(&changed).await.unwrap();
+    assert_eq!(cold.list().unwrap().entries.len(), count);
+    assert_eq!(
+        cold.transcript_reads(),
+        1,
+        "only the appended transcript is read again"
+    );
+}
+
+/// The index is a cache the user's own tools write; an edited entry can
+/// misreport a home in the listing at most. Admission never consults it:
+/// `read` is the exact sidecar, so a doctored entry can neither admit nor
+/// refuse a resume.
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn doctored_index_entry_never_changes_exact_read_or_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-doctored");
+    catalogue.record_new(&identity, &home()).unwrap();
+    store.save(&session(identity.clone())).await.unwrap();
+    let query = quecto::application::sessions::dto::SessionListQuery::All;
+    store.list(&query).await.unwrap();
+    catalogue.list().unwrap();
+    let mut index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+    let entry = &mut index["records"]["chat-doctored"];
+    assert_eq!(entry["stamp"].as_array().map(Vec::len), Some(8));
+    // Real stamps, a lie about where the session was saved.
+    entry["home"]["scope"] = serde_json::json!({
+        "kind": "scoped",
+        "execution_dir": "/elsewhere",
+        "group_kind": "folder",
+        "group_path": "/elsewhere",
+    });
+    std::fs::write(
+        layout.home_catalogue_file(),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    let restarted = FileSessionHomeCatalogue::with_store(store.clone());
+    let listed = restarted.list().unwrap();
+    assert_eq!(restarted.transcript_reads(), 0);
+    assert_eq!(listed.entries.len(), 1);
+    // Exact reads are the sidecar, whatever the index claims.
+    assert_eq!(
+        restarted.read(&identity).unwrap(),
+        SessionHomeScope::Scoped(home())
+    );
+    // A stamp that does not match the file is never trusted: the record is
+    // read and validated again, and the stale row is replaced.
+    let mut index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+    index["records"]["chat-doctored"]["stamp"][1] = serde_json::json!(1);
+    std::fs::write(
+        layout.home_catalogue_file(),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    let restarted = FileSessionHomeCatalogue::with_store(store.clone());
+    let listed = restarted.list().unwrap();
+    assert_eq!(restarted.transcript_reads(), 1);
+    assert_eq!(
+        listed.entries,
+        vec![(identity.clone(), SessionHomeScope::Scoped(home()))]
+    );
+    // The same rule guards the summary walk: an entry whose stamp does not
+    // match the file is read again, whatever summary it carries.
+    let mut index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+    index["records"]["chat-doctored"]["stamp"][1] = serde_json::json!(1);
+    index["records"]["chat-doctored"]["summary"]["title"] = serde_json::json!("doctored");
+    std::fs::write(
+        layout.home_catalogue_file(),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    let fresh = Arc::new(FileSessionStore::new(layout.clone()));
+    let summaries = fresh.list(&query).await.unwrap();
+    assert_eq!(fresh.summary_transcript_reads(), 1);
+    assert_eq!(summaries[0].title, "hello");
 }

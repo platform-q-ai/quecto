@@ -1,10 +1,16 @@
 //! Discardable discovery index. Every query validates against authority; exact
 //! reads never depend on the index. Atomic replacement failures are diagnostics.
+//!
+//! Freshness is a file stamp (see [`stamp`]), never a content digest: a cold
+//! process seeds its projection from the persisted index and reads only the
+//! records whose stamp changed or which are new, so a listing over thousands
+//! of transcripts costs one `stat` per file. The on-disk shape lives in
+//! [`session_home_catalogue_index`].
 use super::{
     session_layout::FlatSessionLayout,
     session_store::{
         FileSessionStore,
-        session_store_home::{atomic_write, decode, error},
+        session_store_home::{atomic_write, error},
     },
 };
 use crate::{
@@ -15,8 +21,11 @@ use crate::{
         session_identity::SessionIdentity,
     },
 };
-use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
+
+#[path = "session_home_catalogue_index.rs"]
+mod session_home_catalogue_index;
+use session_home_catalogue_index::{Catalogue, HomeEntry, IndexEntry, IndexHome, SummaryEntry};
 
 #[derive(Clone)]
 pub struct FileSessionHomeCatalogue {
@@ -26,18 +35,31 @@ pub struct FileSessionHomeCatalogue {
     projection: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, Projection>>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
+/// One validated record, keyed in the projection by the identity's own
+/// layout path: a projection can never yield another file's identity.
 #[derive(Clone)]
 struct Projection {
-    stamp: Vec<u64>,
     identity: SessionIdentity,
-    digest: Vec<u8>,
+    entry: IndexEntry,
 }
+type Records = BTreeMap<String, IndexEntry>;
 
 /// Include ctime and inode, not merely user-restorable mtime/length. Only regular
 /// files qualify; changed/replaced authorities must be validated again.
 pub(super) fn stamp(path: &std::path::Path) -> Result<Vec<u64>, DomainError> {
+    stamp_of(std::fs::symlink_metadata(path).map_err(error)?)
+}
+const STAMP_LEN: usize = 8;
+/// A sidecar's stamp; `None` when no sidecar exists at all.
+fn sidecar_stamp(path: &std::path::Path) -> Result<Option<Vec<u64>>, DomainError> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(error(e)),
+        Ok(metadata) => stamp_of(metadata).map(Some),
+    }
+}
+fn stamp_of(metadata: std::fs::Metadata) -> Result<Vec<u64>, DomainError> {
     use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::symlink_metadata(path).map_err(error)?;
     if metadata.file_type().is_file() {
         Ok(vec![
             metadata.dev(),
@@ -54,12 +76,6 @@ pub(super) fn stamp(path: &std::path::Path) -> Result<Vec<u64>, DomainError> {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
-struct Catalogue {
-    version: u32,
-    /// Strong content digests detect freshness without copying transcripts.
-    records: BTreeMap<String, Vec<u8>>,
-}
 impl FileSessionHomeCatalogue {
     /// The catalogue over `store`'s own layout: home authority is written
     /// under the store's claims, so the two never diverge.
@@ -87,13 +103,7 @@ impl FileSessionHomeCatalogue {
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((
-                    Catalogue {
-                        version: 1,
-                        records,
-                    },
-                    result,
-                ));
+                return Ok((Catalogue::new(records), result));
             }
             Err(e) => return Err(error(e)),
         };
@@ -110,17 +120,11 @@ impl FileSessionHomeCatalogue {
         }
         self.publish_stable_rows(&mut records, &mut result)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok((
-            Catalogue {
-                version: 1,
-                records,
-            },
-            result,
-        ))
+        Ok((Catalogue::new(records), result))
     }
     fn publish_stable_rows(
         &self,
-        records: &mut BTreeMap<String, Vec<u8>>,
+        records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
     ) -> Result<(), DomainError> {
         // A save/delete may have raced an earlier row while later rows were read.
@@ -128,21 +132,20 @@ impl FileSessionHomeCatalogue {
         let mut projection = self.projection.lock().map_err(error)?;
         result.entries.retain(|(identity, home)| {
             let path = self.layout.session_file(identity);
-            let valid = projection
-                .get(&path)
-                .is_some_and(|entry| stamp(&path).is_ok_and(|current| current == entry.stamp));
-            // A published row and its fingerprint are written from one read;
-            // a mismatch is a programming error, never a user-visible panic
-            // from inside `spawn_blocking`.
+            let valid = projection.get(&path).is_some_and(|cached| {
+                stamp(&path).is_ok_and(|current| current == cached.entry.stamp)
+            });
+            // A published row and its index entry are written from one
+            // observation; a mismatch is a programming error, never a
+            // user-visible panic from inside `spawn_blocking`.
             debug_assert!(
-                fingerprinted_home_matches(records, identity, home),
-                "published home observation must match the fingerprinted home bytes"
+                indexed_home_matches(records, identity, home),
+                "published home observation must match its index entry"
             );
             if valid {
                 true
             } else {
-                records.remove(&format!("record:{}", identity.runtime_key()));
-                records.remove(&format!("home:{}", identity.runtime_key()));
+                records.remove(identity.runtime_key());
                 projection.remove(&path);
                 result
                     .diagnostics
@@ -156,15 +159,15 @@ impl FileSessionHomeCatalogue {
     fn scan_record(
         &self,
         path: PathBuf,
-        records: &mut BTreeMap<String, Vec<u8>>,
+        records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
     ) {
-        match self.projected_identity(&path, records) {
+        match self.projected_identity(&path) {
             Ok(identity) => {
-                let home = self.observe_home(&identity, records);
+                let home = self.observe_home(&path, &identity, records);
                 debug_assert!(
-                    fingerprinted_home_matches(records, &identity, &home),
-                    "published home observation must match the fingerprinted home bytes"
+                    indexed_home_matches(records, &identity, &home),
+                    "published home observation must match its index entry"
                 );
                 if let SessionHomeScope::Unavailable(reason) = &home {
                     result
@@ -186,17 +189,11 @@ impl FileSessionHomeCatalogue {
             }
         }
     }
-    fn projected_identity(
-        &self,
-        path: &PathBuf,
-        records: &mut BTreeMap<String, Vec<u8>>,
-    ) -> Result<SessionIdentity, DomainError> {
+    /// The record's identity: the projection's when the file still carries
+    /// the projected stamp, else one full read, strictly validated.
+    fn projected_identity(&self, path: &PathBuf) -> Result<SessionIdentity, DomainError> {
         let before = stamp(path)?;
         if let Some(cached) = self.cached_if_current(path, &before)? {
-            records.insert(
-                format!("record:{}", cached.identity.runtime_key()),
-                cached.digest,
-            );
             return Ok(cached.identity);
         }
         self.transcript_reads
@@ -207,17 +204,17 @@ impl FileSessionHomeCatalogue {
         debug_assert_eq!(self.layout.session_file(&identity), *path);
         let after = stamp(path)?;
         if before == after {
-            use sha2::Digest;
-            let digest = sha2::Sha256::digest(&bytes).to_vec();
             self.projection.lock().map_err(error)?.insert(
                 path.clone(),
                 Projection {
-                    stamp: after,
                     identity: identity.clone(),
-                    digest: digest.clone(),
+                    entry: IndexEntry {
+                        stamp: after,
+                        home: None,
+                        summary: None,
+                    },
                 },
             );
-            records.insert(format!("record:{}", identity.runtime_key()), digest);
             Ok(identity)
         } else {
             Err(error("session changed during catalogue validation"))
@@ -234,32 +231,122 @@ impl FileSessionHomeCatalogue {
             .map_err(error)?
             .get(path)
             .cloned()
-            .filter(|entry| entry.stamp == before))
+            .filter(|cached| cached.entry.stamp == before))
     }
+    /// The home beside `path`'s record: the projected observation when the
+    /// sidecar still carries the projected stamp, else one exact read, cached
+    /// only when the sidecar was stable around it (a concurrent atomic home
+    /// replacement can never mix two versions). Writes the record's entry.
     fn observe_home(
         &self,
+        path: &std::path::Path,
         identity: &SessionIdentity,
-        records: &mut BTreeMap<String, Vec<u8>>,
+        records: &mut Records,
     ) -> SessionHomeScope {
-        // Decode the exact observation fingerprinted in the index: a
-        // concurrent atomic home replacement cannot mix two versions.
-        match std::fs::read(self.layout.home_file(identity)) {
-            Ok(bytes) => {
-                let home = decode(&bytes);
-                records.insert(format!("home:{}", identity.runtime_key()), bytes);
+        let sidecar = self.layout.home_file(identity);
+        let before = sidecar_stamp(&sidecar);
+        // The fresh observation is the admission read itself (`read`): the
+        // listing can never see a home admission would not.
+        let exact = || self.read_home_exactly(identity);
+        let Ok(mut projection) = self.projection.lock() else {
+            return exact();
+        };
+        let Some(cached) = projection.get_mut(path) else {
+            // Unreachable by construction (the identity was just projected);
+            // observe exactly rather than publish nothing.
+            return exact();
+        };
+        let reusable = cached
+            .entry
+            .home
+            .as_ref()
+            .filter(|entry| before.as_ref().is_ok_and(|now| *now == entry.stamp));
+        let home = match reusable {
+            Some(entry) => entry.scope.to_scope(),
+            None => {
+                let home = exact();
+                let after = sidecar_stamp(&sidecar);
+                let stable = matches!((&before, &after), (Ok(b), Ok(a)) if b == a);
+                cached.entry.home = match (stable, after, IndexHome::from_scope(&home)) {
+                    (true, Ok(stamp), Some(scope)) => Some(HomeEntry { stamp, scope }),
+                    _ => None,
+                };
                 home
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                match std::fs::symlink_metadata(self.layout.home_file(identity)) {
-                    Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => {
-                        SessionHomeScope::LegacyUnscoped
-                    }
-                    _ => SessionHomeScope::Unavailable("home authority is inaccessible".into()),
-                }
-            }
-            Err(e) => SessionHomeScope::Unavailable(format!("home authority unreadable: {e}")),
+        };
+        // The store's walk validated its summary at this very stamp, or the
+        // entry keeps the one it was seeded with (same stamp, same record).
+        if let Some(summary) = self.store.summary_at(path, &cached.entry.stamp) {
+            cached.entry.summary = Some(SummaryEntry {
+                title: summary.title,
+                message_count: summary.message_count,
+            });
         }
+        records.insert(identity.runtime_key().to_string(), cached.entry.clone());
+        home
     }
+    /// The exact authority read; `read_home` never fails on an unreadable
+    /// sidecar (that is an `Unavailable` observation), so an error here is
+    /// the same observation.
+    fn read_home_exactly(&self, identity: &SessionIdentity) -> SessionHomeScope {
+        self.store
+            .read_home(identity)
+            .unwrap_or_else(|e| SessionHomeScope::Unavailable(e.to_string()))
+    }
+    /// Trust the persisted index only through its stamps: every seeded entry
+    /// is keyed by its own identity's layout path and reused only while the
+    /// file still carries the recorded stamp.
+    fn seed_projection(&self, index: &Catalogue) -> Result<(), DomainError> {
+        let mut projection = self.projection.lock().map_err(error)?;
+        projection.clear();
+        for (key, entry) in &index.records {
+            let identity = SessionIdentity::from_persisted_key(key.as_str());
+            if identity.persisted_key().is_some() && entry.stamp.len() == STAMP_LEN {
+                projection.insert(
+                    self.layout.session_file(&identity),
+                    Projection {
+                        identity,
+                        entry: entry.clone(),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+}
+/// The listing summaries the persisted index carries, keyed by record path
+/// with the stamp each was validated at, for the store's summary walk to seed
+/// from; an absent, unreadable or incompatible index seeds nothing. The walk
+/// re-stamps every file, so a stale entry is read again, never trusted.
+pub(super) fn persisted_summaries(
+    layout: &FlatSessionLayout,
+) -> BTreeMap<PathBuf, (Vec<u64>, crate::domain::session::SessionSummary)> {
+    let Ok(bytes) = std::fs::read(layout.home_catalogue_file()) else {
+        return BTreeMap::new();
+    };
+    let Ok(index) = Catalogue::decode(&bytes) else {
+        return BTreeMap::new();
+    };
+    index
+        .records
+        .into_iter()
+        .filter_map(|(key, entry)| {
+            let summary = entry.summary?;
+            let identity = SessionIdentity::from_persisted_key(key.as_str());
+            if identity.persisted_key().is_none() || entry.stamp.len() != STAMP_LEN {
+                return None;
+            }
+            let path = layout.session_file(&identity);
+            let summary = crate::domain::session::SessionSummary {
+                key,
+                identity,
+                title: summary.title,
+                message_count: summary.message_count,
+                updated_unix_secs: Some(entry.stamp[4]),
+            };
+            Some((path, (entry.stamp, summary)))
+        })
+        .collect()
 }
 fn identity_from_transcript(
     bytes: &[u8],
@@ -294,27 +381,17 @@ fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
     }
     Ok(first)
 }
-/// A readable index: version 1 and well-formed. Anything else names why.
-fn decode_catalogue(bytes: &[u8]) -> Result<Catalogue, String> {
-    let index: Catalogue = serde_json::from_slice(bytes).map_err(|_| "invalid".to_string())?;
-    if index.version == 1 {
-        Ok(index)
-    } else {
-        Err(format!("version {} unsupported", index.version))
-    }
-}
-fn fingerprinted_home_matches(
-    records: &BTreeMap<String, Vec<u8>>,
+fn indexed_home_matches(
+    records: &Records,
     identity: &SessionIdentity,
     home: &SessionHomeScope,
 ) -> bool {
-    match records.get(&format!("home:{}", identity.runtime_key())) {
-        Some(bytes) => &decode(bytes) == home,
-        None => matches!(
-            home,
-            SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_)
-        ),
-    }
+    records
+        .get(identity.runtime_key())
+        .is_some_and(|entry| match &entry.home {
+            Some(cached) => cached.scope.to_scope() == *home,
+            None => true,
+        })
 }
 impl SessionHomeCatalogue for FileSessionHomeCatalogue {
     fn list_async(
@@ -347,8 +424,9 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
         self.store.discard_orphan_home(identity)
     }
     fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
-        // Serialize list/publication within this adapter. Disk data never seeds
-        // the trusted projection: restart and externally changed indexes rebuild.
+        // Serialize list/publication within this adapter. A well-formed index
+        // seeds the projection, trusted only through stamps: every record is
+        // stat-ed, and any that changed (or is new) is read and validated.
         let mut published = self.published.lock().map_err(error)?;
         let path = self.layout.home_catalogue_file();
         // Only a missing index is "absent"; a read failure is recovery.
@@ -357,15 +435,18 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => Some(format!("unreadable index: {e}").into_bytes()),
         };
+        let cached = disk.as_ref().map(|bytes| Catalogue::decode(bytes));
         if published
             .as_ref()
             .is_some_and(|previous| Some(previous) == disk.as_ref())
         {
-            // Only our unchanged publication permits incremental reuse.
+            // Our own unchanged publication: the projection is current.
         } else {
-            self.projection.lock().map_err(error)?.clear();
+            match &cached {
+                Some(Ok(index)) => self.seed_projection(index)?,
+                _ => self.projection.lock().map_err(error)?.clear(),
+            }
         }
-        let cached = disk.as_ref().map(|bytes| decode_catalogue(bytes));
         let (authority, mut result) = self.scan()?;
         match &cached {
             Some(Ok(index)) if *index == authority => {

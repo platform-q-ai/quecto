@@ -12,11 +12,9 @@ use super::super::session_layout::FlatSessionLayout;
 #[path = "session_store_list_scan.rs"]
 mod session_store_list_scan;
 
-#[derive(Debug, Default)]
-pub(super) struct SummaryCache {
-    pub(super) reads: usize,
-    pub(super) entries: std::collections::BTreeMap<std::path::PathBuf, (Vec<u64>, SessionSummary)>,
-}
+#[path = "session_store_list_index.rs"]
+mod session_store_list_index;
+pub(super) use session_store_list_index::SummaryCache;
 
 pub(super) async fn list_summaries(
     layout: &FlatSessionLayout,

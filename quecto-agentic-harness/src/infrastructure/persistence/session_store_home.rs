@@ -123,6 +123,16 @@ impl FileSessionStore {
     pub fn layout(&self) -> &super::super::session_layout::FlatSessionLayout {
         &self.layout
     }
+    /// The listing summary this store's walk validated for `path` at exactly
+    /// `stamp`, for the derived index to carry; `None` when the walk has not
+    /// seen that version.
+    pub(in crate::infrastructure::persistence) fn summary_at(
+        &self,
+        path: &Path,
+        stamp: &[u64],
+    ) -> Option<crate::domain::session::SessionSummary> {
+        self.summaries.lock().ok()?.summary_at(path, stamp).cloned()
+    }
     pub fn read_home(&self, identity: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         match std::fs::read(self.layout.home_file(identity)) {
             Ok(bytes) => Ok(decode(&bytes)),

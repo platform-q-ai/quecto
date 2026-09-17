@@ -629,7 +629,7 @@ fn catalogue_rebuilt(world: &mut QuectoWorld) {
     let base = world.cli_context.base_dir.as_ref().unwrap();
     let catalogue: serde_json::Value =
         serde_json::from_slice(&fs::read(base.join("sessions/home.catalogue")).unwrap()).unwrap();
-    assert_eq!(catalogue["version"], 1);
+    assert_eq!(catalogue["version"], 2);
 }
 
 #[when("the operator clicks Global in the resume picker")]

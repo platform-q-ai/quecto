@@ -15,9 +15,7 @@ pub(super) fn scan(
     query: &SessionListQuery,
     cache: &std::sync::Mutex<SummaryCache>,
 ) -> Result<Vec<SessionSummary>, DomainError> {
-    let mut cache = cache
-        .lock()
-        .map_err(|e| DomainError::Session(e.to_string()))?;
+    let mut cache = SummaryCache::seeded(cache, layout)?;
     let mut summaries = Vec::new();
     let entries = match std::fs::read_dir(layout.sessions_dir()) {
         Ok(entries) => entries,

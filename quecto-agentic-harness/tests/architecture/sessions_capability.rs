@@ -72,7 +72,9 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/ports/session_home.rs",
     "src/application/sessions/session_home.rs",
     "src/infrastructure/persistence/session_home_catalogue.rs",
+    "src/infrastructure/persistence/session_home_catalogue_index.rs",
     "src/infrastructure/persistence/session_store_home.rs",
+    "src/infrastructure/persistence/session_store_list_index.rs",
     "src/infrastructure/workspace/git_scope_discovery.rs",
     "src/infrastructure/workspace/filesystem_scope.rs",
     "src/application/sessions/mod.rs",
@@ -677,12 +679,28 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,
     ),
-    ("src/infrastructure/persistence/session_store_list.rs", 31),
+    // PR #2018 perf: the summary cache moved to its own module, seeded once
+    // per process from the persisted index (31 → 29; the walk 62 → 60).
+    ("src/infrastructure/persistence/session_store_list.rs", 29),
     // R2-L3: the per-record read (cached summary, header parse, layout
     // check, every skip logged) is its own helper; the walk shrank 110 → 62.
     (
         "src/infrastructure/persistence/session_store_list_scan.rs",
-        62,
+        60,
+    ),
+    (
+        "src/infrastructure/persistence/session_store_list_index.rs",
+        48,
+    ),
+    // PR #2018 perf: the derived index is stamp-based and persisted; its
+    // on-disk shape is its own module, both pinned at delivered size.
+    (
+        "src/infrastructure/persistence/session_home_catalogue.rs",
+        482,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_index.rs",
+        142,
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
