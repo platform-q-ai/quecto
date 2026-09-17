@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use super::catalogue_defaults::ConfigDefaultsWriter;
 use crate::application::catalogue::use_cases::{
     ChangeActiveModel, ChangeReasoningEffort, ListModels, RefreshCatalogueSources,
     ReloadRuntimeConfiguration,
@@ -17,7 +18,6 @@ use crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
 use crate::infrastructure::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
-use crate::infrastructure::config::writer::defaults::ConfigDefaultsWriter;
 use crate::infrastructure::runtime_configuration::FileRuntimeConfiguration;
 use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
@@ -39,9 +39,10 @@ pub fn build_catalogue_handles(
         inputs.clone(),
         snapshot_store_for(base_dir),
     ));
-    // One adapter serves both default-persistence ports: the record goes
-    // through the configuration capability's patch use case (never
-    // prompting — a session has no terminal to approve an overlay at).
+    // One mapping (`catalogue_defaults.rs`) serves both default-persistence
+    // ports: the record goes through the configuration capability's patch
+    // use case (never prompting — a session has no terminal to approve an
+    // overlay at).
     let defaults = Arc::new(match runtime {
         Some(runtime) => ConfigDefaultsWriter::new(
             (runtime.configuration)(&ConfigurationEnvironment {

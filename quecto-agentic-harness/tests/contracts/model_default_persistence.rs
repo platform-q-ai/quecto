@@ -9,9 +9,9 @@ use tempfile::TempDir;
 use quecto::application::catalogue::ports::{DefaultScope, ModelDefaultPersistence};
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection};
 use quecto::application::configuration::ports::{OverlayTrust, OverlayTrustStore};
+use quecto::composition::catalogue_defaults::ConfigDefaultsWriter;
 use quecto::composition::configuration::build_configuration_handles;
 use quecto::infrastructure::config::persistence::PersistentOverlayTrustStore;
-use quecto::infrastructure::config::writer::defaults::ConfigDefaultsWriter;
 use quecto::interface::cli::configuration_handles::ConfigurationEnvironment;
 
 pub(crate) struct Layers {

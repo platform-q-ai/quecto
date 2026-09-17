@@ -1,12 +1,12 @@
-//! The default-persistence adapter over a real composed patch handle: the
+//! The default-persistence mapping over a real composed patch handle: the
 //! record lands in the layer the scope names with the S1 writer's
 //! guarantees (trust recorded, other keys untouched, refusals named), and
 //! the unbound writer refuses everything.
 
+use super::super::configuration::build_configuration_handles;
 use super::*;
 use crate::application::configuration::dto::ConfigLayers;
 use crate::application::configuration::ports::{OverlayTrust, OverlayTrustStore};
-use crate::composition::configuration::build_configuration_handles;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 use tempfile::TempDir;

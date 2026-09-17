@@ -1,17 +1,21 @@
-//! The catalogue's default-persistence ports (#2024 S2) over the one
-//! configuration write path: `set_model … persist` and `set_effort …
-//! persist` record `agents.defaults.model` / `agents.defaults.effort` in
-//! the repository overlay or the global file through the configuration
-//! capability's patch use case — the same exclusive hold, the same
-//! validation of the layer and of the merge, trust recorded for exactly
-//! the bytes written, `providers`/`admission` never touched — so a
-//! default pinned from a running session and one pinned with `quecto
-//! config set` are indistinguishable on disk.
+//! The catalogue's default-persistence ports (#2024 S2) as a mapping onto
+//! the configuration capability's patch use case, in the manner of
+//! `fleet_settlement.rs`: composition adapts the concrete
+//! `PatchConfiguration` handle to the `ModelDefaultPersistence` /
+//! `EffortDefaultPersistence` ports so the two capabilities never name
+//! each other, and `set_model … persist` / `set_effort … persist` record
+//! `agents.defaults.model` / `agents.defaults.effort` through the one
+//! write path — the same exclusive hold, the same validation of the layer
+//! and of the merge, trust recorded for exactly the bytes written,
+//! `providers`/`admission` never touched — so a default pinned from a
+//! running session and one pinned with `quecto config set` are
+//! indistinguishable on disk. A mapping only: it touches no file, lock or
+//! process itself, which is why it lives here and not in infrastructure.
 //!
-//! This adapter holds the composed patch handle and the run's selection;
-//! it constructs neither (composition does). A run composed without a
-//! reloadable configuration (rigs, the `models` CLI) gets the unbound
-//! writer, which refuses every record naming why.
+//! The mapping holds the composed patch handle and the run's selection;
+//! `catalogue.rs` constructs both. A run composed without a reloadable
+//! configuration (rigs, the `models` CLI) gets the unbound writer, which
+//! refuses every record naming why.
 
 use std::sync::Arc;
 
@@ -113,5 +117,5 @@ impl std::fmt::Debug for ConfigDefaultsWriter {
 }
 
 #[cfg(test)]
-#[path = "defaults_tests.rs"]
+#[path = "catalogue_defaults_tests.rs"]
 mod tests;

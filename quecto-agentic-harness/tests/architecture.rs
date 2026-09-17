@@ -211,19 +211,10 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
         let (file_path, _) = file_content.split_once(":\n").unwrap();
         let (_, source) = file_content.split_once(":\n").unwrap();
         assert!(
-            application_dependencies_allowed_in(file_path, source),
+            application_dependencies_allowed(source),
             "Architecture violation in infrastructure: {file_path}"
         );
     }
-}
-
-/// The one infrastructure file admitted to hold the composed
-/// `PatchConfiguration` handle (#2024 S2).
-const DEFAULTS_ADAPTER: &str = "src/infrastructure/config/writer/defaults.rs";
-
-/// The content-only check, for a file the exemptions do not name.
-fn application_dependencies_allowed(content: &str) -> bool {
-    application_dependencies_allowed_in("", content)
 }
 
 #[test]
@@ -344,7 +335,7 @@ fn query_dependencies_allowed(content: &str) -> bool {
     })
 }
 
-fn application_dependencies_allowed_in(file_path: &str, content: &str) -> bool {
+fn application_dependencies_allowed(content: &str) -> bool {
     dependency_paths(content).is_some_and(|paths| {
         paths.iter().all(|path| {
             let parts: Vec<_> = path.split("::").collect();
@@ -431,28 +422,6 @@ fn application_dependencies_allowed_in(file_path: &str, content: &str) -> bool {
                     "use_cases",
                     "ChangeReasoningEffort",
                 ] => true,
-                // The catalogue's default-persistence adapter (#2024 S2)
-                // records `agents.defaults.*` through the composed patch
-                // use case of the configuration capability — one write
-                // path, one set of guarantees — rather than a second patch
-                // cycle beside it. It holds the handle composition built
-                // and invokes it; the patch policy stays the use case's.
-                // Admitted for that one file only.
-                [
-                    "crate",
-                    "application",
-                    "configuration",
-                    "use_cases",
-                    "PatchConfiguration",
-                ]
-                | [
-                    "crate",
-                    "application",
-                    "configuration",
-                    "dto",
-                    "ConfigLayer" | "ConfigPatch" | "ConfigSelection",
-                    ..,
-                ] => file_path == DEFAULTS_ADAPTER,
                 [
                     "crate",
                     "application",
@@ -1999,26 +1968,14 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::application::{ports::Good, secret::Bad};",
         "fn effect() { crate::application::secret::run(); }",
         "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
-        // The patch handle is admitted for the defaults adapter only.
+        // The patch handle is a use-case handle, never an infrastructure
+        // dependency: the catalogue's default-persistence mapping over it
+        // lives in `src/composition/catalogue_defaults.rs` (#2024 S2).
         "use crate::application::configuration::use_cases::PatchConfiguration;",
         "use crate::application::configuration::dto::{ConfigLayer, ConfigPatch};",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }
-    let patch_handle = "use crate::application::configuration::use_cases::PatchConfiguration; \
-                        use crate::application::configuration::dto::{ConfigLayer, ConfigPatch, ConfigSelection};";
-    assert!(application_dependencies_allowed_in(
-        DEFAULTS_ADAPTER,
-        patch_handle
-    ));
-    assert!(!application_dependencies_allowed_in(
-        "src/infrastructure/config/writer/tool_policy.rs",
-        patch_handle
-    ));
-    assert!(
-        Path::new(DEFAULTS_ADAPTER).exists(),
-        "the admitted adapter file moved; update DEFAULTS_ADAPTER"
-    );
 }
 
 #[test]
