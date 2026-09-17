@@ -3,7 +3,6 @@ use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::error::DomainError;
 use crate::domain::session::SessionSummary;
 
-use super::super::super::session_home_catalogue::stamp;
 use super::super::super::session_layout::FlatSessionLayout;
 use super::SummaryCache;
 
@@ -51,21 +50,8 @@ pub(super) fn scan(
             }
         }
     }
-    summaries.retain(|summary| {
-        let path = layout.session_file(&summary.identity);
-        let unchanged = cache
-            .entries
-            .get(&path)
-            .is_some_and(|(version, _)| stamp(&path).is_ok_and(|current| *version == current));
-        if !unchanged {
-            tracing::warn!(
-                target: "session_store",
-                path = %path.display(),
-                "session record changed while it was being listed; skipped this listing"
-            );
-        }
-        unchanged
-    });
+    // Each row was re-stamped around its own read (`summary_of`); a record
+    // rewritten after that is at worst one autosave stale, never partial.
     cache.entries.retain(|path, _| path.exists());
     summaries.sort_by(|a, b| {
         b.updated_unix_secs
