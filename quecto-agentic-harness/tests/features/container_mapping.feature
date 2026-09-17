@@ -55,3 +55,12 @@ Feature: A repository binds itself to a container config through its overlay
     Then the spawn result should not be an error
     And the script-managed runtime should have used container script "default"
     And the script-managed runtime should have received no repository
+
+  @done @issue-2024 @container-spawn
+  Scenario: Unsetting the overlay entry rolls the checkout back to the global default
+    Given the checkout binds itself to container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    And the checkout unbinds container config "r" through quecto config unset --local
+    When I spawn script-managed subagent "container-rollback" with default selection and no config argument and task "CONTAINER_ROLLBACK_MARKER"
+    Then the spawn result should not be an error
+    And the script-managed runtime should have used container script "default"
+    And the script-managed runtime should have received no repository

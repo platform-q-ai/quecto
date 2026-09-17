@@ -157,3 +157,24 @@ fn then_spawn_fails_with(world: &mut QuectoWorld, expected: String) {
         result.content
     );
 }
+
+#[given(
+    expr = "the checkout unbinds container config {string} through quecto config unset --local"
+)]
+fn given_checkout_unbinds(world: &mut QuectoWorld, name: String) {
+    let output = cli::run_with_output(
+        vec![
+            "quecto".to_string(),
+            "config".to_string(),
+            "unset".to_string(),
+            "--local".to_string(),
+            format!("container_configs.{name}"),
+        ],
+        &world.cli_context,
+    );
+    assert_eq!(
+        output.exit_code, 0,
+        "quecto config unset --local failed:\nstdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
+}

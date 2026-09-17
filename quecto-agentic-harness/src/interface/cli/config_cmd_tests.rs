@@ -1,4 +1,4 @@
-//! `quecto config get|set|trust` over a hermetic base directory and
+//! `quecto config get|set|unset|trust` over a hermetic base directory and
 //! working directory: argument parsing, target selection, presentation.
 
 use crate::interface::cli::{CliContext, run_with_output};
@@ -192,6 +192,12 @@ fn usage_errors_name_the_problem() {
         (vec!["config", "set", "only-path"], "a path and a value"),
         (vec!["config", "set", "", "1"], "invalid config path"),
         (vec!["config", "trust", "extra"], "no positional"),
+        (vec!["config", "unset"], "unset takes a path"),
+        (vec!["config", "unset", "a", "b"], "unset takes a path"),
+        (
+            vec!["config", "unset", "--global", "--local", "a"],
+            "only one of",
+        ),
     ] {
         let (code, _, stderr) = rig.run(&args);
         assert_eq!(code, 1, "{args:?}");
@@ -286,4 +292,77 @@ fn get_redacts_secrets_unless_shown_and_says_so_on_stderr() {
     let (code, _, stderr) = rig.run(&["config", "trust", "--show-secrets"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("unknown option --show-secrets"), "{stderr}");
+}
+
+#[test]
+fn unset_removes_a_key_from_the_overlay_by_default_or_the_global_file() {
+    let rig = Rig::new();
+    std::fs::write(
+        rig.global(),
+        r#"{"container_configs":{"g":{"default":true,"create":["/c"],"cleanup":["/k"]}},"agents":{"defaults":{"effort":"high"}}}"#,
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.run(&[
+        "config",
+        "set",
+        "--local",
+        "container_configs.app",
+        r#"{"default":true,"create":["/c","--repo","r"],"cleanup":["/k"]}"#,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let (_, stdout, _) = rig.run(&["config", "get", "--effective", "container_configs"]);
+    let effective: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(effective["app"]["default"], serde_json::json!(true));
+    assert_eq!(effective["g"]["default"], serde_json::json!(false));
+
+    // Rollback: the overlay entry goes, the global default applies again,
+    // and the rewritten overlay is trusted.
+    let (code, stdout, stderr) = rig.run(&["config", "unset", "--local", "container_configs.app"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "unset container_configs.app in {} (trusted)",
+            rig.overlay().display()
+        )),
+        "{stdout}"
+    );
+    let (_, stdout, stderr) = rig.run(&["config", "get", "--effective", "container_configs"]);
+    assert!(!stderr.contains("not trusted"), "{stderr}");
+    let effective: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(effective["g"]["default"], serde_json::json!(true));
+    assert!(effective.get("app").is_none());
+    let (_, stdout, _) = rig.run(&["config", "get", "--local"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
+        serde_json::json!({"container_configs":{}})
+    );
+
+    // A second unset of the same key is refused: nothing to roll back.
+    let (code, _, stderr) = rig.run(&["config", "unset", "container_configs.app"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("is not set there"), "{stderr}");
+
+    let (code, stdout, stderr) =
+        rig.run(&["config", "unset", "--global", "agents.defaults.effort"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "unset agents.defaults.effort in {}\n",
+            rig.global().display()
+        )),
+        "{stdout}"
+    );
+    let (_, stdout, _) = rig.run(&["config", "get", "--global"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
+        serde_json::json!({"container_configs":{"g":{"default":true,"create":["/c"],"cleanup":["/k"]}},"agents":{"defaults":{}}})
+    );
+    // An unset that would brick the merge is refused like a set.
+    let (code, _, stderr) =
+        rig.run(&["config", "unset", "--global", "container_configs.g.default"]);
+    assert_eq!(code, 1);
+    assert!(
+        stderr.contains("no container config is labeled"),
+        "{stderr}"
+    );
 }

@@ -25,9 +25,11 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use crate::application::configuration::dto::{
-    ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection,
+    ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
 };
-use crate::application::configuration::overlay_policy::{GLOBAL_ONLY_KEYS, key_segments, set_path};
+use crate::application::configuration::overlay_policy::{
+    GLOBAL_ONLY_KEYS, key_segments, remove_path, set_path,
+};
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
@@ -60,11 +62,60 @@ impl PatchConfiguration {
     }
 
     pub fn execute(&self, patch: ConfigPatch) -> Result<ConfigPatchReceipt, ConfigPatchError> {
-        let path = self.target_path(&patch)?;
+        let ConfigPatch {
+            selection,
+            layer,
+            key_path,
+            value,
+        } = patch;
+        self.apply(&selection, layer, &key_path, |document, path| {
+            set_path(document, &key_path, value).map_err(|at| ConfigPatchError::NotAnObject {
+                path: path.to_path_buf(),
+                at,
+            })
+        })
+    }
+
+    /// Remove one key: the rollback of [`Self::execute`], under the same
+    /// rules. A key the layer does not carry is refused, so nothing is
+    /// rewritten (and no trust re-recorded) for a no-op.
+    pub fn unset(&self, unset: ConfigUnset) -> Result<ConfigPatchReceipt, ConfigPatchError> {
+        let ConfigUnset {
+            selection,
+            layer,
+            key_path,
+        } = unset;
+        self.apply(
+            &selection,
+            layer,
+            &key_path,
+            |document, path| match remove_path(document, &key_path) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(ConfigPatchError::MissingKey {
+                    path: path.to_path_buf(),
+                    key_path: key_path.clone(),
+                }),
+                Err(at) => Err(ConfigPatchError::NotAnObject {
+                    path: path.to_path_buf(),
+                    at,
+                }),
+            },
+        )
+    }
+
+    /// The one read → edit → validate → write cycle both operations share.
+    fn apply(
+        &self,
+        selection: &ConfigSelection,
+        layer: ConfigLayer,
+        key_path: &str,
+        edit: impl FnOnce(&mut Value, &Path) -> Result<(), ConfigPatchError>,
+    ) -> Result<ConfigPatchReceipt, ConfigPatchError> {
+        let path = self.target_path(selection, layer)?;
         let path = path.as_path();
-        let segments = key_segments(&patch.key_path)
-            .ok_or_else(|| ConfigPatchError::InvalidKeyPath(patch.key_path.clone()))?;
-        if patch.layer == ConfigLayer::Overlay && GLOBAL_ONLY_KEYS.contains(&segments[0]) {
+        let segments = key_segments(key_path)
+            .ok_or_else(|| ConfigPatchError::InvalidKeyPath(key_path.to_string()))?;
+        if layer == ConfigLayer::Overlay && GLOBAL_ONLY_KEYS.contains(&segments[0]) {
             return Err(ConfigPatchError::GlobalOnlyKey {
                 path: path.to_path_buf(),
                 key: segments[0].to_string(),
@@ -79,8 +130,8 @@ impl PatchConfiguration {
                 path: path.to_path_buf(),
                 reason,
             })?;
-        let existing = self.existing(patch.layer, path)?;
-        if let (ConfigLayer::Overlay, Some(bytes)) = (patch.layer, &existing)
+        let existing = self.existing(layer, path)?;
+        if let (ConfigLayer::Overlay, Some(bytes)) = (layer, &existing)
             && let OverlayTrust::Untrusted { fingerprint } = self.trust.decide(path, bytes)
         {
             return Err(ConfigPatchError::UntrustedOverlay {
@@ -97,13 +148,8 @@ impl PatchConfiguration {
             }
             None => Value::Object(Map::new()),
         };
-        set_path(&mut document, &patch.key_path, patch.value).map_err(|at| {
-            ConfigPatchError::NotAnObject {
-                path: path.to_path_buf(),
-                at,
-            }
-        })?;
-        self.check(&patch.selection, patch.layer, path, &document)?;
+        edit(&mut document, path)?;
+        self.check(selection, layer, path, &document)?;
         let written =
             self.writer
                 .write(path, &document)
@@ -111,7 +157,7 @@ impl PatchConfiguration {
                     path: path.to_path_buf(),
                     reason,
                 })?;
-        if patch.layer == ConfigLayer::Overlay {
+        if layer == ConfigLayer::Overlay {
             // Trust is by exact bytes: the ones the writer laid down, never
             // a read-back (another writer may have replaced the file since).
             self.trust
@@ -154,11 +200,14 @@ impl PatchConfiguration {
 
     /// The file the patch addresses: the selection's base file for the
     /// global layer, its overlay location for the overlay layer.
-    fn target_path(&self, patch: &ConfigPatch) -> Result<PathBuf, ConfigPatchError> {
-        match patch.layer {
-            ConfigLayer::Global => Ok(patch.selection.path().to_path_buf()),
-            ConfigLayer::Overlay => patch
-                .selection
+    fn target_path(
+        &self,
+        selection: &ConfigSelection,
+        layer: ConfigLayer,
+    ) -> Result<PathBuf, ConfigPatchError> {
+        match layer {
+            ConfigLayer::Global => Ok(selection.path().to_path_buf()),
+            ConfigLayer::Overlay => selection
                 .overlay_path()
                 .map(Path::to_path_buf)
                 .ok_or(ConfigPatchError::NoOverlayLocation),

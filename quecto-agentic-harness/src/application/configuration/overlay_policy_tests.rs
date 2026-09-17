@@ -150,3 +150,31 @@ fn a_document_looks_like_a_config_only_with_a_known_section_shaped_as_one() {
     assert!(!looks_like_config(&json!({"agents":null})));
     assert!(!looks_like_config(&json!({"providers":true})));
 }
+
+#[test]
+fn remove_path_removes_only_the_addressed_key_and_reports_absence() {
+    let mut doc = json!({"container_configs":{"app":{"default":true},"other":{}},"agents":{"defaults":{"model":"m"}}});
+    assert_eq!(remove_path(&mut doc, "container_configs.app"), Ok(true));
+    assert_eq!(
+        doc,
+        json!({"container_configs":{"other":{}},"agents":{"defaults":{"model":"m"}}})
+    );
+    // Absent leaf, absent parent: nothing to remove, nothing changed.
+    assert_eq!(remove_path(&mut doc, "container_configs.app"), Ok(false));
+    assert_eq!(remove_path(&mut doc, "nope.deeper.key"), Ok(false));
+    assert_eq!(
+        doc,
+        json!({"container_configs":{"other":{}},"agents":{"defaults":{"model":"m"}}})
+    );
+    // Emptied parents stay: only the addressed key changes.
+    assert_eq!(remove_path(&mut doc, "container_configs.other"), Ok(true));
+    assert_eq!(doc["container_configs"], json!({}));
+    // A non-object on the way is named.
+    assert_eq!(
+        remove_path(&mut doc, "agents.defaults.model.x"),
+        Err("agents.defaults.model".to_string())
+    );
+    assert_eq!(remove_path(&mut doc, "",), Err(String::new()));
+    let mut scalar = json!("nope");
+    assert_eq!(remove_path(&mut scalar, "a"), Err(String::new()));
+}

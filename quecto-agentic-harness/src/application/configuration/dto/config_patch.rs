@@ -27,6 +27,17 @@ pub struct ConfigPatch {
     pub value: serde_json::Value,
 }
 
+/// Remove `key_path` from one layer of `selection` (the inverse of
+/// [`ConfigPatch`]): the same validation, hold, write and trust rules
+/// apply; a key that is not there is an error, so a rollback that did
+/// nothing is never reported as done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigUnset {
+    pub selection: ConfigSelection,
+    pub layer: ConfigLayer,
+    pub key_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigPatchReceipt {
     pub path: PathBuf,
@@ -66,6 +77,12 @@ pub enum ConfigPatchError {
     Parse {
         path: PathBuf,
         reason: String,
+    },
+    /// An unset addressed a key the layer does not carry; nothing was
+    /// written.
+    MissingKey {
+        path: PathBuf,
+        key_path: String,
     },
     /// The document, or an intermediate value on the key path, is not an
     /// object.
@@ -130,6 +147,11 @@ impl std::fmt::Display for ConfigPatchError {
             Self::Parse { path, reason } => {
                 write!(f, "failed to parse config {}: {reason}", path.display())
             }
+            Self::MissingKey { path, key_path } => write!(
+                f,
+                "cannot unset `{key_path}` in {}: the key is not set there",
+                path.display()
+            ),
             Self::NotAnObject { path, at } if at.is_empty() => write!(
                 f,
                 "cannot set a key in {}: the document is not a JSON object",

@@ -1,4 +1,4 @@
-//! `quecto config get|set|trust` (#2024): parse the arguments, map them to
+//! `quecto config get|set|unset|trust` (#2024): parse the arguments, map them to
 //! the configuration use cases the context was composed with, present the
 //! outcome. The interface never reads or writes a config file itself.
 
@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use super::CliContext;
 use super::config_loading::layer_diagnostics;
 use crate::application::configuration::dto::{
-    ConfigLayer, ConfigPatch, ConfigReadRequest, ConfigReadScope, ConfigSelection,
+    ConfigLayer, ConfigPatch, ConfigReadRequest, ConfigReadScope, ConfigSelection, ConfigUnset,
     OverlayTrustRequest,
 };
 
-const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local] [--show-secrets]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value; secret-shaped values print as \"<redacted>\" without --show-secrets)\n";
+const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local] [--show-secrets]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config unset <dotted.path> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value; secret-shaped values print as \"<redacted>\" without --show-secrets)\n";
 
 pub(crate) fn cmd_config(
     ctx: &CliContext,
@@ -22,6 +22,7 @@ pub(crate) fn cmd_config(
     let outcome = match args.first().map(String::as_str) {
         Some("get") => cmd_get(ctx, &args[1..], stdout),
         Some("set") => cmd_set(ctx, &args[1..], stdout),
+        Some("unset") => cmd_unset(ctx, &args[1..], stdout),
         Some("trust") => cmd_trust(ctx, &args[1..], stdout),
         _ => Err(USAGE.to_string()),
     };
@@ -164,15 +165,7 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
     let value = serde_json::from_str(raw_value)
         .unwrap_or_else(|_| serde_json::Value::String(raw_value.clone()));
     let selection = ctx.config_selection()?;
-    let layer = match parsed.scope_flag {
-        Some("--global") => ConfigLayer::Global,
-        _ => {
-            // The use case refuses a selection without an overlay too; the
-            // check here is for the message that names the flag to use.
-            overlay_target(&selection)?;
-            ConfigLayer::Overlay
-        }
-    };
+    let layer = write_layer(&selection, parsed.scope_flag)?;
     let receipt = ctx
         .configuration_handles(false)?
         .patch
@@ -187,6 +180,55 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
         "set {key_path} in {}{}{}\n",
         receipt.path.display(),
         if receipt.created { " (created)" } else { "" },
+        if layer == ConfigLayer::Overlay {
+            " (trusted)"
+        } else {
+            ""
+        }
+    ));
+    Ok(Vec::new())
+}
+
+/// The layer a write addresses: `--global` the base file, otherwise the
+/// overlay (with the message that names the flag when none applies).
+fn write_layer(
+    selection: &ConfigSelection,
+    scope_flag: Option<&str>,
+) -> Result<ConfigLayer, String> {
+    match scope_flag {
+        Some("--global") => Ok(ConfigLayer::Global),
+        _ => {
+            // The use case refuses a selection without an overlay too; the
+            // check here is for the message that names the flag to use.
+            overlay_target(selection)?;
+            Ok(ConfigLayer::Overlay)
+        }
+    }
+}
+
+fn cmd_unset(
+    ctx: &CliContext,
+    args: &[String],
+    stdout: &mut String,
+) -> Result<Vec<String>, String> {
+    let parsed = parse(args, &["--global", "--local"], Extra::None)?;
+    let [key_path] = parsed.positionals.as_slice() else {
+        return Err(format!("unset takes a path\n{USAGE}"));
+    };
+    let selection = ctx.config_selection()?;
+    let layer = write_layer(&selection, parsed.scope_flag)?;
+    let receipt = ctx
+        .configuration_handles(false)?
+        .patch
+        .unset(ConfigUnset {
+            selection,
+            layer,
+            key_path: key_path.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+    stdout.push_str(&format!(
+        "unset {key_path} in {}{}\n",
+        receipt.path.display(),
         if layer == ConfigLayer::Overlay {
             " (trusted)"
         } else {

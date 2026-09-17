@@ -546,3 +546,83 @@ fn an_overlay_patch_may_add_a_non_default_container_config() {
             .contains("the document is not a JSON object")
     );
 }
+
+fn unset(layer: ConfigLayer, key_path: &str) -> ConfigUnset {
+    ConfigUnset {
+        selection: layered(),
+        layer,
+        key_path: key_path.into(),
+    }
+}
+
+#[test]
+fn an_unset_removes_only_the_addressed_key_and_re_records_overlay_trust() {
+    let overlay = r#"{"container_configs":{"app":{"default":true,"create":["c"],"cleanup":["k"]}},"agents":{"defaults":{"model":"m"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, overlay)]);
+    let trust = FakeTrust::trusting(OVERLAY, overlay);
+    let receipt = use_case(store.clone(), trust.clone())
+        .unset(unset(ConfigLayer::Overlay, "container_configs.app"))
+        .unwrap();
+    assert_eq!(
+        receipt,
+        ConfigPatchReceipt {
+            path: PathBuf::from(OVERLAY),
+            created: false
+        }
+    );
+    assert_eq!(
+        document(&store, OVERLAY),
+        json!({"container_configs":{},"agents":{"defaults":{"model":"m"}}})
+    );
+    let returned = store.returned.lock().unwrap().last().unwrap().clone();
+    assert!(trust.is_approved(OVERLAY, &returned), "the bytes written");
+    assert!(
+        !trust.is_approved(OVERLAY, overlay.as_bytes()),
+        "the old content is superseded"
+    );
+}
+
+#[test]
+fn an_unset_of_an_absent_key_is_refused_and_writes_nothing() {
+    let global = r#"{"agents":{"defaults":{"model":"m"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, global)]);
+    let err = use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .unset(unset(ConfigLayer::Global, "agents.defaults.effort"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ConfigPatchError::MissingKey {
+            path: PathBuf::from(GLOBAL),
+            key_path: "agents.defaults.effort".into(),
+        }
+    );
+    assert!(err.to_string().contains("is not set there"), "{err}");
+    assert_eq!(store.content(GLOBAL).unwrap(), global);
+    assert!(store.returned.lock().unwrap().is_empty());
+    // An absent overlay has nothing to unset either, and is not created.
+    let err = use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .unset(unset(ConfigLayer::Overlay, "agents.defaults.model"))
+        .unwrap_err();
+    assert!(matches!(err, ConfigPatchError::MissingKey { .. }), "{err}");
+    assert!(store.content(OVERLAY).is_none());
+}
+
+#[test]
+fn an_unset_obeys_the_same_refusals_as_a_set() {
+    let store = MemoryStore::with(&[(GLOBAL, r#"{"providers":{"openai":{"api_base":"u"}}}"#)]);
+    let uc = use_case(store.clone(), Arc::new(FakeTrust::default()));
+    assert!(matches!(
+        uc.unset(unset(ConfigLayer::Overlay, "providers.openai"))
+            .unwrap_err(),
+        ConfigPatchError::GlobalOnlyKey { .. }
+    ));
+    assert!(matches!(
+        uc.unset(unset(ConfigLayer::Global, "a..b")).unwrap_err(),
+        ConfigPatchError::InvalidKeyPath(_)
+    ));
+    // A non-object on the way is named, as for a set.
+    let err = uc
+        .unset(unset(ConfigLayer::Global, "providers.openai.api_base.y"))
+        .unwrap_err();
+    assert!(matches!(err, ConfigPatchError::NotAnObject { .. }), "{err}");
+}
