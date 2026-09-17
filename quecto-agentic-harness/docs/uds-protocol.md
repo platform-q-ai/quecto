@@ -277,7 +277,12 @@ names its file so it can be repaired, e.g.
 recovery — an unreadable or version-incompatible index, with a diagnostic — not
 transcript modification: an absent index (first use) is built silently and an
 index superseded by newer authority (a routine autosave) is refreshed silently.
-Exact-key resume does not rely on the catalogue.
+The index (`home.catalogue`, version 2) records per-file stamps, home
+observations and listing summaries, never transcript content or digests: a
+process seeds from it and reads only records whose stamp changed, so the first
+`list_sessions` of a new harness process over a large, unchanged directory
+costs one `stat` per file (an index of the previous version is rebuilt once,
+reported as `rebuilt`). Exact-key resume does not rely on the catalogue.
 
 The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
 Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse

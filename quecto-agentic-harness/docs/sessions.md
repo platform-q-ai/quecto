@@ -196,7 +196,24 @@ diagnostic; an index that never existed (first use, a fresh install) is built
 silently, and an index superseded by newer authority (a routine autosave) is
 refreshed silently. A failed replacement returns valid discovered rows with
 diagnostics, not a transcript rewrite. Orphan home files without committed
-transcripts are not rows. A store-listed record the strict catalogue has no row
+transcripts are not rows.
+
+The index (`version` 2) holds no transcript bytes and no content digests.
+Per record, keyed by persisted key, it carries the transcript's file *stamp*
+(device, inode, length, mode, mtime, ctime), the `.home` sidecar's stamp with
+the decoded home observation, and the listing summary (title, message count)
+the store's walk validated at that stamp. A process seeds its in-memory
+projection and summary cache from a well-formed index once, then walks the
+directory: one `stat` per file, and only a record whose stamp differs (or is
+new) is read and strictly validated again — the same rule the in-process cache
+always applied, so a transcript rewritten in place with its length and mtime
+restored (new ctime) or replaced by a new inode is re-read. A cold process
+over thousands of unchanged transcripts therefore lists in the time of the
+walk, not of reading every transcript. The index is rewritten only after a
+rebuild or when an entry changed. An entry is never trusted beyond its stamp:
+a doctored entry can at most misreport a home or title in the listing, and
+exact-key reads and resume admission read the `.home` sidecar, never the
+index, so no entry can make a session resume-eligible. A store-listed record the strict catalogue has no row
 for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
 exactly, as admission reads it, and eligibility follows the domain rule, so the
 user's most recent session stays Local and resumable after a crash and listing
