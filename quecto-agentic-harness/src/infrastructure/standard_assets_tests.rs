@@ -1,4 +1,4 @@
-use super::standard_assets::*;
+use super::*;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
