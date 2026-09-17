@@ -1,4 +1,4 @@
-//! Intentional, binary-only initialization of the standard Podman bundle.
+//! Intentional, binary-only initialization of the standard container bundle.
 use super::CliContext;
 use crate::infrastructure::standard_assets;
 use std::path::PathBuf;
