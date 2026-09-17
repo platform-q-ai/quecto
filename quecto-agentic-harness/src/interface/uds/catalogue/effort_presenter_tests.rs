@@ -36,7 +36,7 @@ fn change_and_error_render_the_legacy_shapes() {
 
 #[test]
 fn a_recorded_default_is_rendered_with_its_scope_and_path() {
-    use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
+    use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
     assert_eq!(
         render_change(&EffortChangeOutcome {
             effective: High,

@@ -5,33 +5,7 @@
 //! carries that writer's guarantees (exclusive hold, validation, trust
 //! recorded for the bytes written, global-only sections untouched).
 
-use std::path::PathBuf;
-
-/// Which configuration layer a default is persisted into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultScope {
-    /// The repository overlay (`<cwd>/.quecto/config.json`).
-    Local,
-    /// The global file (`<base_dir>/config.json`).
-    Global,
-}
-
-impl DefaultScope {
-    /// The wire and CLI spelling of the scope.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Global => "global",
-        }
-    }
-}
-
-/// Where a default landed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersistedDefault {
-    pub scope: DefaultScope,
-    pub path: PathBuf,
-}
+pub use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 
 pub trait ModelDefaultPersistence: Send + Sync {
     /// Record `model` (a qualified `provider/model` id) as the default of
@@ -74,7 +48,7 @@ impl RecordedDefaults {
             .push((scope, key.to_string(), value.to_string()));
         Ok(PersistedDefault {
             scope,
-            path: PathBuf::from(format!("/fake/{}.json", scope.as_str())),
+            path: std::path::PathBuf::from(format!("/fake/{}.json", scope.as_str())),
         })
     }
 }

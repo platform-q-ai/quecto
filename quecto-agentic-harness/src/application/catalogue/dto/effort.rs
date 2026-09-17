@@ -1,7 +1,7 @@
 //! Request and outcome of changing the session's reasoning effort (#1848,
 //! #1996).
 
-use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
+use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 use crate::domain::provider::EffortLevel;
 
 /// Change the effort applied to subsequent turns of a session.

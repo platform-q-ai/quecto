@@ -62,7 +62,7 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     let switched = match model.execute_with_default(ctx.agent, &resolved_model, persist) {
         Ok(switched) => switched,
         Err(error) => {
-            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, &error.to_string());
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, error.to_string());
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }

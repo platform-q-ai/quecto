@@ -1,6 +1,6 @@
 //! Request and outcome of changing the session's active model (#1847).
 
-use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
+use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 use crate::domain::catalogue::{ModelRef, UnavailableReason};
 
 /// The per-model limits the loop clamps to, each `None` unless the

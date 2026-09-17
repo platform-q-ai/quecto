@@ -68,7 +68,7 @@ fn no_runtime_keeps_the_legacy_payload_free_reply() {
 
 #[test]
 fn a_recorded_default_is_rendered_beside_the_selection_and_alone_without_a_runtime() {
-    use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
+    use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
     let persisted = PersistedDefault {
         scope: DefaultScope::Global,
         path: "/home/u/.quecto/config.json".into(),

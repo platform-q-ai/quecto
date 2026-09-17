@@ -3,6 +3,7 @@
 //! persistence record; presenters render them.
 
 pub mod active_model;
+pub mod default_persistence;
 pub mod effort;
 pub mod model_listing;
 pub mod refresh;
@@ -11,6 +12,7 @@ pub mod reload;
 pub use active_model::{
     ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
 };
+pub use default_persistence::{DefaultScope, PersistedDefault};
 pub use effort::{EffortChangeError, EffortChangeOutcome, EffortChangeRequest};
 pub use model_listing::{
     ListedModel, ListingDiagnostic, ModelCatalogueListing, ModelListingOutcome,

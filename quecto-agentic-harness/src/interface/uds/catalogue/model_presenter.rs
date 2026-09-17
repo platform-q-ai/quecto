@@ -4,8 +4,8 @@
 //! landed; `NoRuntime` without a record keeps the legacy response shape
 //! (no payload).
 
+use crate::application::catalogue::dto::PersistedDefault;
 use crate::application::catalogue::dto::{ModelSelectionVerdict, ModelSwitched};
-use crate::application::catalogue::ports::PersistedDefault;
 use crate::domain::catalogue::UnavailableReason;
 
 pub fn render_switch(switched: &ModelSwitched) -> Option<serde_json::Value> {

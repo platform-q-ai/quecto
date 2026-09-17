@@ -3,7 +3,7 @@
 //! the configuration layer the default is recorded in; anything else is a
 //! delivery error before any use case runs.
 
-use crate::application::catalogue::ports::DefaultScope;
+use crate::application::catalogue::dto::DefaultScope;
 
 pub fn parse_persist_scope(persist: Option<&str>) -> Result<Option<DefaultScope>, String> {
     match persist {
@@ -17,32 +17,5 @@ pub fn parse_persist_scope(persist: Option<&str>) -> Result<Option<DefaultScope>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn absent_means_session_only() {
-        assert_eq!(parse_persist_scope(None), Ok(None));
-    }
-
-    #[test]
-    fn the_two_scopes_parse() {
-        assert_eq!(
-            parse_persist_scope(Some("local")),
-            Ok(Some(DefaultScope::Local))
-        );
-        assert_eq!(
-            parse_persist_scope(Some("global")),
-            Ok(Some(DefaultScope::Global))
-        );
-    }
-
-    #[test]
-    fn anything_else_is_refused_naming_the_choices() {
-        let error = parse_persist_scope(Some("everywhere")).unwrap_err();
-        assert!(error.contains("\"local\" or \"global\""), "{error}");
-        assert!(error.contains("everywhere"), "{error}");
-        assert!(parse_persist_scope(Some("Local")).is_err());
-        assert!(parse_persist_scope(Some("")).is_err());
-    }
-}
+#[path = "persist_scope_tests.rs"]
+mod tests;
