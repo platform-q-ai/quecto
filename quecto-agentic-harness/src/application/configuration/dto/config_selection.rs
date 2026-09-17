@@ -1,6 +1,15 @@
-//! Request and outcome of configuration-file selection (#1966).
+//! Request and outcome of configuration-file selection (#1966, #2024).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// The repo-local overlay's location relative to the working directory.
+pub const OVERLAY_RELATIVE_PATH: &str = ".quecto/config.json";
+
+/// The retired working-directory selection (#1966): a `config.json`
+/// directly in the working directory used to *replace* the global file.
+/// It is no longer loaded; its presence is reported so the user can move
+/// its content into the overlay.
+pub const LEGACY_LOCAL_FILE_NAME: &str = "config.json";
 
 /// The candidates one run may load its configuration from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,84 +17,71 @@ pub struct ConfigSelectionRequest {
     /// An explicit `--config` override, taken verbatim when present.
     pub explicit: Option<PathBuf>,
     /// The process working directory; `None` when it is unknown, in which
-    /// case nothing local is discovered.
+    /// case no overlay is discovered.
     pub working_directory: Option<PathBuf>,
     /// The global configuration file, which may be absent (defaults apply).
     pub global: PathBuf,
 }
 
-/// The one configuration file selected for a run, and where it came from.
-/// Exactly one is selected; local and global files are never merged.
+/// The layers a run loads its configuration from, and where they came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigSelection {
-    /// `--config <path>`.
+    /// `--config <path>`: that one file, replacing both layers; it must
+    /// exist.
     Explicit(PathBuf),
-    /// `config.json` in the working directory, verified to be a usable
-    /// regular file.
-    WorkingDirectory(PathBuf),
-    /// `<base_dir>/config.json`; may be absent.
-    Global(PathBuf),
+    /// The global file with the working directory's overlay merged over it.
+    Layered(ConfigLayers),
+}
+
+/// The two-layer selection: the global file (may be absent) and the
+/// overlay candidate the working directory names (may be absent, and is
+/// applied only when trusted). Neither candidate is ever the global file
+/// itself (a run started from the base directory's parent would otherwise
+/// see its global file as an untrusted overlay of itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigLayers {
+    /// `<base_dir>/config.json`.
+    pub global: PathBuf,
+    /// `<cwd>/.quecto/config.json`, when the working directory is known.
+    pub overlay: Option<PathBuf>,
+    /// `<cwd>/config.json`, the retired selection, when the working
+    /// directory is known; reported if present, never loaded.
+    pub legacy_local: Option<PathBuf>,
 }
 
 impl ConfigSelection {
-    /// Whether the selected file must exist when it is loaded. An explicit
-    /// override was asked for by name and a working-directory file was
-    /// selected because it was present; a file that has vanished since is
+    /// Whether the base file must exist when it is loaded. An explicit
+    /// override was asked for by name; a file that has vanished since is
     /// an error, never a quiet fall-through to defaults. Only the global
     /// file may be absent.
     pub fn must_exist(&self) -> bool {
-        !matches!(self, Self::Global(_))
+        matches!(self, Self::Explicit(_))
     }
 
-    pub fn path(&self) -> &std::path::Path {
+    /// The base file: the explicit selection or the global file. Children
+    /// handed one file by path (container spawns) receive this one.
+    pub fn path(&self) -> &Path {
         match self {
-            Self::Explicit(path) | Self::WorkingDirectory(path) | Self::Global(path) => path,
+            Self::Explicit(path) => path,
+            Self::Layered(layers) => &layers.global,
         }
     }
 
     pub fn into_path(self) -> PathBuf {
         match self {
-            Self::Explicit(path) | Self::WorkingDirectory(path) | Self::Global(path) => path,
+            Self::Explicit(path) => path,
+            Self::Layered(layers) => layers.global,
+        }
+    }
+
+    /// The overlay candidate, when this selection has one.
+    pub fn overlay_path(&self) -> Option<&Path> {
+        match self {
+            Self::Explicit(_) => None,
+            Self::Layered(layers) => layers.overlay.as_deref(),
         }
     }
 }
-
-/// Why a present local `config.json` could not be selected. Only absence
-/// falls back to the global file; anything else is reported.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LocalConfigRejection {
-    /// The entry exists but is not a regular file (a directory, a socket…).
-    NotRegularFile,
-    /// The entry exists but cannot be read (permissions, a dangling link…).
-    Unreadable(String),
-}
-
-/// A present-but-unusable local configuration file, named so the user can
-/// act on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigSelectionError {
-    pub path: PathBuf,
-    pub rejection: LocalConfigRejection,
-}
-
-impl std::fmt::Display for ConfigSelectionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.rejection {
-            LocalConfigRejection::NotRegularFile => write!(
-                f,
-                "local config {} is not a regular file; move it aside or pass --config",
-                self.path.display()
-            ),
-            LocalConfigRejection::Unreadable(reason) => write!(
-                f,
-                "local config {} cannot be read: {reason}; move or fix it, or pass --config",
-                self.path.display()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ConfigSelectionError {}
 
 #[cfg(test)]
 #[path = "config_selection_tests.rs"]

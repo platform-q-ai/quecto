@@ -279,7 +279,9 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let provider = build_agent_provider(&config, base, &http_client).expect("provider");
     let runtime_configuration =
         quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
-            config_path,
+            selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
+                config_path,
+            ),
             env_overrides,
             http_client,
             provider_runtime: build_agent_provider,

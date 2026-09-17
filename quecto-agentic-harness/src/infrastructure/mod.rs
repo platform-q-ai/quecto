@@ -12,7 +12,6 @@ pub mod config;
 pub mod config_admission;
 pub mod extensions;
 pub mod line_cap;
-pub mod local_config_probe;
 pub mod logging;
 pub mod model_registry;
 pub mod persistence;
@@ -26,7 +25,6 @@ pub mod runtime_configuration;
 pub mod runtime_identity;
 pub mod security;
 pub mod time;
-pub mod tool_policy_persistence;
 pub mod tools;
 
 #[cfg(any(test, feature = "test-support"))]

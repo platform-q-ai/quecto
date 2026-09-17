@@ -114,7 +114,9 @@ pub(crate) fn build_uds_agent(
         base,
         Some(
             &quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
-                config_path,
+                selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
+                    config_path,
+                ),
                 env_overrides,
                 http_client,
                 provider_runtime: build_agent_provider,

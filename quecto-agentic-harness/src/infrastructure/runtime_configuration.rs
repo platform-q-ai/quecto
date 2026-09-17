@@ -6,7 +6,6 @@
 //! runs on the calling thread and blocks it: the caller (the interface's
 //! dispatch loop) runs the use case's rebuild phase off its async runtime.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -23,12 +22,18 @@ use crate::infrastructure::reload::{ReloadSource, RuntimeReload};
 pub type ProviderRuntimeBuilder =
     fn(&Config, &Path, &reqwest::Client) -> Result<Arc<dyn LlmProvider>, String>;
 
+/// Composition's effective-configuration loader (#2024): the run's
+/// selected layers (global file plus trusted overlay, or the explicit
+/// file) read, merged, validated and env-overridden into one `Config`.
+/// Startup and every reload go through the same injected function.
+pub type ConfigLoader = Arc<dyn Fn() -> Result<Config, String> + Send + Sync>;
+
 /// The inputs a rebuild composes from; the builder is the one startup
 /// composed through, so every rebuild goes through the same function.
 struct RebuildInputs {
-    config_path: PathBuf,
+    watched: Vec<PathBuf>,
     base_dir: PathBuf,
-    env_overrides: HashMap<String, String>,
+    load_config: ConfigLoader,
     http_client: reqwest::Client,
     build_provider: ProviderRuntimeBuilder,
 }
@@ -37,9 +42,7 @@ impl RebuildInputs {
     /// One `Config` read feeds both the provider composition and the
     /// tool-policy baseline (fix (a), #1849: formerly parsed twice).
     fn rebuild(&self) -> Result<ReloadedConfiguration, String> {
-        let config =
-            Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
-                .map_err(|error| error.to_string())?;
+        let config = (self.load_config)()?;
         let provider = (self.build_provider)(&config, &self.base_dir, &self.http_client)?;
         let tool_policy = config
             .tools
@@ -61,25 +64,30 @@ pub struct FileRuntimeConfiguration {
 }
 
 impl FileRuntimeConfiguration {
-    /// Watch `config_path` and `<base_dir>/models.json`, seeded from their
-    /// current content so only later edits count as changes.
+    /// Watch every configuration source of the run (`config_sources`: the
+    /// selected file and, when one applies, the overlay and its trust
+    /// record) and `<base_dir>/models.json`, seeded from their current
+    /// content so only later edits count as changes.
     pub fn seeded(
-        config_path: PathBuf,
+        config_sources: Vec<ReloadSource>,
         base_dir: PathBuf,
-        env_overrides: HashMap<String, String>,
+        load_config: ConfigLoader,
         http_client: reqwest::Client,
         build_provider: ProviderRuntimeBuilder,
     ) -> Self {
-        let mut gate = RuntimeReload::new(vec![
-            ReloadSource::new(config_path.clone()),
-            ReloadSource::new(base_dir.join("models.json")),
-        ]);
+        let mut sources = config_sources;
+        sources.push(ReloadSource::new(base_dir.join("models.json")));
+        let watched = sources
+            .iter()
+            .map(|source| source.path().to_path_buf())
+            .collect();
+        let mut gate = RuntimeReload::new(sources);
         gate.seed();
         Self {
             inputs: RebuildInputs {
-                config_path,
+                watched,
                 base_dir,
-                env_overrides,
+                load_config,
                 http_client,
                 build_provider,
             },
@@ -107,7 +115,7 @@ impl RuntimeConfigurationSource for FileRuntimeConfiguration {
 impl std::fmt::Debug for FileRuntimeConfiguration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileRuntimeConfiguration")
-            .field("config_path", &self.inputs.config_path)
+            .field("watched", &self.inputs.watched)
             .field("base_dir", &self.inputs.base_dir)
             .finish_non_exhaustive()
     }

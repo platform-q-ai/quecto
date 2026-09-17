@@ -69,9 +69,11 @@ fn touched_but_identical_file_reports_unchanged_and_advances_the_mtime_cache() {
     assert_eq!(source.changed(), SourceChange::UnchangedNoRead);
 }
 
-/// AC7: a missing file is fail-safe — reported, cache untouched, no panic.
+/// AC7: a required file that goes missing is fail-safe — reported, cache
+/// untouched, no panic — so a save window or a deleted base config never
+/// rebuilds a session against defaults.
 #[test]
-fn missing_file_reports_missing_or_unreadable_and_keeps_the_cache() {
+fn missing_required_file_reports_missing_or_unreadable_and_keeps_the_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = file_with(&dir, "source.txt", "v1");
     let mut source = ReloadSource::new(&path);
@@ -81,6 +83,33 @@ fn missing_file_reports_missing_or_unreadable_and_keeps_the_cache() {
     std::fs::remove_file(&path).unwrap();
     assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
     assert_eq!(source.last_mtime(), seeded);
+}
+
+/// #2024: an optional source (the overlay, its trust record) that was seen
+/// and then removed is one change, after which it stays quiet until it
+/// reappears; one never seen is quiet.
+#[test]
+fn a_removed_optional_file_is_one_change_and_a_never_seen_file_is_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::optional(&path);
+    source.seed();
+    assert!(source.last_mtime().is_some());
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(source.changed(), SourceChange::Changed);
+    assert_eq!(source.last_mtime(), None);
+    assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
+
+    let mut never = ReloadSource::optional(dir.path().join("absent.txt"));
+    never.seed();
+    assert_eq!(never.changed(), SourceChange::MissingOrUnreadable);
+
+    std::fs::write(&path, "v2").unwrap();
+    assert_eq!(
+        source.changed(),
+        SourceChange::Changed,
+        "reappearing counts"
+    );
 }
 
 #[test]
@@ -148,4 +177,54 @@ fn missing_source_is_fail_safe_unchanged_for_the_gate() {
 #[test]
 fn hash_changes_with_content() {
     assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
+}
+
+/// #2024: the trust record is watched only while the overlay it gates
+/// exists — another repository's `config trust` is no change for a
+/// session without an overlay — but an overlay created mid-run brings the
+/// record into the watch on the spot, so a later `config trust` is a
+/// change.
+#[test]
+fn a_guarded_source_counts_only_while_its_guard_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = file_with(&dir, "trust.json", "{}");
+    let overlay = dir.path().join("overlay.json");
+    let mut source = ReloadSource::optional(&record).while_present(&overlay);
+    source.seed();
+    assert_eq!(
+        source.last_mtime(),
+        None,
+        "not fingerprinted while the guard is absent"
+    );
+    rewrite_with_mtime_advance(&record, "{\"other-repo\":1}");
+    assert_eq!(
+        source.changed(),
+        SourceChange::UnchangedNoRead,
+        "a record change is no change without the overlay"
+    );
+
+    std::fs::write(&overlay, "{}").unwrap();
+    let mut gate = RuntimeReload::new(vec![
+        ReloadSource::optional(&overlay),
+        ReloadSource::optional(&record).while_present(&overlay),
+    ]);
+    // The rebuild an overlay creation prompts re-seeds every source, the
+    // record included now that its guard exists.
+    gate.seed();
+    assert!(!gate.sources_changed());
+    rewrite_with_mtime_advance(&record, "{\"this-repo\":1}");
+    assert!(
+        gate.sources_changed(),
+        "trusting the new overlay is a change"
+    );
+    assert!(!gate.sources_changed());
+
+    // The guard going away silences the record again, and its return
+    // (with a record edited meanwhile) is reported.
+    std::fs::remove_file(&overlay).unwrap();
+    assert!(gate.sources_changed(), "the overlay's removal");
+    rewrite_with_mtime_advance(&record, "{\"meanwhile\":1}");
+    assert!(!gate.sources_changed(), "quiet without the overlay");
+    std::fs::write(&overlay, "{}").unwrap();
+    assert!(gate.sources_changed(), "the overlay's return");
 }

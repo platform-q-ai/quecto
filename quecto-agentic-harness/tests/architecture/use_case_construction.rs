@@ -54,12 +54,15 @@ const USE_CASES: &[&str] = &[
     "ListSessions",
     "ObserveOwnedChildExit",
     "OwnerConclusionPorts",
+    "PatchConfiguration",
     "PrepareHarnessShutdown",
+    "ReadConfiguration",
     "ReadHistory",
     "RecallContext",
     "RecoverMessage",
     "RefreshCatalogueSources",
     "ReloadRuntimeConfiguration",
+    "ResolveEffectiveConfig",
     "ResumeSavedSession",
     "RetainContext",
     "RewindConversation",
@@ -72,6 +75,7 @@ const USE_CASES: &[&str] = &[
     "TerminateAllDelegatedAgents",
     "TerminateAllDelegatedAgentsPorts",
     "TerminateDelegatedAgent",
+    "TrustConfigOverlay",
     "WebFetchUseCase",
 ];
 

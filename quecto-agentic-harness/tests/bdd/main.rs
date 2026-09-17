@@ -506,6 +506,12 @@ pub struct QuectoWorld {
     pub _temp_dir: Option<TempDir>,
     /// Additional temp dirs (kept alive for sandbox hardening symlink tests etc.)
     pub _extra_temp_dirs: Vec<TempDir>,
+    /// Bytes of the global config and the repo-local overlay before the
+    /// last CLI run (#2024), so a scenario can assert what a run changed.
+    pub config_snapshots: HashMap<PathBuf, Vec<u8>>,
+    /// A trusted overlay of another checkout (#2024), the target a
+    /// symbolic-link scenario points the working directory's overlay at.
+    pub other_overlay: Option<PathBuf>,
     /// Exec tool for direct exec tool testing (timeout, env sanitization)
     pub exec_tool: Option<Arc<ExecTool>>,
     /// Environment variable overrides for exec tool env sanitization tests
@@ -1727,8 +1733,8 @@ impl QuectoWorld {
         let mut world = Self::default();
         world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
         world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
-        world.cli_context.config_selection =
-            Some(quecto::composition::configuration::build_select_config);
+        world.cli_context.configuration =
+            Some(quecto::composition::configuration::build_configuration_handles);
         world.cli_context.catalogue = Some(quecto::composition::catalogue::build_catalogue_handles);
         world.cli_context.provider_runtime =
             Some(quecto::composition::runtime::build_agent_provider);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::configuration::dto::ConfigSelection;
 use crate::application::tools::ports::Tool;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
@@ -169,7 +170,7 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let tmp = tempfile::TempDir::new().unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
-        config_path: tmp.path().to_path_buf(),
+        selection: ConfigSelection::Explicit(tmp.path().to_path_buf()),
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
@@ -227,7 +228,7 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
     config.providers.openai.api_key = "test-key".into();
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
-        config_path,
+        selection: ConfigSelection::Explicit(config_path),
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
@@ -270,7 +271,7 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
     )
     .unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
-        config_path: config_path.clone(),
+        selection: ConfigSelection::Explicit(config_path.clone()),
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,

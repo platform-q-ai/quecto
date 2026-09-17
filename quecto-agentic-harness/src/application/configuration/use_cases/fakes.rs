@@ -1,0 +1,204 @@
+//! In-memory doubles of the configuration ports for use-case tests.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use serde_json::Value;
+
+use crate::application::configuration::dto::config_selection::OVERLAY_RELATIVE_PATH;
+use crate::application::configuration::ports::{
+    ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, DocumentLock, OverlayApproval,
+    OverlayDocument, OverlayTrust, OverlayTrustStore,
+};
+
+/// Files by path; `broken` paths fail to read (a present, unreadable
+/// entry); `symlinks` are the entries (a file or its `.quecto` directory)
+/// the overlay read refuses as links.
+#[derive(Default)]
+pub struct MemoryStore {
+    pub files: Mutex<BTreeMap<PathBuf, Vec<u8>>>,
+    pub broken: BTreeSet<PathBuf>,
+    pub symlinks: BTreeSet<PathBuf>,
+    pub fail_writes: bool,
+    /// What each `write` returned, in order — deliberately *not* the bytes
+    /// the store then serves (see the writer impl), so a use case that
+    /// records trust for "what was written" is caught reading back.
+    pub returned: Mutex<Vec<Vec<u8>>>,
+}
+
+impl MemoryStore {
+    pub fn with(files: &[(&str, &str)]) -> Arc<Self> {
+        let store = Self::default();
+        for (path, content) in files {
+            store
+                .files
+                .lock()
+                .unwrap()
+                .insert(PathBuf::from(path), content.as_bytes().to_vec());
+        }
+        Arc::new(store)
+    }
+
+    pub fn content(&self, path: &str) -> Option<String> {
+        self.files
+            .lock()
+            .unwrap()
+            .get(Path::new(path))
+            .map(|bytes| String::from_utf8(bytes.clone()).unwrap())
+    }
+}
+
+impl ConfigDocumentStore for MemoryStore {
+    fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, String> {
+        if self.broken.contains(path) {
+            return Err("permission denied".into());
+        }
+        Ok(self.files.lock().unwrap().get(path).cloned())
+    }
+
+    fn read_overlay(&self, path: &Path) -> Result<OverlayDocument, String> {
+        let mut entry = path;
+        for _ in Path::new(OVERLAY_RELATIVE_PATH).components() {
+            if self.symlinks.contains(entry) {
+                return Ok(OverlayDocument::Refused {
+                    reason: format!("{} is a symbolic link (fake policy)", entry.display()),
+                });
+            }
+            entry = entry.parent().ok_or("too short for an overlay location")?;
+        }
+        Ok(self
+            .read(path)?
+            .map_or(OverlayDocument::Absent, OverlayDocument::Present))
+    }
+}
+
+/// Writes compact JSON plus a newline into the same in-memory files, and
+/// returns the pretty rendering of the same document: a real writer's
+/// return value is the bytes it laid down, but between its rename and any
+/// read-back another writer may have replaced the file, so the two must
+/// never be conflated by a caller.
+impl ConfigDocumentWriter for MemoryStore {
+    fn write(&self, path: &Path, document: &Value) -> Result<Vec<u8>, String> {
+        if self.fail_writes {
+            return Err("disk full".into());
+        }
+        let mut bytes = serde_json::to_vec(document).unwrap();
+        bytes.push(b'\n');
+        self.files.lock().unwrap().insert(path.to_path_buf(), bytes);
+        let mut returned = serde_json::to_vec_pretty(document).unwrap();
+        returned.push(b'\n');
+        self.returned.lock().unwrap().push(returned.clone());
+        Ok(returned)
+    }
+
+    fn exclusive(&self, _path: &Path) -> Result<Box<dyn DocumentLock>, String> {
+        Ok(Box::new(()))
+    }
+}
+
+/// A validator that rejects a document whose `agents.defaults.effort` is
+/// `"bogus"` and a `container_scripts` key at resolve time, and rewrites
+/// `workflow.marker` to the document's own path so resolution is visible.
+#[derive(Default)]
+pub struct FakeValidator {
+    pub validated: Mutex<Vec<Value>>,
+}
+
+impl ConfigValidator for FakeValidator {
+    fn resolve(&self, mut document: Value, path: &Path) -> Result<Value, String> {
+        if document.get("container_scripts").is_some() {
+            return Err("the `container_scripts` key was renamed".into());
+        }
+        if let Some(workflow) = document.get_mut("workflow").and_then(Value::as_object_mut)
+            && workflow.contains_key("marker")
+        {
+            workflow.insert("marker".into(), Value::String(path.display().to_string()));
+        }
+        Ok(document)
+    }
+
+    fn validate(&self, document: &Value) -> Result<(), String> {
+        self.validate_layer(document)?;
+        // The complete-configuration rule: a non-empty container map needs
+        // exactly one default.
+        if let Some(map) = document.get("container_configs").and_then(Value::as_object)
+            && !map.is_empty()
+            && map
+                .values()
+                .filter(|entry| entry.get("default").and_then(Value::as_bool) == Some(true))
+                .count()
+                != 1
+        {
+            return Err("no container config is labeled \"default\": true".into());
+        }
+        Ok(())
+    }
+
+    fn validate_layer(&self, document: &Value) -> Result<(), String> {
+        self.validated.lock().unwrap().push(document.clone());
+        if document.pointer("/agents/defaults/effort") == Some(&Value::String("bogus".into())) {
+            return Err("invalid effort level 'bogus'".into());
+        }
+        Ok(())
+    }
+}
+
+/// Trust by exact (path, content) pairs; approvals are recorded. With
+/// `consents`, an offer is accepted (the interactive adapter's "y").
+#[derive(Default)]
+pub struct FakeTrust {
+    pub approved: Mutex<BTreeSet<(PathBuf, Vec<u8>)>>,
+    pub fail_approve: bool,
+    pub consents: bool,
+    pub offered: Mutex<Vec<PathBuf>>,
+}
+
+impl FakeTrust {
+    pub fn trusting(path: &str, content: &str) -> Arc<Self> {
+        let trust = Self::default();
+        trust
+            .approved
+            .lock()
+            .unwrap()
+            .insert((PathBuf::from(path), content.as_bytes().to_vec()));
+        Arc::new(trust)
+    }
+
+    pub fn is_approved(&self, path: &str, content: &[u8]) -> bool {
+        self.approved
+            .lock()
+            .unwrap()
+            .contains(&(PathBuf::from(path), content.to_vec()))
+    }
+}
+
+impl OverlayTrustStore for FakeTrust {
+    fn decide(&self, path: &Path, content: &[u8]) -> OverlayTrust {
+        if self.is_approved(&path.display().to_string(), content) {
+            OverlayTrust::Trusted
+        } else {
+            OverlayTrust::Untrusted {
+                fingerprint: format!("fp-{}", content.len()),
+            }
+        }
+    }
+
+    fn offer(&self, path: &Path, _fingerprint: &str, _content: &[u8]) -> bool {
+        self.offered.lock().unwrap().push(path.to_path_buf());
+        self.consents
+    }
+
+    fn approve(&self, path: &Path, content: &[u8]) -> Result<OverlayApproval, String> {
+        if self.fail_approve {
+            return Err("store unwritable".into());
+        }
+        let mut approved = self.approved.lock().unwrap();
+        approved.retain(|(recorded, _)| recorded != path);
+        approved.insert((path.to_path_buf(), content.to_vec()));
+        Ok(OverlayApproval {
+            path: path.to_path_buf(),
+            fingerprint: format!("fp-{}", content.len()),
+        })
+    }
+}

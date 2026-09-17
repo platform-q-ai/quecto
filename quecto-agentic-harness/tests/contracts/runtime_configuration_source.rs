@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use quecto::application::catalogue::ports::RuntimeConfigurationSource;
+use quecto::application::configuration::dto::ConfigSelection;
 use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
 use quecto::infrastructure::runtime_configuration::FileRuntimeConfiguration;
 
@@ -35,10 +36,13 @@ fn edit(path: &std::path::Path, content: &str) {
 
 fn under_test(dir: &std::path::Path) -> (Box<dyn RuntimeConfigurationSource>, std::path::PathBuf) {
     let config_path = dir.join("config.json");
+    let selection = ConfigSelection::Explicit(config_path.clone());
     let source = FileRuntimeConfiguration::seeded(
-        config_path.clone(),
+        vec![quecto::infrastructure::reload::ReloadSource::new(
+            config_path.clone(),
+        )],
         dir.to_path_buf(),
-        HashMap::new(),
+        quecto::composition::configuration::build_config_loader(dir, selection, HashMap::new()),
         reqwest::Client::new(),
         quecto::composition::runtime::build_agent_provider,
     );

@@ -52,9 +52,13 @@ pub fn build_catalogue_handles(
     let reload = Arc::new(match runtime {
         Some(runtime) => {
             ReloadRuntimeConfiguration::new(Box::new(FileRuntimeConfiguration::seeded(
-                runtime.config_path.clone(),
+                super::configuration::watched_config_sources(base_dir, &runtime.selection),
                 base_dir.to_path_buf(),
-                runtime.env_overrides.clone(),
+                super::configuration::build_config_loader(
+                    base_dir,
+                    runtime.selection.clone(),
+                    runtime.env_overrides.clone(),
+                ),
                 runtime.http_client.clone(),
                 runtime.provider_runtime,
             )))

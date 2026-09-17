@@ -2,6 +2,7 @@
 //! the `--workflow` / `--no-workflow` build paths and the by-value
 //! `--workflow-spec` binding (PRD Stage A).
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
@@ -39,6 +40,8 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         ),
         admission_context: None,
         parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        stdin_is_tty: false,
     }
 }
 
@@ -53,8 +56,14 @@ fn test_build_agent_from_config_uds_default_makes_workflow_available_without_for
     let flags = uds_workflow_flags(false, false);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should build with optional workflow available");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should build with optional workflow available");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
     // #1113: without --workflow the selector nudge stays disarmed — a plain
@@ -77,8 +86,14 @@ fn test_build_agent_from_config_uds_no_workflow_disables_workflow_state() {
     let flags = uds_workflow_flags(false, true);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should build with workflow disabled");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should build with workflow disabled");
     assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
     let tool_definitions = result.agent.tool_definitions();
@@ -109,8 +124,14 @@ fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
     let flags = uds_workflow_flags(true, false);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should build with workflow enabled");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should build with workflow enabled");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
     // #1113: --workflow arms the idle-boundary template selector nudge (no
@@ -188,8 +209,14 @@ fn build_agent_with_workflow_spec_binds_template_in_active_mode() {
     flags.workflow_spec_path = Some(spec_path);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should build with a bound workflow spec");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should build with a bound workflow spec");
 
     let handle = result
         .workflow_state
@@ -220,8 +247,14 @@ fn build_agent_with_unloadable_workflow_spec_fails_closed() {
     flags.workflow_spec_path = Some(tmp.path().join("missing.json"));
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should still build");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should still build");
     // Fail closed: an assigned-but-unloadable spec must NOT degrade into a
     // free-selection workflow agent — no workflow is registered.
     assert!(result.workflow_state.is_none(), "stderr: {stderr}");
@@ -250,7 +283,13 @@ fn build_agent_with_semantically_invalid_workflow_spec_fails_startup() {
     flags.workflow_spec_path = Some(spec_path);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    );
 
     assert!(result.is_none(), "an invalid bound spec must abort startup");
     assert!(stderr.contains("failed to initialize workflow"), "{stderr}");
@@ -276,8 +315,14 @@ fn build_agent_with_oversized_workflow_spec_fails_closed() {
     flags.workflow_spec_path = Some(spec_path);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent should still build");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent should still build");
     assert!(result.workflow_state.is_none(), "stderr: {stderr}");
     assert!(stderr.contains("too large"), "stderr: {stderr}");
 }

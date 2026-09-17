@@ -239,16 +239,20 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
         "idle",
     ));
     rows.push(serde_json::json!({"displayName": "malformed"}));
+    // The earlier harness's file is written with `key` first (the byte
+    // order this fixture always had): a file whose first key is not `type`
+    // is compacted, not appended to, by the next save, which is the
+    // migration the scenario asserts.
     let snapshot = serde_json::json!({
-        "type": "snapshot",
         "key": key,
         "messages": [
             {"role":"user","content":"persisted transcript survives restore"},
             {"role":"assistant","content":"persisted answer"},
             {"role":"assistant","content":"child worker-legacy-live reported: done"},
         ],
-        "workflow_run": {"template_id": "feature", "done": [true, true, false], "active_issue": null},
         "subagent_roster": rows,
+        "type": "snapshot",
+        "workflow_run": {"template_id": "feature", "done": [true, true, false], "active_issue": null},
     });
     std::fs::write(&path, format!("{snapshot}\n")).unwrap();
     let s = state(world);

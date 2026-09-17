@@ -46,14 +46,14 @@ impl std::fmt::Debug for CatalogueHandles {
     }
 }
 
-/// The run's reloadable configuration (#1849), as the interface knows it
-/// at startup: the config file the run selected, the environment overrides
-/// it was loaded with, the HTTP client its providers share and the injected
-/// provider-runtime builder startup composed through. Composition builds
-/// the reload use case over them.
+/// The run's reloadable configuration (#1849, #2024), as the interface
+/// knows it at startup: the config layers the run selected, the
+/// environment overrides it was loaded with, the HTTP client its providers
+/// share and the injected provider-runtime builder startup composed
+/// through. Composition builds the reload use case over them.
 #[derive(Clone)]
 pub struct RuntimeConfigurationInputs {
-    pub config_path: std::path::PathBuf,
+    pub selection: crate::application::configuration::dto::ConfigSelection,
     pub env_overrides: std::collections::HashMap<String, String>,
     pub http_client: reqwest::Client,
     pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,
@@ -62,7 +62,7 @@ pub struct RuntimeConfigurationInputs {
 impl std::fmt::Debug for RuntimeConfigurationInputs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeConfigurationInputs")
-            .field("config_path", &self.config_path)
+            .field("selection", &self.selection)
             .field("env_overrides", &self.env_overrides)
             .finish_non_exhaustive()
     }

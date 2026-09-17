@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.52"
+version = "0.107.55"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -28,7 +28,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }

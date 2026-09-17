@@ -528,7 +528,7 @@ fn cli(o: &OperationsState, args: &[&str]) -> (i32, String, String) {
     let ctx = CliContext {
         base_dir: Some(config.parent().unwrap().to_path_buf()),
         config_path: Some(config.clone()),
-        config_selection: Some(quecto::composition::configuration::build_select_config),
+        configuration: Some(quecto::composition::configuration::build_configuration_handles),
         ..CliContext::default()
     };
     let output = run_with_output(argv, &ctx);

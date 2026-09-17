@@ -227,7 +227,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`), validated against the startup model's catalogue vocabulary (see [Reasoning effort is a per-model capability](../docs/runtime-models-providers.md#reasoning-effort-is-a-per-model-capability)); a level the model does not accept refuses to start, naming the ones it does. Overrides config and env var |
 | `--disable-tool` | No | Disable a registered tool before the session starts (repeatable). Disabled tools remain in the descriptor catalogue for policy/UI callers, but are hidden from model-visible tool definitions and reject execution. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Every named tool is denied for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/subagents.md)). |
-| `--config` | No | Override config file path (else `./config.json` in the working directory, else `<base_dir>/config.json`) |
+| `--config` | No | Load exactly this config file (else `<base_dir>/config.json` with a trusted `./.quecto/config.json` overlay merged over it) |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -339,19 +339,41 @@ Credentials are stored in `~/.quecto/credentials.json`. The credential store tak
 
 ### `quecto status` — Check configuration
 
-Shows the current config, workspace path, model, and API key status. Secret values are redacted in status/debug output.
+Shows the global config file, the repo-local overlay and whether it is trusted,
+the effective workspace, model and effort, and API key status. Secret values
+are redacted in status/debug output.
 
 ```bash
 quecto status
 ```
 
+### `quecto config` — Read and write configuration
+
+```bash
+quecto config get                                  # the effective (merged) document
+quecto config get agents.defaults.model            # one value, as JSON
+quecto config get --global tools.policy.entries    # one layer as written (--local for the overlay)
+quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes ./.quecto/config.json
+quecto config set --global agents.defaults.effort '"high"'       # writes ~/.quecto/config.json
+quecto config trust                                # approve ./.quecto/config.json's current content
+```
+
+Values are JSON; a bare word that is not valid JSON is taken as a string, so
+`quecto config set agents.defaults.model gpt-5.5` reads naturally. `set`
+defaults to the repo-local overlay and refuses the global-only sections
+(`providers`, `admission`) there; it also refuses to patch an overlay whose
+current content is not trusted. See
+[discovery and precedence](#configuration-discovery-and-precedence) for the
+merge rules and the writer's guarantees.
+
 ### First run — zero config
 
 quecto needs no setup step. With no config file it runs on defaults; supply a
 key via `quecto auth login` or `QUECTO_*` env vars. A config file is optional —
-when present it's read from `./config.json` in the working directory, else
-`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)),
-and the workspace is created on demand:
+when present it's read from `~/.quecto/config.json`, with a trusted
+`./.quecto/config.json` in the working directory merged over it (see
+[discovery and precedence](#configuration-discovery-and-precedence)), and the
+workspace is created on demand:
 
 ```
 ~/.quecto/
@@ -362,49 +384,133 @@ and the workspace is created on demand:
 ### Configuration discovery and precedence
 
 Every command that loads configuration (`status`, `agent`, `admission-broker`,
-and the REPL's `status`) loads exactly one file, chosen in this order (#1966):
+`config get --effective`, and the REPL's `status`) reads its configuration from
+these layers (#1966, #2024):
 
-1. `--config <path>` — an explicit selection always wins; the file must exist.
-2. `./config.json` — a `config.json` directly in the process working directory.
-   Only the working directory itself is probed, never its parents.
-3. `<base_dir>/config.json` — the global file (`~/.quecto/config.json`, or
+1. `--config <path>` — an explicit selection replaces everything; the file must
+   exist. Nothing else is read.
+2. `<base_dir>/config.json` — the global file (`~/.quecto/config.json`, or
    `$QUECTO_BASE_DIR/config.json`). Absent means defaults apply.
+3. `./.quecto/config.json` — the **repo-local overlay** in the process working
+   directory, merged *over* the global file. Only the working directory itself
+   is probed, never its parents. It is applied only when trusted (below); an
+   absent overlay is simply not there.
 
-Files are selected, not merged: a local `config.json` fully replaces the global
-one for that run. Only the *absence* of `./config.json` falls through to the
-global file — a local file that is present but invalid JSON, unreadable, or not
-a regular file (a directory, a dangling symlink) is reported as an error naming
-the path, never silently skipped. `quecto status` prints which file was
-selected.
+The overlay is merged section by section, so a repository needs at most a
+small file and never duplicates your secrets or policy:
 
-**Trust the file before you run in its directory.** Launching quecto inside a
-directory loads that directory's `config.json` with no prompt and full
-authority — the same authority as your global file. Concretely, a checked-out
-project's `config.json` can:
+| Section | Merge |
+|---|---|
+| `agents.defaults` | field-wise — an overlay field replaces the global field, other fields stay |
+| `tools.web` | field-wise per engine (`brave`, `duckduckgo`, `fetch`) |
+| `tools.policy.entries` | entry-wise — an overlay entry replaces the global entry of the same stable id |
+| `container_configs` | entry-wise; an overlay entry with `"default": true` un-defaults every global entry |
+| `workflow` | field-wise (`templates` replaced whole) |
+| `providers`, `admission` | **global-only** — an overlay carrying either is refused with an error naming the key |
+| anything else | replaced whole (unknown keys pass through both files) |
 
-- point `providers.*.api_base` at any host, and quecto will send the API key or
-  OAuth token from *your* credential store to it on the first `quecto agent`
-  run;
-- define `container_configs` whose `create`/`exec`/`kill` scripts run on your
-  machine — without the SHA-256 trust prompt that guards the same content in a
-  repo-local `.quecto/config.json` (see
-  [Container runtimes](../docs/container-runtimes.md));
-- change tools, models, workflow templates and every other agent default.
+The global file must be a valid configuration on its own, the overlay a
+valid layer (an overlay may add a container config without claiming the
+default), and the merge a valid configuration. A trusted overlay that is invalid JSON, a directory, a dangling
+symlink or unreadable is an error naming the path, never a silent fallback.
 
-Review it as you would a repository's build scripts. Note also that the
-workspace an agent's own tools write to is its working directory: a file
-written to `./config.json` by an agent is loaded by every subagent spawned
-locally afterwards, exactly as a file the user placed there would be.
+**Trust.** A checked-out project's overlay is applied only once its exact
+content has been approved: the approval is recorded by canonical path and
+SHA-256 in `<base_dir>/config-overlay-trust.json`. Approve it explicitly with
+`quecto config trust` from the project directory (an agent or a script can do
+this without a terminal), or answer the `[y/N]` prompt a one-shot
+`quecto agent` run offers from an interactive terminal — it prints the
+overlay (the first 4 KiB) before asking, and the answer is recorded only after
+the same checks `quecto config trust` applies. One content per
+path is trusted: editing the overlay by hand revokes its trust until it is
+approved again, and reverting to an earlier content does not restore it;
+`quecto config set` records trust for what it writes. An untrusted overlay is
+reported (which file, its hash, and the command to run — or, when
+`quecto config trust` would refuse it, why) and **not** applied, so nothing in
+a repository you have not reviewed can change your agents' defaults. The
+overlay must be a regular file in a regular `.quecto` directory: a symbolic
+link at `.quecto/config.json` *or* at `.quecto` itself is refused whatever it
+points at (trust is keyed by the file's identity, which a link would borrow
+from its target), and `quecto config set` never writes through one. `quecto status` prints both files and the
+overlay's trust state (`trusted`, `untrusted`, `refused` or `none`):
+
+```
+$ quecto status
+quecto Status
+  Config:    /home/me/.quecto/config.json
+  Overlay:   /home/me/src/app/.quecto/config.json (trusted)
+  Workspace: /home/me/.quecto/workspace
+  Model:     openai-api/gpt-5.5
+  Effort:    default
+  ...
+```
+
+**Migration.** Until #2024 a `./config.json` directly in the working directory
+*replaced* the global file. That selection is retired: such a file is no longer
+loaded, and `quecto status` warns while one that looks like a quecto
+configuration (a JSON object with a known section) exists — an unrelated
+`config.json` at a project root is left alone. Move its repo-specific
+settings to `./.quecto/config.json` (`quecto config set …` writes them for
+you) and any `providers` or `admission` section to the global file.
+
+**Reading and writing.** `quecto config get [<dotted.path>]` prints the
+effective value (`--global` or `--local` print one layer as written).
+Secret-shaped values — keys named `api_key`, `apiKey`, `token`, `secret`,
+`password`, or ending in `_key`/`_token` — print as `"<redacted>"` unless you
+pass `--show-secrets`, because agents run this command and its output lands
+in model context and transcripts. `quecto config set <dotted.path>
+<json-value>` writes the repo-local overlay (`--global` writes the global
+file). The writer patches the JSON *document*: only the addressed key's value
+changes, every other key and the key order are kept, and the result is
+validated before anything is written — the file on its own and the effective
+configuration this directory would then load (global merged with the trusted
+overlay), so a change that is fine in one file but breaks the merge (an overlay
+container config that leaves no default) is refused rather than bricking the
+next run. The write is atomic (tmp + fsync + rename) and serialised per file
+on a lock under `<base_dir>/locks/` (never beside the file, so a refused
+`config set` in a clean checkout creates nothing there — not even `.quecto/`),
+so concurrent `config set`s never lose each other's keys. It does normalise
+layout: the file comes back as pretty-printed JSON in its own indentation
+(two spaces for a new or compact file) with LF line endings and one trailing
+newline, and numbers are re-rendered — a file already in that layout changes
+only on the touched line. A refused value leaves the file byte-identical.
+`set_tool_policy … persist` writes through the same path into the base file;
+an entry the trusted overlay already defines is refused (it would be shadowed
+on the next reload) with the `quecto config set` command to run instead.
+
+A running agent re-reads the base file and the overlay (and, while an
+overlay exists, the trust record) before the next turn, `set_model` or a
+forced `reload`, so `quecto config trust`, a `config set`, or creating or
+removing the overlay is picked up without a restart. What a reload changes
+in the running loop is the providers and the tool policy; a new
+`agents.defaults.model` or `effort` in the files applies to the next run (use
+`set_model`/`set_effort` for the current one). A `config set` writes the
+overlay and then its trust record, so a reload that lands between the two
+applies the global file alone for that one turn and reports the overlay
+untrusted; the next reload applies it. A missing base file never triggers a
+reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for
+trust; run `quecto config trust` in the project directory and the next turn
+picks it up.
+
+**Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with
+`container: true` still loads `container_configs` from the base file plus the
+*separate* repo-local container mechanism of
+[Container runtimes](../docs/container-runtimes.md), with its own trust record
+(`container-config-trust.json` under the state directory) and its own
+`[y/N]` prompt; `quecto config trust` does not approve container scripts for
+that path. S4 folds container spawning onto the effective configuration and
+this trust record. Until then, treat `container_configs` in an overlay as
+visible to `config get --effective` and `status` but not yet to `spawn`.
 
 Subagents: a locally spawned subagent inherits the parent's working directory
-and performs its own discovery there — it loads `./config.json` when present,
-else the global file. A parent's explicit `--config` is *not* forwarded to
-local children (pre-existing behaviour; pass `config` in the spawn call, or set
+and performs its own discovery there — the same global file and, when trusted,
+the same overlay. A parent's explicit `--config` is *not* forwarded to local
+children (pass `config` in the spawn call, or set
 `QUECTO_RUNTIME_CONFIG_PATH`, to pin a child's file). Container subagents are
-always handed the parent's selected file explicitly. `QUECTO_RUNTIME_CONFIG_PATH`
-is a child-launch mechanism only: it is the `--config` given to spawned
-children when neither the spawn call nor (for containers) the parent supplies
-one; it does not affect the launching process's own selection above.
+handed the parent's selected base file explicitly. `QUECTO_RUNTIME_CONFIG_PATH` is a
+child-launch mechanism only: it is the `--config` given to spawned children
+when neither the spawn call nor (for containers) the parent supplies one; it
+does not affect the launching process's own selection above.
 
 ### `quecto help` — Show usage
 
@@ -428,8 +534,11 @@ Also available as `quecto --version` or `quecto -v`.
 
 ## Configuration
 
-Config file: `./config.json` in the working directory, else
-`~/.quecto/config.json` (see [discovery and precedence](#configuration-discovery-and-precedence)).
+Config file: `~/.quecto/config.json`, with a trusted repo-local
+`./.quecto/config.json` overlay merged over it (see
+[discovery and precedence](#configuration-discovery-and-precedence)). Prefer
+`quecto config set` over hand edits: it patches one key and leaves the rest of
+the file untouched.
 
 ```json
 {
@@ -859,7 +968,8 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ```
 ~/.quecto/
-  config.json              # Global configuration (a ./config.json in the working directory takes precedence)
+  config.json              # Global configuration (a trusted ./.quecto/config.json overlays it)
+  config-overlay-trust.json # Approved repo-local overlays (canonical path + sha256)
   credentials.json         # Stored API tokens (from quecto auth)
   sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json

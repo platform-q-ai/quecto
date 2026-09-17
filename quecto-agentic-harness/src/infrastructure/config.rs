@@ -337,7 +337,6 @@ fn default_max_results() -> u32 {
     5
 }
 impl Config {
-    /// Load config from a JSON file at the given path.
     /// Load config from a JSON file. A missing file yields the default config
     /// (quecto is zero-config: every field has a sensible default, and
     /// credentials come from env vars or `quecto auth login`). Other IO errors
@@ -350,34 +349,21 @@ impl Config {
         };
         let mut value: serde_json::Value =
             serde_json::from_str(&content).map_err(ConfigError::Parse)?;
-        // Honest breaking-window signal, not a compat shim: the pre-#1410 key
-        // would otherwise be silently ignored and containers would quietly
-        // become "none configured".
-        if value.get("container_scripts").is_some() {
-            return Err(ConfigError::ContainerConfigs(
-                "the `container_scripts` key was renamed to `container_configs` (#1410); \
-                 entries are now a flat map of container configs with exactly one labeled \
-                 \"default\": true — see docs/container-runtimes.md"
-                    .into(),
-            ));
-        }
+        Self::reject_retired_keys(&value)?;
         let resolved_references = resolve_workflow_step_entries(&mut value, Path::new(path))?;
         // Deserializing the resolved Value loses line/column error context, so
         // only pay that cost when a reference was actually substituted.
-        let config: Config = if resolved_references {
-            serde_json::from_value(value).map_err(ConfigError::Parse)?
+        if resolved_references {
+            Self::from_document(value)
         } else {
-            serde_json::from_str(&content).map_err(ConfigError::Parse)?
-        };
-        config.validate_effort()?;
-        config.validate_container_configs()?;
-        config.validate_admission()?;
-        Ok(config)
+            let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+            config.validated()
+        }
     }
 
     /// Reject an unrecognised `agents.defaults.effort` at configuration time
     /// with an error naming every valid value (#1066).
-    fn validate_effort(&self) -> Result<(), ConfigError> {
+    pub(super) fn validate_effort(&self) -> Result<(), ConfigError> {
         if let Some(effort) = self.agents.defaults.effort.as_deref()
             && crate::domain::provider::EffortLevel::parse(effort).is_none()
         {
@@ -389,7 +375,7 @@ impl Config {
     /// Exactly one container config must be labeled `"default": true` when
     /// any are defined (#1410). Zero or multiple defaults fail here, at load
     /// time, naming the configured entries so the caller can fix the file.
-    fn validate_container_configs(&self) -> Result<(), ConfigError> {
+    pub(super) fn validate_container_configs(&self) -> Result<(), ConfigError> {
         if self.container_configs.is_empty() {
             return Ok(());
         }
@@ -427,11 +413,7 @@ impl Config {
         path: &str,
         env_overrides: &HashMap<String, String>,
     ) -> Result<Self, ConfigError> {
-        let mut config = Self::load(path)?;
-        Self::apply_env_overrides(&mut config, env_overrides);
-        config.validate_effort()?;
-        config.validate_container_configs()?;
-        Ok(config)
+        Self::load(path)?.with_env_overrides(env_overrides)
     }
 
     /// Apply environment variable overrides to a mutable config.
@@ -446,7 +428,7 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
-    fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
+    pub(super) fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_MODEL") {
             config.agents.defaults.model = v.clone();
         }
@@ -511,7 +493,7 @@ const WORKFLOW_STEP_FIELDS: &[&str] = &["key", "label", "phase", "guidance"];
 /// Returns `true` when resolution replaced at least one reference entry;
 /// callers use that to keep the cheaper (and line/column-preserving) text
 /// deserialization path for configs without references.
-fn resolve_workflow_step_entries(
+pub(super) fn resolve_workflow_step_entries(
     config: &mut serde_json::Value,
     config_path: &Path,
 ) -> Result<bool, ConfigError> {
@@ -686,48 +668,13 @@ fn reject_unknown_keys(
     Ok(())
 }
 
-#[derive(Debug)]
-pub enum ConfigError {
-    Io(String, std::io::Error),
-    Parse(serde_json::Error),
-    WorkflowStep(String),
-    /// Workflow template directory discovery/load failure (slice 2); the
-    /// message names the offending file or directory.
-    WorkflowTemplate(String),
-    /// Unrecognised `agents.defaults.effort` value (#1066).
-    InvalidEffort(String),
-    /// Invalid `container_configs` default labeling (#1410).
-    ContainerConfigs(String),
-    /// Invalid `admission` section (#1679).
-    Admission(String),
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::Io(path, err) => {
-                write!(f, "failed to read config file '{}': {}", path, err)
-            }
-            ConfigError::Parse(err) => write!(f, "failed to parse config: {}", err),
-            ConfigError::WorkflowStep(err) => write!(f, "failed to load workflow step: {err}"),
-            ConfigError::WorkflowTemplate(err) => {
-                write!(f, "failed to load workflow template: {err}")
-            }
-            ConfigError::InvalidEffort(v) => write!(
-                f,
-                "invalid effort level '{}'; expected one of: {}",
-                v,
-                crate::domain::provider::EffortLevel::VALID_VALUES
-            ),
-            ConfigError::ContainerConfigs(err) => {
-                write!(f, "invalid container_configs: {err}")
-            }
-            ConfigError::Admission(err) => write!(f, "invalid admission config: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {}
+#[path = "config_error.rs"]
+mod error;
+pub use error::ConfigError;
+pub mod loaders;
+pub mod mapping;
+pub mod persistence;
+pub mod writer;
 
 #[cfg(test)]
 #[path = "config_admission_tests.rs"]

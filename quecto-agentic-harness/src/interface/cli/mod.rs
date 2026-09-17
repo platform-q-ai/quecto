@@ -3,7 +3,11 @@ mod agent;
 mod auth;
 pub mod catalogue_handles;
 mod commands;
+mod config_cmd;
 mod config_flag;
+mod config_loading;
+pub mod configuration_handles;
+mod help;
 mod models;
 pub mod protocol;
 pub mod uds;
@@ -339,14 +343,19 @@ pub type ProviderRuntimeBuilder =
 /// durable `set_tool_policy … persist` writer over the run's config file.
 /// Injected through the CLI context; the agent build installs it on the
 /// loop, the interface never constructs the writer.
-pub type ToolPolicyPersistenceBuilder =
-    fn(&std::path::Path) -> crate::application::agent_loop::ToolPolicyPersistence;
+pub type ToolPolicyPersistenceBuilder = fn(
+    &std::path::Path,
+    &crate::application::configuration::dto::ConfigSources,
+)
+    -> crate::application::agent_loop::ToolPolicyPersistence;
 
-/// Composition's builder of the configuration-selection use case (#1966):
-/// which one file a run loads its configuration from. Injected through the
-/// CLI context; the interface never probes the filesystem for a config.
-pub type ConfigSelectionBuilder =
-    fn() -> std::sync::Arc<crate::application::configuration::use_cases::SelectConfig>;
+/// Composition's builder of the configuration handles (#1966, #2024):
+/// which files a run loads, the effective merge, and the one safe write
+/// path. Injected through the CLI context; the interface never probes or
+/// writes a config file itself.
+pub type ConfigurationHandlesBuilder = fn(
+    &configuration_handles::ConfigurationEnvironment,
+) -> configuration_handles::ConfigurationHandles;
 
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
@@ -389,10 +398,11 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an unnamed
     /// chat run refuses to start without it.
     pub fresh_session_identity: Option<FreshSessionIdentityBuilder>,
-    /// Composition's configuration-selection builder (#1966). Supplied by
-    /// the binary's `main` through [`run`]'s [`CliComposition`]; any command
-    /// that loads configuration refuses to run without it.
-    pub config_selection: Option<ConfigSelectionBuilder>,
+    /// Composition's configuration handles builder (#1966, #2024).
+    /// Supplied by the binary's `main` through [`run`]'s
+    /// [`CliComposition`]; any command that loads or writes configuration
+    /// refuses to run without it.
+    pub configuration: Option<ConfigurationHandlesBuilder>,
     /// Composition's catalogue handles builder (#1845). Supplied by the
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
@@ -408,22 +418,41 @@ pub struct CliContext {
 }
 
 impl CliContext {
-    /// Select the config file (#1966): explicit override > `./config.json` in
-    /// the working directory > `<base_dir>/config.json`. A local file that is
-    /// present but unusable is an error, never a fallback. The working
-    /// directory is the one handed in (`run` supplies the process's; rigs
-    /// supply a hermetic one); without one nothing local is discovered.
-    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
-        let Some(select_config) = self.config_selection else {
-            return Err("configuration selection capability not composed".to_string());
+    /// The composed configuration handles (#2024). `prompt_for_trust`
+    /// lets an unrecorded overlay be offered to an interactive user; only
+    /// an agent run started from a terminal asks for it.
+    pub(crate) fn configuration_handles(
+        &self,
+        prompt_for_trust: bool,
+    ) -> Result<configuration_handles::ConfigurationHandles, String> {
+        let Some(build) = self.configuration else {
+            return Err("configuration capability not composed".to_string());
         };
-        select_config()
+        Ok(build(&configuration_handles::ConfigurationEnvironment {
+            base_dir: self.base_dir(),
+            prompt_for_trust,
+        }))
+    }
+
+    /// Select the config layers (#1966, #2024): an explicit override
+    /// replaces everything; otherwise `<base_dir>/config.json` with the
+    /// working directory's `.quecto/config.json` as the overlay candidate.
+    /// The working directory is the one handed in (`run` supplies the
+    /// process's; rigs supply a hermetic one); without one no overlay is
+    /// discovered.
+    pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
+        // Both directories are compared by identity by the use case; the
+        // filesystem's canonical form (symlinked homes, relative base dirs)
+        // is what makes that comparison honest.
+        let canonical = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+        Ok(self
+            .configuration_handles(false)?
+            .select
             .execute(ConfigSelectionRequest {
                 explicit: self.config_path.clone(),
-                working_directory: self.cwd.clone(),
-                global: self.base_dir().join("config.json"),
-            })
-            .map_err(|error| error.to_string())
+                working_directory: self.cwd.clone().map(canonical),
+                global: canonical(self.base_dir()).join("config.json"),
+            }))
     }
 
     /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
@@ -447,7 +476,7 @@ pub struct CliComposition {
     pub sessions: SessionHandlesBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
-    pub config_selection: ConfigSelectionBuilder,
+    pub configuration: ConfigurationHandlesBuilder,
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
@@ -474,7 +503,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         sessions: Some(composition.sessions),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
-        config_selection: Some(composition.config_selection),
+        configuration: Some(composition.configuration),
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),
@@ -550,22 +579,23 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         match args[1].as_str() {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
+            "config" => config_cmd::cmd_config(ctx, &args[2..], &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
             "admission-broker" => {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
             "help" | "--help" | "-h" => {
-                help_text(&mut stdout);
+                help::help_text(&mut stdout);
                 0
             }
             "version" | "--version" | "-v" => {
-                version_text(&mut stdout);
+                help::version_text(&mut stdout);
                 0
             }
             other => {
                 stderr.push_str(&format!("Unknown command: {other}\n"));
-                help_text(&mut stdout);
+                help::help_text(&mut stdout);
                 1
             }
         }
@@ -680,53 +710,6 @@ pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::
         let _ = tokio::task::spawn_blocking(|| {}).await;
     });
     Ok(runtime)
-}
-
-fn version_text(out: &mut String) {
-    out.push_str(&format!("quecto {}\n", env!("CARGO_PKG_VERSION")));
-}
-
-fn help_text(out: &mut String) {
-    out.push_str(&format!(
-        "quecto - Personal AI Assistant v{}\n",
-        env!("CARGO_PKG_VERSION")
-    ));
-    out.push_str("\nUsage: quecto [command]\n");
-    out.push_str("\nWhen run with no arguments, quecto enters the setup and configuration REPL.\n");
-    out.push_str("  Use `quecto agent` or `quecto-tui` for agent operation.\n");
-    out.push_str("\nGlobal options:\n");
-    out.push_str("  --config <path>  Override config file path (default: ./config.json in the\n");
-    out.push_str("                   working directory, else <base_dir>/config.json)\n");
-    out.push_str("\nCommands:\n");
-    out.push_str("  admission-broker run|status|reset\n");
-    out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
-    out.push_str("  agent       Run a one-shot agent session (-m required)\n");
-    out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
-    out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
-    out.push_str("                       --model <m>   Override model\n");
-    out.push_str("                       --system <p>  System prompt\n");
-    out.push_str("                       --max-iterations <n>  Max tool iterations\n");
-    out.push_str("                       --max-time <s>  Wall-clock timeout in seconds\n");
-    out.push_str(
-        "                       --mode uds    framed JSON agent mode via Unix domain socket\n",
-    );
-    out.push_str(
-        "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
-    );
-    out.push_str(
-        "                       --persist     Keep a top-level UDS agent alive after its last client disconnects; SIGTERM/SIGINT or a protocol shutdown then tears its subagents down over the protocol before it exits (harness-spawned subagents are lifetime-bound to their launcher instead)\n",
-    );
-    out.push_str(
-        "                       --effort <level>  Effort level for 4.6 models (low/medium/high/max)\n",
-    );
-    out.push_str(
-        "                       --disable-tool <name>  Disable/hide a tool and deny re-registration (repeatable)\n",
-    );
-    out.push_str("  auth        Manage authentication (login, logout, status)\n");
-    out.push_str("  models      Manage runtime model registry (discover)\n");
-    out.push_str("  status      Show status\n");
-    out.push_str("  help        Show this help\n");
-    out.push_str("  version     Show version information\n");
 }
 
 #[cfg(test)]

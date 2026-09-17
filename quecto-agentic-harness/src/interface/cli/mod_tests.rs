@@ -30,7 +30,7 @@ fn test_composition() -> CliComposition {
         sessions: crate::composition::sessions::build_session_handles,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
-        config_selection: crate::composition::configuration::build_select_config,
+        configuration: crate::composition::configuration::build_configuration_handles,
         catalogue: crate::composition::catalogue::build_catalogue_handles,
         provider_runtime: crate::composition::runtime::build_agent_provider,
         tool_policy_persistence: crate::composition::tool_policy::build_tool_policy_persistence,
@@ -123,10 +123,10 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
 }
 
 /// The interface never probes for a config itself (#1966): without
-/// composition's selection builder a config-loading command refuses to run
-/// rather than quietly reading the global file.
+/// composition's configuration builder a config-loading command refuses to
+/// run rather than quietly reading the global file.
 #[test]
-fn config_loading_commands_refuse_to_run_without_the_selection_capability() {
+fn config_loading_commands_refuse_to_run_without_the_configuration_capability() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
@@ -135,34 +135,39 @@ fn config_loading_commands_refuse_to_run_without_the_selection_capability() {
     let out = run_with_output(args("status"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
-        out.stderr
-            .contains("configuration selection capability not composed"),
+        out.stderr.contains("configuration capability not composed"),
         "{}",
         out.stderr
     );
 }
 
-/// The composed context selects `./config.json` from the hermetic cwd and
-/// reports it, ahead of the base directory's file.
+/// The composed context merges a trusted `./.quecto/config.json` from the
+/// hermetic cwd over the base directory's file and reports both (#2024);
+/// a retired `./config.json` beside it is warned about, never loaded.
 #[test]
-fn composed_context_prefers_the_working_directory_config() {
+fn composed_context_layers_the_working_directory_overlay_over_the_global_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("project");
-    std::fs::create_dir(&cwd).unwrap();
+    std::fs::create_dir_all(cwd.join(".quecto")).unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
         r#"{"agents":{"defaults":{"model":"global-model"}}}"#,
     )
     .unwrap();
     std::fs::write(
-        cwd.join("config.json"),
+        cwd.join(".quecto").join("config.json"),
         r#"{"agents":{"defaults":{"model":"local-model"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("config.json"),
+        r#"{"agents":{"defaults":{"model":"legacy-model"}}}"#,
     )
     .unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         cwd: Some(cwd.clone()),
-        config_selection: Some(crate::composition::configuration::build_select_config),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -173,8 +178,31 @@ fn composed_context_prefers_the_working_directory_config() {
     let out = run_with_output(args("status"), &ctx);
     assert_eq!(out.exit_code, 0, "{}", out.stderr);
     assert!(
+        out.stdout.contains(&format!(
+            "Config:    {}",
+            tmp.path().join("config.json").display()
+        )),
+        "{}",
         out.stdout
-            .contains(&format!("Config:    {}", cwd.join("config.json").display()))
+    );
+    assert!(
+        out.stdout.contains("Model:     global-model"),
+        "untrusted overlay is not applied: {}",
+        out.stdout
+    );
+    assert!(out.stderr.contains("not trusted"), "{}", out.stderr);
+    assert!(out.stderr.contains("no longer loaded"), "{}", out.stderr);
+
+    let trust = run_with_output(args("config trust"), &ctx);
+    assert_eq!(trust.exit_code, 0, "{}", trust.stderr);
+    let out = run_with_output(args("status"), &ctx);
+    assert!(
+        out.stdout.contains(&format!(
+            "Overlay:   {} (trusted)",
+            cwd.join(".quecto").join("config.json").display()
+        )),
+        "{}",
+        out.stdout
     );
     assert!(
         out.stdout.contains("Model:     local-model"),
