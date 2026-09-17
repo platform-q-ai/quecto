@@ -130,6 +130,9 @@ for arg in "$@"; do
   --socket) socket_path="$arg" ;;
   --config) config_path="$arg" ;;
   esac
+  case "$arg" in
+    --config=*) config_path="${arg#--config=}" ;;
+  esac
   prev="$arg"
 done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
@@ -140,6 +143,7 @@ socket_dir="$(dirname "$socket_path")"
 # failed create would leak an unreported env dir forever.
 if [ -n "$config_path" ]; then
   [ -f "$config_path" ] || die "child --config $config_path does not exist"
+  jq -e . "$config_path" >/dev/null 2>&1 || die "child --config $config_path is not valid JSON"
 fi
 # Every die-able check precedes the environment mktemp below so a failed
 # create never leaks an unreported environment directory.
@@ -363,13 +367,13 @@ fi
 if [ -n "$secret_env_file" ]; then
   # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
   # child as the container's PID 1. Requires /bin/sh in the image.
-  "$cli" run -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "${child_argv[@]}" >/dev/null
 else
-  "$cli" run -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
