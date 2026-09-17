@@ -73,6 +73,17 @@ impl FlatSessionLayout {
         super::filename::sanitize_session_key(prefix.as_str())
     }
 
+    /// Optional authoritative home metadata, never rewritten by transcript saves.
+    pub fn home_file(&self, identity: &SessionIdentity) -> PathBuf {
+        self.sessions_dir
+            .join(format!("{}.home", self.sanitized(identity)))
+    }
+
+    /// Discardable, atomically replaced home discovery index.
+    pub fn home_catalogue_file(&self) -> PathBuf {
+        self.sessions_dir.join("home.catalogue")
+    }
+
     fn sanitized(&self, identity: &SessionIdentity) -> String {
         super::filename::sanitize_session_key(identity.runtime_key())
     }

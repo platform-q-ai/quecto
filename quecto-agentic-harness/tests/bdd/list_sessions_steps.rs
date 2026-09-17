@@ -45,6 +45,7 @@ fn given_saved_session(
     let base = world.cli_context.base_dir.clone().expect("no base dir");
     let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let identity = SessionIdentity::named_cli(&name).expect("valid session name");
+    super::session_scope_steps::record_fixture_home(&base, identity.runtime_key());
     let mut session = Session::new(identity);
     for index in 0..messages {
         session.messages.push(if index == 0 {
@@ -91,8 +92,11 @@ fn then_every_listed_session_has_summary_fields(world: &mut QuectoWorld) {
         assert_eq!(
             fields,
             [
+                "executionPath",
+                "homeState",
                 "key",
                 "messageCount",
+                "resumeEligible",
                 "title",
                 "updatedAt",
                 "updatedUnixSecs"

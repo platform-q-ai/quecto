@@ -7,7 +7,6 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
     let tmp = tempfile::tempdir().unwrap();
     let handles = build_session_handles(SessionLoopInputs {
         base_dir: tmp.path().to_path_buf(),
-        store: None,
         identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
             "cli:export",
         ),

@@ -182,3 +182,8 @@ mod turn_cancellation;
 mod uds_direct_child_routing;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
+
+#[path = "contracts/session_home_catalogue.rs"]
+mod session_home_catalogue;
+#[path = "contracts/workspace_discovery.rs"]
+mod workspace_discovery;

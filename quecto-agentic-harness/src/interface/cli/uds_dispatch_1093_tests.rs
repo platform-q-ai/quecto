@@ -680,6 +680,8 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
     ));
     let mut fx = Fixture::new(Some(store.clone()));
     let collapsed = collapsed_message(spill_id);
+    crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, "cli:saved")
+        .await;
     fx.store
         .save(&Session {
             key: SessionIdentity::from_persisted_key("cli:saved"),

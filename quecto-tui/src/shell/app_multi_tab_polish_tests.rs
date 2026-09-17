@@ -315,7 +315,13 @@ async fn resume_selector_hides_workspace_rows_even_when_manifest_exists() {
     let mut app = headless_app();
     app.open_resume_selector_with_workspaces(Vec::new(), &path, None);
     assert!(
-        app.ac().sessions.resume_selector.is_none(),
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count()
+            == 0,
         "workspace-only manifests no longer open /resume selector rows"
     );
 }
@@ -388,7 +394,13 @@ async fn legacy_label_less_manifest_is_not_listed_in_resume_selector() {
     let mut app = headless_app();
     app.open_resume_selector_with_workspaces(Vec::new(), &path, None);
     assert!(
-        app.ac().sessions.resume_selector.is_none(),
+        app.ac()
+            .sessions
+            .resume_selector
+            .as_ref()
+            .unwrap()
+            .item_count()
+            == 0,
         "legacy workspace-only manifests no longer open /resume selector rows"
     );
 }

@@ -96,6 +96,46 @@ pub struct CredentialStore {
     migrate_on_write: bool,
 }
 
+/// Transaction-scoped lock, explicitly released even if a concurrently forked
+/// child still holds a duplicate of the open file description until exec.
+///
+/// `flock(2)` is owned by the open file description, not the descriptor.
+/// `File` is already `FD_CLOEXEC`, so an exec'd child does not keep the lock,
+/// but any fork-to-exec window (or a child that has not yet exec'd) still
+/// holds a duplicate. Closing our fd then leaves `try_lock` returning
+/// `WouldBlock` until that duplicate is gone — the parallel cargo-test
+/// failure mode when another test thread forks while a credential write
+/// holds this lock. `LOCK_UN` releases every duplicate of this OFD.
+struct CredentialLock {
+    _file: std::fs::File,
+}
+
+impl CredentialLock {
+    /// A duplicate of the lock's descriptor sharing its open file description,
+    /// as a child forked while the lock is held would inherit it.
+    /// `cfg(test)` only: `test-support` on the lib path would otherwise
+    /// `deny(dead_code)` these helpers (they are unused outside unit tests).
+    #[cfg(test)]
+    fn inherited_descriptor(&self) -> std::io::Result<std::fs::File> {
+        self._file.try_clone()
+    }
+
+    #[cfg(all(unix, test))]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd;
+        self._file.as_raw_fd()
+    }
+}
+
+impl Drop for CredentialLock {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Closing only our descriptor can leave the flock owned by an inherited
+        // duplicate. Match the ownership/singleton guards' explicit release.
+        let _ = self._file.unlock();
+    }
+}
+
 impl CredentialStore {
     /// Create the general (legacy-compatible) credential store.
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
@@ -180,7 +220,7 @@ impl CredentialStore {
     // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
     // the #1460 locking work and awaits a coordinated MSRV bump.
     #[expect(clippy::incompatible_msrv)]
-    fn lock_exclusive(&self) -> Result<std::fs::File, DomainError> {
+    fn lock_exclusive(&self) -> Result<CredentialLock, DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 DomainError::Config(format!("failed to create credentials dir: {}", e))
@@ -208,9 +248,38 @@ impl CredentialStore {
         let file = file.map_err(|e| {
             DomainError::Config(format!("failed to open credentials lock file: {}", e))
         })?;
+        // Affirmative CLOEXEC: an exec'd child must not inherit this fd.
+        // `std::fs::File` is CLOEXEC today, but the invariant is ours — set it
+        // rather than assuming the std open flags. CLOEXEC does not cover the
+        // fork-to-exec window; Drop's unlock() does.
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = file.as_raw_fd();
+            // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags < 0 {
+                return Err(DomainError::Config(
+                    "failed to read credentials lock fd flags".to_string(),
+                ));
+            }
+            // SAFETY: fd is a live File raw fd; F_SETFD only sets FD_CLOEXEC on FD_* flags.
+            let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+            if rc != 0 {
+                return Err(DomainError::Config(
+                    "failed to set FD_CLOEXEC on credentials lock fd".to_string(),
+                ));
+            }
+            debug_assert_eq!(
+                // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
+                unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC,
+                "credentials lock fd must be FD_CLOEXEC"
+            );
+        }
         file.lock()
             .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
-        Ok(file)
+        Ok(CredentialLock { _file: file })
     }
 
     /// Save all credentials to disk with restricted file permissions (0600).

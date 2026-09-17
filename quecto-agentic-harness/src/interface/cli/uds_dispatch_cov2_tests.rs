@@ -58,6 +58,7 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
         assert!(
             !super::dispatch_command(
                 AgentCommand::ListSessions {
+                    scope: Default::default(),
                     id: Some("ls".into()),
                 },
                 &mut ctx,

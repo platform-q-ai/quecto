@@ -21,28 +21,20 @@ pub(super) fn display_title(raw: &str) -> String {
     out
 }
 
+#[path = "uds_dispatch_discovery.rs"]
+mod uds_dispatch_discovery;
+pub(super) use uds_dispatch_discovery::discovery_json;
+use uds_dispatch_discovery::safe_display;
+
 pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,
 ) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,
-        "title": display_title(&summary.title),
+        "title": display_title(&safe_display(&summary.title)),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
-    })
-}
-
-/// The `list_sessions` response data: the summaries in store order under
-/// the `sessions` field the TUI resume selector reads.
-pub(super) fn sessions_json(
-    sessions: &[crate::domain::session::SessionSummary],
-) -> serde_json::Value {
-    serde_json::json!({
-        "sessions": sessions
-            .iter()
-            .map(session_summary_to_json)
-            .collect::<Vec<_>>()
     })
 }
 
@@ -68,13 +60,8 @@ pub(super) async fn dispatch_fieldless_command(
     // List saved sessions (#1861): invoked through the composed controller
     // and presented here; the scope and order are the application's and
     // the store's, never decided at this edge.
-    if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let list_sessions = ctx.list_sessions.clone();
-        let event = match list_sessions.list_all().await {
-            Ok(sessions) => AgentEvent::ok(id, tn, Some(sessions_json(&sessions))),
-            Err(err) => AgentEvent::err(id, tn, err.to_string()),
-        };
-        emit_event_to_broadcast_or_writer(ctx, &event).await;
+    if let AgentCommand::ListSessions { scope, .. } = cmd {
+        super::uds_dispatch_session::handle_list_sessions(ctx, id, tn, *scope).await;
         return Some(false);
     }
     // Recover full message/tool-call content (#1858, #1971): the composed

@@ -35,7 +35,6 @@ fn liveness_read_handles(
     quecto::composition::sessions::build_session_handles(
         quecto::interface::cli::uds_session_handles::SessionLoopInputs {
             base_dir: base,
-            store: None,
             identity: quecto::domain::session_identity::SessionIdentity::ephemeral(),
             ephemeral: true,
             system_prompt: String::new(),

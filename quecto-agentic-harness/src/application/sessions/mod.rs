@@ -15,3 +15,5 @@ pub mod dto;
 pub mod history_paging;
 pub mod ports;
 pub mod use_cases;
+
+pub mod session_home;

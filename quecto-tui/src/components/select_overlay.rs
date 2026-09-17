@@ -37,20 +37,6 @@ pub(crate) fn build_select_list_overlay(
     })
 }
 
-pub(crate) fn build_resume_selector_overlay(
-    selector: &mut SelectList,
-    terminal_width: usize,
-    terminal_height: usize,
-) -> (Vec<String>, usize) {
-    build_select_list_overlay(
-        "Resume session",
-        "Enter resume · Esc cancel",
-        selector,
-        terminal_width,
-        terminal_height,
-    )
-}
-
 pub(crate) fn build_rewind_selector_overlay(
     selector: &mut SelectList,
     terminal_width: usize,

@@ -35,7 +35,13 @@ fn sample_selector() -> SelectList {
 #[test]
 fn resume_overlay_has_title_and_footer() {
     let mut sel = sample_selector();
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     let joined = lines.join("\n");
     assert!(joined.contains("Resume session"), "should contain title");
     assert!(
@@ -47,7 +53,13 @@ fn resume_overlay_has_title_and_footer() {
 #[test]
 fn resume_overlay_contains_selector_items() {
     let mut sel = sample_selector();
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     let joined = lines.join("\n");
     assert!(joined.contains("alpha"), "should render first item");
     assert!(joined.contains("beta"), "should render second item");
@@ -56,7 +68,13 @@ fn resume_overlay_contains_selector_items() {
 #[test]
 fn resume_overlay_width_is_bounded() {
     let mut sel = sample_selector();
-    let (_, width) = build_resume_selector_overlay(&mut sel, 200, 40);
+    let (_, width) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        200,
+        40,
+    );
     assert!(
         width <= SELECTOR_MAX_PANEL_WIDTH,
         "overlay width {width} should not exceed max {SELECTOR_MAX_PANEL_WIDTH}"
@@ -66,7 +84,13 @@ fn resume_overlay_width_is_bounded() {
 #[test]
 fn resume_overlay_clamps_to_terminal_width() {
     let mut sel = sample_selector();
-    let (_, width) = build_resume_selector_overlay(&mut sel, 20, 40);
+    let (_, width) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        20,
+        40,
+    );
     assert!(
         width <= 20,
         "overlay width {width} should not exceed terminal width 20"
@@ -76,7 +100,13 @@ fn resume_overlay_clamps_to_terminal_width() {
 #[test]
 fn resume_overlay_lines_do_not_exceed_max_height() {
     let mut sel = sample_selector();
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 10);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        10,
+    );
     assert!(
         lines.len() <= 6,
         "overlay should be clamped to terminal_height - 4 = 6"
@@ -195,7 +225,13 @@ fn rewind_overlay_contains_items() {
 #[test]
 fn overlay_uses_opaque_background() {
     let mut sel = sample_selector();
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     assert!(
         lines.iter().any(|l| l.contains(theme::BG_OVERLAY)),
         "at least one line should use the opaque background"
@@ -205,7 +241,13 @@ fn overlay_uses_opaque_background() {
 #[test]
 fn overlay_lines_are_uniform_width() {
     let mut sel = sample_selector();
-    let (lines, width) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, width) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     for (i, line) in lines.iter().enumerate() {
         let vis = crate::components::utils::visible_width(line);
         assert_eq!(
@@ -218,7 +260,13 @@ fn overlay_lines_are_uniform_width() {
 #[test]
 fn overlay_with_empty_selector_still_has_title() {
     let mut sel = SelectList::new(vec![], 10);
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     let joined = lines.join("\n");
     assert!(joined.contains("Resume session"));
 }
@@ -233,7 +281,13 @@ fn overlay_with_single_item() {
         }],
         10,
     );
-    let (lines, _) = build_resume_selector_overlay(&mut sel, 100, 40);
+    let (lines, _) = build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut sel,
+        100,
+        40,
+    );
     let joined = lines.join("\n");
     assert!(joined.contains("only"));
 }

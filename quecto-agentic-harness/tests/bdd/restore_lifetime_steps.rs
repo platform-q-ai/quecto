@@ -192,6 +192,8 @@ fn legacy_row(
 fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
     let base = base(world);
     let key = Session::build_key("cli", &session_name);
+    // Legacy child-row schema is independent of session-home authority.
+    super::session_scope_steps::record_fixture_home(&base, &key);
     // Let the store place the file, then overwrite it with the legacy shape.
     let store = FileSessionStore::new(FlatSessionLayout::new(&base));
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -262,6 +264,10 @@ fn given_legacy_session(world: &mut QuectoWorld, session_name: String) {
 
 #[given(expr = "session {string} was saved by an earlier harness with no child rows")]
 fn given_plain_session(world: &mut QuectoWorld, session_name: String) {
+    super::session_scope_steps::record_fixture_home(
+        &base(world),
+        &Session::build_key("cli", &session_name),
+    );
     let store = FileSessionStore::new(FlatSessionLayout::new(base(world)));
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(store.save(&Session {
@@ -326,7 +332,6 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
-            session_store_override: None,
             ext_registry: Some(ext_registry),
             lifetime,
             notification_rx: None,

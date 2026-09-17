@@ -314,3 +314,31 @@ fn indicator_tracks_selection_position() {
         "indicator must show the 1-based selection over the full total"
     );
 }
+
+#[test]
+fn inactive_selection_dims_the_marker_and_never_accents_the_label() {
+    let nav = ListNavigator::new();
+    let items = rows(&["a", "b"]);
+    let lines = render_windowed_styled(
+        &items,
+        &nav,
+        5,
+        40,
+        "",
+        DescriptionMode::AlignedCached { label_width: 0 },
+        SelectionStyle::Inactive,
+        |r| r.clone(),
+    );
+    assert!(strip_ansi(&lines[0]).starts_with("→ a"), "{:?}", lines[0]);
+    assert!(
+        lines[0].starts_with("\x1b[2m→ "),
+        "inactive marker must be dim: {:?}",
+        lines[0]
+    );
+    assert!(
+        !lines[0].contains("\x1b[36m"),
+        "inactive selection must not accent the label: {:?}",
+        lines[0]
+    );
+    assert!(strip_ansi(&lines[1]).starts_with("  b"));
+}

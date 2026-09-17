@@ -16,8 +16,13 @@ use super::session_layout::FlatSessionLayout;
 pub struct FileSessionStore {
     layout: FlatSessionLayout,
     ownership: super::session_ownership::SessionOwnershipRegistry,
+    summaries: std::sync::Arc<std::sync::Mutex<session_store_list::SummaryCache>>,
 }
 
+#[path = "session_store_catalogue.rs"]
+pub(super) mod session_store_catalogue;
+#[path = "session_store_home.rs"]
+pub(super) mod session_store_home;
 #[path = "session_store_list.rs"]
 mod session_store_list;
 #[path = "session_store_ordinals.rs"]
@@ -32,8 +37,14 @@ impl FileSessionStore {
     pub fn new(layout: FlatSessionLayout) -> Self {
         Self {
             layout,
+            summaries: Default::default(),
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn summary_transcript_reads(&self) -> usize {
+        self.summaries.lock().expect("summary cache lock").reads
     }
 
     fn claim_key(&self, identity: &SessionIdentity) -> Result<(), DomainError> {
@@ -70,19 +81,6 @@ impl FileSessionStore {
             must_compact,
         )
         .await
-    }
-
-    async fn delete_session_file_if_present(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Result<(), DomainError> {
-        match tokio::fs::remove_file(self.session_path(identity)).await {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(DomainError::Session(format!(
-                "failed to delete empty session: {err}"
-            ))),
-        }
     }
 
     async fn ensure_dir(&self) -> Result<(), DomainError> {
@@ -199,7 +197,9 @@ impl SessionStore for FileSessionStore {
         query: &SessionListQuery,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
         let query = query.clone();
-        Box::pin(async move { session_store_list::list_summaries(&self.layout, &query).await })
+        Box::pin(async move {
+            session_store_list::list_summaries(&self.layout, &query, self.summaries.clone()).await
+        })
     }
 }
 
