@@ -1,24 +1,51 @@
-@done @issue-1966
-Feature: Configuration discovery
+@done @issue-2024
+Feature: Configuration discovery and the repo-local overlay
   As a user
-  I want Quecto to prefer a config.json in my current directory
-  So that a project can carry its own configuration without changing my global defaults
+  I want a repo-local .quecto/config.json to overlay my global configuration
+  So that a project can pin its own defaults without duplicating my providers, policy or admission
 
-  Scenario: A config.json in the current directory is preferred over the global configuration
+  # ── Selection and layering ────────────────────────────────────────────────
+
+  Scenario: A trusted repo-local overlay merges over the global configuration
     Given a config file at "~/.quecto/config.json" with content:
       """
-      {"agents":{"defaults":{"model":"global-model"}}}
+      {"agents":{"defaults":{"model":"global-model"}},"providers":{"openai":{"api_key":"sk-global"}}}
       """
-    And a config file named "config.json" in the current directory with content:
+    And a repo-local overlay in the current directory with content:
       """
       {"agents":{"defaults":{"model":"local-model"}}}
       """
+    And the repo-local overlay is trusted
     When I run quecto with arguments "status"
     Then the exit code should be 0
-    And the reported config path should be the current directory's "config.json"
+    And the reported config path should be the global "config.json"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "trusted"
     And the output should contain "Model:     local-model"
+    And the output should contain "OpenAI API:    configured"
 
-  Scenario: Without a local config.json the global configuration is used
+  Scenario: The effective configuration reads through both layers
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model","effort":"high"}},"tools":{"policy":{"entries":{"native:bash":{"scope":"both"}}}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"local-model"}},"tools":{"policy":{"entries":{"native:docs":{"scope":"parent"}}}}}
+      """
+    And the repo-local overlay is trusted
+    When I run quecto with arguments "config get --effective agents.defaults"
+    Then the exit code should be 0
+    And the printed JSON should have "model" equal to "local-model"
+    And the printed JSON should have "effort" equal to "high"
+    When I run quecto with arguments "config get --effective tools.policy.entries"
+    Then the printed JSON should have "native:bash.scope" equal to "both"
+    And the printed JSON should have "native:docs.scope" equal to "parent"
+    When I run quecto with arguments "config get --global agents.defaults.model"
+    Then the printed JSON should be "global-model"
+    When I run quecto with arguments "config get --local agents.defaults.model"
+    Then the printed JSON should be "local-model"
+
+  Scenario: Without a repo-local overlay the global configuration is used
     Given a config file at "~/.quecto/config.json" with content:
       """
       {"agents":{"defaults":{"model":"global-model"}}}
@@ -27,12 +54,18 @@ Feature: Configuration discovery
     Then the exit code should be 0
     And the reported config path should be the global "config.json"
     And the output should contain "Model:     global-model"
+    And the output should contain "Overlay:   none"
 
-  Scenario: An explicit --config selection wins over the local config.json
-    Given a config file named "config.json" in the current directory with content:
+  Scenario: An explicit --config selection replaces both layers
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
       """
       {"agents":{"defaults":{"model":"local-model"}}}
       """
+    And the repo-local overlay is trusted
     And a config file named "explicit.json" in the current directory with content:
       """
       {"agents":{"defaults":{"model":"explicit-model"}}}
@@ -40,13 +73,14 @@ Feature: Configuration discovery
     When I run quecto status with --config pointing at the current directory's "explicit.json"
     Then the exit code should be 0
     And the output should contain "Model:     explicit-model"
+    And the output should not contain "local-model"
 
-  Scenario: A parent directory's config.json is not discovered
+  Scenario: A parent directory's overlay is not discovered
     Given a config file at "~/.quecto/config.json" with content:
       """
       {"agents":{"defaults":{"model":"global-model"}}}
       """
-    And a config file named "config.json" in the parent of the current directory with content:
+    And a repo-local overlay in the parent of the current directory with content:
       """
       {"agents":{"defaults":{"model":"parent-model"}}}
       """
@@ -54,68 +88,223 @@ Feature: Configuration discovery
     Then the exit code should be 0
     And the output should contain "Model:     global-model"
 
-  Scenario: An invalid local config.json is an error rather than a silent fallback
+  # ── Global-only sections ──────────────────────────────────────────────────
+
+  Scenario: An overlay carrying providers is refused naming the key
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"providers":{"openai":{"api_key":"sk-global"}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"providers":{"openai":{"api_base":"https://evil.example"}}}
+      """
+    And the repo-local overlay is trusted regardless of its content
+    When I run quecto with arguments "agent -m hello"
+    Then the exit code should be 1
+    And the stderr should contain "failed to load config"
+    And the stderr should name the current directory's ".quecto/config.json"
+    And the stderr should contain "`providers` is global-only"
+
+  Scenario: An overlay carrying admission is refused naming the key
     Given a config file at "~/.quecto/config.json" with content:
       """
       {"agents":{"defaults":{"model":"global-model"}}}
       """
-    And a config file named "config.json" in the current directory with content:
+    And a repo-local overlay in the current directory with content:
+      """
+      {"admission":null}
+      """
+    And the repo-local overlay is trusted regardless of its content
+    When I run quecto with arguments "status"
+    Then the exit code should be 1
+    And the stderr should name the current directory's ".quecto/config.json"
+    And the stderr should contain "`admission` is global-only"
+    And the output should not contain "global-model"
+
+  # ── Trust ─────────────────────────────────────────────────────────────────
+
+  Scenario: An untrusted overlay is reported and not applied
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"local-model"}}}
+      """
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "untrusted"
+    And the stderr should contain "not applied"
+    And the stderr should contain "quecto config trust"
+
+  Scenario: quecto config trust approves the overlay non-interactively
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"local-model"}}}
+      """
+    When I run quecto with arguments "config trust"
+    Then the exit code should be 0
+    And the output should contain "trusted"
+    And the stdout should name the current directory's ".quecto/config.json"
+    When I run quecto with arguments "status"
+    Then the output should contain "Model:     local-model"
+
+  Scenario: Editing a trusted overlay by hand revokes its trust
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"local-model"}}}
+      """
+    And the repo-local overlay is trusted
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"edited-model"}}}
+      """
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the stderr should contain "not applied"
+
+  Scenario: quecto config trust refuses an overlay that carries a global-only section
+    Given a repo-local overlay in the current directory with content:
+      """
+      {"providers":{"openai":{"api_key":"sk-smuggled"}}}
+      """
+    When I run quecto with arguments "config trust"
+    Then the exit code should be 1
+    And the stderr should contain "`providers` is global-only"
+
+  Scenario: An invalid trusted overlay is an error rather than a silent fallback
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a repo-local overlay in the current directory with content:
       """
       {"agents":{"defaults":{"model":
       """
+    And the repo-local overlay is trusted regardless of its content
     When I run quecto with arguments "status"
     Then the exit code should be 1
     And the stderr should contain "failed to load config"
-    And the stderr should name the current directory's "config.json"
+    And the stderr should name the current directory's ".quecto/config.json"
     And the output should not contain "global-model"
 
-  Scenario: An invalid local config.json stops an agent run with an error naming the file
+  # ── The safe writer ───────────────────────────────────────────────────────
+
+  Scenario: quecto config set writes the repo-local overlay by default and leaves the global file untouched
     Given a config file at "~/.quecto/config.json" with content:
       """
-      {"providers":{"openai":{"api_key":"sk-global"}}}
+      {"agents":{"defaults":{"model":"global-model"}},"providers":{"openai":{"api_key":"sk-global"}}}
       """
-    And a config file named "config.json" in the current directory with content:
+    When I run quecto with the arguments:
       """
-      {"providers":{"openai":{"api_key":
+      config set agents.defaults.model '"local-model"'
       """
-    When I run quecto with arguments "agent -m hello"
-    Then the exit code should be 1
-    And the stderr should contain "failed to load config"
-    And the stderr should name the current directory's "config.json"
+    Then the exit code should be 0
+    And the global config file should be byte-identical to its previous content
+    And the current directory's ".quecto/config.json" should set "agents.defaults.model" to "local-model"
+    When I run quecto with arguments "status"
+    Then the output should contain "Model:     local-model"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "trusted"
 
-  Scenario: An agent run uses the local config.json ahead of the global configuration
+  Scenario: quecto config set --global changes only the touched line and preserves unknown keys
     Given a config file at "~/.quecto/config.json" with content:
       """
-      {"providers":{"openai":{"api_key":"sk-global"}}}
+      {
+        "unknown_key": "kept",
+        "agents": {
+          "defaults": {
+            "model": "old-model"
+          }
+        }
+      }
       """
-    And a config file named "config.json" in the current directory with content:
+    When I run quecto with the arguments:
       """
-      {"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}
+      config set --global agents.defaults.model '"new-model"'
       """
-    When I run quecto with arguments "agent -m hello"
-    Then the exit code should be 1
-    And the stderr should contain "no LLM providers"
+    Then the exit code should be 0
+    And the global config file should differ from its previous content only on the line containing "model"
+    And the global config file should set "unknown_key" to "kept"
+    And the global config file should set "agents.defaults.model" to "new-model"
+    And no temporary config files should remain beside the global config file
 
-  Scenario: A local config.json that is not a regular file is an error
+  Scenario: quecto config set refuses a value the configuration would not accept and leaves the file untouched
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "agents": {
+          "defaults": {
+            "effort": "high"
+          }
+        }
+      }
+      """
+    When I run quecto with the arguments:
+      """
+      config set --global agents.defaults.effort '"bogus"'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "invalid effort level"
+    And the global config file should be byte-identical to its previous content
+    And no temporary config files should remain beside the global config file
+
+  Scenario: quecto config set refuses a global-only key in the overlay
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {}
+      """
+    When I run quecto with the arguments:
+      """
+      config set --local providers.openai.api_key '"sk-leak"'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "`providers` is global-only"
+    And the current directory's ".quecto/config.json" should not exist
+
+  Scenario: quecto config set refuses to patch an untrusted overlay
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {}
+      """
+    And a repo-local overlay in the current directory with content:
+      """
+      {"agents":{"defaults":{"model":"someone-elses-model"}}}
+      """
+    When I run quecto with the arguments:
+      """
+      config set --local agents.defaults.effort '"low"'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "quecto config trust"
+    And the current directory's ".quecto/config.json" should be byte-identical to its previous content
+
+  # ── Migration from the retired ./config.json selection ────────────────────
+
+  Scenario: A legacy config.json in the working directory no longer replaces the global file
     Given a config file at "~/.quecto/config.json" with content:
       """
       {"agents":{"defaults":{"model":"global-model"}}}
       """
-    And a directory named "config.json" in the current directory
-    When I run quecto with arguments "status"
-    Then the exit code should be 1
-    And the stderr should contain "config.json"
-    And the stderr should contain "not a regular file"
-    And the output should not contain "global-model"
-
-  Scenario: An unreadable local config.json is an error
-    Given a config file at "~/.quecto/config.json" with content:
+    And a config file named "config.json" in the current directory with content:
       """
-      {"agents":{"defaults":{"model":"global-model"}}}
+      {"agents":{"defaults":{"model":"legacy-model"}}}
       """
-    And a dangling symlink named "config.json" in the current directory
     When I run quecto with arguments "status"
-    Then the exit code should be 1
-    And the stderr should contain "config.json"
-    And the stderr should contain "cannot be read"
-    And the output should not contain "global-model"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the reported config path should be the global "config.json"
+    And the stderr should contain "no longer loaded"
+    And the stderr should name the current directory's "config.json"
+    And the stderr should contain ".quecto/config.json"
