@@ -139,21 +139,10 @@ async fn legacy_pid_and_socket_are_dropped_on_the_next_save() {
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     store.ensure_dir().await.unwrap();
     let path = store.session_path(&id("cli:legacy-authority"));
-    let snapshot = serde_json::json!({
-        "type": "snapshot",
-        "key": "cli:legacy-authority",
-        "messages": [{"role":"user","content":"old"}],
-        "subagent_roster": [{
-            "agentUuid":"old-child",
-            "displayName":"old worker",
-            "sessionKey":"old-child",
-            "socketPath":"/tmp/old-child.sock",
-            "pid":4242,
-            "liveness":"live",
-            "status":"running"
-        }]
-    });
-    tokio::fs::write(&path, format!("{}\n", snapshot))
+    // A legacy file whose first key is not `type` (the store's own writer
+    // always leads with it), so the next save compacts rather than appends.
+    let snapshot = r#"{"key":"cli:legacy-authority","messages":[{"role":"user","content":"old"}],"subagent_roster":[{"agentUuid":"old-child","displayName":"old worker","sessionKey":"old-child","socketPath":"/tmp/old-child.sock","pid":4242,"liveness":"live","status":"running"}],"type":"snapshot"}"#;
+    tokio::fs::write(&path, format!("{snapshot}\n"))
         .await
         .unwrap();
 
