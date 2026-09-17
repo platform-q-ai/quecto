@@ -204,6 +204,13 @@ never disagrees with exact-key admission; only an authority that cannot be read
 at all is `Unavailable("record not in catalogue")`, with a diagnostic. Exact-key
 admission reads authority independently of catalogue health.
 
+The store's summary scan admits only regular `<sanitized key>.json` files whose
+recorded key names that very file: a hand-renamed record, a symlink into the
+sessions directory, an unreadable or invalid file, or a file replaced while it
+was being read is skipped — deliberately, so no alias or foreign file can pose
+as a session — and every skip is a `tracing::warn!` naming the path and the
+reason, so nothing vanishes from the list silently.
+
 **Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
 found on PATH (resolved once, spawned by absolute path off the async executor,
 with the ambient `GIT_DIR`/`GIT_WORK_TREE`/`GIT_CEILING_DIRECTORIES` and config

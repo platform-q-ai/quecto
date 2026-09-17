@@ -40,7 +40,16 @@ pub(super) fn scan(
                     .starts_with(&layout.record_name_prefix(prefix))
             });
         if admitted {
-            let Ok(before) = stamp(&path) else { continue };
+            // Every skip is logged: a record never vanishes from the list
+            // silently (a hand-renamed or symlinked file, an unreadable or
+            // invalid one).
+            let before = match stamp(&path) {
+                Ok(before) => before,
+                Err(error) => {
+                    skipped(&path, "not a regular session record", &error);
+                    continue;
+                }
+            };
             let cached = cache
                 .entries
                 .get(&path)
@@ -49,24 +58,38 @@ pub(super) fn scan(
                 Some((_, summary)) => summary.clone(),
                 None => {
                     cache.reads += 1;
-                    let Ok(content) = std::fs::read_to_string(&path) else {
-                        continue;
+                    let content = match std::fs::read_to_string(&path) {
+                        Ok(content) => content,
+                        Err(error) => {
+                            skipped(&path, "unreadable session file", &error);
+                            continue;
+                        }
                     };
-                    let Ok(header) = parse_session_header(&content) else {
-                        continue;
+                    let header = match parse_session_header(&content) {
+                        Ok(header) => header,
+                        Err(error) => {
+                            skipped(&path, "invalid session file", &error);
+                            continue;
+                        }
                     };
                     let identity = SessionIdentity::from_persisted_key(header.key.as_ref());
-                    if layout.session_file(&identity) == path
-                        && stamp(&path).is_ok_and(|after| before == after)
-                    {
-                        let summary = summarize(header, &path);
-                        cache
-                            .entries
-                            .insert(path.clone(), (before.clone(), summary.clone()));
-                        summary
-                    } else {
+                    if layout.session_file(&identity) != path {
+                        skipped(
+                            &path,
+                            "session file name does not match its key",
+                            &format_args!("key {:?}", header.key),
+                        );
                         continue;
                     }
+                    if !stamp(&path).is_ok_and(|after| before == after) {
+                        skipped(&path, "session file changed while listing", &"retry");
+                        continue;
+                    }
+                    let summary = summarize(header, &path);
+                    cache
+                        .entries
+                        .insert(path.clone(), (before.clone(), summary.clone()));
+                    summary
                 }
             };
             if query.key_prefix().is_none_or(|prefix| {
@@ -90,6 +113,14 @@ pub(super) fn scan(
             .then_with(|| a.title.cmp(&b.title))
     });
     Ok(summaries)
+}
+
+fn skipped(path: &std::path::Path, why: &str, detail: &dyn std::fmt::Display) {
+    tracing::warn!(
+        path = %path.display(),
+        detail = %detail,
+        "skipping {why} while listing sessions"
+    );
 }
 
 fn summarize(header: SessionHeader<'_>, path: &std::path::Path) -> SessionSummary {
