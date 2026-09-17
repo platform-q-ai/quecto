@@ -177,3 +177,44 @@ async fn list_sessions_error_closes_the_picker_it_opened() {
         "{rendered}"
     );
 }
+
+/// #2018: a corrupt record's diagnostic toasts once per process, not on every
+/// listing in every scope, and several new diagnostics collapse to one line.
+#[tokio::test]
+async fn discovery_diagnostics_toast_once_per_process_and_summarise_batches() {
+    use crate::protocol::session_payloads::SessionListScope;
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let diag =
+        "cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6";
+    for _ in 0..2 {
+        for scope in [SessionListScope::Local, SessionListScope::Global] {
+            a.request_session_scope(scope);
+            let id = a.ac().sessions.pending_list_id.clone().unwrap();
+            a.handle_session_list_response(
+                Some(&id),
+                Some(serde_json::json!({"sessions":[],"diagnostics":[diag]})),
+            );
+        }
+    }
+    let toasts: Vec<String> = a
+        .notifications
+        .messages()
+        .into_iter()
+        .filter(|m| m.contains("session record unavailable"))
+        .collect();
+    assert_eq!(toasts, vec![diag.to_string()]);
+    a.request_session_scope(SessionListScope::Local);
+    let id = a.ac().sessions.pending_list_id.clone().unwrap();
+    a.handle_session_list_response(
+        Some(&id),
+        Some(serde_json::json!({"sessions":[],"diagnostics":[diag, "a.json: session record unavailable: EOF", "b.json: home needs repair: gone"]})),
+    );
+    let messages = a.notifications.messages();
+    assert!(
+        messages.iter().any(|m| m
+            == "2 session records need repair; first: a.json: session record unavailable: EOF"),
+        "{messages:?}"
+    );
+    assert!(!messages.iter().any(|m| m.contains("b.json: home")));
+}

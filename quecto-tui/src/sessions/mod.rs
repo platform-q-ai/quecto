@@ -8,6 +8,7 @@
 #[path = "resume_picker_tests.rs"]
 mod resume_picker_tests;
 
+pub mod discovery_diagnostics;
 pub mod resume_picker;
 pub mod resume_rows;
 

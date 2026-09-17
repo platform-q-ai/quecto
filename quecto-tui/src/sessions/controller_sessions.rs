@@ -8,6 +8,8 @@ pub(crate) struct SessionsFlow {
     pub(super) pending_list_id: Option<String>,
     pub(super) scope: crate::protocol::session_payloads::SessionListScope,
     pub(super) eligible_keys: std::collections::BTreeSet<String>,
+    /// Discovery diagnostics already toasted in this process (#2018).
+    pub(super) shown_diagnostics: std::collections::BTreeSet<String>,
     /// Session stats fallback to learn real context window for current session/model.
     pub(super) context_stats_requested: bool,
 }
