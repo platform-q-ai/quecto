@@ -1554,13 +1554,16 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
 // #2009 typed discovery deserialization removes six raw parsing sites.
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 127;
+// #2024 S2: `model_payloads.rs` reads every string field through one
+// `string_field` helper (five sites folded into one) while adding the
+// `persisted` mapper (one site): 127 → 122.
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 122;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 127;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 122;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 142;
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 137;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
