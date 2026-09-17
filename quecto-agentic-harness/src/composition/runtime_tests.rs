@@ -27,7 +27,7 @@ fn select_model(
     dir: &Path,
     model: &str,
 ) -> crate::application::catalogue::dto::ModelSelectionVerdict {
-    crate::composition::catalogue::build_catalogue_handles(dir)
+    crate::composition::catalogue::build_catalogue_handles(dir, None)
         .model
         .plan(model)
         .verdict

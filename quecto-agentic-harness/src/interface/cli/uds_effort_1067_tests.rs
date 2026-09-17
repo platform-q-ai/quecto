@@ -119,8 +119,6 @@ impl EffortFx {
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
-            provider_reload: None,
-            provider_reload_inputs: None,
             save_session,
             rewrite,
             switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(

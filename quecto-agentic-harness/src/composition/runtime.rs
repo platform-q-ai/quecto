@@ -2,8 +2,9 @@
 //! `catalogue_runtime.rs` and `cli/agent_provider.rs`, epic #1193 slice 3):
 //! the one place that sees both the compose-provider-runtime use case and
 //! the infrastructure adapters it runs over. `main` hands
-//! [`build_agent_provider`] to the CLI; startup and provider reload call it
-//! instead of constructing provider state themselves.
+//! [`build_agent_provider`] to the CLI for startup, and the reload use case
+//! composed in `composition::catalogue` (#1849 PR 2) rebuilds through it;
+//! the interface never constructs provider state itself.
 
 use std::path::Path;
 use std::sync::Arc;

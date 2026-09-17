@@ -76,8 +76,6 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         notification_rx: None,
         workflow_state: None,
         workflow_config: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         save_session,
         rewrite,
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
@@ -147,8 +145,6 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
         notification_rx: None,
         workflow_state: None,
         workflow_config: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         save_session,
         rewrite,
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
@@ -219,8 +215,6 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
         notification_rx: None,
         workflow_state: None,
         workflow_config: None,
-        provider_reload: None,
-        provider_reload_inputs: None,
         save_session,
         rewrite,
         switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(

@@ -9,7 +9,7 @@ fn composed_handles_list_the_real_catalogue_of_a_base_directory() {
         r#"{"providers":{"acme":{"api":"openai-completions","baseUrl":"https://acme.test/v1","apiKey":"$ACME_KEY","models":[{"id":"acme-1"}]}}}"#,
     )
     .unwrap();
-    let handles = build_catalogue_handles(tmp.path());
+    let handles = build_catalogue_handles(tmp.path(), None);
     let before = snapshot_store_for(tmp.path()).current().generation();
     let ModelListingOutcome::Listed(listing) = handles.list_models.list() else {
         panic!("a valid models.json lists");

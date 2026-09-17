@@ -1048,22 +1048,6 @@ pub struct QuectoWorld {
     pub audit_content_preview: Option<String>,
     /// Audit events captured from a real agent-loop run (#937 emission path)
     pub audit_loop_events: Vec<quecto::domain::audit::AuditEvent>,
-    /// RuntimeReload BDD: temp dir holding the watched source file(s)
-    pub _reload_tmp: Option<TempDir>,
-    /// RuntimeReload BDD: path → file label map (for multi-source scenarios)
-    pub reload_files: HashMap<String, PathBuf>,
-    /// RuntimeReload BDD: the reload gate under test (string last-good)
-    pub reload_gate: Option<quecto::infrastructure::reload::RuntimeReload<String>>,
-    /// RuntimeReload BDD: single reload source under test
-    pub reload_source: Option<quecto::infrastructure::reload::ReloadSource>,
-    /// RuntimeReload BDD: captured mtime before a touch, for cache-advance asserts
-    pub reload_mtime_before: Option<std::time::SystemTime>,
-    /// RuntimeReload BDD: whether the rebuild closure was invoked
-    pub reload_rebuild_called: Arc<Mutex<bool>>,
-    /// RuntimeReload BDD: result of the last poll/force-poll
-    pub reload_poll_result: Option<quecto::infrastructure::reload::ReloadResult<String>>,
-    /// RuntimeReload BDD: result of the last source probe
-    pub reload_source_change: Option<quecto::infrastructure::reload::SourceChange>,
     // --- TUI markdown table safety BDD ---
     /// The rendered markdown-table lines (ANSI intact) under test.
     pub tui_table_rendered: Option<Vec<String>>,
@@ -1462,7 +1446,6 @@ mod read_tool_steps;
 mod reasoning_effort_capability_steps;
 mod recall_tool_steps;
 mod release_profile_steps;
-mod reload_steps;
 mod repl_steps;
 mod repo_docs_steps;
 mod restore_lifetime_steps;
@@ -1735,7 +1718,8 @@ fn ask_owned_child_to_stop(
 impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
     /// capability (#1970), its retained-context graph (#1978), the catalogue
-    /// handles (#1845) and the provider-runtime builder (#1849): every
+    /// handles (#1845), the provider-runtime builder and the tool-policy
+    /// persistence builder (#1849): every
     /// `quecto agent …` run through `run_with_output` needs them or exits
     /// with "… capability not composed", exactly as the binary's `main`
     /// supplies them.
@@ -1748,6 +1732,8 @@ impl QuectoWorld {
         world.cli_context.catalogue = Some(quecto::composition::catalogue::build_catalogue_handles);
         world.cli_context.provider_runtime =
             Some(quecto::composition::runtime::build_agent_provider);
+        world.cli_context.tool_policy_persistence =
+            Some(quecto::composition::tool_policy::build_tool_policy_persistence);
         world
     }
 }

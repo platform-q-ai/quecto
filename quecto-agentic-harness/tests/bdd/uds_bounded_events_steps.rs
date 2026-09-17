@@ -1509,7 +1509,6 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     use quecto::infrastructure::config::Config;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-    use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
     use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 
     let env_overrides: HashMap<String, String> = std::env::vars()
@@ -1533,14 +1532,13 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             return;
         }
     };
-    let mut provider_reload = seeded_provider_reload(&config_path, provider.clone());
-    let provider_reload_inputs = ProviderReloadInputs::new(
-        config_path,
-        base.to_path_buf(),
-        env_overrides,
-        http_client,
-        build_agent_provider,
-    );
+    let runtime_configuration =
+        quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+            config_path,
+            env_overrides,
+            http_client,
+            provider_runtime: build_agent_provider,
+        };
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
     let sandbox = Sandbox::new(Some(workspace.clone()));
@@ -1611,7 +1609,10 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_for_thread),
+            catalogue: quecto::composition::catalogue::build_catalogue_handles(
+                &base_for_thread,
+                Some(&runtime_configuration),
+            ),
             ext_registry: Some(ext_reg),
             lifetime: if persist {
                 quecto::domain::harness_lifetime::HarnessLifetime::Persistent
@@ -1624,8 +1625,6 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: None,
         })

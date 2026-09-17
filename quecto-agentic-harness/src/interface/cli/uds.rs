@@ -153,8 +153,6 @@ pub(crate) struct DispatchCtx<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
-    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
-    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
     /// List saved sessions (#1861, #1970): answers the `list_sessions` command.
@@ -326,7 +324,9 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // #1721: a failure during this turn is dated at the generation known now.
     ctx.session
         .observe_control_generation(ctx.turn_control.control_generation());
-    super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
+    // Reload runtime configuration (#1849): the pull-based poll before every
+    // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
+    super::uds_dispatch_reload::poll_reload(ctx).await;
     let cancel_rx = arm_prompt_cancel(
         ctx,
         matches!(streaming_behavior, Some(StreamingBehavior::Steer)),

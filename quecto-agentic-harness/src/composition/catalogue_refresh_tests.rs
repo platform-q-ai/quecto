@@ -12,7 +12,7 @@ fn refresh_catalogue(
     selection: &RefreshSelection,
     bounds: RefreshBounds,
 ) -> crate::application::catalogue::dto::CatalogueRefreshReport {
-    crate::composition::catalogue::build_catalogue_handles(dir)
+    crate::composition::catalogue::build_catalogue_handles(dir, None)
         .refresh
         .execute(selection, bounds)
 }

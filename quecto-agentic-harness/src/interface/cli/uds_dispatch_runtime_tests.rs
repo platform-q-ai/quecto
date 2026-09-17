@@ -19,7 +19,7 @@ fn compose(dir: &std::path::Path) {
 }
 
 fn selection_status(dir: &std::path::Path, model: &str) -> Option<serde_json::Value> {
-    let plan = crate::composition::catalogue::build_catalogue_handles(dir)
+    let plan = crate::composition::catalogue::build_catalogue_handles(dir, None)
         .model
         .plan(model);
     render_verdict(&plan.verdict)

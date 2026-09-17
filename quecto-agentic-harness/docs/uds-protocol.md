@@ -796,7 +796,9 @@ Rewind conversation history to a selected user-message boundary. Prefer stable `
 
 ### `reload`
 
-Force a runtime config reload (provider/model registry plus config watch surfaces). Reload also reparses and reapplies `tools.policy.entries` from config as the persisted tool-policy baseline and clears live-only AgentLoop tool-policy overlays, so a client that edited or removed `tools.policy` can send `reload` to make the live catalogue reflect the durable config rather than stale session-only policy.
+Force a runtime config reload (provider/model registry plus config watch surfaces): the reload-runtime-configuration use case (#1849) rebuilds the provider runtime from the run's config file and `models.json` regardless of whether they changed, from one parse of the config. Reload also reapplies `tools.policy.entries` from that same read as the persisted tool-policy baseline and clears live-only AgentLoop tool-policy overlays, so a client that edited or removed `tools.policy` can send `reload` to make the live catalogue reflect the durable config rather than stale session-only policy. A forced reload observes the files it read, so the automatic poll before the next prompt or `set_model` does not rebuild again. The rebuild runs off the dispatch runtime (`tokio::task::spawn_blocking`); connections keep being accepted and read and events keep flushing while it is in flight; commands are dispatched in order once the rebuild completes, and the reply is sent once the result is applied.
+
+**Response:** a data-less success (`success: true`) once the runtime was reloaded; `success: false` with the rebuild error (for example a config parse error) when the rebuild failed — the last-good runtime stays active — or `"provider reload is not configured"` for a loop built without a reloadable configuration.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

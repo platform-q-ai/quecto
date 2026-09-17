@@ -251,6 +251,9 @@ fn test_agent_config_flag_loads_custom_path() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let args = vec![
@@ -280,6 +283,9 @@ fn test_agent_config_flag_missing_value() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(
@@ -300,6 +306,9 @@ fn test_agent_config_flag_nonexistent_path() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let args = vec![

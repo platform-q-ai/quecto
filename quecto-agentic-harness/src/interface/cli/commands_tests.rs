@@ -35,6 +35,9 @@ fn test_status_shows_summary() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -77,6 +80,9 @@ fn test_status_respects_global_config_flag() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
 
@@ -120,6 +126,9 @@ fn test_status_no_config_uses_defaults() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -144,6 +153,9 @@ fn test_status_redacts_api_keys() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -169,6 +181,9 @@ fn test_status_both_providers_configured() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
@@ -188,6 +203,9 @@ fn test_status_explicit_missing_config_fails() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
 
@@ -221,6 +239,9 @@ fn test_status_invalid_config_fails() {
         config_selection: Some(crate::composition::configuration::build_select_config),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);

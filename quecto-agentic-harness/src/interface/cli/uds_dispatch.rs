@@ -19,8 +19,7 @@ use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::session::SubagentRestoreReason;
 use crate::domain::tool::{
-    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyReconciliation,
-    ToolPolicyRequest,
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest,
 };
 use crate::interface::cli::protocol::{
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
@@ -126,7 +125,15 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             .await
         }
         AgentCommand::Reload { .. } => {
-            super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
+            // Reload runtime configuration (#1849): forced, rebuilt off the
+            // runtime; the reply is the presenter's rendering of the outcome.
+            let outcome = super::super::uds_dispatch_reload::force_reload(ctx).await;
+            let ev = match crate::interface::uds::catalogue::reload_presenter::render(&outcome) {
+                Ok(()) => AgentEvent::ok(id.as_deref(), &type_name, None),
+                Err(error) => AgentEvent::err(id.as_deref(), &type_name, error),
+            };
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            false
         }
         AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
         AgentCommand::ResumeSession { session, .. } => {
@@ -246,15 +253,6 @@ pub(super) async fn handle_set_tool_policy(
             request
         }
     };
-    if persist {
-        if let Some(inputs) = ctx.provider_reload_inputs {
-            let config_path = inputs.config_path.clone();
-            ctx.agent
-                .set_tool_policy_persistence(Some(std::sync::Arc::new(move |reconciliation| {
-                    persist_tool_policy_results(&config_path, reconciliation)
-                })));
-        }
-    }
     let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);
     let data = match reconciliation {
         Some(reconciliation) => {
@@ -291,43 +289,6 @@ pub(super) async fn handle_set_tool_policy(
     let ev = AgentEvent::ok(id, type_name, Some(data));
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
-}
-
-fn persist_tool_policy_results(
-    config_path: &std::path::Path,
-    reconciliation: &ToolPolicyReconciliation,
-) -> Result<(), String> {
-    use crate::domain::tool::ToolPolicyMutationStatus;
-    use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
-    // Persist only user preferences already present on disk. Do not use
-    // load_with_env here: environment overrides may contain secrets and must
-    // not be serialized back into the durable config file.
-    let mut config = Config::load(config_path.to_str().unwrap_or(""))
-        .map_err(|e| format!("failed to load config for tool policy persistence: {e}"))?;
-    for result in &reconciliation.results {
-        if matches!(
-            result.status,
-            ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
-        ) {
-            if let Some(after) = &result.after {
-                config.tools.policy.entries.insert(
-                    after.stable_id.to_string(),
-                    ToolPolicyEntryConfig {
-                        scope: result.requested_scope,
-                    },
-                );
-            }
-        }
-    }
-    let parent = config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    std::fs::create_dir_all(parent)
-        .map_err(|e| format!("failed to create config directory: {e}"))?;
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("failed to serialize config: {e}"))?;
-    std::fs::write(config_path, format!("{json}\n"))
-        .map_err(|e| format!("failed to write config: {e}"))
 }
 
 pub(super) async fn handle_steer(

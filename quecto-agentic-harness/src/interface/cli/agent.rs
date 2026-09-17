@@ -202,6 +202,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         retention: None,
         catalogue: None,
         provider_runtime: None,
+        tool_policy_persistence: None,
         admission_context,
         parent_control,
     };
@@ -306,8 +307,6 @@ pub(crate) struct AgentBuildResult {
     pub subagent_registry: Option<SubagentRegistry>,
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
-    pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
     pub workspace: std::path::PathBuf,
 }
 pub(crate) fn build_agent_from_config(
@@ -356,6 +355,10 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: catalogue capability not composed\n");
         return None;
     };
+    let Some(build_tool_policy_persistence) = flags.tool_policy_persistence else {
+        stderr.push_str("agent: tool-policy persistence capability not composed\n");
+        return None;
+    };
     if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
         return None;
     }
@@ -367,18 +370,6 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-    let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload_with_base(
-        config_path,
-        Some(base_dir.to_path_buf()),
-        provider.clone(),
-    );
-    let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(
-        config_path.to_path_buf(),
-        base_dir.to_path_buf(),
-        env_overrides.clone(),
-        http_client.clone(),
-        build_provider,
-    );
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
@@ -392,7 +383,15 @@ pub(crate) fn build_agent_from_config(
             config.tools.web.fetch.max_response_kb,
         )
     });
-    let catalogue = build_catalogue(base_dir);
+    // The run's reloadable configuration (#1849): the reload use case is
+    // seeded now, after the startup composition read the same files.
+    let runtime_inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+        config_path: config_path.to_path_buf(),
+        env_overrides: env_overrides.clone(),
+        http_client: http_client.clone(),
+        provider_runtime: build_provider,
+    };
+    let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
     let ToolRegistryBuild {
         registry,
         retention,
@@ -475,10 +474,13 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
-    let agent = super::swarm_composition::wire_agent(
+    let mut agent = super::swarm_composition::wire_agent(
         agent,
         crate::interface::tool_runtime::swarm_context(),
     );
+    // Durable `set_tool_policy … persist` writes into the run's config
+    // file through composition's persistence hook (#1849).
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(config_path)));
     Some(AgentBuildResult {
         agent,
         catalogue,
@@ -491,8 +493,6 @@ pub(crate) fn build_agent_from_config(
         subagent_registry,
         harness_lifecycle,
         workflow_state,
-        provider_reload,
-        provider_reload_inputs,
         workspace,
     })
 }
@@ -651,7 +651,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     if !swarm_runtime::bind_socket(&socket_path, stderr) {
         return 1;
     }
-    let mut provider_reload = build.provider_reload;
     let retention = build.retention;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
@@ -674,8 +673,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,
-        provider_reload: Some(&mut provider_reload),
-        provider_reload_inputs: Some(&build.provider_reload_inputs),
         parent_control,
         teardown_graph: ctx.teardown_graph,
     });

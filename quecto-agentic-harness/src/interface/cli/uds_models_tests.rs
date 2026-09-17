@@ -151,7 +151,7 @@ fn refresh_models_data_reports_per_source_outcomes_on_the_wire() {
         let base_dir = tmp.path().to_path_buf();
         let data = tokio::task::spawn_blocking(move || {
             refresh_models_data(
-                &crate::composition::catalogue::build_catalogue_handles(&base_dir).refresh,
+                &crate::composition::catalogue::build_catalogue_handles(&base_dir, None).refresh,
                 None,
             )
         })
@@ -185,7 +185,7 @@ fn refresh_models_data_reports_per_source_outcomes_on_the_wire() {
         let base_dir = tmp.path().to_path_buf();
         let data = tokio::task::spawn_blocking(move || {
             refresh_models_data(
-                &crate::composition::catalogue::build_catalogue_handles(&base_dir).refresh,
+                &crate::composition::catalogue::build_catalogue_handles(&base_dir, None).refresh,
                 Some("anthropic-api"),
             )
         })

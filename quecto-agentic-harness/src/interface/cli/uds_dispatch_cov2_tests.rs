@@ -81,7 +81,7 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
 }
 
 #[tokio::test]
-async fn reload_without_provider_reload_configuration_errors() {
+async fn reload_without_runtime_configuration_errors() {
     let mut fx = Fixture::new();
     let mut ctx = fx.ctx();
     assert!(

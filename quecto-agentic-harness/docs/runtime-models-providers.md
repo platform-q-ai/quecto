@@ -10,11 +10,12 @@ Quecto's runtime model registry lives at `~/.quecto/models.json`. It is the user
 
 **How hot reload works (mechanics):**
 
-1. The reload gate (`src/infrastructure/reload.rs`) watches both the config file the run selected (`--config`, else `./config.json` in the working directory, else `~/.quecto/config.json`) and `~/.quecto/models.json` by mtime + length + content hash.
-2. On a poll, if metadata is unchanged it does **not** read the file (cheap). If metadata changed, it reads and hashes; if the hash changed, it rebuilds the provider router.
-3. Polls happen automatically before each prompt, before `set_model`, when `/model` is opened (TUI re-requests the list), and on an explicit UDS `reload`.
-4. Reload is **fail-safe**: if the new file is malformed, the last-good provider router stays active and a warning is logged — the session does not crash.
-5. Because quecto-tui talks to the agent over UDS, it never needs its own restart either.
+1. The reload use case (`src/application/catalogue/use_cases/reload_runtime_configuration.rs`, #1849) owns the policy in two phases: a rebuild phase (`rebuild_if_changed` for the pull-based poll, `rebuild` for the forced UDS `reload`) that borrows no runtime and yields a `ReloadStep`, and an `apply` phase that swaps the step into the loop. It drives two ports — a `RuntimeConfigurationSource` and the agent loop as `ReloadRuntime` — and never reads a file or touches a scheduler itself. The UDS dispatch loop (`src/interface/cli/uds_dispatch_reload.rs`) runs the rebuild phase under `tokio::task::spawn_blocking`, so the current-thread UDS runtime keeps accepting, reading and flushing for other clients while a rebuild is in flight (their commands are dispatched in order once it completes), and applies on the dispatch task.
+2. The source adapter (`src/infrastructure/runtime_configuration.rs`) watches both the config file the run selected (`--config`, else `./config.json` in the working directory, else `~/.quecto/config.json`) and `~/.quecto/models.json` through the reload gate (`src/infrastructure/reload.rs`) by mtime + length + content hash. On a poll, if metadata is unchanged it does **not** read the file (cheap). If metadata changed, it reads and hashes; only a changed hash rebuilds.
+3. A rebuild parses the config **once**, composes and publishes the provider runtime through the same injected provider-runtime builder startup used (`ProviderRuntimeBuilder`, threaded from `CliComposition` into the reload inputs), and returns it together with the persisted `tools.policy.entries`; the use case swaps the provider on the loop and re-applies that policy baseline (clearing live-only overlays). The rebuild observes the files before reading them, so a forced `reload` never triggers a second rebuild at the next poll.
+4. Polls happen automatically before each prompt, before `set_model`, when `/model` is opened (TUI re-requests the list), and on an explicit UDS `reload`.
+5. Reload is **fail-safe**: if the new file is malformed, nothing is published and the last-good provider router stays active — a poll logs a warning and proceeds, an explicit `reload` reports the error — and the session does not crash.
+6. Because quecto-tui talks to the agent over UDS, it never needs its own restart either.
 
 So: **edit the file, save, send the next prompt or reopen `/model` — the new provider/model is live.**
 

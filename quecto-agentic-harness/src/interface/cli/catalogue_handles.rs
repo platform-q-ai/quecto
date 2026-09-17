@@ -6,14 +6,14 @@
 use std::sync::Arc;
 
 use crate::application::catalogue::use_cases::{
-    ChangeActiveModel, ChangeReasoningEffort, RefreshCatalogueSources,
+    ChangeActiveModel, ChangeReasoningEffort, RefreshCatalogueSources, ReloadRuntimeConfiguration,
 };
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
 /// The composed `list_models` controller a dispatch loop holds.
 pub type ListModelsHandle = Arc<ListModelsController>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CatalogueHandles {
     /// List available models (#1845): answers the UDS `list_models` command.
     pub list_models: ListModelsHandle,
@@ -27,6 +27,45 @@ pub struct CatalogueHandles {
     /// Refresh model catalogue sources (#1846) and discover a provider's
     /// models (#1844): UDS `refresh_models` and CLI `models discover`.
     pub refresh: Arc<RefreshCatalogueSources>,
+    /// Reload runtime configuration (#1849): the UDS `reload` command and
+    /// the poll before every prompt and `set_model`. Unconfigured (every
+    /// reload reports so) for a loop built without
+    /// [`RuntimeConfigurationInputs`].
+    pub reload: Arc<ReloadRuntimeConfiguration>,
+}
+
+impl std::fmt::Debug for CatalogueHandles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatalogueHandles")
+            .field("list_models", &self.list_models)
+            .field("effort", &self.effort)
+            .field("model", &self.model)
+            .field("refresh", &self.refresh)
+            .field("reload", &self.reload)
+            .finish()
+    }
+}
+
+/// The run's reloadable configuration (#1849), as the interface knows it
+/// at startup: the config file the run selected, the environment overrides
+/// it was loaded with, the HTTP client its providers share and the injected
+/// provider-runtime builder startup composed through. Composition builds
+/// the reload use case over them.
+#[derive(Clone)]
+pub struct RuntimeConfigurationInputs {
+    pub config_path: std::path::PathBuf,
+    pub env_overrides: std::collections::HashMap<String, String>,
+    pub http_client: reqwest::Client,
+    pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,
+}
+
+impl std::fmt::Debug for RuntimeConfigurationInputs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfigurationInputs")
+            .field("config_path", &self.config_path)
+            .field("env_overrides", &self.env_overrides)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The effort fields of a dispatch loop's state snapshot (#1848).

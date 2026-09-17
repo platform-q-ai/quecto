@@ -3,8 +3,8 @@ use crate::application::tools::ports::Tool;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
+use crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs;
 use crate::interface::cli::protocol::{AgentCommand, ToolPolicyApplyModeCommand};
-use crate::interface::cli::provider_reload::ProviderReloadInputs;
 
 #[derive(Debug)]
 struct NamedTool(&'static str);
@@ -168,13 +168,12 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
     fx.agent
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let tmp = tempfile::TempDir::new().unwrap();
-    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
-        tmp.path().to_path_buf(),
-        tmp.path().to_path_buf(),
-        std::collections::HashMap::new(),
-        reqwest::Client::new(),
-        crate::composition::runtime::build_agent_provider,
-    ));
+    fx.runtime_configuration = Some(RuntimeConfigurationInputs {
+        config_path: tmp.path().to_path_buf(),
+        env_overrides: std::collections::HashMap::new(),
+        http_client: reqwest::Client::new(),
+        provider_runtime: crate::composition::runtime::build_agent_provider,
+    });
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
@@ -227,19 +226,12 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
     );
     config.providers.openai.api_key = "test-key".into();
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
-    fx.provider_reload = Some(
-        crate::interface::cli::provider_reload::seeded_provider_reload(
-            config_path.clone(),
-            crate::interface::test_support::make_stub_provider(),
-        ),
-    );
-    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
+    fx.runtime_configuration = Some(RuntimeConfigurationInputs {
         config_path,
-        tmp.path().to_path_buf(),
-        std::collections::HashMap::new(),
-        reqwest::Client::new(),
-        crate::composition::runtime::build_agent_provider,
-    ));
+        env_overrides: std::collections::HashMap::new(),
+        http_client: reqwest::Client::new(),
+        provider_runtime: crate::composition::runtime::build_agent_provider,
+    });
 
     {
         let mut ctx = fx.ctx();
@@ -277,13 +269,12 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
         serde_json::to_string_pretty(&Config::default()).unwrap(),
     )
     .unwrap();
-    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
-        config_path.clone(),
-        tmp.path().to_path_buf(),
-        std::collections::HashMap::new(),
-        reqwest::Client::new(),
-        crate::composition::runtime::build_agent_provider,
-    ));
+    fx.runtime_configuration = Some(RuntimeConfigurationInputs {
+        config_path: config_path.clone(),
+        env_overrides: std::collections::HashMap::new(),
+        http_client: reqwest::Client::new(),
+        provider_runtime: crate::composition::runtime::build_agent_provider,
+    });
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),

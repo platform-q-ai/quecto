@@ -55,8 +55,6 @@ pub struct UdsLoopArgs<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
-    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
     pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
@@ -98,8 +96,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         workflow_state,
         workflow_config,
         broadcast_tx,
-        provider_reload,
-        provider_reload_inputs,
         parent_control,
         teardown_graph,
     } = args;
@@ -144,8 +140,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ext_registry,
                 subagent_registry,
                 workflow_state,
-                provider_reload,
-                provider_reload_inputs,
             },
             std_stream,
             &sessions,
@@ -179,8 +173,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 workflow_state,
                 workflow_config,
                 broadcast_tx,
-                provider_reload,
-                provider_reload_inputs,
                 parent_control,
                 teardown_graph,
             },

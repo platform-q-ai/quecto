@@ -1,8 +1,9 @@
 //! Runtime reload gate for startup-loaded file-backed surfaces.
 //!
 //! This module owns only the shared pull-based change-detection mechanism from
-//! ADR-0002: stat, hash, seed, fail safe. Surface-specific rebuilds are supplied
-//! by callers.
+//! ADR-0002: stat, hash, seed, fail safe. What a change rebuilds is the
+//! reload use case's, driven through the source adapter in
+//! `runtime_configuration.rs` (#1849).
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -99,103 +100,41 @@ impl ReloadSource {
     }
 }
 
-/// Result of polling a runtime reload gate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReloadResult<T> {
-    Unchanged,
-    Reloaded(T),
-}
-
-/// Shared reload gate plus fail-safe last-good state.
+/// The change-detection gate over every file-backed source one runtime was
+/// composed from: seeded once at startup, probed at the natural
+/// checkpoints (ADR-0002). What to rebuild on a change, and the last-good
+/// state a failed rebuild retains, are the reload use case's and the
+/// runtime's — the gate holds only fingerprints.
 #[derive(Debug, Clone)]
-pub struct RuntimeReload<T> {
+pub struct RuntimeReload {
     sources: Vec<ReloadSource>,
-    last_good: Option<T>,
 }
 
-impl<T: Clone> RuntimeReload<T> {
+impl RuntimeReload {
     /// Create an unseeded reload gate.
     pub fn new(sources: Vec<ReloadSource>) -> Self {
-        Self {
-            sources,
-            last_good: None,
-        }
+        Self { sources }
     }
 
-    /// Seed all source fingerprints and store the initial last-good value.
-    pub fn seed(&mut self, initial: T) {
+    /// Observe every source's current fingerprint without reporting a
+    /// change: at startup, and again before a rebuild reads the files so a
+    /// later probe reports only edits made after that read.
+    pub fn seed(&mut self) {
         for source in &mut self.sources {
             source.seed();
         }
-        self.last_good = Some(initial);
     }
 
-    /// Probe watched sources and return whether at least one content hash changed.
+    /// Probe watched sources and return whether at least one content hash
+    /// changed. Every probe advances the observed fingerprints, so a file
+    /// that is not edited again reports unchanged from then on — even if
+    /// the rebuild this probe prompted fails.
     pub fn sources_changed(&mut self) -> bool {
         let mut any_changed = false;
         for source in &mut self.sources {
             any_changed |= matches!(source.changed(), SourceChange::Changed);
         }
         any_changed
-    }
-
-    /// Record a successful reload.
-    pub fn record_reloaded(&mut self, new: T) -> ReloadResult<T> {
-        self.last_good = Some(new.clone());
-        ReloadResult::Reloaded(new)
-    }
-
-    /// Poll watched sources and rebuild only when at least one content hash changed.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn poll(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
-        if !self.sources_changed() {
-            return ReloadResult::Unchanged;
-        }
-
-        self.rebuild_or_keep_last_good(rebuild, "reload rebuild failed; keeping last-good")
-    }
-
-    /// Force a rebuild regardless of mtime/hash state.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn poll_forced(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
-        self.poll_forced_result(rebuild)
-            .unwrap_or(ReloadResult::Unchanged)
-    }
-
-    /// Force a rebuild and preserve the rebuild error for command responses.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn poll_forced_result(
-        &mut self,
-        rebuild: impl FnOnce() -> Result<T, String>,
-    ) -> Result<ReloadResult<T>, String> {
-        match rebuild() {
-            Ok(new) => Ok(self.record_reloaded(new)),
-            Err(err) => {
-                tracing::warn!(target: "reload", error = %err, "forced reload failed; keeping last-good");
-                Err(err)
-            }
-        }
-    }
-
-    /// Last successfully rebuilt value.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn last_good(&self) -> Option<&T> {
-        self.last_good.as_ref()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn rebuild_or_keep_last_good(
-        &mut self,
-        rebuild: impl FnOnce() -> Result<T, String>,
-        warning: &'static str,
-    ) -> ReloadResult<T> {
-        match rebuild() {
-            Ok(new) => self.record_reloaded(new),
-            Err(err) => {
-                tracing::warn!(target: "reload", error = %err, warning);
-                ReloadResult::Unchanged
-            }
-        }
     }
 }
 

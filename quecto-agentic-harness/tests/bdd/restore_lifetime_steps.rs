@@ -314,8 +314,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             workflow_state,
             workflow_config,
             broadcast_tx,
-            mut provider_reload,
-            provider_reload_inputs,
+            catalogue,
         } = ctx;
         run_uds_loop(UdsLoopArgs {
             agent,
@@ -331,7 +330,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             socket_path: sp,
             socket_override: None,
             sessions: quecto::composition::sessions::build_session_handles,
-            catalogue: quecto::composition::catalogue::build_catalogue_handles(&base_dir),
+            catalogue,
             ext_registry: Some(ext_registry),
             lifetime,
             notification_rx: None,
@@ -340,8 +339,6 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             workflow_state,
             workflow_config,
             broadcast_tx,
-            provider_reload: Some(&mut provider_reload),
-            provider_reload_inputs: Some(&provider_reload_inputs),
             parent_control: None,
             teardown_graph: Some(build_teardown_graph),
         })
