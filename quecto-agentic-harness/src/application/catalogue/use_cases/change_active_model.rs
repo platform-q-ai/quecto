@@ -96,9 +96,10 @@ impl ChangeActiveModel {
     /// Plan, record the model as the configured default of `persist` when
     /// asked, then apply. The recorded id is the qualified `provider/model`
     /// the plan resolved, and its provider must be one the generation just
-    /// published knows: a bare id (which a later start would route to the
-    /// first configured provider) and a provider no configuration names
-    /// (every later start in that directory would fail its first prompt)
+    /// published lists models for: a bare id (which a later start would
+    /// route to the first configured provider) and a provider the
+    /// published catalogue lists no models for (unconfigured — every later
+    /// start there would fail its first prompt — or not yet refreshed)
     /// are not recorded. The model itself need not be enumerated or
     /// runnable now — open-router prefixes accept ids the catalogue cannot
     /// list, and a credential may arrive later — so the verdict stays a
@@ -148,7 +149,7 @@ impl ChangeActiveModel {
     }
 
     /// The `provider/model` id a plan stands for, if it names one on a
-    /// provider the published catalogue knows.
+    /// provider the published catalogue lists models for.
     fn qualified(&self, plan: &ModelSwitchPlan) -> Result<String, ModelSwitchError> {
         let reference =
             ModelRef::parse_qualified(&plan.model).map_err(|_| ModelSwitchError::Unqualified {

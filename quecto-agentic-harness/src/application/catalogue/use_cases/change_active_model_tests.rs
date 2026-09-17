@@ -520,7 +520,15 @@ fn a_provider_the_published_catalogue_does_not_know_is_not_recorded_and_not_appl
             provider: "nobody".into(),
         }
     );
-    assert!(error.to_string().contains("`nobody`"));
+    let message = error.to_string();
+    assert!(
+        message.contains("the published catalogue lists no models for `nobody`"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("no configured provider"),
+        "known-ness is decided from catalogue entries, so the message must not claim the provider is unconfigured: {message}"
+    );
     assert!(persistence.records.lock().unwrap().is_empty());
     assert_eq!(lp.model, "old/model", "nothing applied");
     // A known provider with an id the catalogue does not enumerate is

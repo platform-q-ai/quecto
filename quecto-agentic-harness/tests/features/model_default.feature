@@ -137,11 +137,11 @@ Feature: Default model and effort per repository
     And the production agent's state should report model "openai-api/gpt-5.6-sol"
     And the current directory's ".quecto/config.json" should not exist
 
-  Scenario: A provider no configuration knows cannot be persisted, while an unlisted id on a known provider can
+  Scenario: A provider the published catalogue lists no models for cannot be persisted, while an unlisted id on a listed provider can
     When a production UDS agent is started in the current directory
     And the production agent is sent set_model "nobody/some-model" with persist "local"
     Then the production agent's reply should fail
-    And the production agent's reply error should contain "no configured provider or catalogue source knows `nobody`"
+    And the production agent's reply error should contain "the published catalogue lists no models for `nobody`"
     And the production agent's state should report model "openai-api/gpt-5.6-sol"
     And the current directory's ".quecto/config.json" should not exist
     When the production agent is sent set_model "openai-api/not-listed-yet" with persist "local"

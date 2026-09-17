@@ -57,8 +57,11 @@ pub enum ModelSwitchError {
     /// The requested id is not a `provider/model` reference, so there is
     /// no qualified id to record.
     Unqualified { model: String },
-    /// The reference names a provider no configuration or catalogue source
-    /// knows; recorded, it would fail every later start's first prompt.
+    /// The published catalogue lists no models for the reference's
+    /// provider — unconfigured, or configured but with no entries yet (a
+    /// failed source, a custom endpoint before its first `refresh_models`).
+    /// Known-ness is decided from the catalogue entries, so the message
+    /// says exactly that and names both remedies.
     UnknownProvider { model: String, provider: String },
     /// The persistence adapter refused or failed; `reason` names the
     /// remedy.
@@ -80,9 +83,9 @@ impl std::fmt::Display for ModelSwitchError {
             ),
             Self::UnknownProvider { model, provider } => write!(
                 f,
-                "cannot persist `{model}` as a default: no configured provider or catalogue \
-                 source knows `{provider}`, so every later start here would fail; configure the \
-                 provider first or choose a listed provider/model"
+                "cannot persist `{model}` as a default: the published catalogue lists no models \
+                 for `{provider}`; configure the provider or refresh the catalogue first, or \
+                 choose a listed provider/model"
             ),
             Self::Persist {
                 model,
