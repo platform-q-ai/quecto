@@ -95,3 +95,28 @@ fn a_missing_or_unreadable_overlay_and_a_failed_store_are_reported() {
         .contains("TrustConfigOverlay")
     );
 }
+
+#[test]
+fn an_overlay_the_store_refuses_is_never_approved_and_the_reason_is_printed() {
+    for link in [OVERLAY, "/work/.quecto"] {
+        let mut store = MemoryStore::default();
+        store
+            .files
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from(OVERLAY), b"{}".to_vec());
+        store.symlinks.insert(PathBuf::from(link));
+        let trust = Arc::new(FakeTrust::default());
+        let error = use_case(Arc::new(store), trust.clone())
+            .execute(request())
+            .unwrap_err();
+        assert!(
+            matches!(&error, OverlayTrustError::Refused { path, .. } if path == std::path::Path::new(OVERLAY)),
+            "{error:?}"
+        );
+        let printed = error.to_string();
+        assert!(printed.starts_with("refusing to trust "), "{printed}");
+        assert!(printed.contains("symbolic link"), "{printed}");
+        assert!(!trust.is_approved(OVERLAY, b"{}"), "never approved");
+    }
+}

@@ -219,6 +219,36 @@ Feature: Configuration discovery and the repo-local overlay
     And the stderr should contain "symbolic link"
     And the current directory's ".quecto/config.json" should be byte-identical to its previous content
 
+  Scenario: A symbolic link at the .quecto directory is refused and never written through
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"agents":{"defaults":{"model":"global-model"}}}
+      """
+    And a trusted overlay in another directory with content:
+      """
+      {"agents":{"defaults":{"model":"borrowed-model"}}}
+      """
+    And the current directory's ".quecto" is a symbolic link to that overlay's directory
+    When I run quecto with arguments "status"
+    Then the exit code should be 0
+    And the output should contain "Model:     global-model"
+    And the reported overlay path should be the current directory's ".quecto/config.json" marked "refused"
+    And the stderr should contain "symbolic link"
+    When I run quecto with arguments "config get --effective agents.defaults.model"
+    Then the exit code should be 0
+    And the printed JSON should be "global-model"
+    When I run quecto with arguments "config trust"
+    Then the exit code should be 1
+    And the stderr should contain "symbolic link"
+    When I run quecto with the arguments:
+      """
+      config set --local agents.defaults.model '"mine"'
+      """
+    Then the exit code should be 1
+    And the stderr should contain "symbolic link"
+    And the other directory's overlay should be byte-identical to its previous content
+    And the current directory's ".quecto" should still be a symbolic link
+
   Scenario: quecto config trust refuses an overlay that carries a global-only section
     Given a repo-local overlay in the current directory with content:
       """

@@ -159,19 +159,47 @@ fn a_symbolic_link_at_the_overlay_location_is_refused_even_when_its_target_is_tr
     let (resolve, _) = use_case(Arc::new(store), trust.clone());
     let effective = resolve.execute(&layered()).unwrap();
     assert_eq!(effective.document, json!({}), "not applied");
-    assert_eq!(
-        effective.sources.overlay,
-        Some(OverlayReport {
-            path: PathBuf::from(OVERLAY),
-            state: OverlayState::Refused {
-                reason: SYMLINK_REFUSAL.to_string()
-            }
-        })
+    let Some(OverlayReport {
+        path,
+        state: OverlayState::Refused { reason },
+    }) = &effective.sources.overlay
+    else {
+        panic!("refused: {:?}", effective.sources.overlay);
+    };
+    assert_eq!(path, &PathBuf::from(OVERLAY));
+    assert!(
+        reason.contains("symbolic link"),
+        "the store's reason travels with the report: {reason}"
     );
     assert!(trust.offered.lock().unwrap().is_empty(), "never offered");
     let lines = effective.sources.diagnostics();
     assert!(lines[0].contains("symbolic link"), "{}", lines[0]);
     assert!(lines[0].contains(OVERLAY), "{}", lines[0]);
+}
+
+#[test]
+fn a_symbolic_link_at_the_quecto_directory_is_refused_even_with_a_regular_file_behind_it() {
+    let overlay = r#"{"agents":{"defaults":{"model":"local"}}}"#;
+    let mut store = MemoryStore::default();
+    store
+        .files
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(OVERLAY), overlay.as_bytes().to_vec());
+    store
+        .symlinks
+        .insert(Path::new(OVERLAY).parent().unwrap().to_path_buf());
+    let trust = FakeTrust::trusting(OVERLAY, overlay);
+    let (resolve, _) = use_case(Arc::new(store), trust);
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(effective.document, json!({}), "not applied");
+    assert!(matches!(
+        effective.sources.overlay,
+        Some(OverlayReport {
+            state: OverlayState::Refused { .. },
+            ..
+        })
+    ));
 }
 
 #[test]

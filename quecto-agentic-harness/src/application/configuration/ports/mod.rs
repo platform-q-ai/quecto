@@ -10,7 +10,7 @@ pub mod config_document_writer;
 pub mod config_validator;
 pub mod overlay_trust_store;
 
-pub use config_document_store::ConfigDocumentStore;
+pub use config_document_store::{ConfigDocumentStore, OverlayDocument};
 pub use config_document_writer::{ConfigDocumentWriter, DocumentLock};
 pub use config_validator::ConfigValidator;
 pub use overlay_trust_store::{OverlayApproval, OverlayTrust, OverlayTrustStore};

@@ -6,12 +6,15 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::application::configuration::dto::config_selection::OVERLAY_RELATIVE_PATH;
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, DocumentLock, OverlayApproval,
-    OverlayTrust, OverlayTrustStore,
+    OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
 
-/// Files by path; `broken` paths fail to read (a present, unreadable entry).
+/// Files by path; `broken` paths fail to read (a present, unreadable
+/// entry); `symlinks` are the entries (a file or its `.quecto` directory)
+/// the overlay read refuses as links.
 #[derive(Default)]
 pub struct MemoryStore {
     pub files: Mutex<BTreeMap<PathBuf, Vec<u8>>>,
@@ -54,12 +57,19 @@ impl ConfigDocumentStore for MemoryStore {
         Ok(self.files.lock().unwrap().get(path).cloned())
     }
 
-    fn is_present(&self, path: &Path) -> bool {
-        self.broken.contains(path) || self.files.lock().unwrap().contains_key(path)
-    }
-
-    fn is_symlink(&self, path: &Path) -> bool {
-        self.symlinks.contains(path)
+    fn read_overlay(&self, path: &Path) -> Result<OverlayDocument, String> {
+        let mut entry = path;
+        for _ in Path::new(OVERLAY_RELATIVE_PATH).components() {
+            if self.symlinks.contains(entry) {
+                return Ok(OverlayDocument::Refused {
+                    reason: format!("{} is a symbolic link (fake policy)", entry.display()),
+                });
+            }
+            entry = entry.parent().ok_or("too short for an overlay location")?;
+        }
+        Ok(self
+            .read(path)?
+            .map_or(OverlayDocument::Absent, OverlayDocument::Present))
     }
 }
 

@@ -5,8 +5,9 @@
 //! global-only section, and is valid as a layer. An untrusted overlay is
 //! reported, never applied; a trusted one that is broken is an error naming
 //! the file, never a fallback; a merge that is invalid names both files.
-//! An overlay that is a symbolic link is refused whatever it holds: trust
-//! is keyed by the file's identity, and a link would borrow its target's.
+//! An overlay the store's overlay policy refuses (a symbolic link on the
+//! way to it) is reported refused whatever it holds: trust is keyed by the
+//! file's identity, and a link would borrow its target's.
 //!
 //! [`ResolveEffectiveConfig::preview`] answers the same question for a
 //! layer that has not been written yet, so the patch use case validates
@@ -25,11 +26,8 @@ use crate::application::configuration::overlay_policy::{
     global_only_key, looks_like_config, merge_overlay,
 };
 use crate::application::configuration::ports::{
-    ConfigDocumentStore, ConfigValidator, OverlayTrust, OverlayTrustStore,
+    ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
-
-/// Why a symbolic link at the overlay location never applies.
-pub const SYMLINK_REFUSAL: &str = "it is a symbolic link, and a repo-local overlay must be a regular file (replace the link with a copy, then run `quecto config trust`)";
 
 pub struct ResolveEffectiveConfig {
     store: Arc<dyn ConfigDocumentStore>,
@@ -181,19 +179,22 @@ impl ResolveEffectiveConfig {
                 state,
             })
         };
-        let Some(bytes) = self.read(path)? else {
-            return Ok((global, report(OverlayState::Absent)));
-        };
-        // Before any trust decision: a link's canonical path is its
-        // target's, whose approval it must not inherit.
-        if self.store.is_symlink(path) {
-            return Ok((
-                global,
-                report(OverlayState::Refused {
-                    reason: SYMLINK_REFUSAL.to_string(),
-                }),
-            ));
-        }
+        // The store's refusal comes before any trust decision: a link's
+        // canonical path is its target's, whose approval it must not inherit.
+        let bytes =
+            match self
+                .store
+                .read_overlay(path)
+                .map_err(|reason| EffectiveConfigError::Read {
+                    path: path.to_path_buf(),
+                    reason,
+                })? {
+                OverlayDocument::Present(bytes) => bytes,
+                OverlayDocument::Absent => return Ok((global, report(OverlayState::Absent))),
+                OverlayDocument::Refused { reason } => {
+                    return Ok((global, report(OverlayState::Refused { reason })));
+                }
+            };
         let trust = self.trust.decide(path, &bytes);
         // An untrusted overlay is checked before anyone is asked about it,
         // so nobody is offered — or sent to `quecto config trust` for — a

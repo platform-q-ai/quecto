@@ -41,9 +41,13 @@ pub enum ConfigPatchError {
     /// The selection has no overlay location (unknown working directory or
     /// an explicit `--config`), so there is no overlay to patch.
     NoOverlayLocation,
-    /// The overlay entry is a symbolic link; the overlay must be a regular
-    /// file (trust is by the file's identity, which a link would borrow).
-    NotARegularFile(PathBuf),
+    /// The store's overlay policy refuses the entry at the overlay
+    /// location (a symbolic link on the way to it); nothing is written
+    /// through it.
+    Refused {
+        path: PathBuf,
+        reason: String,
+    },
     /// The top-level key is global-only and the target is the overlay.
     GlobalOnlyKey {
         path: PathBuf,
@@ -107,11 +111,9 @@ impl std::fmt::Display for ConfigPatchError {
                 f,
                 "no repo-local overlay applies to this run (an explicit --config replaces both layers, and an unknown working directory has none)"
             ),
-            Self::NotARegularFile(path) => write!(
-                f,
-                "refusing to write {}: it is a symbolic link, and a repo-local overlay must be a regular file (replace the link with a copy)",
-                path.display()
-            ),
+            Self::Refused { path, reason } => {
+                write!(f, "refusing to write {}: {reason}", path.display())
+            }
             Self::GlobalOnlyKey { path, key } => write!(
                 f,
                 "cannot set `{key}` in {}: `{key}` is global-only; use --global",

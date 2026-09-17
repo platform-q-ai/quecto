@@ -1,9 +1,9 @@
 //! Approve the repo-local overlay explicitly (#2024): the non-interactive
 //! counterpart of the startup prompt, so an agent or a script can trust an
 //! overlay it has reviewed. Only an overlay that would actually apply is
-//! approved: a regular file (never a symbolic link, whose identity is its
-//! target's) holding a JSON object with no global-only section that
-//! validates on its own.
+//! approved: one the store's overlay policy reads (never through a
+//! symbolic link, whose identity is its target's) holding a JSON object
+//! with no global-only section that validates on its own.
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::application::configuration::dto::{OverlayTrustError, OverlayTrustRequest};
 use crate::application::configuration::overlay_policy::global_only_key;
 use crate::application::configuration::ports::{
-    ConfigDocumentStore, ConfigValidator, OverlayApproval, OverlayTrustStore,
+    ConfigDocumentStore, ConfigValidator, OverlayApproval, OverlayDocument, OverlayTrustStore,
 };
 
 pub struct TrustConfigOverlay {
@@ -39,17 +39,25 @@ impl TrustConfigOverlay {
         request: OverlayTrustRequest,
     ) -> Result<OverlayApproval, OverlayTrustError> {
         let path = request.path.as_path();
-        if self.store.is_symlink(path) {
-            return Err(OverlayTrustError::NotARegularFile(path.to_path_buf()));
-        }
-        let bytes = self
-            .store
-            .read(path)
-            .map_err(|reason| OverlayTrustError::Read {
-                path: path.to_path_buf(),
-                reason,
-            })?
-            .ok_or_else(|| OverlayTrustError::Missing(path.to_path_buf()))?;
+        let bytes =
+            match self
+                .store
+                .read_overlay(path)
+                .map_err(|reason| OverlayTrustError::Read {
+                    path: path.to_path_buf(),
+                    reason,
+                })? {
+                OverlayDocument::Present(bytes) => bytes,
+                OverlayDocument::Absent => {
+                    return Err(OverlayTrustError::Missing(path.to_path_buf()));
+                }
+                OverlayDocument::Refused { reason } => {
+                    return Err(OverlayTrustError::Refused {
+                        path: path.to_path_buf(),
+                        reason,
+                    });
+                }
+            };
         let value: Value =
             serde_json::from_slice(&bytes).map_err(|error| OverlayTrustError::Parse {
                 path: path.to_path_buf(),

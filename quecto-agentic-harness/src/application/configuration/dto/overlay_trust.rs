@@ -10,9 +10,13 @@ pub struct OverlayTrustRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayTrustError {
     Missing(PathBuf),
-    /// A symbolic link is never trusted: trust is keyed by the file's
-    /// identity, which a link would borrow from its target.
-    NotARegularFile(PathBuf),
+    /// The store's overlay policy refuses the entry at the overlay
+    /// location (a symbolic link on the way to it): trust is keyed by the
+    /// file's identity, which a link would borrow from its target.
+    Refused {
+        path: PathBuf,
+        reason: String,
+    },
     Read {
         path: PathBuf,
         reason: String,
@@ -41,11 +45,9 @@ impl std::fmt::Display for OverlayTrustError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Missing(path) => write!(f, "no overlay to trust at {}", path.display()),
-            Self::NotARegularFile(path) => write!(
-                f,
-                "refusing to trust {}: it is a symbolic link, and a repo-local overlay must be a regular file (replace the link with a copy)",
-                path.display()
-            ),
+            Self::Refused { path, reason } => {
+                write!(f, "refusing to trust {}: {reason}", path.display())
+            }
             Self::Read { path, reason } => {
                 write!(f, "failed to read overlay {}: {reason}", path.display())
             }

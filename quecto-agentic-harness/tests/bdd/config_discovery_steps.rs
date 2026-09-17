@@ -30,7 +30,9 @@ pub(crate) fn snapshot_config_files(world: &mut QuectoWorld) {
     if world.cli_context.base_dir.is_none() || world.cli_context.cwd.is_none() {
         return;
     }
-    for path in [global_config(world), overlay_path(world)] {
+    let mut paths = vec![global_config(world), overlay_path(world)];
+    paths.extend(world.other_overlay.clone());
+    for path in paths {
         if let Ok(bytes) = std::fs::read(&path) {
             world.config_snapshots.insert(path, bytes);
         }
@@ -161,6 +163,46 @@ fn given_overlay_is_symlink(world: &mut QuectoWorld, name: String) {
     let link = cwd(world).join(name);
     std::fs::create_dir_all(link.parent().unwrap()).expect("create .quecto");
     std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+}
+
+/// The whole `.quecto` directory as a link into the other checkout: the
+/// file behind it is a regular, trusted one, which the policy must not
+/// read — nor write into.
+#[given(expr = "the current directory's {string} is a symbolic link to that overlay's directory")]
+fn given_overlay_dir_is_symlink(world: &mut QuectoWorld, name: String) {
+    let target = world
+        .other_overlay
+        .clone()
+        .expect("a trusted overlay in another directory comes first");
+    let link = cwd(world).join(name);
+    std::os::unix::fs::symlink(target.parent().expect("overlay has a parent"), &link)
+        .expect("create directory symlink");
+}
+
+#[then("the other directory's overlay should be byte-identical to its previous content")]
+fn then_other_overlay_unchanged(world: &mut QuectoWorld) {
+    let path = world
+        .other_overlay
+        .clone()
+        .expect("a trusted overlay in another directory comes first");
+    let now = std::fs::read(&path).expect("read the other overlay");
+    assert_eq!(
+        now,
+        previous_content(world, &path),
+        "the other overlay changed"
+    );
+}
+
+#[then(expr = "the current directory's {string} should still be a symbolic link")]
+fn then_local_still_symlink(world: &mut QuectoWorld, name: String) {
+    let path = cwd(world).join(&name);
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .expect("entry exists")
+            .file_type()
+            .is_symlink(),
+        "{name} is no longer a link"
+    );
 }
 
 #[when(expr = "I run quecto status with --config pointing at the current directory's {string}")]

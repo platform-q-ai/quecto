@@ -9,8 +9,10 @@
 //! the whole read → patch → validate → write cycle runs under the
 //! writer's exclusive hold on the file so concurrent patches serialise,
 //! and the write is all-or-nothing through the store. An overlay patch
-//! additionally refuses global-only keys, refuses a symbolic link, refuses
-//! to touch an overlay whose current content is not trusted, and records
+//! additionally refuses global-only keys, refuses whatever the store's
+//! overlay policy refuses (a symbolic link on the way to the file — before
+//! the hold is taken, so nothing is created on the way either), refuses to
+//! touch an overlay whose current content is not trusted, and records
 //! trust for exactly the bytes the writer laid down.
 //!
 //! The merge check is [`ResolveEffectiveConfig`]'s: a use case of the same
@@ -27,7 +29,8 @@ use crate::application::configuration::dto::{
 };
 use crate::application::configuration::overlay_policy::{GLOBAL_ONLY_KEYS, key_segments, set_path};
 use crate::application::configuration::ports::{
-    ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayTrust, OverlayTrustStore,
+    ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
+    OverlayTrustStore,
 };
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 
@@ -67,9 +70,6 @@ impl PatchConfiguration {
                 key: segments[0].to_string(),
             });
         }
-        if patch.layer == ConfigLayer::Overlay && self.store.is_symlink(path) {
-            return Err(ConfigPatchError::NotARegularFile(path.to_path_buf()));
-        }
         // Held until the write has landed (or the patch is refused): what
         // is read below is what the write replaces.
         let _hold = self
@@ -79,13 +79,7 @@ impl PatchConfiguration {
                 path: path.to_path_buf(),
                 reason,
             })?;
-        let existing = self
-            .store
-            .read(path)
-            .map_err(|reason| ConfigPatchError::Read {
-                path: path.to_path_buf(),
-                reason,
-            })?;
+        let existing = self.existing(patch.layer, path)?;
         if let (ConfigLayer::Overlay, Some(bytes)) = (patch.layer, &existing)
             && let OverlayTrust::Untrusted { fingerprint } = self.trust.decide(path, bytes)
         {
@@ -131,6 +125,31 @@ impl PatchConfiguration {
             path: path.to_path_buf(),
             created: existing.is_none(),
         })
+    }
+
+    /// The document as it stands: the base file read plainly, the overlay
+    /// under the store's overlay policy — a refusal (a symbolic link on the
+    /// way to it) is the patch's, and nothing is written through the link.
+    fn existing(
+        &self,
+        layer: ConfigLayer,
+        path: &Path,
+    ) -> Result<Option<Vec<u8>>, ConfigPatchError> {
+        let read_error = |reason| ConfigPatchError::Read {
+            path: path.to_path_buf(),
+            reason,
+        };
+        match layer {
+            ConfigLayer::Global => self.store.read(path).map_err(read_error),
+            ConfigLayer::Overlay => match self.store.read_overlay(path).map_err(read_error)? {
+                OverlayDocument::Present(bytes) => Ok(Some(bytes)),
+                OverlayDocument::Absent => Ok(None),
+                OverlayDocument::Refused { reason } => Err(ConfigPatchError::Refused {
+                    path: path.to_path_buf(),
+                    reason,
+                }),
+            },
+        }
     }
 
     /// The file the patch addresses: the selection's base file for the

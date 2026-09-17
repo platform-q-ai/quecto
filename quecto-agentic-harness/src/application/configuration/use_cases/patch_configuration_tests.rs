@@ -380,12 +380,38 @@ fn an_overlay_patch_refuses_a_symbolic_link_and_a_selection_without_an_overlay()
             json!("m"),
         ))
         .unwrap_err();
-    assert_eq!(
-        error,
-        ConfigPatchError::NotARegularFile(PathBuf::from(OVERLAY))
+    assert!(
+        matches!(&error, ConfigPatchError::Refused { path, .. } if path == Path::new(OVERLAY)),
+        "{error:?}"
     );
     assert!(error.to_string().contains("symbolic link"), "{error}");
     assert_eq!(store.content(OVERLAY), None);
+
+    // The `.quecto` directory as a link: refused too, and the file behind
+    // it is neither read (its trust is irrelevant) nor written.
+    let mut store = MemoryStore::default();
+    store
+        .symlinks
+        .insert(Path::new(OVERLAY).parent().unwrap().to_path_buf());
+    store
+        .files
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(OVERLAY), b"{}".to_vec());
+    let store = Arc::new(store);
+    let error = use_case(store.clone(), FakeTrust::trusting(OVERLAY, "{}"))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "agents.defaults.model",
+            json!("m"),
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(error, ConfigPatchError::Refused { .. }),
+        "{error:?}"
+    );
+    assert_eq!(store.content(OVERLAY).as_deref(), Some("{}"));
 
     let error = use_case(MemoryStore::with(&[]), Arc::new(FakeTrust::default()))
         .execute(ConfigPatch {
