@@ -28,7 +28,7 @@ use crate::interface::cli::configuration_handles::{
 
 pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> ConfigurationHandles {
     let store = Arc::new(FilesystemConfigDocumentStore);
-    let writer = Arc::new(JsonDocumentWriter);
+    let writer = Arc::new(JsonDocumentWriter::for_base_dir(&env.base_dir));
     let validator = Arc::new(ConfigValidatorAdapter);
     let trust = Arc::new(PersistentOverlayTrustStore::for_base_dir(
         &env.base_dir,

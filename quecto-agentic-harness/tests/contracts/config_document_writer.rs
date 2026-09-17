@@ -9,8 +9,8 @@ use tempfile::TempDir;
 use quecto::application::configuration::ports::ConfigDocumentWriter;
 use quecto::infrastructure::config::writer::JsonDocumentWriter;
 
-fn under_test() -> Arc<dyn ConfigDocumentWriter> {
-    Arc::new(JsonDocumentWriter)
+fn under_test(base_dir: &std::path::Path) -> Arc<dyn ConfigDocumentWriter> {
+    Arc::new(JsonDocumentWriter::for_base_dir(base_dir))
 }
 
 const PRETTY: &str = "{\n  \"unknown_key\": \"kept\",\n  \"zeta\": 1,\n  \"agents\": {\n    \"defaults\": {\n      \"model\": \"old\"\n    }\n  }\n}\n";
@@ -22,7 +22,7 @@ fn a_document_in_the_writers_layout_changes_only_on_the_touched_line() {
     std::fs::write(&path, PRETTY).unwrap();
     let mut document: serde_json::Value = serde_json::from_str(PRETTY).unwrap();
     document["agents"]["defaults"]["model"] = serde_json::json!("new");
-    under_test().write(&path, &document).unwrap();
+    under_test(dir.path()).write(&path, &document).unwrap();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         PRETTY.replace("\"old\"", "\"new\"")
@@ -33,7 +33,7 @@ fn a_document_in_the_writers_layout_changes_only_on_the_touched_line() {
 fn a_missing_file_is_created_and_no_temporary_file_survives() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("nested").join("config.json");
-    under_test()
+    under_test(dir.path())
         .write(&path, &serde_json::json!({"a": 1}))
         .unwrap();
     let parsed: serde_json::Value =
@@ -57,7 +57,7 @@ fn a_failed_write_leaves_the_previous_content_in_place() {
         std::os::unix::fs::PermissionsExt::from_mode(0o500),
     )
     .unwrap();
-    let outcome = under_test().write(&path, &serde_json::json!({"a": 1}));
+    let outcome = under_test(dir.path()).write(&path, &serde_json::json!({"a": 1}));
     std::fs::set_permissions(
         dir.path(),
         std::os::unix::fs::PermissionsExt::from_mode(0o700),

@@ -190,6 +190,7 @@ impl Fixture {
         self.agent
             .set_tool_policy_persistence(self.runtime_configuration.as_ref().map(|inputs| {
                 crate::composition::tool_policy::build_tool_policy_persistence(
+                    self._tmp.path(),
                     &crate::application::configuration::dto::ConfigSources {
                         base: inputs.selection.path().to_path_buf(),
                         explicit: true,

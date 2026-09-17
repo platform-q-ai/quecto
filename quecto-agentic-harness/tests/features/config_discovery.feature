@@ -346,6 +346,7 @@ Feature: Configuration discovery and the repo-local overlay
     Then the exit code should be 1
     And the stderr should contain "`providers` is global-only"
     And the current directory's ".quecto/config.json" should not exist
+    And the current directory should be left without a ".quecto" directory
 
   Scenario: quecto config set refuses to patch an untrusted overlay
     Given a config file at "~/.quecto/config.json" with content:
@@ -378,6 +379,7 @@ Feature: Configuration discovery and the repo-local overlay
     And the stderr should name the current directory's ".quecto/config.json"
     And the stderr should contain "no container config is labeled"
     And the current directory's ".quecto/config.json" should not exist
+    And the current directory should be left without a ".quecto" directory
     When I run quecto with arguments "status"
     Then the exit code should be 0
     And the output should contain "Model:     global-model"

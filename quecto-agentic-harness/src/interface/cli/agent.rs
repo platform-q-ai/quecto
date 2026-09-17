@@ -490,7 +490,10 @@ pub(crate) fn build_agent_from_config(
     );
     // Durable `set_tool_policy … persist` writes into the run's config
     // file through composition's persistence hook (#1849).
-    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(&config_sources)));
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(
+        base_dir,
+        &config_sources,
+    )));
     Some(AgentBuildResult {
         agent,
         catalogue,

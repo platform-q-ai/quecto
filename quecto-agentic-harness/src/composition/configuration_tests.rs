@@ -160,7 +160,14 @@ fn concurrent_patches_of_one_file_all_land() {
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
     assert!(
-        global.with_extension("json.lock").exists(),
-        "the sidecar lock"
+        !global.with_extension("json.lock").exists(),
+        "no sidecar beside the document"
     );
+    let locks: Vec<_> = std::fs::read_dir(base.path().join("locks"))
+        .expect("the lock directory under the base dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(locks.len(), 1, "one lock for the one document: {locks:?}");
+    assert!(locks[0].ends_with(".lock"), "{locks:?}");
 }

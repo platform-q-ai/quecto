@@ -9,10 +9,16 @@
 //! A rename keeps a file whole but not an *update*: two patchers that read
 //! the same content both rename their own result in, and one's key is
 //! gone. Every read → patch → validate → write cycle therefore runs under
-//! an exclusive `flock(2)` on the sidecar `<file>.lock`
-//! ([`exclusive_hold`]), which blocks across processes and threads alike.
+//! an exclusive `flock(2)` ([`exclusive_hold`]), which blocks across
+//! processes and threads alike. The lock file lives under the base
+//! directory (`<base_dir>/locks/<sha256 of the document's canonical
+//! path>.lock`), never beside the document: taking the hold on a
+//! repository's not-yet-written `.quecto/config.json` must not create
+//! `.quecto/` there, and a refused write leaves a clean checkout clean.
 
 use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 
 use crate::application::configuration::ports::{ConfigDocumentWriter, DocumentLock};
 use crate::infrastructure::atomic_write::atomic_write;
@@ -22,8 +28,28 @@ pub mod tool_policy;
 /// The mode a configuration file is created with: it may hold API keys.
 const NEW_CONFIG_MODE: u32 = 0o600;
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct JsonDocumentWriter;
+/// The directory under the base directory that holds every document lock.
+pub const LOCK_DIR_NAME: &str = "locks";
+
+/// Where the locks of the documents written under `base_dir` live.
+pub fn lock_dir_for(base_dir: &Path) -> PathBuf {
+    base_dir.join(LOCK_DIR_NAME)
+}
+
+/// The writer bound to one base directory: every hold it hands out is a
+/// file under [`lock_dir_for`] of that directory.
+#[derive(Debug, Clone)]
+pub struct JsonDocumentWriter {
+    lock_dir: PathBuf,
+}
+
+impl JsonDocumentWriter {
+    pub fn for_base_dir(base_dir: &Path) -> Self {
+        Self {
+            lock_dir: lock_dir_for(base_dir),
+        }
+    }
+}
 
 impl ConfigDocumentWriter for JsonDocumentWriter {
     fn write(&self, path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String> {
@@ -31,21 +57,54 @@ impl ConfigDocumentWriter for JsonDocumentWriter {
     }
 
     fn exclusive(&self, path: &Path) -> Result<Box<dyn DocumentLock>, String> {
-        exclusive_hold(path).map(|hold| Box::new(hold) as Box<dyn DocumentLock>)
+        exclusive_hold(&self.lock_dir, path).map(|hold| Box::new(hold) as Box<dyn DocumentLock>)
     }
 }
 
-/// The sidecar the exclusive hold on `path` is taken on: `<file>.lock`
-/// beside it (beside the link's target when `path` is a symlink, so every
-/// name of one file shares one lock).
-pub fn lock_path(path: &Path) -> Result<PathBuf, String> {
-    let target = resolve_symlink(path)?;
-    let mut name = target.as_os_str().to_os_string();
-    name.push(".lock");
-    Ok(PathBuf::from(name))
+/// The lock file the exclusive hold on `path` is taken on:
+/// `<lock_dir>/<sha256 hex of the document's canonical path>.lock`. The
+/// canonical path resolves every link on the way (a symlinked global
+/// file and its target share one lock) and, for a document that does not
+/// exist yet, its deepest existing ancestor plus the remaining names —
+/// so two creators of the same file contend for the same lock.
+pub fn lock_path(lock_dir: &Path, path: &Path) -> Result<PathBuf, String> {
+    let identity = canonical_identity(path)?;
+    let digest = Sha256::digest(identity.as_os_str().as_encoded_bytes());
+    Ok(lock_dir.join(format!("{digest:x}.lock")))
 }
 
-/// An exclusive `flock` on the document's sidecar, released on drop
+/// `path` with every existing prefix canonicalised: the file itself when
+/// it exists, else its deepest existing ancestor with the missing tail
+/// appended as named. A path with no existing ancestor is an error.
+fn canonical_identity(path: &Path) -> Result<PathBuf, String> {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut probe = path;
+    loop {
+        match std::fs::canonicalize(probe) {
+            Ok(canonical) => {
+                let mut identity = canonical;
+                for name in tail.iter().rev() {
+                    identity.push(name);
+                }
+                return Ok(identity);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = probe
+                    .file_name()
+                    .ok_or_else(|| format!("{} has no existing ancestor", path.display()))?;
+                tail.push(name.to_os_string());
+                probe = probe
+                    .parent()
+                    .ok_or_else(|| format!("{} has no existing ancestor", path.display()))?;
+            }
+            Err(error) => {
+                return Err(format!("cannot resolve {}: {error}", probe.display()));
+            }
+        }
+    }
+}
+
+/// An exclusive `flock` on the document's lock file, released on drop
 /// (explicitly, so a duplicate of the descriptor a forked child still
 /// holds does not keep the lock alive).
 #[derive(Debug)]
@@ -62,25 +121,26 @@ impl Drop for ExclusiveHold {
     }
 }
 
-/// Take the exclusive hold on `path`'s sidecar, blocking until any other
-/// holder — in this process or another — releases it. The sidecar is
-/// created 0600 like the document it guards (a world-writable lock would
-/// let any co-resident user wedge every configuration write).
+/// Take the exclusive hold on `path`'s lock file under `lock_dir`,
+/// blocking until any other holder — in this process or another —
+/// releases it. Only `lock_dir` is created; the document's own directory
+/// is not touched (that is `write_document`'s, after validation). The
+/// lock file is created 0600 like the document it guards (a
+/// world-writable lock would let any co-resident user wedge every
+/// configuration write).
 //
 // `File::lock` stabilized in 1.89; the crate's tests already call it, so
 // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
 // it and awaits a coordinated MSRV bump.
 #[expect(clippy::incompatible_msrv)]
-pub fn exclusive_hold(path: &Path) -> Result<ExclusiveHold, String> {
-    let lock_path = lock_path(path)?;
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "failed to create {} for the config lock: {error}",
-                parent.display()
-            )
-        })?;
-    }
+pub fn exclusive_hold(lock_dir: &Path, path: &Path) -> Result<ExclusiveHold, String> {
+    let lock_path = lock_path(lock_dir, path)?;
+    std::fs::create_dir_all(lock_dir).map_err(|error| {
+        format!(
+            "failed to create {} for the config lock: {error}",
+            lock_dir.display()
+        )
+    })?;
     let mut options = std::fs::OpenOptions::new();
     options.create(true).truncate(false).write(true);
     #[cfg(unix)]
@@ -98,7 +158,8 @@ pub fn exclusive_hold(path: &Path) -> Result<ExclusiveHold, String> {
 
 /// Render `document` in the layout `path` already uses and replace the
 /// file atomically, returning the bytes written. An existing file keeps
-/// its mode; a new one is private to the user.
+/// its mode; a new one is private to the user, and its directory is
+/// created here — after the caller validated the document — not before.
 pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String> {
     // A symlinked config (dotfiles) is written through the link: the rename
     // would otherwise replace the link with a plain file and leave the

@@ -445,6 +445,25 @@ fn then_local_absent(world: &mut QuectoWorld, name: String) {
     assert!(!path.exists(), "{} exists", path.display());
 }
 
+/// A refused `config set --local` in a clean checkout must not leave a
+/// `.quecto/` behind (not even for a lock file): the lock lives under
+/// the base directory.
+#[then(expr = "the current directory should be left without a {string} directory")]
+fn then_local_dir_absent(world: &mut QuectoWorld, name: String) {
+    let path = cwd(world).join(&name);
+    assert!(
+        std::fs::symlink_metadata(&path).is_err(),
+        "{} was created: {:?}",
+        path.display(),
+        std::fs::read_dir(&path)
+            .map(|entries| entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>())
+            .ok()
+    );
+}
+
 #[then("no temporary config files should remain beside the global config file")]
 fn then_no_temp_files(world: &mut QuectoWorld) {
     let leftovers: Vec<String> = std::fs::read_dir(base_path(world))

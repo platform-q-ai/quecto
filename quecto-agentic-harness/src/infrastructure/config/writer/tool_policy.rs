@@ -18,15 +18,23 @@ pub type ToolPolicyPersistenceFn =
 const ENTRIES_POINTER: &str = "/tools/policy/entries";
 
 /// A persistence hook that writes every applied mutation into
-/// `config_path`. With `overlay_path`, an entry the repo-local overlay
-/// already defines is refused (the overlay would shadow the persisted value
-/// on the next reload) rather than written without effect.
+/// `config_path`, holding the same lock under `base_dir` that
+/// `quecto config set` takes. With `overlay_path`, an entry the repo-local
+/// overlay already defines is refused (the overlay would shadow the
+/// persisted value on the next reload) rather than written without effect.
 pub fn tool_policy_persistence_for(
+    base_dir: &Path,
     config_path: PathBuf,
     overlay_path: Option<PathBuf>,
 ) -> ToolPolicyPersistenceFn {
+    let lock_dir = super::lock_dir_for(base_dir);
     Arc::new(move |reconciliation| {
-        persist_tool_policy_results(&config_path, overlay_path.as_deref(), reconciliation)
+        persist_tool_policy_results(
+            &lock_dir,
+            &config_path,
+            overlay_path.as_deref(),
+            reconciliation,
+        )
     })
 }
 
@@ -36,6 +44,7 @@ pub fn tool_policy_persistence_for(
 /// must not be serialized back), `tools.policy.entries` is extended, the
 /// result is validated as a `Config`, and only then written.
 pub fn persist_tool_policy_results(
+    lock_dir: &Path,
     config_path: &Path,
     overlay_path: Option<&Path>,
     reconciliation: &ToolPolicyReconciliation,
@@ -74,7 +83,7 @@ pub fn persist_tool_policy_results(
     }
     // The same hold `quecto config set` takes: the entries read below are
     // the ones the write replaces, whatever else is patching this file.
-    let _hold = super::exclusive_hold(config_path)?;
+    let _hold = super::exclusive_hold(lock_dir, config_path)?;
     let mut document = match std::fs::read(config_path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
             format!(

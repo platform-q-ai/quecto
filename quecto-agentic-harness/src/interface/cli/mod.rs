@@ -344,6 +344,7 @@ pub type ProviderRuntimeBuilder =
 /// Injected through the CLI context; the agent build installs it on the
 /// loop, the interface never constructs the writer.
 pub type ToolPolicyPersistenceBuilder = fn(
+    &std::path::Path,
     &crate::application::configuration::dto::ConfigSources,
 )
     -> crate::application::agent_loop::ToolPolicyPersistence;

@@ -14,7 +14,9 @@ fn a_file_in_the_writers_layout_changes_only_on_the_touched_line() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("config.json");
     std::fs::write(&path, PRETTY).unwrap();
-    JsonDocumentWriter.write(&path, &patched()).unwrap();
+    JsonDocumentWriter::for_base_dir(dir.path())
+        .write(&path, &patched())
+        .unwrap();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         PRETTY.replace("\"old\"", "\"new\"")
@@ -113,4 +115,45 @@ fn a_symlinked_config_is_written_through_the_link() {
     std::os::unix::fs::symlink(dir.path().join("missing.json"), &dangling).unwrap();
     let error = write_document(&dangling, &json!({})).unwrap_err();
     assert!(error.contains("symlink"), "{error}");
+}
+
+#[test]
+fn the_lock_lives_under_the_base_directory_keyed_by_the_documents_identity() {
+    let base = TempDir::new().unwrap();
+    let repo = TempDir::new().unwrap();
+    let lock_dir = lock_dir_for(base.path());
+    let overlay = repo.path().join(".quecto").join("config.json");
+    // Not yet written: the lock is keyed by where the file *would* be.
+    let before = lock_path(&lock_dir, &overlay).unwrap();
+    assert_eq!(before.parent(), Some(lock_dir.as_path()));
+    assert!(before.extension().is_some_and(|ext| ext == "lock"));
+    let hold = exclusive_hold(&lock_dir, &overlay).unwrap();
+    assert!(
+        before.exists(),
+        "the lock file is created under the base dir"
+    );
+    assert!(
+        !overlay.parent().unwrap().exists(),
+        "the hold creates nothing in the repository"
+    );
+    assert_eq!(
+        std::fs::metadata(&before).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    drop(hold);
+    // Once written, the same file yields the same lock, through a link too.
+    write_document(&overlay, &json!({})).unwrap();
+    assert_eq!(lock_path(&lock_dir, &overlay).unwrap(), before);
+    let link = repo.path().join("alias.json");
+    std::os::unix::fs::symlink(&overlay, &link).unwrap();
+    assert_eq!(lock_path(&lock_dir, &link).unwrap(), before);
+    // A different document, a different lock.
+    assert_ne!(
+        lock_path(&lock_dir, &repo.path().join("other.json")).unwrap(),
+        before
+    );
+    assert!(
+        lock_path(&lock_dir, Path::new("")).is_err(),
+        "a path with no existing ancestor has no identity"
+    );
 }
