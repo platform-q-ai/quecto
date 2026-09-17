@@ -20,15 +20,15 @@ const NEW_CONFIG_MODE: u32 = 0o600;
 pub struct JsonDocumentWriter;
 
 impl ConfigDocumentWriter for JsonDocumentWriter {
-    fn write(&self, path: &Path, document: &serde_json::Value) -> Result<(), String> {
+    fn write(&self, path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String> {
         write_document(path, document)
     }
 }
 
 /// Render `document` in the layout `path` already uses and replace the
-/// file atomically. An existing file keeps its mode; a new one is private
-/// to the user.
-pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<(), String> {
+/// file atomically, returning the bytes written. An existing file keeps
+/// its mode; a new one is private to the user.
+pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String> {
     // A symlinked config (dotfiles) is written through the link: the rename
     // would otherwise replace the link with a plain file and leave the
     // linked copy stale.
@@ -41,7 +41,8 @@ pub fn write_document(path: &Path, document: &serde_json::Value) -> Result<(), S
     };
     let bytes = render(document, existing.as_deref());
     let mode = existing_mode(path).unwrap_or(NEW_CONFIG_MODE);
-    atomic_write(path, &bytes, Some(mode)).map_err(|error| error.to_string())
+    atomic_write(path, &bytes, Some(mode)).map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 /// The file a write lands in: the final target when `path` is a symlink

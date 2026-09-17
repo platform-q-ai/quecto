@@ -348,6 +348,7 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str(&line);
         stderr.push('\n');
     }
+    let config_sources = loaded.sources;
     let config = loaded.config;
     // The provider runtime (#1849): composed through the injected builder;
     // the interface never constructs provider state itself. Checked before
@@ -489,7 +490,7 @@ pub(crate) fn build_agent_from_config(
     );
     // Durable `set_tool_policy … persist` writes into the run's config
     // file through composition's persistence hook (#1849).
-    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(selection)));
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(&config_sources)));
     Some(AgentBuildResult {
         agent,
         catalogue,

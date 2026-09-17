@@ -94,7 +94,7 @@ fn prompt_approval(path: &Path, fingerprint: &str) -> bool {
     if !io::stdin().is_terminal() {
         return false;
     }
-    eprintln!(
+    eprint!(
         "Trust repo-local config overlay {} (sha256 {fingerprint})? [y/N] ",
         path.display()
     );
@@ -109,7 +109,8 @@ fn prompt_approval(path: &Path, fingerprint: &str) -> bool {
 /// The one approved content hash per canonical path. A hand edit revokes
 /// trust, and reverting to an earlier content does not restore it: only
 /// the content approved last is trusted. Records written before #2024
-/// held a list of hashes per path; those read as "the last one listed".
+/// held every approved hash per path; those keep matching any of them
+/// until the next approval collapses the entry to one.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TrustRecord {
     #[serde(default)]
@@ -128,7 +129,7 @@ impl Fingerprint {
     fn matches(&self, fingerprint: &str) -> bool {
         match self {
             Self::One(one) => one == fingerprint,
-            Self::Legacy(list) => list.last().map(String::as_str) == Some(fingerprint),
+            Self::Legacy(list) => list.iter().any(|recorded| recorded == fingerprint),
         }
     }
 }

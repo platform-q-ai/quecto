@@ -8,7 +8,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Result of probing a watched file-backed source.
@@ -31,17 +31,36 @@ pub struct ReloadSource {
     last_mtime: Option<SystemTime>,
     last_len: Option<u64>,
     last_hash: u64,
+    removal_is_change: bool,
 }
 
 impl ReloadSource {
-    /// Create an unseeded reload source.
+    /// Create an unseeded reload source. A file that goes missing after it
+    /// was seen is fail-safe (`MissingOrUnreadable`, last-good state kept):
+    /// an editor's save window or a deleted base config must not rebuild a
+    /// live session against defaults.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             last_mtime: None,
             last_len: None,
             last_hash: 0,
+            removal_is_change: false,
         }
+    }
+
+    /// A source whose removal *is* a change (#2024): the repo-local
+    /// overlay and its trust record, which are optional by design, so
+    /// deleting one must take effect on the next reload.
+    pub fn optional(path: impl Into<PathBuf>) -> Self {
+        Self {
+            removal_is_change: true,
+            ..Self::new(path)
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Seed the source fingerprint from disk without reporting a change.
@@ -93,11 +112,11 @@ impl ReloadSource {
         }
     }
 
-    /// A source that was present at the last observation and is missing
-    /// or unreadable now is a change (#2024: removing the repo-local
-    /// overlay must take effect); one that was never seen stays quiet.
+    /// An optional source that was present at the last observation and is
+    /// missing now is a change; a required one, or one never seen, keeps
+    /// the last-good state.
     fn vanished(&mut self) -> SourceChange {
-        if self.last_mtime.take().is_some() {
+        if self.removal_is_change && self.last_mtime.take().is_some() {
             self.last_len = None;
             self.last_hash = 0;
             SourceChange::Changed

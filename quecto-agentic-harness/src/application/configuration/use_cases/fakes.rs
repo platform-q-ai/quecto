@@ -56,14 +56,17 @@ impl ConfigDocumentStore for MemoryStore {
 
 /// Writes compact JSON plus a newline into the same in-memory files.
 impl ConfigDocumentWriter for MemoryStore {
-    fn write(&self, path: &Path, document: &Value) -> Result<(), String> {
+    fn write(&self, path: &Path, document: &Value) -> Result<Vec<u8>, String> {
         if self.fail_writes {
             return Err("disk full".into());
         }
         let mut bytes = serde_json::to_vec(document).unwrap();
         bytes.push(b'\n');
-        self.files.lock().unwrap().insert(path.to_path_buf(), bytes);
-        Ok(())
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), bytes.clone());
+        Ok(bytes)
     }
 }
 

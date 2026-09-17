@@ -60,9 +60,13 @@ fn a_trusted_overlay_merges_over_the_global_file() {
         Some(&PathBuf::from(OVERLAY))
     );
     let validated = validator.validated.lock().unwrap();
-    assert_eq!(validated.len(), 2, "the overlay standalone, then the merge");
     assert_eq!(
-        validated[0],
+        validated.len(),
+        3,
+        "the global file alone, the overlay as a layer, then the merge"
+    );
+    assert_eq!(
+        validated[1],
         json!({"agents":{"defaults":{"model":"local"}}})
     );
 }
@@ -363,7 +367,8 @@ fn consent_at_the_prompt_applies_and_records_the_overlay_after_the_same_checks()
     );
     assert_eq!(trust.offered.lock().unwrap().len(), 1);
 
-    // A "y" on an overlay that would not apply records nothing.
+    // An overlay that would not apply is never offered, so a "y" cannot
+    // record it.
     for content in [
         r#"{"providers":{}}"#,
         r#"{"agents":{"defaults":{"effort":"bogus"}}}"#,
@@ -375,7 +380,16 @@ fn consent_at_the_prompt_applies_and_records_the_overlay_after_the_same_checks()
             ..Default::default()
         });
         let (resolve, _) = use_case(store, trust.clone());
-        assert!(resolve.execute(&layered()).is_err(), "{content}");
+        // Never offered: reported as untrusted, the run stays on the global file.
+        let effective = resolve.execute(&layered()).unwrap();
+        assert!(
+            matches!(
+                effective.sources.overlay.unwrap().state,
+                OverlayState::Untrusted { .. }
+            ),
+            "{content}"
+        );
+        assert!(trust.offered.lock().unwrap().is_empty(), "{content}");
         assert!(!trust.is_approved(OVERLAY, content.as_bytes()), "{content}");
     }
 
@@ -428,7 +442,7 @@ fn an_overlay_may_add_a_non_default_container_config_and_an_invalid_merge_names_
     let error = resolve.execute(&layered()).unwrap_err();
     assert!(
         matches!(&error, EffectiveConfigError::InvalidMerge { global, overlay, .. }
-        if global == Path::new(GLOBAL) && overlay == Path::new(OVERLAY))
+        if global.as_deref() == Some(Path::new(GLOBAL)) && overlay == Path::new(OVERLAY))
     );
     let text = error.to_string();
     assert!(
@@ -460,4 +474,52 @@ fn an_unrelated_config_json_in_the_working_directory_is_not_a_retired_config() {
         resolve.execute(&layered()).unwrap().sources.legacy_local,
         Some(PathBuf::from(LEGACY))
     );
+}
+
+#[test]
+fn the_global_file_must_be_valid_on_its_own_even_when_the_overlay_would_repair_it() {
+    let overlay = r#"{"container_configs":{"l":{"default":true,"create":["c"]}}}"#;
+    let store = MemoryStore::with(&[
+        (
+            GLOBAL,
+            r#"{"container_configs":{"a":{"default":true},"b":{"default":true}}}"#,
+        ),
+        (OVERLAY, overlay),
+    ]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, overlay));
+    assert!(matches!(
+        resolve.execute(&layered()).unwrap_err(),
+        EffectiveConfigError::Invalid { path, .. } if path == Path::new(GLOBAL)
+    ));
+}
+
+#[test]
+fn a_prompt_is_offered_only_for_an_overlay_that_would_apply_and_an_absent_global_is_named_as_such()
+{
+    let content = r#"{"providers":{}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+    let trust = Arc::new(FakeTrust {
+        consents: true,
+        ..Default::default()
+    });
+    let (resolve, _) = use_case(store, trust.clone());
+    let effective = resolve.execute(&layered()).unwrap();
+    assert!(matches!(
+        effective.sources.overlay.unwrap().state,
+        OverlayState::Untrusted { .. }
+    ));
+    assert!(
+        trust.offered.lock().unwrap().is_empty(),
+        "nobody is asked to trust a refused overlay"
+    );
+
+    let overlay = r#"{"container_configs":{"h":{"create":["b"]}}}"#;
+    let store = MemoryStore::with(&[(OVERLAY, overlay)]);
+    let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, overlay));
+    let error = resolve.execute(&layered()).unwrap_err();
+    assert!(matches!(
+        &error,
+        EffectiveConfigError::InvalidMerge { global: None, .. }
+    ));
+    assert!(error.to_string().contains("no global file"), "{error}");
 }

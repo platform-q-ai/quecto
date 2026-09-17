@@ -69,15 +69,30 @@ fn touched_but_identical_file_reports_unchanged_and_advances_the_mtime_cache() {
     assert_eq!(source.changed(), SourceChange::UnchangedNoRead);
 }
 
-/// AC7 + #2024: a file that was never seen is fail-safe (reported, no
-/// panic); a file that was seen and then removed is one change — removing
-/// the repo-local overlay must take effect — after which it stays quiet
-/// until it reappears.
+/// AC7: a required file that goes missing is fail-safe — reported, cache
+/// untouched, no panic — so a save window or a deleted base config never
+/// rebuilds a session against defaults.
 #[test]
-fn a_removed_file_is_one_change_and_a_never_seen_file_is_quiet() {
+fn missing_required_file_reports_missing_or_unreadable_and_keeps_the_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = file_with(&dir, "source.txt", "v1");
     let mut source = ReloadSource::new(&path);
+    source.seed();
+    let seeded = source.last_mtime();
+    assert!(seeded.is_some());
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
+    assert_eq!(source.last_mtime(), seeded);
+}
+
+/// #2024: an optional source (the overlay, its trust record) that was seen
+/// and then removed is one change, after which it stays quiet until it
+/// reappears; one never seen is quiet.
+#[test]
+fn a_removed_optional_file_is_one_change_and_a_never_seen_file_is_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = file_with(&dir, "source.txt", "v1");
+    let mut source = ReloadSource::optional(&path);
     source.seed();
     assert!(source.last_mtime().is_some());
     std::fs::remove_file(&path).unwrap();
@@ -85,7 +100,7 @@ fn a_removed_file_is_one_change_and_a_never_seen_file_is_quiet() {
     assert_eq!(source.last_mtime(), None);
     assert_eq!(source.changed(), SourceChange::MissingOrUnreadable);
 
-    let mut never = ReloadSource::new(dir.path().join("absent.txt"));
+    let mut never = ReloadSource::optional(dir.path().join("absent.txt"));
     never.seed();
     assert_eq!(never.changed(), SourceChange::MissingOrUnreadable);
 

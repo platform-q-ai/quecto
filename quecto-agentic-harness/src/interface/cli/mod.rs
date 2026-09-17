@@ -5,7 +5,7 @@ pub mod catalogue_handles;
 mod commands;
 mod config_cmd;
 mod config_flag;
-pub mod config_loading;
+mod config_loading;
 pub mod configuration_handles;
 mod help;
 mod models;
@@ -343,8 +343,10 @@ pub type ProviderRuntimeBuilder =
 /// durable `set_tool_policy … persist` writer over the run's config file.
 /// Injected through the CLI context; the agent build installs it on the
 /// loop, the interface never constructs the writer.
-pub type ToolPolicyPersistenceBuilder =
-    fn(&ConfigSelection) -> crate::application::agent_loop::ToolPolicyPersistence;
+pub type ToolPolicyPersistenceBuilder = fn(
+    &crate::application::configuration::dto::ConfigSources,
+)
+    -> crate::application::agent_loop::ToolPolicyPersistence;
 
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write
@@ -438,13 +440,17 @@ impl CliContext {
     /// process's; rigs supply a hermetic one); without one no overlay is
     /// discovered.
     pub(crate) fn config_selection(&self) -> Result<ConfigSelection, String> {
+        // Both directories are compared by identity by the use case; the
+        // filesystem's canonical form (symlinked homes, relative base dirs)
+        // is what makes that comparison honest.
+        let canonical = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
         Ok(self
             .configuration_handles(false)?
             .select
             .execute(ConfigSelectionRequest {
                 explicit: self.config_path.clone(),
-                working_directory: self.cwd.clone(),
-                global: self.base_dir().join("config.json"),
+                working_directory: self.cwd.clone().map(canonical),
+                global: canonical(self.base_dir()).join("config.json"),
             }))
     }
 

@@ -189,7 +189,14 @@ impl Fixture {
         // the CLI's agent build installs it (#1849).
         self.agent
             .set_tool_policy_persistence(self.runtime_configuration.as_ref().map(|inputs| {
-                crate::composition::tool_policy::build_tool_policy_persistence(&inputs.selection)
+                crate::composition::tool_policy::build_tool_policy_persistence(
+                    &crate::application::configuration::dto::ConfigSources {
+                        base: inputs.selection.path().to_path_buf(),
+                        explicit: true,
+                        overlay: None,
+                        legacy_local: None,
+                    },
+                )
             }));
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),

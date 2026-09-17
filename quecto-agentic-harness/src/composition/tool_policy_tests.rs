@@ -3,6 +3,7 @@
 //! overwriting it.
 
 use super::*;
+use crate::application::configuration::dto::ConfigSources;
 use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyReconciliation};
 
 fn empty_reconciliation() -> ToolPolicyReconciliation {
@@ -18,7 +19,12 @@ fn the_composed_hook_leaves_a_file_alone_when_nothing_was_applied() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_path = tmp.path().join("config.json");
     std::fs::write(&config_path, "{\"custom\": 1}").unwrap();
-    let persist = build_tool_policy_persistence(&ConfigSelection::Explicit(config_path.clone()));
+    let persist = build_tool_policy_persistence(&ConfigSources {
+        base: config_path.clone(),
+        explicit: true,
+        overlay: None,
+        legacy_local: None,
+    });
     persist(&empty_reconciliation()).unwrap();
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),

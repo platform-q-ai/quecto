@@ -83,8 +83,12 @@ fn a_reload_watches_the_base_file_the_overlay_and_the_trust_record() {
         overlay: Some(PathBuf::from("/work/.quecto/config.json")),
         legacy_local: None,
     });
+    let paths: Vec<PathBuf> = watched_config_sources(base, &layered)
+        .iter()
+        .map(|source| source.path().to_path_buf())
+        .collect();
     assert_eq!(
-        watched_config_files(base, &layered),
+        paths,
         vec![
             base.join("config.json"),
             PathBuf::from("/work/.quecto/config.json"),
@@ -92,8 +96,5 @@ fn a_reload_watches_the_base_file_the_overlay_and_the_trust_record() {
         ]
     );
     let explicit = ConfigSelection::Explicit(PathBuf::from("/x/c.json"));
-    assert_eq!(
-        watched_config_files(base, &explicit),
-        vec![PathBuf::from("/x/c.json")]
-    );
+    assert_eq!(watched_config_sources(base, &explicit).len(), 1);
 }

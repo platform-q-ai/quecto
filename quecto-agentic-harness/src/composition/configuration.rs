@@ -7,7 +7,7 @@
 //! source.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::ConfigSelection;
@@ -20,6 +20,7 @@ use crate::infrastructure::config::persistence::{
     PersistentOverlayTrustStore, TRUST_RECORD_FILE_NAME,
 };
 use crate::infrastructure::config::writer::JsonDocumentWriter;
+use crate::infrastructure::reload::ReloadSource;
 use crate::infrastructure::runtime_configuration::ConfigLoader;
 use crate::interface::cli::configuration_handles::{
     ConfigurationEnvironment, ConfigurationHandles,
@@ -74,21 +75,25 @@ pub fn build_config_loader(
         // A reload has no terminal: an overlay that became untrusted (a
         // hand edit mid-run) drops out of the effective configuration, and
         // the operator's log is the only place that says so.
-        for line in crate::interface::cli::config_loading::layer_diagnostics(&effective.sources) {
+        for line in effective.sources.diagnostics() {
             tracing::warn!(target: "quecto::configuration", "{line}");
         }
         realize_config(effective.document, &env_overrides, &base_dir)
     })
 }
 
-/// The files a reload must watch for `selection` (#2024): the base file,
-/// the overlay when one applies, and the overlay trust record (so
-/// `quecto config trust` takes effect on the next reload).
-pub fn watched_config_files(base_dir: &Path, selection: &ConfigSelection) -> Vec<PathBuf> {
-    let mut watched = vec![selection.path().to_path_buf()];
+/// The sources a reload must watch for `selection` (#2024): the base file
+/// (required: its removal keeps the last-good runtime), and, when an
+/// overlay applies, the overlay and the overlay trust record (optional:
+/// removing either, or `quecto config trust`, takes effect on the next
+/// reload).
+pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> Vec<ReloadSource> {
+    let mut watched = vec![ReloadSource::new(selection.path())];
     if let Some(overlay) = selection.overlay_path() {
-        watched.push(overlay.to_path_buf());
-        watched.push(base_dir.join(TRUST_RECORD_FILE_NAME));
+        watched.push(ReloadSource::optional(overlay));
+        watched.push(ReloadSource::optional(
+            base_dir.join(TRUST_RECORD_FILE_NAME),
+        ));
     }
     watched
 }

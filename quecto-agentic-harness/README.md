@@ -409,8 +409,9 @@ small file and never duplicates your secrets or policy:
 | `providers`, `admission` | **global-only** — an overlay carrying either is refused with an error naming the key |
 | anything else | replaced whole (unknown keys pass through both files) |
 
-Each layer must be valid on its own and the merge must be a valid
-configuration. A trusted overlay that is invalid JSON, a directory, a dangling
+The global file must be a valid configuration on its own, the overlay a
+valid layer (an overlay may add a container config without claiming the
+default), and the merge a valid configuration. A trusted overlay that is invalid JSON, a directory, a dangling
 symlink or unreadable is an error naming the path, never a silent fallback.
 
 **Trust.** A checked-out project's overlay is applied only once its exact
@@ -461,7 +462,10 @@ on the next reload) with the `quecto config set` command to run instead.
 A running agent re-reads the base file, the overlay and the trust record
 before the next turn, `set_model` or a forced `reload`, so `quecto config
 trust`, a `config set`, or removing the overlay takes effect without a
-restart. `quecto-tui` sessions never prompt for trust; run `quecto config
+restart (a `config set` writes the overlay and then its trust record, so a
+reload that lands between the two applies the global file alone for that
+one turn and reports the overlay untrusted; the next reload applies it). A
+missing base file never triggers a reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for trust; run `quecto config
 trust` in the project directory and the next turn picks it up.
 
 **Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with

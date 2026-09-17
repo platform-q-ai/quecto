@@ -54,30 +54,9 @@ pub(crate) fn quecto_env_overrides() -> HashMap<String, String> {
         .collect()
 }
 
-/// What the user should know about the layers, one line each: an overlay
-/// that was present but not applied, and a retired working-directory file.
-pub fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(overlay) = &sources.overlay
-        && let OverlayState::Untrusted { fingerprint } = &overlay.state
-    {
-        lines.push(format!(
-            "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; review it, then run `quecto config trust` from this directory",
-            overlay.path.display()
-        ));
-    }
-    if let Some(legacy) = &sources.legacy_local {
-        lines.push(format!(
-            "warning: {} is no longer loaded (a working-directory config.json used to replace the global file); move its repo-specific settings to {} with `quecto config set`, and its providers or admission section to the global file",
-            legacy.display(),
-            legacy
-                .parent()
-                .unwrap_or(legacy)
-                .join(".quecto/config.json")
-                .display()
-        ));
-    }
-    lines
+/// The layer diagnostics, as the DTO renders them.
+pub(crate) fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
+    sources.diagnostics()
 }
 
 /// The `Overlay:` line of `quecto status`.

@@ -64,20 +64,24 @@ pub struct FileRuntimeConfiguration {
 }
 
 impl FileRuntimeConfiguration {
-    /// Watch every configuration file of the run (`config_paths`: the
-    /// selected file and, when one applies, the overlay) and
-    /// `<base_dir>/models.json`, seeded from their current content so only
-    /// later edits count as changes.
+    /// Watch every configuration source of the run (`config_sources`: the
+    /// selected file and, when one applies, the overlay and its trust
+    /// record) and `<base_dir>/models.json`, seeded from their current
+    /// content so only later edits count as changes.
     pub fn seeded(
-        config_paths: Vec<PathBuf>,
+        config_sources: Vec<ReloadSource>,
         base_dir: PathBuf,
         load_config: ConfigLoader,
         http_client: reqwest::Client,
         build_provider: ProviderRuntimeBuilder,
     ) -> Self {
-        let mut watched = config_paths;
-        watched.push(base_dir.join("models.json"));
-        let mut gate = RuntimeReload::new(watched.iter().cloned().map(ReloadSource::new).collect());
+        let mut sources = config_sources;
+        sources.push(ReloadSource::new(base_dir.join("models.json")));
+        let watched = sources
+            .iter()
+            .map(|source| source.path().to_path_buf())
+            .collect();
+        let mut gate = RuntimeReload::new(sources);
         gate.seed();
         Self {
             inputs: RebuildInputs {

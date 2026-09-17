@@ -106,6 +106,7 @@ pub fn persist_tool_policy_results(
             )
         })?;
     super::write_document(config_path, &document)
+        .map(|_| ())
         .map_err(|e| format!("failed to write config {}: {e}", config_path.display()))
 }
 

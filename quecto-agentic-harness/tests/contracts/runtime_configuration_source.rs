@@ -38,7 +38,9 @@ fn under_test(dir: &std::path::Path) -> (Box<dyn RuntimeConfigurationSource>, st
     let config_path = dir.join("config.json");
     let selection = ConfigSelection::Explicit(config_path.clone());
     let source = FileRuntimeConfiguration::seeded(
-        vec![config_path.clone()],
+        vec![quecto::infrastructure::reload::ReloadSource::new(
+            config_path.clone(),
+        )],
         dir.to_path_buf(),
         quecto::composition::configuration::build_config_loader(dir, selection, HashMap::new()),
         reqwest::Client::new(),

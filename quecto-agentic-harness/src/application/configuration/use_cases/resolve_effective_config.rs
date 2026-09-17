@@ -63,9 +63,16 @@ impl ResolveEffectiveConfig {
                 })
             }
             ConfigSelection::Layered(layers) => {
-                let global = match self.read(&layers.global)? {
-                    Some(bytes) => self.resolved_object(&layers.global, &bytes)?,
-                    None => Map::new(),
+                // The global file must be valid on its own, whatever the
+                // overlay adds: the writer, tool-policy persistence and the
+                // admission broker all load it alone.
+                let (global, global_present) = match self.read(&layers.global)? {
+                    Some(bytes) => {
+                        let global = self.resolved_object(&layers.global, &bytes)?;
+                        self.validate(&layers.global, &global)?;
+                        (global, true)
+                    }
+                    None => (Map::new(), false),
                 };
                 let (document, overlay) = match &layers.overlay {
                     Some(path) => self.apply_overlay(global, path)?,
@@ -79,7 +86,7 @@ impl ResolveEffectiveConfig {
                         .validator
                         .validate(&Value::Object(document.clone()))
                         .map_err(|reason| EffectiveConfigError::InvalidMerge {
-                            global: layers.global.clone(),
+                            global: global_present.then(|| layers.global.clone()),
                             overlay: applied.path.clone(),
                             reason,
                         })?,
@@ -119,16 +126,48 @@ impl ResolveEffectiveConfig {
         let Some(bytes) = self.read(path)? else {
             return Ok((global, report(OverlayState::Absent)));
         };
-        let offered = match self.trust.decide(path, &bytes) {
-            OverlayTrust::Trusted => false,
-            OverlayTrust::Untrusted { fingerprint } => {
-                if !self.trust.offer(path, &fingerprint) {
-                    return Ok((global, report(OverlayState::Untrusted { fingerprint })));
+        let trust = self.trust.decide(path, &bytes);
+        // An untrusted overlay is not parsed before the user is asked about
+        // it — unless an interactive adapter can ask; then it is checked
+        // first so nobody is offered a file that would be refused anyway.
+        let overlay = match &trust {
+            OverlayTrust::Trusted => self.checked_overlay(path, &bytes)?,
+            OverlayTrust::Untrusted { fingerprint } => match self.checked_overlay(path, &bytes) {
+                Ok(overlay) if self.trust.offer(path, fingerprint) => overlay,
+                _ => {
+                    return Ok((
+                        global,
+                        report(OverlayState::Untrusted {
+                            fingerprint: fingerprint.clone(),
+                        }),
+                    ));
                 }
-                true
-            }
+            },
         };
-        let overlay = self.resolved_object(path, &bytes)?;
+        // Consent given at the prompt is recorded only now, after the same
+        // checks `quecto config trust` applies.
+        if matches!(trust, OverlayTrust::Untrusted { .. }) {
+            self.trust
+                .approve(path, &bytes)
+                .map_err(|reason| EffectiveConfigError::Read {
+                    path: path.to_path_buf(),
+                    reason: format!("could not record trust: {reason}"),
+                })?;
+        }
+        Ok((
+            merge_overlay(global, overlay),
+            report(OverlayState::Applied),
+        ))
+    }
+
+    /// The overlay parsed, resolved, free of global-only sections and valid
+    /// as a layer.
+    fn checked_overlay(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+    ) -> Result<Map<String, Value>, EffectiveConfigError> {
+        let overlay = self.resolved_object(path, bytes)?;
         if let Some(key) = global_only_key(&overlay) {
             return Err(EffectiveConfigError::GlobalOnlyKey {
                 path: path.to_path_buf(),
@@ -141,21 +180,7 @@ impl ResolveEffectiveConfig {
                 path: path.to_path_buf(),
                 reason,
             })?;
-        // Consent given at the prompt is recorded only now, after the same
-        // checks `quecto config trust` applies; a failure above records
-        // nothing.
-        if offered {
-            self.trust
-                .approve(path, &bytes)
-                .map_err(|reason| EffectiveConfigError::Read {
-                    path: path.to_path_buf(),
-                    reason: format!("could not record trust: {reason}"),
-                })?;
-        }
-        Ok((
-            merge_overlay(global, overlay),
-            report(OverlayState::Applied),
-        ))
+        Ok(overlay)
     }
 
     /// A retired `<cwd>/config.json` is worth a warning only when it is a

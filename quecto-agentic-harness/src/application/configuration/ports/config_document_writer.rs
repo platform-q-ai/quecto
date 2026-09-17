@@ -9,5 +9,7 @@ use std::path::Path;
 /// the existing indentation kept). Implemented by infrastructure
 /// (tmp + fsync + rename); faked in use-case tests.
 pub trait ConfigDocumentWriter: Send + Sync {
-    fn write(&self, path: &Path, document: &serde_json::Value) -> Result<(), String>;
+    /// Write `document` and return the exact bytes laid down, so a caller
+    /// that records trust records what it wrote, not what is on disk later.
+    fn write(&self, path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String>;
 }

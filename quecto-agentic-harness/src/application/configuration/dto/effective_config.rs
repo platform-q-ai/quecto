@@ -80,7 +80,8 @@ pub enum EffectiveConfigError {
     /// Each layer is valid but the overlay merged over the global file is
     /// not; both files are named because either may need the fix.
     InvalidMerge {
-        global: PathBuf,
+        /// `None` when the global file is absent (defaults were merged over).
+        global: Option<PathBuf>,
         overlay: PathBuf,
         reason: String,
     },
@@ -117,14 +118,50 @@ impl std::fmt::Display for EffectiveConfigError {
                 global,
                 overlay,
                 reason,
-            } => write!(
-                f,
-                "failed to load config {} merged over {}: {reason}",
-                overlay.display(),
-                global.display()
-            ),
+            } => match global {
+                Some(global) => write!(
+                    f,
+                    "failed to load config {} merged over {}: {reason}",
+                    overlay.display(),
+                    global.display()
+                ),
+                None => write!(
+                    f,
+                    "failed to load config {} merged over the defaults (no global file): {reason}",
+                    overlay.display()
+                ),
+            },
         }
     }
 }
 
 impl std::error::Error for EffectiveConfigError {}
+
+impl ConfigSources {
+    /// What the user should know about the layers, one line each: an
+    /// overlay that was present but not applied, and a retired
+    /// working-directory file that is a quecto configuration.
+    pub fn diagnostics(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(overlay) = &self.overlay
+            && let OverlayState::Untrusted { fingerprint } = &overlay.state
+        {
+            lines.push(format!(
+                "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; review it, then run `quecto config trust` from this directory",
+                overlay.path.display()
+            ));
+        }
+        if let Some(legacy) = &self.legacy_local {
+            lines.push(format!(
+                "warning: {} is no longer loaded (a working-directory config.json used to replace the global file); move its repo-specific settings to {} with `quecto config set`, and its providers or admission section to the global file",
+                legacy.display(),
+                legacy
+                    .parent()
+                    .unwrap_or(legacy)
+                    .join(".quecto/config.json")
+                    .display()
+            ));
+        }
+        lines
+    }
+}

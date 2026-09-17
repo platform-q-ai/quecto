@@ -76,10 +76,16 @@ fn an_approval_supersedes_the_previous_one_and_legacy_lists_read_their_last_entr
     });
     std::fs::write(trust.record_path(), serde_json::to_vec(&legacy).unwrap()).unwrap();
     assert_eq!(trust.decide(&path, b"new"), OverlayTrust::Trusted);
-    assert!(matches!(
+    assert_eq!(
         trust.decide(&path, b"old"),
-        OverlayTrust::Untrusted { .. }
-    ));
+        OverlayTrust::Trusted,
+        "a legacy list keeps every entry"
+    );
+    trust.approve(&path, b"new").unwrap();
+    assert!(
+        matches!(trust.decide(&path, b"old"), OverlayTrust::Untrusted { .. }),
+        "collapsed to one"
+    );
 }
 
 #[test]

@@ -104,9 +104,10 @@ fn given_overlay_trusted(world: &mut QuectoWorld) {
 }
 
 /// The trust record is written directly with the overlay's content hash,
-/// as an interactive `[y/N]` approval would leave it — without the checks
-/// `quecto config trust` applies — so a scenario can show what a *trusted*
-/// overlay that is broken, or carries a global-only section, does at load.
+/// as a pre-#2024 record or a hand edit of the record would leave it —
+/// without the checks `quecto config trust` (and the prompt) apply — so a
+/// scenario can show what a *trusted* overlay that is broken, or carries a
+/// global-only section, does at load.
 #[given("the repo-local overlay is trusted regardless of its content")]
 fn given_overlay_trusted_unchecked(world: &mut QuectoWorld) {
     use sha2::Digest;

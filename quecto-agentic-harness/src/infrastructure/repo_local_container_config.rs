@@ -130,9 +130,13 @@ pub fn effective_container_configs_for_checkout(
         }),
         TrustDecision::Approved => {
             let local = load_repo_local_container_configs(&content)?;
+            // Entry-wise (#2024): a local entry need not claim the default;
+            // the exactly-one-default rule holds for the merged set.
+            let config = merge_container_configs(global, local);
+            validate_container_configs(&config.container_configs)?;
             trust.record_approved(&identity);
             Ok(EffectiveContainerConfigs {
-                config: merge_container_configs(global, local),
+                config,
                 diagnostics: Vec::new(),
             })
         }
@@ -158,7 +162,6 @@ fn load_repo_local_container_configs(
                 .into(),
         ));
     }
-    validate_container_configs(&local.container_configs)?;
     Ok(local.container_configs)
 }
 
