@@ -2,8 +2,10 @@
 use crate::components::{
     component::Component,
     fuzzy::fuzzy_filter,
+    list_rows::SelectionStyle,
     select_list::{SelectItem, SelectList, SelectResult},
     select_overlay::build_select_overlay,
+    theme,
     utils::sanitize_truncate_chars_with_ellipsis,
 };
 use crate::protocol::session_payloads::SessionListScope;
@@ -16,11 +18,37 @@ pub enum ResumePickerEvent {
     Dismissed,
     Pending,
 }
+/// The three focusable sections, in Tab order after `Results`. The user-facing
+/// names (`Sessions`, `Local/Global`, `Search`) live in [`Focus::label`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Scope,
     Query,
     Results,
+}
+impl Focus {
+    fn label(self) -> &'static str {
+        match self {
+            Focus::Results => "Sessions",
+            Focus::Scope => "Local/Global",
+            Focus::Query => "Search",
+        }
+    }
+}
+/// Content-relative columns of the scope switch's two labels, covering both
+/// renderings (`Scope: [Local]  Global` and `Scope:  Local  [Global]`) after the
+/// two-cell focus marker.
+const LOCAL_COLS: std::ops::RangeInclusive<usize> = 9..=15;
+const GLOBAL_COLS: std::ops::RangeInclusive<usize> = 17..=24;
+/// Content rows above the first result: title, scope, search, `Sessions`.
+const HEADER_ROWS: usize = 4;
+/// Where a section marker goes: `▸ ` on the focused section, blank elsewhere.
+fn marker(focused: bool) -> String {
+    if focused {
+        theme::accent("▸ ")
+    } else {
+        "  ".into()
+    }
 }
 #[derive(Default)]
 struct HitLayout {
@@ -169,17 +197,22 @@ impl ResumePicker {
             if row == h.border + 1 && col >= h.border * 2 {
                 self.focus = Focus::Scope;
                 let col = col - h.border * 2;
-                return match col {
-                    0..=6 => self.change_scope(SessionListScope::Local),
-                    10..=17 => self.change_scope(SessionListScope::Global),
-                    _ => ResumePickerEvent::Pending,
+                return if LOCAL_COLS.contains(&col) {
+                    self.change_scope(SessionListScope::Local)
+                } else if GLOBAL_COLS.contains(&col) {
+                    self.change_scope(SessionListScope::Global)
+                } else {
+                    ResumePickerEvent::Pending
                 };
             }
             if row == h.border + 2 {
                 self.focus = Focus::Query;
             }
-            if row >= h.border + 3 {
-                let offset = row - (h.border + 3);
+            if row == h.border + 3 {
+                self.focus = Focus::Results;
+            }
+            if row >= h.border + HEADER_ROWS {
+                let offset = row - (h.border + HEADER_ROWS);
                 if offset < self.result_rows
                     && let Some(id) = self
                         .list
@@ -203,24 +236,40 @@ impl ResumePicker {
     }
     pub fn render(&mut self, width: usize, height: usize) -> (Vec<String>, usize) {
         let scope = match self.scope {
-            SessionListScope::Local => "[Local] | Global",
-            SessionListScope::Global => " Local  | [Global]",
+            SessionListScope::Local => "Scope: [Local]  Global",
+            SessionListScope::Global => "Scope:  Local  [Global]",
         };
-        let focus = match self.focus {
-            Focus::Scope => "scope",
-            Focus::Query => "query",
-            Focus::Results => "results",
-        };
+        let focus = self.focus;
+        let cursor = if focus == Focus::Query { "▏" } else { "" };
+        let footer = [Focus::Results, Focus::Scope, Focus::Query]
+            .map(|f| {
+                if f == focus {
+                    theme::accent(f.label())
+                } else {
+                    f.label().to_string()
+                }
+            })
+            .join(" ▸ ");
+        self.list.set_selection_style(if focus == Focus::Results {
+            SelectionStyle::Active
+        } else {
+            SelectionStyle::Inactive
+        });
         let (lines, panel_width) = build_select_overlay(width, height, |content_width| {
             let mut lines = vec![
                 "Resume session".into(),
-                scope.into(),
-                format!("Query: {}", self.query),
+                format!("{}{scope}", marker(focus == Focus::Scope)),
+                format!(
+                    "{}Search: {}{cursor}",
+                    marker(focus == Focus::Query),
+                    self.query
+                ),
+                format!("{}Sessions", marker(focus == Focus::Results)),
             ];
-            // Budget before rendering: outer margins, borders, three headers,
+            // Budget before rendering: outer margins, borders, the header rows,
             // footer, overflow indicator and wrapped selected details all consume rows.
             let border_rows = if width.saturating_sub(4) >= 6 { 2 } else { 0 };
-            let budget = height.saturating_sub(4 + border_rows + 4);
+            let budget = height.saturating_sub(4 + border_rows + HEADER_ROWS + 1);
             let details = self
                 .list
                 .selected_item()
@@ -249,9 +298,7 @@ impl ResumePicker {
                 lines.extend(rendered);
             }
             lines.extend(details.into_iter().take(detail_rows));
-            lines.push(format!(
-                "Tab focus ({focus}) · Enter/Space select · Esc cancel"
-            ));
+            lines.push(format!("Tab: {footer} · ↑↓ · Enter open · Esc close"));
             lines
         });
         let visible_height = lines.len().min(height.saturating_sub(4));

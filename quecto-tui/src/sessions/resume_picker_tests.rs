@@ -70,7 +70,7 @@ fn empty_picker_scope_mouse_is_centered_and_visible() {
             .iter()
             .any(|s| s.contains("Local") && s.contains("Global"))
     );
-    let x = (100 - width) / 2 + 2 + 10;
+    let x = (100 - width) / 2 + column_of(&lines[2], "Global");
     let y = (30 - lines.len()) / 2 + 2;
     assert_eq!(
         picker.handle_input(&Key::MousePress(x as u16, y as u16)),
@@ -103,7 +103,7 @@ fn mouse_result_uses_visible_window_and_ignores_outside_clicks() {
     }
     let (lines, width) = picker.render(100, 40);
     let x = (100 - width) / 2 + 3;
-    let y = (40 - lines.len()) / 2 + 4;
+    let y = (40 - lines.len()) / 2 + 5; // border, title, scope, search, Sessions
     assert_eq!(
         picker.handle_input(&Key::MousePress(0, 0)),
         ResumePickerEvent::Pending
@@ -150,7 +150,7 @@ fn selected_details_show_long_path_suffix_and_unavailable_actions() {
     assert!(text.contains("Locate unavailable"), "{text}");
     assert!(text.contains("Cancel"));
     let x = (180 - width) / 2 + 3;
-    let y = (40 - lines.len()) / 2 + 5; // details, immediately after the sole result
+    let y = (40 - lines.len()) / 2 + 6; // details, immediately after the sole result
     assert_eq!(
         picker.handle_key(&Key::MousePress(x as u16, y as u16)),
         ResumePickerEvent::Pending
@@ -184,7 +184,7 @@ fn short_height_selected_result_is_visible_before_keyboard_and_mouse_activation(
         result_identities > 0 && result_identities < 12,
         "visible results must be fitted to height 18, not always-12: {result_identities} {text}"
     );
-    assert!(text.contains("Esc cancel"));
+    assert!(text.contains("Esc close"));
     assert_eq!(
         picker.handle_key(&Key::Enter),
         ResumePickerEvent::Selected("ROW-10".into())
@@ -230,7 +230,7 @@ fn resizing_and_wrapping_navigation_keep_selection_visible_and_details_inert() {
             assert!(lines.join("\n").contains(&selected), "height={height}");
             let footer = lines
                 .iter()
-                .position(|line| line.contains("Esc cancel"))
+                .position(|line| line.contains("Esc close"))
                 .unwrap();
             let x = (100 - width) / 2 + 3;
             let y = (height - lines.len()) / 2 + footer;
@@ -262,4 +262,124 @@ fn overflow_indicator_row_is_not_an_activatable_result() {
         ResumePickerEvent::Pending
     );
     assert_eq!(picker.selected_item().unwrap().value, "ROW-00");
+}
+
+use crate::components::ansi::strip_ansi;
+use crate::components::utils::visible_width;
+
+/// Column of `needle` in `line` as the terminal shows it (ANSI stripped).
+fn column_of(line: &str, needle: &str) -> usize {
+    let plain = strip_ansi(line);
+    visible_width(&plain[..plain.find(needle).unwrap()])
+}
+
+#[test]
+fn focus_marker_moves_between_sessions_scope_and_search() {
+    let mut picker = ResumePicker::new(vec![item("a"), item("b")], SessionListScope::Local);
+    let marked = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_matches(['│', ' ']).to_string())
+            .filter(|l| l.starts_with("▸ "))
+            .collect()
+    };
+    let (lines, _) = picker.render(100, 30);
+    let text = lines.join("\n");
+    assert_eq!(marked(&lines).len(), 1, "{text}");
+    assert!(marked(&lines)[0].contains("▸ Sessions"), "{text}");
+    assert!(
+        text.contains("→ \x1b[36ma"),
+        "active selection accented: {text}"
+    );
+    assert!(
+        !text.contains('▏'),
+        "no text cursor without Search focus: {text}"
+    );
+
+    picker.handle_input(&Key::Tab);
+    let (lines, _) = picker.render(100, 30);
+    let text = lines.join("\n");
+    assert_eq!(marked(&lines).len(), 1, "{text}");
+    assert!(
+        marked(&lines)[0].contains("▸ Scope: [Local]  Global"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\x1b[2m→ "),
+        "inactive selection dimmed: {text}"
+    );
+    assert!(!text.contains("→ \x1b[36ma"), "{text}");
+
+    picker.handle_input(&Key::Tab);
+    picker.handle_input(&Key::Char('x'));
+    let (lines, _) = picker.render(100, 30);
+    let text = lines.join("\n");
+    assert_eq!(marked(&lines).len(), 1, "{text}");
+    assert!(marked(&lines)[0].contains("▸ Search: x▏"), "{text}");
+    assert!(!text.contains("Query:"), "{text}");
+}
+
+#[test]
+fn footer_names_sections_in_plain_words_and_highlights_the_focused_one() {
+    let mut picker = ResumePicker::new(vec![item("a")], SessionListScope::Local);
+    let footer = |picker: &mut ResumePicker| {
+        let (lines, _) = picker.render(100, 30);
+        lines
+            .iter()
+            .find(|l| l.contains("Esc close"))
+            .cloned()
+            .unwrap_or_else(|| panic!("footer: {}", lines.join("\n")))
+    };
+    let line = footer(&mut picker);
+    assert_eq!(
+        strip_ansi(&line).trim_matches(['│', ' ']),
+        "Tab: Sessions ▸ Local/Global ▸ Search · ↑↓ · Enter open · Esc close"
+    );
+    assert!(line.contains("\x1b[36mSessions\x1b[0m"), "{line:?}");
+    picker.handle_input(&Key::Tab);
+    assert!(footer(&mut picker).contains("\x1b[36mLocal/Global\x1b[0m"));
+    picker.handle_input(&Key::Tab);
+    assert!(footer(&mut picker).contains("\x1b[36mSearch\x1b[0m"));
+}
+
+#[test]
+fn scope_switch_clicks_land_on_the_rendered_labels() {
+    let mut picker = ResumePicker::default();
+    let (lines, width) = picker.render(100, 30);
+    let scope_row = lines.iter().position(|l| l.contains("Scope:")).unwrap();
+    let left = (100 - width) / 2;
+    let top = (30 - lines.len()) / 2;
+    let x = left + column_of(&lines[scope_row], "Global");
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, (top + scope_row) as u16)),
+        ResumePickerEvent::ScopeChanged(SessionListScope::Global)
+    );
+    let (lines, _) = picker.render(100, 30);
+    assert!(strip_ansi(&lines[scope_row]).contains("Scope:  Local  [Global]"));
+    let x = left + column_of(&lines[scope_row], "Local") + 4;
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, (top + scope_row) as u16)),
+        ResumePickerEvent::ScopeChanged(SessionListScope::Local)
+    );
+    let x = left + column_of(&lines[scope_row], "Scope:");
+    assert_eq!(
+        picker.handle_input(&Key::MousePress(x as u16, (top + scope_row) as u16)),
+        ResumePickerEvent::Pending
+    );
+}
+
+#[test]
+fn empty_list_keeps_its_placeholder_under_every_focus() {
+    let mut picker = ResumePicker::default();
+    for _ in 0..3 {
+        let (lines, _) = picker.render(100, 30);
+        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
+        let sessions = plain.iter().position(|l| l.contains("Sessions")).unwrap();
+        assert!(
+            plain[sessions + 1].contains("No items"),
+            "{}",
+            plain.join("\n")
+        );
+        picker.handle_input(&Key::Tab);
+    }
 }
