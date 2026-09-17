@@ -4,6 +4,20 @@
 
 use super::integration_tests::{args, composed_ctx};
 use super::*;
+
+/// The selection a test hands the build path for a file at `path`: explicit
+/// (must exist) or the global layer with no overlay candidate.
+pub(crate) fn selection_for_test(path: &std::path::Path, must_exist: bool) -> ConfigSelection {
+    if must_exist {
+        ConfigSelection::Explicit(path.to_path_buf())
+    } else {
+        ConfigSelection::Layered(crate::application::configuration::dto::ConfigLayers {
+            global: path.to_path_buf(),
+            overlay: None,
+            legacy_local: None,
+        })
+    }
+}
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::interface::cli::run_with_output;
 

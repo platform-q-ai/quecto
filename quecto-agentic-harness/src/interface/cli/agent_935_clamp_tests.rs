@@ -3,6 +3,7 @@
 //! configured `max_tokens` is clamped. Kept in its own file so neither this nor
 //! `agent_tests.rs` crosses the source line-count gate.
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 #[test]

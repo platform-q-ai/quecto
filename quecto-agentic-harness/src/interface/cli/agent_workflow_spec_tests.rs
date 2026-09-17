@@ -2,6 +2,7 @@
 //! the `--workflow` / `--no-workflow` build paths and the by-value
 //! `--workflow-spec` binding (PRD Stage A).
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {

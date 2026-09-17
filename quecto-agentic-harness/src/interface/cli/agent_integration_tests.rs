@@ -1,3 +1,4 @@
+use super::build_tests::selection_for_test;
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::composition::runtime::build_agent_provider;

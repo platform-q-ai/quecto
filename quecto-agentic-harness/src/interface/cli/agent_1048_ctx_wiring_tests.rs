@@ -4,6 +4,7 @@
 //! Pattern mirrors `agent_935_clamp_tests.rs`. Kept in its own file for the
 //! 750-line source gate.
 
+use super::build_tests::selection_for_test;
 use super::*;
 
 fn flags_for_wiring_test() -> AgentFlags {

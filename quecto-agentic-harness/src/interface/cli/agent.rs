@@ -734,18 +734,3 @@ mod workflow_discovery_tests;
 #[cfg(test)]
 #[path = "agent_workflow_spec_tests.rs"]
 mod workflow_spec_tests;
-
-/// The selection a test hands the build path for a file at `path`: explicit
-/// (must exist) or the global layer with no overlay candidate.
-#[cfg(test)]
-pub(crate) fn selection_for_test(path: &std::path::Path, must_exist: bool) -> ConfigSelection {
-    if must_exist {
-        ConfigSelection::Explicit(path.to_path_buf())
-    } else {
-        ConfigSelection::Layered(crate::application::configuration::dto::ConfigLayers {
-            global: path.to_path_buf(),
-            overlay: None,
-            legacy_local: None,
-        })
-    }
-}
