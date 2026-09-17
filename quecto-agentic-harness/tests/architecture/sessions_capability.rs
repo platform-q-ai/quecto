@@ -520,7 +520,7 @@ const SANITIZER_CALLERS: &[&str] = &[
 // #2009: scoped discovery/admission extends existing owners. After the review
 // splits (list_sessions_discover, save_session_home, resume_saved_session_admission,
 // dto/resume_disposition, composition/session_home, uds_dispatch_discovery) the
-// owners that remain above master are: ports.rs 148→150 (the `session_home`
+// owners that remain above master are: ports.rs 148→149 (the `session_home`
 // port module declaration), save_session.rs 268→282 (home context field, the
 // two prepare_home calls), resume_saved_session.rs 191→208 (mandatory home
 // context, admission under the claim guard at load and startup),
@@ -554,7 +554,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D7 #1976 declares and re-exports the transition ports module (was
     // 135 before D7); D9 #1978 adds the ephemeral scrub to the retention
     // port (was 142 before D9).
-    ("src/application/sessions/ports.rs", 150),
+    ("src/application/sessions/ports.rs", 149),
     ("src/application/sessions/ports/export.rs", 30),
     // D6 #1975 adds the accounting-reset port beside the save observations
     // (was 29 before D6).
