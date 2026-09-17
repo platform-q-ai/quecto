@@ -318,6 +318,9 @@ async fn warm_projection_invalidates_same_length_rewrites_and_home_changes() {
     let path = layout.session_file(&identity);
     let old = std::fs::metadata(&path).unwrap();
     let bytes = std::fs::read(&path).unwrap();
+    // The rewrite is detected through ctime; file timestamps use the kernel's
+    // coarse clock, so step past the tick in which the save landed.
+    std::thread::sleep(std::time::Duration::from_millis(25));
     std::fs::write(&path, vec![b'x'; bytes.len()]).unwrap();
     std::fs::File::options()
         .write(true)

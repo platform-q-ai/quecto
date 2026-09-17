@@ -53,10 +53,18 @@ pub(super) fn scan(
     }
     summaries.retain(|summary| {
         let path = layout.session_file(&summary.identity);
-        cache
+        let unchanged = cache
             .entries
             .get(&path)
-            .is_some_and(|(version, _)| stamp(&path).is_ok_and(|current| *version == current))
+            .is_some_and(|(version, _)| stamp(&path).is_ok_and(|current| *version == current));
+        if !unchanged {
+            tracing::warn!(
+                target: "session_store",
+                path = %path.display(),
+                "session record changed while it was being listed; skipped this listing"
+            );
+        }
+        unchanged
     });
     cache.entries.retain(|path, _| path.exists());
     summaries.sort_by(|a, b| {
