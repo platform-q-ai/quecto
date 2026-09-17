@@ -8,14 +8,20 @@
 //! limits come from that generation, the runtime's selection verdict from
 //! the same generation, and the session effort is reset through the
 //! change-reasoning-effort use case for the model now active.
+//!
+//! A switch may also record the model as a configured default (#2024 S2)
+//! — the repository overlay or the global file — through the
+//! [`ModelDefaultPersistence`] port this use case owns. The record comes
+//! before the apply: a refused record leaves the session as it was.
 
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
-    ModelLimits, ModelSelectionVerdict, ModelSwitchPlan, ModelSwitched,
+    ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
 };
 use crate::application::catalogue::ports::{
-    CatalogueInputsLoader, ModelRuntime, RuntimeSnapshotSource,
+    CatalogueInputsLoader, DefaultScope, ModelDefaultPersistence, ModelRuntime, PersistedDefault,
+    RuntimeSnapshotSource,
 };
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
@@ -27,6 +33,7 @@ pub struct ChangeActiveModel {
     store: CatalogueSnapshotStore,
     runtime: Arc<dyn RuntimeSnapshotSource>,
     effort: Arc<ChangeReasoningEffort>,
+    persistence: Arc<dyn ModelDefaultPersistence>,
 }
 
 impl ChangeActiveModel {
@@ -35,12 +42,14 @@ impl ChangeActiveModel {
         store: CatalogueSnapshotStore,
         runtime: Arc<dyn RuntimeSnapshotSource>,
         effort: Arc<ChangeReasoningEffort>,
+        persistence: Arc<dyn ModelDefaultPersistence>,
     ) -> Self {
         Self {
             inputs,
             store,
             runtime,
             effort,
+            persistence,
         }
     }
 
@@ -81,7 +90,46 @@ impl ChangeActiveModel {
     /// Plan and apply: the loop runs on `model` with its limits from the
     /// next turn on, and its effort is reset for the new model.
     pub fn execute(&self, runtime: &mut dyn ModelRuntime, model: &str) -> ModelSwitched {
+        self.apply(runtime, self.plan(model), None)
+    }
+
+    /// Plan, record the model as the configured default of `persist` when
+    /// asked, then apply. The recorded id is the qualified `provider/model`
+    /// the plan resolved; a bare id (which the catalogue cannot attribute
+    /// to a provider and a later start would route to the first
+    /// configured one) is not recorded, and neither it nor a record the
+    /// adapter refuses changes the session.
+    pub fn execute_with_default(
+        &self,
+        runtime: &mut dyn ModelRuntime,
+        model: &str,
+        persist: Option<DefaultScope>,
+    ) -> Result<ModelSwitched, ModelSwitchError> {
         let plan = self.plan(model);
+        let persisted = match persist {
+            None => None,
+            Some(scope) => {
+                let qualified = Self::qualified(&plan)?;
+                Some(
+                    self.persistence
+                        .persist_model(scope, &qualified)
+                        .map_err(|reason| ModelSwitchError::Persist {
+                            model: qualified,
+                            scope,
+                            reason,
+                        })?,
+                )
+            }
+        };
+        Ok(self.apply(runtime, plan, persisted))
+    }
+
+    fn apply(
+        &self,
+        runtime: &mut dyn ModelRuntime,
+        plan: ModelSwitchPlan,
+        persisted: Option<PersistedDefault>,
+    ) -> ModelSwitched {
         runtime.apply_model(plan.model.clone(), plan.limits);
         // The reset reads the model the runtime now reports, so it can only
         // ever follow the switch.
@@ -90,7 +138,17 @@ impl ChangeActiveModel {
         ModelSwitched {
             plan,
             effort_changed,
+            persisted,
         }
+    }
+
+    /// The `provider/model` id a plan stands for, if it names one.
+    fn qualified(plan: &ModelSwitchPlan) -> Result<String, ModelSwitchError> {
+        ModelRef::parse_qualified(&plan.model)
+            .map(|reference| reference.qualified_id())
+            .map_err(|_| ModelSwitchError::Unqualified {
+                model: plan.model.clone(),
+            })
     }
 
     /// The published runtime's verdict on `reference` (#1573): known and

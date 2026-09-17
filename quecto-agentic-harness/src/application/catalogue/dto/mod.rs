@@ -8,7 +8,9 @@ pub mod model_listing;
 pub mod refresh;
 pub mod reload;
 
-pub use active_model::{ModelLimits, ModelSelectionVerdict, ModelSwitchPlan, ModelSwitched};
+pub use active_model::{
+    ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
+};
 pub use effort::{EffortChangeError, EffortChangeOutcome, EffortChangeRequest};
 pub use model_listing::{
     ListedModel, ListingDiagnostic, ModelCatalogueListing, ModelListingOutcome,
