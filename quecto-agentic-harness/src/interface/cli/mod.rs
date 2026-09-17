@@ -698,7 +698,7 @@ fn help_text(out: &mut String) {
     out.push_str(
         "                       --disable-tool <name>  Disable/hide a tool and deny re-registration (repeatable)\n",
     );
-    out.push_str("  container   Initialize the embedded standard rootless Podman bundle\n");
+    out.push_str("  container   Initialize the embedded standard rootless container bundle\n");
     out.push_str("              Usage: quecto container init [--project /absolute/project]\n");
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");

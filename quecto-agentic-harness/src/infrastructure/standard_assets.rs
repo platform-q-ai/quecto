@@ -32,23 +32,23 @@ const ASSETS: &[StandardAsset] = &[
         mode: 0o600,
     },
     StandardAsset {
-        path: "standard-container/scripts/podman/create.sh",
-        contents: include_str!("../../assets/standard-container/scripts/podman/create.sh"),
+        path: "standard-container/scripts/runtime/create.sh",
+        contents: include_str!("../../assets/standard-container/scripts/runtime/create.sh"),
         mode: 0o755,
     },
     StandardAsset {
-        path: "standard-container/scripts/podman/exec.sh",
-        contents: include_str!("../../assets/standard-container/scripts/podman/exec.sh"),
+        path: "standard-container/scripts/runtime/exec.sh",
+        contents: include_str!("../../assets/standard-container/scripts/runtime/exec.sh"),
         mode: 0o755,
     },
     StandardAsset {
-        path: "standard-container/scripts/podman/inspect.sh",
-        contents: include_str!("../../assets/standard-container/scripts/podman/inspect.sh"),
+        path: "standard-container/scripts/runtime/inspect.sh",
+        contents: include_str!("../../assets/standard-container/scripts/runtime/inspect.sh"),
         mode: 0o755,
     },
     StandardAsset {
-        path: "standard-container/scripts/podman/kill.sh",
-        contents: include_str!("../../assets/standard-container/scripts/podman/kill.sh"),
+        path: "standard-container/scripts/runtime/kill.sh",
+        contents: include_str!("../../assets/standard-container/scripts/runtime/kill.sh"),
         mode: 0o755,
     },
 ];

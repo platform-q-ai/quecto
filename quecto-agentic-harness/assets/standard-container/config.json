@@ -2,11 +2,11 @@
   "container_configs": {
     "standard": {
       "default": true,
-      "create": ["@PROJECT@/scripts/podman/create.sh", "--state-dir", "@PROJECT@/state", "--"],
-      "exec": ["@PROJECT@/scripts/podman/exec.sh"],
-      "inspect": ["@PROJECT@/scripts/podman/inspect.sh"],
-      "kill": ["@PROJECT@/scripts/podman/kill.sh"],
-      "cleanup": ["@PROJECT@/scripts/podman/kill.sh"]
+      "create": ["@PROJECT@/scripts/runtime/create.sh", "--state-dir", "@PROJECT@/state", "--"],
+      "exec": ["@PROJECT@/scripts/runtime/exec.sh"],
+      "inspect": ["@PROJECT@/scripts/runtime/inspect.sh"],
+      "kill": ["@PROJECT@/scripts/runtime/kill.sh"],
+      "cleanup": ["@PROJECT@/scripts/runtime/kill.sh"]
     }
   }
 }

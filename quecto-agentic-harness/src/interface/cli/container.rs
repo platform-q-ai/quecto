@@ -42,7 +42,7 @@ pub(crate) fn cmd_container(ctx: &CliContext, args: &[String], stdout: &mut Stri
     }
     match standard_assets::materialize_standard_assets_for_root(&bundle, &project) {
         Ok(created) => {
-            stdout.push_str(&format!("Standard Podman container bundle ready at {}\n", bundle.display()));
+            stdout.push_str(&format!("standard container bundle ready at {}\n", bundle.display()));
             if created.is_empty() { stdout.push_str("No files changed (existing files were preserved).\n"); }
             else { stdout.push_str(&format!("Materialized {} files.\n", created.len())); }
             0
