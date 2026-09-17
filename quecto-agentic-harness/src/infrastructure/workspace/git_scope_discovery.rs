@@ -154,11 +154,38 @@ impl GitScopeDiscovery {
     }
 }
 
+/// Git said "not a repository": no ancestor on the same filesystem may carry
+/// a `.git` marker, or discovery failed rather than found nothing.
 fn verify_no_git_marker(directory: &Path) -> Result<(), DomainError> {
-    for ancestor in directory.ancestors() {
-        verify_no_marker(ancestor)?;
+    for ancestor in marker_walk(directory)? {
+        verify_no_marker(&ancestor)?;
     }
     Ok(())
+}
+
+/// The ancestors Git's own parent walk examines: the directory and its
+/// parents up to, and not beyond, the filesystem the directory lives on
+/// (`GIT_DISCOVERY_ACROSS_FILESYSTEM` is never set for it). A `.git` above a
+/// mount point (a bind-mounted subdirectory, a container volume) is not
+/// Git's repository and must not turn "not a repository" into a failure.
+fn marker_walk(directory: &Path) -> Result<Vec<PathBuf>, DomainError> {
+    use std::os::unix::fs::MetadataExt;
+    let device = std::fs::metadata(directory)
+        .map_err(|error| DomainError::Session(format!("Git boundary unavailable: {error}")))?
+        .dev();
+    let mut walk = Vec::new();
+    for ancestor in directory.ancestors() {
+        match std::fs::metadata(ancestor) {
+            Ok(metadata) if metadata.dev() == device => walk.push(ancestor.to_path_buf()),
+            Ok(_) => break,
+            Err(error) => {
+                return Err(DomainError::Session(format!(
+                    "Git boundary unavailable: {error}"
+                )));
+            }
+        }
+    }
+    Ok(walk)
 }
 
 fn verify_no_marker(ancestor: &Path) -> Result<(), DomainError> {

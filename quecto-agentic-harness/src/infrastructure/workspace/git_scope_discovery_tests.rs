@@ -169,6 +169,51 @@ fn non_git_folder_on_a_mount_boundary_is_an_exact_folder() {
     );
 }
 
+/// L4: the marker walk stops where Git's parent walk stops — at the
+/// filesystem boundary — so a `.git` above a mount point is never consulted.
+#[test]
+fn marker_walk_stops_at_the_filesystem_boundary_git_stopped_at() {
+    let Some(boundary) = mount_boundary_directory() else {
+        eprintln!("no writable mount boundary on this machine; walk covers the same device");
+        return;
+    };
+    let dir = tempfile::tempdir_in(&boundary).unwrap();
+    let nested = dir.path().join("a").join("b");
+    std::fs::create_dir_all(&nested).unwrap();
+    let canonical = nested.canonicalize().unwrap();
+    let boundary = boundary.canonicalize().unwrap();
+    let walk = marker_walk(&canonical).unwrap();
+    assert_eq!(walk.first().unwrap(), &canonical);
+    assert_eq!(
+        walk.last().unwrap(),
+        &boundary,
+        "the mount point itself is examined, nothing above it: {walk:?}"
+    );
+    assert!(
+        !walk.iter().any(|dir| dir == boundary.parent().unwrap()),
+        "{walk:?}"
+    );
+    assert!(verify_no_git_marker(&canonical).is_ok());
+}
+
+#[test]
+fn marker_walk_on_one_filesystem_reaches_every_ancestor() {
+    let dir = tempfile::tempdir().unwrap();
+    let canonical = dir.path().canonicalize().unwrap();
+    let walk = marker_walk(&canonical).unwrap();
+    let same_device: Vec<_> = canonical
+        .ancestors()
+        .take_while(|ancestor| {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(ancestor).map(|m| m.dev()).ok()
+                == std::fs::metadata(&canonical).map(|m| m.dev()).ok()
+        })
+        .map(Path::to_path_buf)
+        .collect();
+    assert_eq!(walk, same_device);
+    assert!(marker_walk(&canonical.join("missing")).is_err());
+}
+
 #[test]
 fn git_is_resolved_to_an_absolute_program_once() {
     let discovery = GitScopeDiscovery::default();
