@@ -94,14 +94,41 @@ pub struct CredentialStore {
 
 /// Transaction-scoped lock, explicitly released even if a concurrently forked
 /// child still holds a duplicate of the open file description until exec.
-struct CredentialLock(std::fs::File);
+///
+/// `flock(2)` is owned by the open file description, not the descriptor.
+/// `File` is already `FD_CLOEXEC`, so an exec'd child does not keep the lock,
+/// but any fork-to-exec window (or a child that has not yet exec'd) still
+/// holds a duplicate. Closing our fd then leaves `try_lock` returning
+/// `WouldBlock` until that duplicate is gone — the parallel cargo-test
+/// failure mode when another test thread forks while a credential write
+/// holds this lock. `LOCK_UN` releases every duplicate of this OFD.
+struct CredentialLock {
+    _file: std::fs::File,
+}
+
+impl CredentialLock {
+    /// A duplicate of the lock's descriptor sharing its open file description,
+    /// as a child forked while the lock is held would inherit it.
+    /// `cfg(test)` only: `test-support` on the lib path would otherwise
+    /// `deny(dead_code)` these helpers (they are unused outside unit tests).
+    #[cfg(test)]
+    fn inherited_descriptor(&self) -> std::io::Result<std::fs::File> {
+        self._file.try_clone()
+    }
+
+    #[cfg(all(unix, test))]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd;
+        self._file.as_raw_fd()
+    }
+}
 
 impl Drop for CredentialLock {
     #[expect(clippy::incompatible_msrv)]
     fn drop(&mut self) {
         // Closing only our descriptor can leave the flock owned by an inherited
         // duplicate. Match the ownership/singleton guards' explicit release.
-        let _ = self.0.unlock();
+        let _ = self._file.unlock();
     }
 }
 
@@ -179,9 +206,35 @@ impl CredentialStore {
         let file = file.map_err(|e| {
             DomainError::Config(format!("failed to open credentials lock file: {}", e))
         })?;
+        // Affirmative CLOEXEC: an exec'd child must not inherit this fd.
+        // `std::fs::File` is CLOEXEC today, but the invariant is ours — set it
+        // rather than assuming the std open flags. CLOEXEC does not cover the
+        // fork-to-exec window; Drop's unlock() does.
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = file.as_raw_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags < 0 {
+                return Err(DomainError::Config(
+                    "failed to read credentials lock fd flags".to_string(),
+                ));
+            }
+            let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+            if rc != 0 {
+                return Err(DomainError::Config(
+                    "failed to set FD_CLOEXEC on credentials lock fd".to_string(),
+                ));
+            }
+            debug_assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC,
+                "credentials lock fd must be FD_CLOEXEC"
+            );
+        }
         file.lock()
             .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
-        Ok(CredentialLock(file))
+        Ok(CredentialLock { _file: file })
     }
 
     /// Save all credentials to disk with restricted file permissions (0600).

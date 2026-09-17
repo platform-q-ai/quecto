@@ -387,10 +387,7 @@ async fn concurrent_home_replacement_keeps_published_observation_consistent() {
     let writer_barrier = barrier.clone();
     let writer = std::thread::spawn(move || {
         writer_barrier.wait();
-        while matches!(
-            writer_stop.load(std::sync::atomic::Ordering::Acquire),
-            false
-        ) {
+        while !writer_stop.load(std::sync::atomic::Ordering::Acquire) {
             for bytes in [valid.as_slice(), b"{broken"] {
                 let mut temporary =
                     tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
@@ -428,7 +425,7 @@ async fn summary_projection_skips_warm_reads_and_invalidates_rewrites() {
     let store = FileSessionStore::new(layout.clone());
     let identity = SessionIdentity::from_persisted_key("chat-summary-cache");
     store.save(&session(identity.clone())).await.unwrap();
-    let query = SessionListQuery::default();
+    let query = SessionListQuery::All;
     assert_eq!(store.list(&query).await.unwrap().len(), 1);
     let reads = store.summary_transcript_reads();
     assert_eq!(store.list(&query).await.unwrap().len(), 1);
@@ -440,4 +437,99 @@ async fn summary_projection_skips_warm_reads_and_invalidates_rewrites() {
     assert_eq!(store.list(&query).await.unwrap().len(), 1);
     std::fs::remove_file(layout.session_file(&identity)).unwrap();
     assert!(store.list(&query).await.unwrap().is_empty());
+}
+
+#[test]
+fn exact_key_read_never_depends_on_the_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    std::fs::create_dir_all(layout.sessions_dir()).unwrap();
+    let identity = SessionIdentity::from_persisted_key("chat-exact");
+    let catalogue = FileSessionHomeCatalogue::with_store(
+        layout.clone(),
+        Arc::new(FileSessionStore::new(layout.clone())),
+    );
+    catalogue.record_new(&identity, &home()).unwrap();
+    std::fs::write(
+        layout.home_catalogue_file(),
+        br#"{"version":1,"records":{"home:chat-exact":[0]}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        catalogue.read(&identity).unwrap(),
+        SessionHomeScope::Scoped(home())
+    );
+    std::fs::write(layout.home_catalogue_file(), b"corrupt").unwrap();
+    assert_eq!(
+        catalogue.read(&identity).unwrap(),
+        SessionHomeScope::Scoped(home())
+    );
+    std::fs::write(layout.home_file(&identity), b"{broken").unwrap();
+    assert!(matches!(
+        catalogue.read(&identity).unwrap(),
+        SessionHomeScope::Unavailable(_)
+    ));
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn warm_listing_does_not_reread_unchanged_transcripts_across_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let first = SessionIdentity::from_persisted_key("chat-warm-a");
+    let second = SessionIdentity::from_persisted_key("chat-warm-b");
+    store.save(&session(first.clone())).await.unwrap();
+    store.save(&session(second.clone())).await.unwrap();
+    let listed = catalogue.list().unwrap();
+    assert_eq!(listed.entries.len(), 2);
+    let cold = catalogue.transcript_reads();
+    assert!(cold >= 2, "cold listing must parse each transcript once");
+    assert_eq!(catalogue.list().unwrap().entries.len(), 2);
+    assert_eq!(
+        catalogue.transcript_reads(),
+        cold,
+        "warm listing reread unchanged transcripts"
+    );
+    let mut changed = session(first.clone());
+    changed.messages.push(Message::user("changed"));
+    store.save(&changed).await.unwrap();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 2);
+    let after_one = catalogue.transcript_reads();
+    assert!(after_one > cold, "changed transcript must be revalidated");
+    assert_eq!(catalogue.list().unwrap().entries.len(), 2);
+    assert_eq!(
+        catalogue.transcript_reads(),
+        after_one,
+        "unchanged sibling transcript was reread after a single save"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn stale_corrupt_index_recovers_from_authority_without_trusting_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    let catalogue = FileSessionHomeCatalogue::with_store(layout.clone(), store.clone());
+    let identity = SessionIdentity::from_persisted_key("chat-stale-index");
+    catalogue.record_new(&identity, &home()).unwrap();
+    store.save(&session(identity.clone())).await.unwrap();
+    assert_eq!(catalogue.list().unwrap().entries.len(), 1);
+    let cold = catalogue.transcript_reads();
+    std::fs::write(layout.home_catalogue_file(), b"not-json").unwrap();
+    let recovered = catalogue.list().unwrap();
+    assert!(recovered.rebuilt);
+    assert_eq!(
+        recovered.entries,
+        vec![(identity.clone(), SessionHomeScope::Scoped(home()))]
+    );
+    assert!(
+        catalogue.transcript_reads() > cold,
+        "externally changed index must invalidate the trusted projection"
+    );
+    let after_recovery = catalogue.transcript_reads();
+    assert!(!catalogue.list().unwrap().rebuilt);
+    assert_eq!(catalogue.transcript_reads(), after_recovery);
 }

@@ -250,23 +250,46 @@ fn exact_foreign(world: &mut QuectoWorld) {
         assert!(Instant::now() < deadline, "resume response timed out");
     }
 }
-#[then("the runtime refuses replacement and preserves the selected conversation")]
-fn refused(world: &mut QuectoWorld) {
+fn assert_scope_refusal(
+    world: &mut QuectoWorld,
+    expected: quecto::application::sessions::dto::resume_saved_session::ResumeDisposition,
+) {
+    use quecto::application::sessions::dto::ResumeSavedSessionError;
     let response: serde_json::Value = serde_json::from_str(&world.stderr).unwrap();
     assert_eq!(response["success"], false, "{response}");
-    use quecto::application::sessions::dto::{
-        ResumeSavedSessionError, resume_saved_session::ResumeDisposition,
-    };
+    let error = response["error"]
+        .as_str()
+        .expect("typed resume error string");
+    assert_eq!(
+        error,
+        ResumeSavedSessionError::Scope(expected).to_string(),
+        "{response}"
+    );
+    assert!(
+        error.starts_with("session resume unavailable:"),
+        "scope refusal, not ephemeral/generic: {error}"
+    );
+}
+
+#[then("the runtime refuses replacement as a different-execution-directory scope error")]
+fn refused_foreign_directory(world: &mut QuectoWorld) {
+    use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
+    assert_scope_refusal(world, ResumeDisposition::DifferentExecutionDirectory);
+}
+
+#[then("the runtime refuses replacement as an unavailable-home scope error")]
+fn refused_corrupt_home(world: &mut QuectoWorld) {
+    use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
+    assert_scope_refusal(
+        world,
+        ResumeDisposition::Unavailable("corrupt authority".into()),
+    );
+}
+
+#[then("the selected conversation identity history and ownership are preserved")]
+fn preserved_active_identity(world: &mut QuectoWorld) {
     let process = world.session_scope_process.as_ref().unwrap();
     let home = process.source_home.as_ref().unwrap().clone();
-    let disposition = match serde_json::from_slice::<serde_json::Value>(&home) {
-        Ok(_) => ResumeDisposition::DifferentExecutionDirectory,
-        Err(_) => ResumeDisposition::Unavailable("corrupt authority".into()),
-    };
-    assert_eq!(
-        response["error"],
-        ResumeSavedSessionError::Scope(disposition).to_string()
-    );
     let before = process.before_history.as_ref().unwrap().clone();
     let before_state = process.before_state.as_ref().unwrap().clone();
     let after_state = query(world, "get_state");
@@ -276,15 +299,13 @@ fn refused(world: &mut QuectoWorld) {
             "active {field} preserved"
         );
     }
+    assert_eq!(before_state["sessionKey"], "cli:local");
     assert!(
         before.to_string().contains("LOCAL-CONVERSATION"),
         "nonempty active history: {before}"
     );
-    assert_eq!(
-        query(world, "get_messages"),
-        before,
-        "active history preserved"
-    );
+    let after_history = query(world, "get_messages");
+    assert_eq!(after_history, before, "active history preserved");
     assert_eq!(query(world, "get_session_stats")["sessionKey"], "cli:local");
     let base = world.cli_context.base_dir.as_ref().unwrap();
     assert_eq!(
@@ -327,7 +348,13 @@ fn refused(world: &mut QuectoWorld) {
 }
 fn query(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
     let process = world.session_scope_process.as_mut().unwrap();
-    let id = format!("scope-check-{kind}");
+    let id = format!(
+        "scope-check-{kind}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     writeln!(
         process.stream,
         "{}",

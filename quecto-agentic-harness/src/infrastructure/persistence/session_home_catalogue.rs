@@ -4,7 +4,7 @@ use super::{
     session_layout::FlatSessionLayout,
     session_store::{
         FileSessionStore,
-        session_store_home::{atomic_write, error},
+        session_store_home::{atomic_write, decode, error},
     },
 };
 use crate::{
@@ -106,14 +106,33 @@ impl FileSessionHomeCatalogue {
                     .push(format!("session directory entry unavailable: {e}")),
             }
         }
+        self.publish_stable_rows(&mut records, &mut result)?;
+        result.entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok((
+            Catalogue {
+                version: 1,
+                records,
+            },
+            result,
+        ))
+    }
+    fn publish_stable_rows(
+        &self,
+        records: &mut BTreeMap<String, Vec<u8>>,
+        result: &mut HomeCatalogueSnapshot,
+    ) -> Result<(), DomainError> {
         // A save/delete may have raced an earlier row while later rows were read.
         // Admit only rows whose validated authority still has the same signature.
         let mut projection = self.projection.lock().map_err(error)?;
-        result.entries.retain(|(identity, _)| {
+        result.entries.retain(|(identity, home)| {
             let path = self.layout.session_file(identity);
             let valid = projection
                 .get(&path)
                 .is_some_and(|entry| stamp(&path).is_ok_and(|current| current == entry.stamp));
+            assert!(
+                fingerprinted_home_matches(records, identity, home),
+                "published home observation must match the fingerprinted home bytes"
+            );
             if valid {
                 true
             } else {
@@ -127,14 +146,7 @@ impl FileSessionHomeCatalogue {
             }
         });
         projection.retain(|path, _| path.exists());
-        result.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok((
-            Catalogue {
-                version: 1,
-                records,
-            },
-            result,
-        ))
+        Ok(())
     }
     fn scan_record(
         &self,
@@ -142,88 +154,13 @@ impl FileSessionHomeCatalogue {
         records: &mut BTreeMap<String, Vec<u8>>,
         result: &mut HomeCatalogueSnapshot,
     ) {
-        let parsed = (|| -> Result<SessionIdentity, DomainError> {
-            let before = stamp(&path)?;
-            let cached = self.projection.lock().map_err(error)?.get(&path).cloned();
-            if let Some(cached) = cached.filter(|entry| entry.stamp == before) {
-                records.insert(
-                    format!("record:{}", cached.identity.runtime_key()),
-                    cached.digest,
-                );
-                return Ok(cached.identity);
-            }
-            self.transcript_reads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let bytes = std::fs::read(&path).map_err(error)?;
-            let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-                Ok(value) => value,
-                Err(_) => {
-                    // Validate every JSONL record: an in-flight partial append must
-                    // never publish a row based only on its intact snapshot header.
-                    let mut values = serde_json::Deserializer::from_slice(&bytes)
-                        .into_iter::<serde_json::Value>();
-                    let first = values
-                        .next()
-                        .ok_or_else(|| error("empty session"))?
-                        .map_err(error)?;
-                    for value in values {
-                        value.map_err(error)?;
-                    }
-                    first
-                }
-            };
-            super::session_store::validate_catalogue_record(&bytes)?;
-            let key = value
-                .get("key")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| error("record has no key"))?;
-            let identity = SessionIdentity::from_persisted_key(key);
-            if self.layout.session_file(&identity) == path && identity.persisted_key().is_some() {
-                use sha2::Digest;
-                let after = stamp(&path)?;
-                if before == after {
-                    let digest = sha2::Sha256::digest(&bytes).to_vec();
-                    self.projection.lock().map_err(error)?.insert(
-                        path.clone(),
-                        Projection {
-                            stamp: after,
-                            identity: identity.clone(),
-                            digest: digest.clone(),
-                        },
-                    );
-                    records.insert(format!("record:{key}"), digest);
-                } else {
-                    return Err(error("session changed during catalogue validation"));
-                }
-                Ok(identity)
-            } else {
-                Err(error("record identity does not match layout"))
-            }
-        })();
-        match parsed {
+        match self.projected_identity(&path, records) {
             Ok(identity) => {
-                // Decode the exact observation fingerprinted in the index: a
-                // concurrent atomic home replacement cannot mix two versions.
-                let home = match std::fs::read(self.layout.home_file(&identity)) {
-                    Ok(bytes) => {
-                        let home = super::session_store::session_store_home::decode(&bytes);
-                        records.insert(format!("home:{}", identity.runtime_key()), bytes);
-                        home
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        match std::fs::symlink_metadata(self.layout.home_file(&identity)) {
-                            Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => {
-                                SessionHomeScope::LegacyUnscoped
-                            }
-                            _ => SessionHomeScope::Unavailable(
-                                "home authority is inaccessible".into(),
-                            ),
-                        }
-                    }
-                    Err(e) => {
-                        SessionHomeScope::Unavailable(format!("home authority unreadable: {e}"))
-                    }
-                };
+                let home = self.observe_home(&identity, records);
+                assert!(
+                    fingerprinted_home_matches(records, &identity, &home),
+                    "published home observation must match the fingerprinted home bytes"
+                );
                 if let SessionHomeScope::Unavailable(reason) = &home {
                     result
                         .diagnostics
@@ -235,6 +172,126 @@ impl FileSessionHomeCatalogue {
                 .diagnostics
                 .push(format!("session record unavailable: {e}")),
         }
+    }
+    fn projected_identity(
+        &self,
+        path: &PathBuf,
+        records: &mut BTreeMap<String, Vec<u8>>,
+    ) -> Result<SessionIdentity, DomainError> {
+        let before = stamp(path)?;
+        if let Some(cached) = self.cached_if_current(path, &before)? {
+            records.insert(
+                format!("record:{}", cached.identity.runtime_key()),
+                cached.digest,
+            );
+            return Ok(cached.identity);
+        }
+        self.transcript_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let bytes = std::fs::read(path).map_err(error)?;
+        let identity = identity_from_transcript(&bytes, path, &self.layout)?;
+        super::session_store::validate_catalogue_record(&bytes)?;
+        debug_assert_eq!(self.layout.session_file(&identity), *path);
+        let after = stamp(path)?;
+        if before == after {
+            use sha2::Digest;
+            let digest = sha2::Sha256::digest(&bytes).to_vec();
+            self.projection.lock().map_err(error)?.insert(
+                path.clone(),
+                Projection {
+                    stamp: after,
+                    identity: identity.clone(),
+                    digest: digest.clone(),
+                },
+            );
+            records.insert(format!("record:{}", identity.runtime_key()), digest);
+            Ok(identity)
+        } else {
+            Err(error("session changed during catalogue validation"))
+        }
+    }
+    fn cached_if_current(
+        &self,
+        path: &std::path::Path,
+        before: &[u64],
+    ) -> Result<Option<Projection>, DomainError> {
+        Ok(self
+            .projection
+            .lock()
+            .map_err(error)?
+            .get(path)
+            .cloned()
+            .filter(|entry| entry.stamp == before))
+    }
+    fn observe_home(
+        &self,
+        identity: &SessionIdentity,
+        records: &mut BTreeMap<String, Vec<u8>>,
+    ) -> SessionHomeScope {
+        // Decode the exact observation fingerprinted in the index: a
+        // concurrent atomic home replacement cannot mix two versions.
+        match std::fs::read(self.layout.home_file(identity)) {
+            Ok(bytes) => {
+                let home = decode(&bytes);
+                records.insert(format!("home:{}", identity.runtime_key()), bytes);
+                home
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::symlink_metadata(self.layout.home_file(identity)) {
+                    Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => {
+                        SessionHomeScope::LegacyUnscoped
+                    }
+                    _ => SessionHomeScope::Unavailable("home authority is inaccessible".into()),
+                }
+            }
+            Err(e) => SessionHomeScope::Unavailable(format!("home authority unreadable: {e}")),
+        }
+    }
+}
+fn identity_from_transcript(
+    bytes: &[u8],
+    path: &std::path::Path,
+    layout: &FlatSessionLayout,
+) -> Result<SessionIdentity, DomainError> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => first_jsonl_value(bytes)?,
+    };
+    let key = value
+        .get("key")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| error("record has no key"))?;
+    let identity = SessionIdentity::from_persisted_key(key);
+    if layout.session_file(&identity) == path && identity.persisted_key().is_some() {
+        Ok(identity)
+    } else {
+        Err(error("record identity does not match layout"))
+    }
+}
+fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
+    // Validate every JSONL record: an in-flight partial append must never
+    // publish a row based only on its intact snapshot header.
+    let mut values = serde_json::Deserializer::from_slice(bytes).into_iter::<serde_json::Value>();
+    let first = values
+        .next()
+        .ok_or_else(|| error("empty session"))?
+        .map_err(error)?;
+    for value in values {
+        value.map_err(error)?;
+    }
+    Ok(first)
+}
+fn fingerprinted_home_matches(
+    records: &BTreeMap<String, Vec<u8>>,
+    identity: &SessionIdentity,
+    home: &SessionHomeScope,
+) -> bool {
+    match records.get(&format!("home:{}", identity.runtime_key())) {
+        Some(bytes) => &decode(bytes) == home,
+        None => matches!(
+            home,
+            SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_)
+        ),
     }
 }
 impl SessionHomeCatalogue for FileSessionHomeCatalogue {

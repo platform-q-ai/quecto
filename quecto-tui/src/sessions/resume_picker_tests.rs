@@ -171,8 +171,20 @@ fn short_height_selected_result_is_visible_before_keyboard_and_mouse_activation(
         picker.handle_key(&Key::Down);
     }
     let (lines, width) = picker.render_overlay(100, 18);
-    assert!(lines.join("\n").contains("ROW-10"));
-    assert!(lines.join("\n").contains("Esc cancel"));
+    let text = lines.join("\n");
+    // Independently reproduced against always-12: overlay truncates to
+    // height-4=14, so ROW-10 sits past the clip while Enter still returned it.
+    // A height-derived window must scroll ROW-00 off and keep ROW-10 on-screen.
+    assert!(text.contains("ROW-10"), "{text}");
+    assert!(!text.contains("ROW-00"), "{text}");
+    let result_identities = (0..20)
+        .filter(|i| text.contains(&format!("ROW-{i:02}")))
+        .count();
+    assert!(
+        result_identities > 0 && result_identities < 12,
+        "visible results must be fitted to height 18, not always-12: {result_identities} {text}"
+    );
+    assert!(text.contains("Esc cancel"));
     assert_eq!(
         picker.handle_key(&Key::Enter),
         ResumePickerEvent::Selected("ROW-10".into())
@@ -232,4 +244,22 @@ fn resizing_and_wrapping_navigation_keep_selection_visible_and_details_inert() {
             );
         }
     }
+}
+
+#[test]
+fn overflow_indicator_row_is_not_an_activatable_result() {
+    let items = (0..20).map(|i| item(&format!("ROW-{i:02}"))).collect();
+    let mut picker = ResumePicker::new(items, SessionListScope::Local);
+    let (lines, width) = picker.render_overlay(100, 18);
+    let indicator = lines
+        .iter()
+        .position(|line| line.contains("(1/20)"))
+        .expect("overflow indicator");
+    let x = (100 - width) / 2 + 3;
+    let y = (18 - lines.len()) / 2 + indicator;
+    assert_eq!(
+        picker.handle_key(&Key::MousePress(x as u16, y as u16)),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(picker.selected_item().unwrap().value, "ROW-00");
 }

@@ -523,6 +523,23 @@ fn test_lock_file_is_owner_only() {
     assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
 }
 
+/// The lock fd is CLOEXEC so an already-exec'd child cannot keep the flock.
+/// This does not replace Drop's unlock(): CLOEXEC does not cover fork-to-exec.
+#[cfg(unix)]
+#[test]
+fn credentials_lock_fd_is_cloexec() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    let lock = store.lock_exclusive().unwrap();
+    let flags = unsafe { libc::fcntl(lock.as_raw_fd(), libc::F_GETFD) };
+    assert!(flags >= 0, "F_GETFD on credentials lock");
+    assert_ne!(
+        flags & libc::FD_CLOEXEC,
+        0,
+        "credentials lock fd must be FD_CLOEXEC"
+    );
+}
+
 /// A descriptor inherited across fork shares the same open file description.
 /// Retain a real duplicate deterministically, rather than relying on concurrent
 /// process-launch scheduling to hit the fork-to-exec window.
@@ -531,7 +548,7 @@ fn credentials_lock_releases_while_inherited_descriptor_remains_open() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
     let lock = store.lock_exclusive().unwrap();
-    let inherited = lock.0.try_clone().unwrap();
+    let inherited = lock.inherited_descriptor().unwrap();
     let contender = std::fs::OpenOptions::new()
         .write(true)
         .open(store.lock_path())

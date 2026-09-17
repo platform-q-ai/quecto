@@ -246,6 +246,147 @@ async fn discovery_observations_scale_with_directories_not_rows() {
 }
 
 #[tokio::test]
+async fn one_hundred_sessions_in_one_directory_discover_once() {
+    let saved = observed_home(Path::new("/here"));
+    let entries: Vec<_> = (0..100)
+        .map(|i| {
+            (
+                SessionIdentity::user_chat(&format!("chat-same-{i}")).unwrap(),
+                SessionHomeScope::Scoped(saved.clone()),
+            )
+        })
+        .collect();
+    let summaries = entries
+        .iter()
+        .map(|(id, _)| summary(id.runtime_key(), None))
+        .collect();
+    let discovery = Arc::new(CountingDiscovery(Mutex::new(vec![])));
+    let listed = ListSessions::new(ScriptedStore::answering(Ok(summaries)))
+        .with_home(SessionHomeContext {
+            catalogue: Arc::new(FixedCatalogue(entries)),
+            discovery: discovery.clone(),
+            execution_dir: "/here".into(),
+        })
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Global,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.sessions.len(), 100);
+    assert!(listed.sessions.iter().all(|row| row.resume_eligible));
+    assert_eq!(
+        *discovery.0.lock().unwrap(),
+        vec![PathBuf::from("/here")],
+        "shared Git directory must not rediscover per row"
+    );
+}
+
+#[tokio::test]
+async fn current_canonical_observation_is_reused_for_saved_directory() {
+    struct CanonicalDiscovery(Mutex<Vec<PathBuf>>);
+    impl WorkspaceDiscovery for CanonicalDiscovery {
+        fn discover(&self, path: &Path) -> Result<SessionHome, DomainError> {
+            self.0.lock().unwrap().push(path.into());
+            let observed = match path.to_str() {
+                Some("/cwd") => Path::new("/canonical"),
+                _ => path,
+            };
+            Ok(observed_home(observed))
+        }
+    }
+    let saved = observed_home(Path::new("/canonical"));
+    let entries: Vec<_> = (0..100)
+        .map(|i| {
+            (
+                SessionIdentity::user_chat(&format!("chat-canon-{i}")).unwrap(),
+                SessionHomeScope::Scoped(saved.clone()),
+            )
+        })
+        .collect();
+    let summaries = entries
+        .iter()
+        .map(|(id, _)| summary(id.runtime_key(), None))
+        .collect();
+    let discovery = Arc::new(CanonicalDiscovery(Mutex::new(vec![])));
+    let listed = ListSessions::new(ScriptedStore::answering(Ok(summaries)))
+        .with_home(SessionHomeContext {
+            catalogue: Arc::new(FixedCatalogue(entries)),
+            discovery: discovery.clone(),
+            execution_dir: "/cwd".into(),
+        })
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Global,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.sessions.len(), 100);
+    assert!(listed.sessions.iter().all(|row| row.resume_eligible));
+    assert_eq!(
+        *discovery.0.lock().unwrap(),
+        vec![PathBuf::from("/cwd")],
+        "canonical current facts must cover saved execution directories"
+    );
+}
+
+#[tokio::test]
+async fn local_scope_skips_discovery_for_foreign_and_non_scoped_homes() {
+    fn folder(path: &str) -> SessionHome {
+        SessionHome {
+            execution_dir: path.into(),
+            group: WorkspaceGroup::Folder {
+                directory: path.into(),
+            },
+            provenance: AssociationProvenance::SavedHere,
+        }
+    }
+    let entries = vec![
+        (
+            SessionIdentity::user_chat("chat-here").unwrap(),
+            SessionHomeScope::Scoped(observed_home(Path::new("/here"))),
+        ),
+        (
+            SessionIdentity::user_chat("chat-foreign").unwrap(),
+            SessionHomeScope::Scoped(folder("/foreign")),
+        ),
+        (
+            SessionIdentity::user_chat("chat-legacy").unwrap(),
+            SessionHomeScope::LegacyUnscoped,
+        ),
+        (
+            SessionIdentity::user_chat("chat-broken").unwrap(),
+            SessionHomeScope::Unavailable("broken".into()),
+        ),
+    ];
+    let summaries = entries
+        .iter()
+        .map(|(id, _)| summary(id.runtime_key(), None))
+        .collect();
+    let discovery = Arc::new(CountingDiscovery(Mutex::new(vec![])));
+    let listed = ListSessions::new(ScriptedStore::answering(Ok(summaries)))
+        .with_home(SessionHomeContext {
+            catalogue: Arc::new(FixedCatalogue(entries)),
+            discovery: discovery.clone(),
+            execution_dir: "/here".into(),
+        })
+        .discover(&ListSessionsRequest {
+            query: SessionListQuery::All,
+            scope: SessionListScope::Local,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(listed.sessions[0].summary.key, "chat-here");
+    assert!(listed.sessions[0].resume_eligible);
+    assert_eq!(
+        *discovery.0.lock().unwrap(),
+        vec![PathBuf::from("/here")],
+        "local listing must not discover foreign, legacy, or unavailable homes"
+    );
+}
+
+#[tokio::test]
 async fn discovery_observations_are_fresh_each_query_and_failure_never_admits() {
     let identity = SessionIdentity::user_chat("chat-fresh").unwrap();
     let saved = observed_home(Path::new("/here"));
