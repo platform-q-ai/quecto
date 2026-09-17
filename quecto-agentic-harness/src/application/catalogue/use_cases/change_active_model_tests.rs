@@ -535,4 +535,10 @@ fn a_provider_the_published_catalogue_does_not_know_is_not_recorded_and_not_appl
     ));
     assert_eq!(persistence.records.lock().unwrap()[0].2, "acme/unlisted");
     assert_eq!(lp.model, "acme/unlisted");
+    // The router matches prefixes case-insensitively; the record carries
+    // the catalogue's spelling.
+    rig.use_case
+        .execute_with_default(&mut lp, "ACME/m", Some(DefaultScope::Global))
+        .unwrap();
+    assert_eq!(persistence.records.lock().unwrap()[1].2, "acme/m");
 }

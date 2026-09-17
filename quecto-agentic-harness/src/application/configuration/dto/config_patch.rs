@@ -132,7 +132,7 @@ impl std::fmt::Display for ConfigPatchError {
             }
             Self::GlobalOnlyKey { path, key } => write!(
                 f,
-                "cannot set `{key}` in {}: `{key}` is global-only; use --global",
+                "cannot change `{key}` in {}: `{key}` is global-only; use --global",
                 path.display()
             ),
             Self::UntrustedOverlay { path, fingerprint } => write!(

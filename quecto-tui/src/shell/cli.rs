@@ -65,16 +65,16 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 flags.config_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
-            "--model" if i + 1 < args.len() => {
+            "--model" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
                 flags.model = Some(args[i + 1].clone());
                 i += 2;
             }
-            "--effort" if i + 1 < args.len() => {
+            "--effort" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
                 flags.effort = Some(args[i + 1].clone());
                 i += 2;
             }
             flag @ ("--model" | "--effort") => {
-                eprintln!("warning: {flag} requires a value; ignoring trailing flag");
+                eprintln!("warning: {flag} requires a value; ignoring it");
                 i += 1;
             }
             "--system" if i + 1 < args.len() => {

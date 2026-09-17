@@ -154,18 +154,19 @@ impl ChangeActiveModel {
             ModelRef::parse_qualified(&plan.model).map_err(|_| ModelSwitchError::Unqualified {
                 model: plan.model.clone(),
             })?;
+        // The router matches provider prefixes case-insensitively; the
+        // record carries the catalogue's own spelling.
         let snapshot = self.store.current();
-        let provider_known = snapshot
+        let provider = snapshot
             .entries()
             .iter()
-            .any(|entry| &entry.provider.id == reference.provider());
-        if !provider_known {
-            return Err(ModelSwitchError::UnknownProvider {
+            .map(|entry| entry.provider.id.as_str())
+            .find(|known| known.eq_ignore_ascii_case(reference.provider().as_str()))
+            .ok_or_else(|| ModelSwitchError::UnknownProvider {
                 model: plan.model.clone(),
                 provider: reference.provider().as_str().to_string(),
-            });
-        }
-        Ok(reference.qualified_id())
+            })?;
+        Ok(format!("{provider}/{}", reference.model()))
     }
 
     /// The published runtime's verdict on `reference` (#1573): known and

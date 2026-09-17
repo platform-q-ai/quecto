@@ -616,12 +616,19 @@ fn unset_shares_the_patch_refusals() {
             .unwrap_err(),
         ConfigPatchError::UntrustedOverlay { .. }
     ));
+    let global_only = use_case
+        .unset(unset(ConfigLayer::Overlay, "providers.openai"))
+        .unwrap_err();
     assert!(matches!(
-        use_case
-            .unset(unset(ConfigLayer::Overlay, "providers.openai"))
-            .unwrap_err(),
+        global_only,
         ConfigPatchError::GlobalOnlyKey { .. }
     ));
+    assert!(
+        global_only
+            .to_string()
+            .starts_with("cannot change `providers`"),
+        "{global_only}"
+    );
     assert!(matches!(
         use_case
             .unset(unset(ConfigLayer::Global, "a..b"))

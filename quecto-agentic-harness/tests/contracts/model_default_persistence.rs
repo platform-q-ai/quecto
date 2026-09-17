@@ -8,7 +8,9 @@ use tempfile::TempDir;
 
 use quecto::application::catalogue::ports::{DefaultScope, ModelDefaultPersistence};
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection};
+use quecto::application::configuration::ports::{OverlayTrust, OverlayTrustStore};
 use quecto::composition::configuration::build_configuration_handles;
+use quecto::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use quecto::infrastructure::config::writer::defaults::ConfigDefaultsWriter;
 use quecto::interface::cli::configuration_handles::ConfigurationEnvironment;
 
@@ -67,12 +69,12 @@ fn a_local_record_lands_in_the_overlay_only_and_is_trusted() {
     assert_eq!(persisted.path, fx.overlay);
     assert_eq!(json(&fx.overlay)["agents"]["defaults"]["model"], "acme/m");
     assert_eq!(std::fs::read(&fx.global).unwrap(), before);
-    let trust = json(&fx.base.path().join("config-overlay-trust.json"));
-    assert!(
-        trust["approved"]
-            .as_object()
-            .is_some_and(|approved| !approved.is_empty()),
-        "{trust}"
+    // Trust is for the bytes written: the overlay as it now stands decides
+    // Trusted, so the next start in that directory applies it.
+    let trust = PersistentOverlayTrustStore::for_base_dir(fx.base.path(), false);
+    assert_eq!(
+        trust.decide(&fx.overlay, &std::fs::read(&fx.overlay).unwrap()),
+        OverlayTrust::Trusted
     );
 }
 

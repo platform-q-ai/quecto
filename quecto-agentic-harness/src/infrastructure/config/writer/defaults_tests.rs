@@ -5,7 +5,9 @@
 
 use super::*;
 use crate::application::configuration::dto::ConfigLayers;
+use crate::application::configuration::ports::{OverlayTrust, OverlayTrustStore};
 use crate::composition::configuration::build_configuration_handles;
+use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 use tempfile::TempDir;
 
@@ -61,9 +63,13 @@ fn a_local_record_creates_the_trusted_overlay_and_leaves_the_global_file_alone()
     assert_eq!(persisted.path, fx.overlay);
     assert_eq!(json(&fx.overlay)["agents"]["defaults"]["model"], "acme/m");
     assert_eq!(std::fs::read(&fx.global).unwrap(), before);
-    assert!(
-        fx.trust_record.exists(),
-        "trust recorded for the bytes written"
+    assert!(fx.trust_record.exists());
+    let on_disk = std::fs::read(&fx.overlay).unwrap();
+    let trust = PersistentOverlayTrustStore::for_base_dir(fx._base.path(), false);
+    assert_eq!(
+        trust.decide(&fx.overlay, &on_disk),
+        OverlayTrust::Trusted,
+        "trust is recorded for the bytes the writer laid down"
     );
 }
 

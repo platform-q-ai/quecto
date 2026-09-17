@@ -294,4 +294,9 @@ fn model_and_effort_flags_are_omitted_when_not_given_and_need_a_value() {
     assert_eq!(trailing.effort, None);
     let trailing = parse_flags(&args("--model"));
     assert_eq!(trailing.model, None);
+    // A following flag is not a value: the flag is dropped and the next
+    // one still parses.
+    let clashing = parse_flags(&args("--model --no-persist"));
+    assert_eq!(clashing.model, None);
+    assert!(!clashing.persist);
 }

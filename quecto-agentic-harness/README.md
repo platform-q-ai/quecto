@@ -486,8 +486,9 @@ and `agents.defaults.effort` in the overlay pin what every agent started in
 that directory starts on — `quecto agent`, a `quecto-tui` tab, a spawned local
 child — while a sibling repository keeps the global default. Pin one with
 `quecto config set agents.defaults.model '"provider/model"'`, from a running
-session with `set_model … "persist":"local"` (`"global"` for the global file;
-the same for `set_effort`), or in `quecto-tui`'s `/model` selector (Tab cycles
+session with `set_model … "persist":"local"` (`"global"` for the run's global
+layer: the global file, or the `--config` file when one was given; the same
+for `set_effort`), or in `quecto-tui`'s `/model` selector (Tab cycles
 *use for this session* / *use and pin as this repo's default* / *use and pin as
 the global default*). Every path goes through the writer above and is refused
 with the session unchanged when the overlay is untrusted or a symbolic link,
