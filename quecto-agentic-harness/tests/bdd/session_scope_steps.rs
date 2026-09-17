@@ -469,6 +469,21 @@ fn git_rows(world: &mut QuectoWorld) {
         serde_json::from_str(world.agent_events.last().unwrap()).unwrap();
     let rows = response["data"]["sessions"].as_array().unwrap();
     assert_eq!(rows.len(), 3, "exact local identities: {rows:?}");
+    // Grouping is not permission: only the row saved in this execution
+    // directory is eligible; the subfolder and the linked worktree share the
+    // group and are refused.
+    for (key, eligible) in [
+        ("cli:root", true),
+        ("cli:sub", false),
+        ("cli:linked", false),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row["key"] == key)
+            .unwrap_or_else(|| panic!("{key} listed: {rows:?}"));
+        assert_eq!(row["homeState"], "scoped", "{row}");
+        assert_eq!(row["resumeEligible"], eligible, "{row}");
+    }
 }
 
 #[given("the foreign saved home metadata is corrupt")]
