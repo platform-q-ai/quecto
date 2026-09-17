@@ -4,6 +4,11 @@
 
 use std::path::Path;
 
+/// The overlay layout this port's `read_overlay` is stated over: the
+/// components of this relative path are the entries below the working
+/// directory an adapter inspects.
+pub use crate::application::configuration::dto::config_selection::OVERLAY_RELATIVE_PATH;
+
 /// What the store found at an overlay candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayDocument {
@@ -27,7 +32,7 @@ pub trait ConfigDocumentStore: Send + Sync {
     fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, String>;
 
     /// The repo-local overlay at `path` (`<cwd>/.quecto/config.json`, see
-    /// `OVERLAY_RELATIVE_PATH`), under the overlay policy: every directory
+    /// [`OVERLAY_RELATIVE_PATH`]), under the overlay policy: every directory
     /// entry below the working directory — the `.quecto` directory and the
     /// file — must be a regular one. A symbolic link anywhere on that
     /// stretch is [`OverlayDocument::Refused`] whatever it points at and

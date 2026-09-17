@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::application::configuration::dto::config_selection::OVERLAY_RELATIVE_PATH;
+use crate::application::configuration::ports::config_document_store::OVERLAY_RELATIVE_PATH;
 use crate::application::configuration::ports::{ConfigDocumentStore, OverlayDocument};
 
 #[derive(Debug, Default, Clone, Copy)]
