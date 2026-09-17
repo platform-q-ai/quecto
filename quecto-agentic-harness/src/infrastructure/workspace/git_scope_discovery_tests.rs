@@ -2,6 +2,9 @@ use super::*;
 use std::process::Command;
 fn git(path: &Path, args: &[&str]) {
     let output = Command::new("git")
+        // A hook-run test inherits GIT_DIR/GIT_WORK_TREE; they must not redirect the fixture.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .current_dir(path)
         .args(args)
         .output()

@@ -5,6 +5,9 @@ fn real_workspace_port_groups_repository_subdirectories_but_not_execution() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
         std::process::Command::new("git")
+            // A hook-run test inherits GIT_DIR/GIT_WORK_TREE; they must not redirect `init`.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .arg("init")
             .arg(dir.path())
             .output()

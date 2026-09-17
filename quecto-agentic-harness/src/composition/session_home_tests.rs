@@ -65,6 +65,9 @@ fn resume_over(
 
 fn git(cwd: &Path, args: &[&str]) {
     let output = std::process::Command::new("git")
+        // A hook-run test inherits GIT_DIR/GIT_WORK_TREE; they must not redirect the fixture.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .current_dir(cwd)
         .args(args)
         .output()
