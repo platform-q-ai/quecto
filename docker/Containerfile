@@ -9,23 +9,24 @@ LABEL org.opencontainers.image.title="Quecto standard harness" \
       org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
       org.opencontainers.image.description="Pinned Debian trixie slim runtime for the Quecto harness"
 
-# Keep the package set explicit: this is the complete approved build-time
-# toolchain used by docker-harness-entrypoint.sh and the repository tools.
+# Keep this package set exact and intentionally tool-only. In particular, the
+# standard image contains no compiler, Cargo, Node.js, or alternate runtime.
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
-      bash ca-certificates cargo rustc build-essential fd-find git gh \
-      openssh-client python3 ripgrep socat gosu \
+      bash ca-certificates coreutils findutils grep sed curl jq less git \
+      openssh-client gh ripgrep fd-find python3 python3-venv \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+ && python3 -m venv /opt/quecto-pip-venv \
  && install --directory --mode=0777 /home/appuser /workspace /socket
 
 COPY scripts/docker-harness-entrypoint.sh /usr/local/bin/docker-harness-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-harness-entrypoint.sh
 
 ENV HOME=/home/appuser \
+    PATH=/opt/quecto-pip-venv/bin:$PATH \
     QUECTO_BASE_DIR=/home/appuser/.quecto \
-    QUECTO_DEV_REPO_DIR=/workspace/quecto \
-    QUECTO_INSTALL_ROOT=/workspace/.cargo-install
+    QUECTO_DEV_REPO_DIR=/workspace/quecto
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/docker-harness-entrypoint.sh"]
