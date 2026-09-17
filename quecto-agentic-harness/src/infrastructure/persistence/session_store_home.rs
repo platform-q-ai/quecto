@@ -28,18 +28,25 @@ fn decode_path(bytes: Vec<u8>) -> Result<PathBuf, String> {
     use std::os::unix::ffi::OsStringExt;
     if bytes.len() <= 32768 && bytes.iter().all(|byte| *byte >= 32 && *byte != 127) {
         let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
-        if path.is_absolute()
-            && path.components().all(|part| {
-                matches!(
-                    part,
-                    std::path::Component::RootDir | std::path::Component::Normal(_)
-                )
-            })
-        {
+        if admissible_home_path(&path) {
             return Ok(path);
         }
     }
     Err("home path is not an admissible absolute path".into())
+}
+
+/// The one shape a home path may take, whether it comes from the sidecar or
+/// from the derived index: absolute, made only of normal components (no `..`,
+/// no `.`, no prefix), so nothing metadata says is ever resolved against the
+/// harness cwd. Byte-level limits are the decoder's.
+pub(in crate::infrastructure::persistence) fn admissible_home_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path.components().all(|part| {
+            matches!(
+                part,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            )
+        })
 }
 
 pub(super) fn encode(home: &SessionHome) -> Result<Vec<u8>, DomainError> {

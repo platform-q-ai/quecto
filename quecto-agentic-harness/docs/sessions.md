@@ -198,7 +198,8 @@ refreshed silently. A failed replacement returns valid discovered rows with
 diagnostics, not a transcript rewrite. Orphan home files without committed
 transcripts are not rows.
 
-The index (`version` 2) holds no transcript bytes and no content digests.
+The index (`version` 2) holds no transcript content beyond each record's
+listing title (its first user message, capped) and no content digests.
 Per record, keyed by persisted key, it carries the transcript's file *stamp*
 (device, inode, length, mode, mtime, ctime), the `.home` sidecar's stamp with
 the decoded home observation, and the listing summary (title, message count)

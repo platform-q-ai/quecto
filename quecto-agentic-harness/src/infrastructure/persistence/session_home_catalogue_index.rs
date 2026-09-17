@@ -1,23 +1,21 @@
 //! The on-disk shape of the derived `home.catalogue` (version 2). Per record:
-//! the authority's file stamp (device, inode, length, mode, mtime, ctime), its
-//! persisted key, the `.home` sidecar observation with the sidecar's own
-//! stamp, and the listing summary the store's walk validated at that stamp.
-//! No transcript bytes and no content digests: a record whose stamp is
-//! unchanged is reused without a read; anything else is validated again.
+//! the authority's file stamp (device, inode, length, mode, mtime, ctime), the
+//! `.home` observation with the sidecar's stamp, and the listing summary the
+//! store's walk validated at that stamp. No transcript content beyond the
+//! title, no digests: an unchanged stamp is reused without a read.
 //!
-//! Trust: an entry is only ever reused when the file it names still carries
-//! the recorded stamp, and the row it yields is the identity whose layout path
-//! it was keyed under. A doctored entry can at most misreport a home or a
-//! title in the listing; resume admission reads the `.home` sidecar exactly,
-//! never this index, so no entry can make a session resume-eligible.
+//! Trust: an entry is reused only while its file carries the recorded stamp,
+//! yields only the identity it was keyed under, and its paths pass the sidecar
+//! decoder's rule. A doctored entry can at most misreport a home or title in
+//! the listing; admission reads the sidecar exactly, never this index.
+use super::super::session_store::session_store_home::admissible_home_path;
 use crate::domain::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// Bumped whenever the entry shape changes: an older index is
-/// version-incompatible and rebuilt once, with a diagnostic.
+/// Bumped when the entry shape changes; older indexes rebuild once, with a diagnostic.
 pub(super) const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
@@ -34,14 +32,12 @@ impl Catalogue {
             records,
         }
     }
-    /// A readable index: the current version and well-formed. Anything else
-    /// names why.
+    /// A readable index: current version and well-formed; anything else names why.
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, String> {
         let index: Self = serde_json::from_slice(bytes).map_err(|_| "invalid".to_string())?;
-        if index.version == VERSION {
-            Ok(index)
-        } else {
-            Err(format!("version {} unsupported", index.version))
+        match index.version {
+            VERSION => Ok(index),
+            other => Err(format!("version {other} unsupported")),
         }
     }
 }
@@ -66,9 +62,9 @@ pub(in crate::infrastructure::persistence) struct SummaryEntry {
     pub(in crate::infrastructure::persistence) message_count: usize,
 }
 
+/// A sidecar observation with the sidecar's stamp (`None`: no sidecar existed).
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
 pub(super) struct HomeEntry {
-    /// The sidecar's stamp; `None` when no sidecar existed.
     pub(super) stamp: Option<Vec<u64>>,
     pub(super) scope: IndexHome,
 }
@@ -120,11 +116,15 @@ impl IndexHome {
             } => {
                 let execution_dir = PathBuf::from(execution_dir);
                 let group_path = PathBuf::from(group_path);
-                let group = match group_kind.as_str() {
-                    "git" => WorkspaceGroup::Git {
+                // Same admissibility as the sidecar decoder.
+                if !admissible_home_path(&execution_dir) || !admissible_home_path(&group_path) {
+                    return SessionHomeScope::Unavailable("home facts failed validation".into());
+                }
+                let group = match (group_kind.as_str(), execution_dir == group_path) {
+                    ("git", _) => WorkspaceGroup::Git {
                         common_dir: group_path,
                     },
-                    "folder" if execution_dir == group_path => WorkspaceGroup::Folder {
+                    ("folder", true) => WorkspaceGroup::Folder {
                         directory: group_path,
                     },
                     _ => return SessionHomeScope::Unavailable("unsupported home group".into()),

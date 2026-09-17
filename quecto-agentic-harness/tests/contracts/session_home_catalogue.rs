@@ -220,20 +220,37 @@ fn partially_appended_transcript_cannot_publish_a_catalogue_row() {
 }
 
 #[tokio::test]
-async fn derived_index_contains_no_transcript_and_detects_content_changes() {
+async fn derived_index_holds_only_the_listing_title_and_detects_content_changes() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path());
     let store = Arc::new(FileSessionStore::new(layout.clone()));
     let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-digest");
     let mut value = session(identity);
-    value.messages = vec![Message::user("DISTINCTIVE-SECRET-TRANSCRIPT")];
+    value.messages = vec![
+        Message::user("TITLE-LINE"),
+        Message::assistant("DISTINCTIVE-SECRET-TRANSCRIPT", vec![]),
+    ];
     store.save(&value).await.unwrap();
+    // The store walk validates the listing summary, which the index then
+    // carries: the title (first user message) is persisted, nothing else of
+    // the transcript is.
+    store
+        .list(&quecto::application::sessions::dto::SessionListQuery::All)
+        .await
+        .unwrap();
     let first = catalogue.list().unwrap();
     assert!(!first.rebuilt, "first use builds the index silently");
     assert!(first.diagnostics.is_empty(), "{:?}", first.diagnostics);
     let cached = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
-    assert!(!cached.contains("DISTINCTIVE-SECRET-TRANSCRIPT"));
+    assert!(
+        cached.contains("TITLE-LINE"),
+        "the listing title is persisted"
+    );
+    assert!(
+        !cached.contains("DISTINCTIVE-SECRET-TRANSCRIPT"),
+        "no transcript content beyond the title"
+    );
     assert!(!catalogue.list().unwrap().rebuilt);
     // A routine autosave then `/resume`: the index is refreshed to the new
     // content, with no rebuild and no diagnostic for the TUI to toast.
@@ -698,11 +715,40 @@ async fn doctored_index_entry_never_changes_exact_read_or_admission() {
     let listed = restarted.list().unwrap();
     assert_eq!(restarted.transcript_reads(), 0);
     assert_eq!(listed.entries.len(), 1);
+    // Accepted trust boundary: while the sidecar stamp still matches, the
+    // *listing* repeats the doctored home; only exact reads (admission) are
+    // authoritative, so a lie here can never make a resume succeed.
+    match &listed.entries[0].1 {
+        SessionHomeScope::Scoped(shown) => {
+            assert_eq!(shown.execution_dir, std::path::PathBuf::from("/elsewhere"))
+        }
+        other => panic!("doctored listing shape: {other:?}"),
+    }
     // Exact reads are the sidecar, whatever the index claims.
     assert_eq!(
         restarted.read(&identity).unwrap(),
         SessionHomeScope::Scoped(home())
     );
+    // Index paths are held to the sidecar decoder's rule: a relative or
+    // parent-traversing execution directory is never scoped, so nothing the
+    // index says is ever resolved against the harness cwd by discovery.
+    for hostile in ["work/project", "/work/../etc"] {
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(layout.home_catalogue_file()).unwrap()).unwrap();
+        index["records"]["chat-doctored"]["home"]["scope"]["execution_dir"] =
+            serde_json::json!(hostile);
+        index["records"]["chat-doctored"]["home"]["scope"]["group_path"] =
+            serde_json::json!(hostile);
+        std::fs::write(layout.home_catalogue_file(), index.to_string()).unwrap();
+        let hostile_listing = FileSessionHomeCatalogue::with_store(store.clone())
+            .list()
+            .unwrap();
+        assert_eq!(
+            hostile_listing.entries[0].1,
+            SessionHomeScope::Unavailable("home facts failed validation".into()),
+            "{hostile}"
+        );
+    }
     // A stamp that does not match the file is never trusted: the record is
     // read and validated again, and the stale row is replaced.
     let mut index: serde_json::Value =
