@@ -183,7 +183,11 @@ mounts=(
   -v "$env_dir/home:$HOME:rw"
 )
 if [ -n "$oauth_store" ]; then
-  mounts+=(-v "$oauth_store:$HOME/.quecto:rw")
+  # Mount only the selected OAuth directory at a private, dedicated path;
+  # never overlay the container's general ~/.quecto state directory.
+  oauth_mount="$HOME/.quecto/oauth-store"
+  mounts+=(-v "$oauth_store:$oauth_mount:rw")
+  envs_oauth=("-e" "QUECTO_OAUTH_CREDENTIALS_FILE=$oauth_mount/oauth-credentials.json")
 fi
 if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
   mounts+=(-v "$config_path:$config_path:ro")
@@ -228,6 +232,7 @@ fi
 # trace of why (termination signal, teardown, socket close). The host can
 # still override the level per spawn.
 envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
+if [ -n "${envs_oauth+x}" ]; then envs+=("${envs_oauth[@]}"); fi
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000
