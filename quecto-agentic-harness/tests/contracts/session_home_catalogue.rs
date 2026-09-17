@@ -60,8 +60,16 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     catalogue.record_new(&identity, &home()).unwrap();
     let first = catalogue.list().unwrap();
     assert!(first.entries.is_empty());
-    assert!(first.rebuilt, "an absent index is recovery, reported once");
-    assert!(first.diagnostics.iter().any(|d| d.contains("absent")));
+    assert!(
+        !first.rebuilt,
+        "an index that never existed is built on first use, not recovered"
+    );
+    assert!(
+        first.diagnostics.is_empty(),
+        "first use raises no warning: {:?}",
+        first.diagnostics
+    );
+    assert!(layout.home_catalogue_file().exists());
     store.save(&session(identity.clone())).await.unwrap();
     // Newer authority supersedes a well-formed index: refreshed silently.
     let snapshot = catalogue.list().unwrap();
@@ -221,7 +229,9 @@ async fn derived_index_contains_no_transcript_and_detects_content_changes() {
     let mut value = session(identity);
     value.messages = vec![Message::user("DISTINCTIVE-SECRET-TRANSCRIPT")];
     store.save(&value).await.unwrap();
-    assert!(catalogue.list().unwrap().rebuilt);
+    let first = catalogue.list().unwrap();
+    assert!(!first.rebuilt, "first use builds the index silently");
+    assert!(first.diagnostics.is_empty(), "{:?}", first.diagnostics);
     let cached = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
     assert!(!cached.contains("DISTINCTIVE-SECRET-TRANSCRIPT"));
     assert!(!catalogue.list().unwrap().rebuilt);

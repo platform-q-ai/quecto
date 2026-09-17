@@ -190,9 +190,10 @@ and a stale home is never inherited by the first transcript written under the
 key. A home beside a transcript is authority and is never touched by this rule.
 
 The derived `home.catalogue` is discardable. Listing validates it against
-authoritative records and rebuilds by atomic replacement: an absent, unreadable
-or version-incompatible index is recovery, reported once as `rebuilt` with a
-diagnostic; an index superseded by newer authority (a routine autosave) is
+authoritative records and rebuilds by atomic replacement: an unparseable or
+version-incompatible index is recovery, reported once as `rebuilt` with a
+diagnostic; an index that never existed (first use, a fresh install) is built
+silently, and an index superseded by newer authority (a routine autosave) is
 refreshed silently. A failed replacement returns valid discovered rows with
 diagnostics, not a transcript rewrite. Orphan home files without committed
 transcripts are not rows. A store-listed record the strict catalogue has no row

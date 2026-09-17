@@ -131,7 +131,10 @@ impl FileSessionHomeCatalogue {
             let valid = projection
                 .get(&path)
                 .is_some_and(|entry| stamp(&path).is_ok_and(|current| current == entry.stamp));
-            assert!(
+            // A published row and its fingerprint are written from one read;
+            // a mismatch is a programming error, never a user-visible panic
+            // from inside `spawn_blocking`.
+            debug_assert!(
                 fingerprinted_home_matches(records, identity, home),
                 "published home observation must match the fingerprinted home bytes"
             );
@@ -159,7 +162,7 @@ impl FileSessionHomeCatalogue {
         match self.projected_identity(&path, records) {
             Ok(identity) => {
                 let home = self.observe_home(&identity, records);
-                assert!(
+                debug_assert!(
                     fingerprinted_home_matches(records, &identity, &home),
                     "published home observation must match the fingerprinted home bytes"
                 );
@@ -359,19 +362,16 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
             // A well-formed index superseded by newer authority (an autosave
             // since the last query) is routine: refresh it silently.
             Some(Ok(_)) => {}
-            // Absent, unparseable or version-incompatible: recovery, reported.
+            // Unparseable or version-incompatible: recovery, reported.
             Some(Err(reason)) => {
                 result.rebuilt = true;
                 result
                     .diagnostics
                     .push(format!("home catalogue {reason}; rebuilt from authority"));
             }
-            None => {
-                result.rebuilt = true;
-                result
-                    .diagnostics
-                    .push("home catalogue absent; rebuilt from authority".into());
-            }
+            // An index that never existed (first use, a fresh install) is
+            // built, not recovered: nothing to report.
+            None => {}
         }
         let bytes = serde_json::to_vec(&authority).map_err(error)?;
         match atomic_write(&path, &bytes, false) {
