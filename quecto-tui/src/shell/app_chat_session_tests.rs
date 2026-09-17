@@ -136,3 +136,44 @@ async fn discovery_mouse_global_uses_full_frame_coordinates_with_panel() {
         crate::protocol::session_payloads::SessionListScope::Global
     );
 }
+
+/// R2-L5: an error answer to this tab's own list request closes the picker
+/// `request_session_scope` opened for it; a foreign or stale error leaves the
+/// live request and its picker alone.
+#[tokio::test]
+async fn list_sessions_error_closes_the_picker_it_opened() {
+    use crate::protocol::session_payloads::SessionListScope;
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.send_list_sessions();
+    let stale = a.ac().sessions.pending_list_id.clone().unwrap();
+    a.request_session_scope(SessionListScope::Global);
+    let current = a.ac().sessions.pending_list_id.clone().unwrap();
+    assert!(a.ac().sessions.resume_selector.is_some());
+    a.handle_response(
+        Some(stale),
+        "list_sessions".into(),
+        false,
+        None,
+        Some("stale".into()),
+    );
+    assert!(a.ac().sessions.resume_selector.is_some());
+    assert_eq!(
+        a.ac().sessions.pending_list_id.as_deref(),
+        Some(current.as_str())
+    );
+    a.handle_response(
+        Some(current),
+        "list_sessions".into(),
+        false,
+        None,
+        Some("discovery unavailable".into()),
+    );
+    assert!(a.ac().sessions.resume_selector.is_none());
+    assert!(a.ac().sessions.pending_list_id.is_none());
+    let rendered = a.notifications.render(200).join("\n");
+    assert!(
+        rendered.contains("Could not list sessions: discovery unavailable"),
+        "{rendered}"
+    );
+}

@@ -269,7 +269,10 @@ impl App {
                     .as_deref()
                     .is_some_and(|pending| Some(pending) == id.as_deref())
                 {
+                    // The picker opened for this answer; with no rows to
+                    // show it closes, so an empty overlay never lingers.
                     self.ac_mut().sessions.pending_list_id = None;
+                    self.ac_mut().sessions.resume_selector = None;
                     self.notify_response_error("Could not list sessions", error);
                 }
             }
