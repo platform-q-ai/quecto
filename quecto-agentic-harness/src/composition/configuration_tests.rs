@@ -2,6 +2,7 @@ use super::*;
 use crate::application::configuration::dto::{
     ConfigLayers, ConfigSelectionRequest, OverlayTrustRequest,
 };
+use crate::infrastructure::reload::RuntimeReload;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -76,41 +77,64 @@ fn the_loader_reports_a_broken_selected_file() {
 }
 
 #[test]
-fn a_reload_watches_the_trust_record_only_when_an_overlay_exists_at_seed_time() {
-    let base = Path::new("/home/u/.quecto");
+fn a_reload_watches_the_trust_record_while_the_overlay_exists() {
+    let base = TempDir::new().unwrap();
     let work = TempDir::new().unwrap();
     let overlay = work.path().join(".quecto").join("config.json");
+    let record = base.path().join("config-overlay-trust.json");
     let layered = ConfigSelection::Layered(ConfigLayers {
-        global: base.join("config.json"),
+        global: base.path().join("config.json"),
         overlay: Some(overlay.clone()),
         legacy_local: None,
     });
-    let watched = |selection: &ConfigSelection| -> Vec<PathBuf> {
-        watched_config_sources(base, selection)
+    let paths = |selection: &ConfigSelection| -> Vec<PathBuf> {
+        watched_config_sources(base.path(), selection)
             .iter()
             .map(|source| source.path().to_path_buf())
             .collect()
     };
-    // No overlay: the overlay location is watched (its creation is a
-    // change), the host-wide trust record is not (another repository's
-    // `config trust` is no change for this session).
     assert_eq!(
-        watched(&layered),
-        vec![base.join("config.json"), overlay.clone()]
-    );
-    // An overlay that exists: its removal and its trust are both changes.
-    std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
-    std::fs::write(&overlay, "{}").unwrap();
-    assert_eq!(
-        watched(&layered),
+        paths(&layered),
         vec![
-            base.join("config.json"),
-            overlay,
-            base.join("config-overlay-trust.json"),
+            base.path().join("config.json"),
+            overlay.clone(),
+            record.clone()
         ]
     );
     let explicit = ConfigSelection::Explicit(PathBuf::from("/x/c.json"));
-    assert_eq!(watched(&explicit), vec![PathBuf::from("/x/c.json")]);
+    assert_eq!(paths(&explicit), vec![PathBuf::from("/x/c.json")]);
+
+    // Seeded with no overlay: another repository's `config trust` (a
+    // record change) is no change for this session.
+    std::fs::write(&record, "{}").unwrap();
+    let mut gate = RuntimeReload::new(watched_config_sources(base.path(), &layered));
+    gate.seed();
+    assert!(!gate.sources_changed());
+    std::fs::write(&record, r#"{"approved":{"/elsewhere":"x"}}"#).unwrap();
+    assert!(
+        !gate.sources_changed(),
+        "no overlay, no interest in the record"
+    );
+
+    // An overlay created mid-run is a change; the rebuild re-seeds, and
+    // the `config trust` that follows is picked up on the next poll.
+    std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
+    std::fs::write(&overlay, "{}").unwrap();
+    assert!(gate.sources_changed(), "the overlay's creation");
+    gate.seed();
+    assert!(!gate.sources_changed());
+    let handles = build_configuration_handles(&env(base.path()));
+    handles
+        .trust
+        .execute(OverlayTrustRequest {
+            path: overlay.clone(),
+        })
+        .unwrap();
+    assert!(
+        gate.sources_changed(),
+        "trusting the new overlay is a change"
+    );
+    assert!(!gate.sources_changed());
 }
 
 #[test]

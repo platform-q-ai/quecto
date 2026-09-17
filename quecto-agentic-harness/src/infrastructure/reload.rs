@@ -32,6 +32,13 @@ pub struct ReloadSource {
     last_len: Option<u64>,
     last_hash: u64,
     removal_is_change: bool,
+    /// A path that must exist for this source to count at all (#2024):
+    /// the overlay for its trust record. While the guard is absent the
+    /// source is neither fingerprinted nor reported; when the guard
+    /// (re)appears the source is unseeded, so the rebuild that the
+    /// guard's own change prompts seeds it — or, failing that, the next
+    /// probe reports it.
+    guard: Option<PathBuf>,
 }
 
 impl ReloadSource {
@@ -46,6 +53,17 @@ impl ReloadSource {
             last_len: None,
             last_hash: 0,
             removal_is_change: false,
+            guard: None,
+        }
+    }
+
+    /// Watch this source only while `guard` exists: a record shared by
+    /// every repository on the host is of interest to a session only
+    /// while that session's overlay is there to be trusted.
+    pub fn while_present(self, guard: impl Into<PathBuf>) -> Self {
+        Self {
+            guard: Some(guard.into()),
+            ..self
         }
     }
 
@@ -64,7 +82,13 @@ impl ReloadSource {
     }
 
     /// Seed the source fingerprint from disk without reporting a change.
+    /// A guarded source whose guard is absent is left (or put back)
+    /// unseeded.
     pub fn seed(&mut self) {
+        if !self.guard_present() {
+            self.forget();
+            return;
+        }
         let Ok((mtime, len, hash)) = read_fingerprint(&self.path) else {
             return;
         };
@@ -85,6 +109,10 @@ impl ReloadSource {
     /// particular, a touch-only update advances the mtime cache so subsequent
     /// polls are stat-only no-ops.
     pub fn changed(&mut self) -> SourceChange {
+        if !self.guard_present() {
+            self.forget();
+            return SourceChange::UnchangedNoRead;
+        }
         let Ok(metadata) = fs::metadata(&self.path) else {
             return self.vanished();
         };
@@ -123,6 +151,17 @@ impl ReloadSource {
         } else {
             SourceChange::MissingOrUnreadable
         }
+    }
+
+    fn guard_present(&self) -> bool {
+        self.guard.as_ref().is_none_or(|guard| guard.exists())
+    }
+
+    /// Drop the fingerprint: the next observation starts from nothing.
+    fn forget(&mut self) {
+        self.last_mtime = None;
+        self.last_len = None;
+        self.last_hash = 0;
     }
 
     /// Last observed mtime, exposed for state-machine tests.

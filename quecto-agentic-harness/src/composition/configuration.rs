@@ -94,21 +94,19 @@ pub fn build_config_loader(
 /// The sources a reload must watch for `selection` (#2024): the base file
 /// (required: its removal keeps the last-good runtime); when the selection
 /// has an overlay location, the overlay (optional: its creation or removal
-/// is a change); and, only when an overlay file exists as the watch is
-/// seeded, the per-user trust record (optional: `quecto config trust`, or a
-/// `config set` that re-records trust, takes effect on the next reload).
-/// A session with no overlay is not rebuilt every time some other
-/// repository's overlay is trusted — the record is one file for every
-/// overlay on the host.
+/// is a change) and the per-user trust record, watched only while the
+/// overlay exists (optional: `quecto config trust`, or a `config set` that
+/// re-records trust, takes effect on the next reload). The record is one
+/// file for every overlay on the host, so a session with no overlay is
+/// not rebuilt every time some other repository's overlay is trusted; an
+/// overlay created mid-run brings the record into the watch on the spot.
 pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> Vec<ReloadSource> {
     let mut watched = vec![ReloadSource::new(selection.path())];
     if let Some(overlay) = selection.overlay_path() {
         watched.push(ReloadSource::optional(overlay));
-        if overlay.exists() {
-            watched.push(ReloadSource::optional(
-                base_dir.join(TRUST_RECORD_FILE_NAME),
-            ));
-        }
+        watched.push(
+            ReloadSource::optional(base_dir.join(TRUST_RECORD_FILE_NAME)).while_present(overlay),
+        );
     }
     watched
 }
