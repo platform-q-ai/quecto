@@ -283,6 +283,15 @@ fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
     }
     Ok(first)
 }
+/// A readable index: version 1 and well-formed. Anything else names why.
+fn decode_catalogue(bytes: &[u8]) -> Result<Catalogue, String> {
+    let index: Catalogue = serde_json::from_slice(bytes).map_err(|_| "invalid".to_string())?;
+    if index.version == 1 {
+        Ok(index)
+    } else {
+        Err(format!("version {} unsupported", index.version))
+    }
+}
 fn fingerprinted_home_matches(
     records: &BTreeMap<String, Vec<u8>>,
     identity: &SessionIdentity,
@@ -337,18 +346,30 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
         } else {
             self.projection.lock().map_err(error)?.clear();
         }
-        let cached = disk
-            .as_ref()
-            .and_then(|bytes| serde_json::from_slice::<Catalogue>(bytes).ok());
+        let cached = disk.as_ref().map(|bytes| decode_catalogue(bytes));
         let (authority, mut result) = self.scan()?;
-        if cached.as_ref() == Some(&authority) {
-            *published = disk;
-            return Ok(result);
+        match &cached {
+            Some(Ok(index)) if *index == authority => {
+                *published = disk;
+                return Ok(result);
+            }
+            // A well-formed index superseded by newer authority (an autosave
+            // since the last query) is routine: refresh it silently.
+            Some(Ok(_)) => {}
+            // Absent, unparseable or version-incompatible: recovery, reported.
+            Some(Err(reason)) => {
+                result.rebuilt = true;
+                result
+                    .diagnostics
+                    .push(format!("home catalogue {reason}; rebuilt from authority"));
+            }
+            None => {
+                result.rebuilt = true;
+                result
+                    .diagnostics
+                    .push("home catalogue absent; rebuilt from authority".into());
+            }
         }
-        result.rebuilt = true;
-        result
-            .diagnostics
-            .push("home catalogue absent, stale, or invalid; rebuilt from authority".into());
         let bytes = serde_json::to_vec(&authority).map_err(error)?;
         match atomic_write(&path, &bytes, false) {
             Ok(()) => *published = Some(bytes),

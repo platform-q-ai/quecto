@@ -58,10 +58,19 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     let catalogue = FileSessionHomeCatalogue::with_store(store.clone());
     let identity = SessionIdentity::from_persisted_key("chat-home");
     catalogue.record_new(&identity, &home()).unwrap();
-    assert!(catalogue.list().unwrap().entries.is_empty());
+    let first = catalogue.list().unwrap();
+    assert!(first.entries.is_empty());
+    assert!(first.rebuilt, "an absent index is recovery, reported once");
+    assert!(first.diagnostics.iter().any(|d| d.contains("absent")));
     store.save(&session(identity.clone())).await.unwrap();
+    // Newer authority supersedes a well-formed index: refreshed silently.
     let snapshot = catalogue.list().unwrap();
-    assert!(snapshot.rebuilt);
+    assert!(!snapshot.rebuilt);
+    assert!(
+        snapshot.diagnostics.is_empty(),
+        "{:?}",
+        snapshot.diagnostics
+    );
     assert_eq!(
         snapshot.entries,
         vec![(identity.clone(), SessionHomeScope::Scoped(home()))]
@@ -70,6 +79,22 @@ async fn new_home_survives_restart_and_catalogue_recovers_without_orphans() {
     std::fs::write(layout.home_catalogue_file(), b"corrupt").unwrap();
     let recovered = catalogue.list().unwrap();
     assert!(recovered.rebuilt);
+    assert!(recovered.diagnostics.iter().any(|d| d.contains("invalid")));
+    assert_eq!(snapshot.entries, recovered.entries);
+    assert!(!catalogue.list().unwrap().rebuilt);
+    std::fs::write(
+        layout.home_catalogue_file(),
+        br#"{"version":2,"records":{}}"#,
+    )
+    .unwrap();
+    let recovered = catalogue.list().unwrap();
+    assert!(recovered.rebuilt);
+    assert!(
+        recovered
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("version 2 unsupported"))
+    );
     assert_eq!(snapshot.entries, recovered.entries);
     assert!(!catalogue.list().unwrap().rebuilt);
     assert!(store.load(&identity).await.unwrap().is_some());
@@ -200,9 +225,15 @@ async fn derived_index_contains_no_transcript_and_detects_content_changes() {
     let cached = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
     assert!(!cached.contains("DISTINCTIVE-SECRET-TRANSCRIPT"));
     assert!(!catalogue.list().unwrap().rebuilt);
+    // A routine autosave then `/resume`: the index is refreshed to the new
+    // content, with no rebuild and no diagnostic for the TUI to toast.
     value.messages.push(Message::user("changed"));
     store.save(&value).await.unwrap();
-    assert!(catalogue.list().unwrap().rebuilt);
+    let routine = catalogue.list().unwrap();
+    assert!(!routine.rebuilt);
+    assert!(routine.diagnostics.is_empty(), "{:?}", routine.diagnostics);
+    let refreshed = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
+    assert_ne!(cached, refreshed, "superseded index is refreshed silently");
     assert!(!catalogue.list().unwrap().rebuilt);
 }
 

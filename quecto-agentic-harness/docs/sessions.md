@@ -166,16 +166,33 @@ persistent identity can receive its initial home; existing legacy records are no
 automatically associated. Ephemeral runs write neither transcripts nor homes.
 
 The derived `home.catalogue` is discardable. Listing validates it against
-authoritative records, reports missing/corrupt/stale data and rebuilds by atomic
-replacement. A failed replacement returns valid discovered rows with diagnostics,
-not a transcript rewrite. Orphan home files without committed transcripts are not
-rows. Exact-key admission reads authority independently of catalogue health.
+authoritative records and rebuilds by atomic replacement: an absent, unreadable
+or version-incompatible index is recovery, reported once as `rebuilt` with a
+diagnostic; an index superseded by newer authority (a routine autosave) is
+refreshed silently. A failed replacement returns valid discovered rows with
+diagnostics, not a transcript rewrite. Orphan home files without committed
+transcripts are not rows; a store-listed record the strict catalogue rejects (a
+crash-truncated transcript) stays a Global row with an unavailable home, never
+eligible. Exact-key admission reads authority independently of catalogue health.
+
+Discovery that fails for a new identity (no Git on PATH, a mount boundary the
+parent walk stops at, an unreadable current directory) never costs a
+transcript: the record is saved without a `.home` — legacy-unscoped, visible in
+Global — and the failure is a diagnostic. Git is resolved on PATH once and
+spawned by absolute path off the async executor.
 
 `SessionHomeContext` is an application observation collaborator, not another
 query/save/restore owner. `ListSessions`, `SaveSession` and `ResumeSavedSession`
-retain those responsibilities. Resume admission rechecks canonical facts after
-ownership admission for both explicit resume and startup; a discovery group is
-not permission to execute history in another directory.
+retain those responsibilities; it is composed once per loop over the one file
+store (`composition/session_home.rs`) and is mandatory for resume, so admission
+is never fail-open. The one eligibility rule is the domain's
+`SessionHome::admission`: the saved authority re-observed unchanged at its own
+directory, which must be the current execution directory in the same group —
+`HomeChanged` when the directory's group changed since the save,
+`DifferentExecutionDirectory` otherwise (a grouped worktree included). Resume
+admission rechecks it after ownership admission for both explicit resume and
+startup; a discovery group is not permission to execute history in another
+directory.
 
 ### DTOs and the active session
 

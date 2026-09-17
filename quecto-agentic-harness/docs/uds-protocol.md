@@ -272,8 +272,10 @@ eligible for restore. Global lists all saved identities, including legacy
 unassociated and unavailable-home records. Metadata search is not part of this
 slice. Malformed records and discovery/catalogue failures produce diagnostics;
 one bad record does not hide valid siblings. `rebuilt` reports derived catalogue
-recovery, not transcript modification. Exact-key resume does not rely on the
-catalogue.
+recovery — an absent, unreadable or version-incompatible index, with a
+diagnostic — not transcript modification: an index superseded by newer authority
+(a routine autosave) is refreshed silently. Exact-key resume does not rely on
+the catalogue.
 
 The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
 Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse
