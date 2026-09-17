@@ -1,0 +1,12 @@
+{
+  "container_configs": {
+    "standard": {
+      "default": true,
+      "create": ["@PROJECT@/scripts/podman/create.sh", "--state-dir", "@PROJECT@/state", "--"],
+      "exec": ["@PROJECT@/scripts/podman/exec.sh"],
+      "inspect": ["@PROJECT@/scripts/podman/inspect.sh"],
+      "kill": ["@PROJECT@/scripts/podman/kill.sh"],
+      "cleanup": ["@PROJECT@/scripts/podman/kill.sh"]
+    }
+  }
+}

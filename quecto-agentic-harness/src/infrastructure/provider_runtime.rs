@@ -77,10 +77,11 @@ pub(crate) fn compose_agent_provider_inner(
     let base_dir: &std::path::Path = &inputs.base_dir;
     let http_client = &inputs.http_client;
     let store = CredentialStore::new(base_dir);
+    let oauth_store = CredentialStore::oauth(base_dir);
 
     let mut provider_list: Vec<Arc<dyn crate::application::providers::ports::LlmProvider>> =
         Vec::new();
-    let store_arc = Arc::new(CredentialStore::new(base_dir));
+    let store_arc = Arc::new(CredentialStore::oauth(base_dir));
     let refresh_fn = inputs.refresh_fn.clone();
 
     // #1066: the endpoint router needs the *effective* registry (builtin +
@@ -132,7 +133,7 @@ pub(crate) fn compose_agent_provider_inner(
         );
     }
     if let Some(openai_oauth_cred) =
-        store.get("openai").ok().flatten().filter(|c| {
+        oauth_store.get("openai").ok().flatten().filter(|c| {
             c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
         })
     {
@@ -220,7 +221,7 @@ pub(crate) fn compose_agent_provider_inner(
         }
     }
     if let Some(anthropic_oauth_cred) =
-        store.get("anthropic").ok().flatten().filter(|c| {
+        oauth_store.get("anthropic").ok().flatten().filter(|c| {
             c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
         })
     {

@@ -3,6 +3,7 @@ mod agent;
 mod auth;
 pub mod catalogue_handles;
 mod commands;
+mod container;
 mod config_flag;
 mod models;
 pub mod protocol;
@@ -524,6 +525,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         match args[1].as_str() {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
+            "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
             "admission-broker" => {
@@ -696,6 +698,8 @@ fn help_text(out: &mut String) {
     out.push_str(
         "                       --disable-tool <name>  Disable/hide a tool and deny re-registration (repeatable)\n",
     );
+    out.push_str("  container   Initialize the embedded standard rootless Podman bundle\n");
+    out.push_str("              Usage: quecto container init [--project /absolute/project]\n");
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");
     out.push_str("  status      Show status\n");

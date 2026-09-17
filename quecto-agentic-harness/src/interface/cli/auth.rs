@@ -447,7 +447,7 @@ pub(crate) fn store_oauth_credential(
     token_resp: &crate::infrastructure::auth::oauth::OAuthTokenResponse,
     out: &mut Output<'_>,
 ) -> i32 {
-    let store = CredentialStore::new(ctx.base_dir());
+    let store = CredentialStore::oauth(ctx.base_dir());
     match store.store(Credential {
         provider: params.provider.clone(),
         token: token_resp.access_token.clone(),
@@ -580,7 +580,9 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
         None => return 1,
     };
 
-    let store = CredentialStore::new(ctx.base_dir());
+    // External auth.json contains OAuth only; keep imported secrets in the
+    // narrow store rather than the broad API-key credential file.
+    let oauth_store = CredentialStore::oauth(ctx.base_dir());
     let rt = match super::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
@@ -592,13 +594,13 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
 
     let mut imported = 0;
 
-    match auth_import::import_anthropic(&auth_json, &store, &rt, out) {
+    match auth_import::import_anthropic(&auth_json, &oauth_store, &rt, out) {
         Some(n) => imported += n,
         None => return 1,
     }
 
     let openai_params = auth_import::OpenAiImportParams {
-        store: &store,
+        store: &oauth_store,
         rt: &rt,
         oauth_base_url: None,
     };
@@ -694,7 +696,18 @@ fn cmd_auth_logout(
         return 1;
     };
 
-    let store = CredentialStore::new(base);
+    // Select the store by the credential's declared auth method. OAuth must
+    // never be deleted from (or written to) the broad API-token store.
+    let oauth_store = CredentialStore::oauth(base);
+    let legacy_store = CredentialStore::new(base);
+    let oauth_exists = match oauth_store.get(&provider) {
+        Ok(value) => value.is_some(),
+        Err(e) => {
+            stderr.push_str(&format!("auth logout: failed to remove credential: {}\n", e));
+            return 1;
+        }
+    };
+    let store = if oauth_exists { oauth_store } else { legacy_store };
     match store.remove(&provider) {
         Ok(true) => {
             stdout.push_str(&format!("Credential removed for {}\n", provider));
@@ -715,24 +728,38 @@ fn cmd_auth_logout(
 }
 
 fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
-    let store = CredentialStore::new(base);
-    match store.status_summary() {
-        Ok(statuses) => {
-            if statuses.is_empty() {
-                stdout.push_str("no credentials stored\n");
-            } else {
-                stdout.push_str("Credentials:\n");
-                for s in &statuses {
-                    stdout.push_str(&format!("  {} ({}) — {}\n", s.provider, s.method, s.status));
-                }
-            }
-            0
-        }
+    // Read both stores and let the narrow OAuth store win on duplicate provider
+    // names. This preserves visibility of legacy API tokens while preventing a
+    // migrated OAuth credential from being reported as an API token.
+    let legacy_store = CredentialStore::new(base);
+    let oauth_store = CredentialStore::oauth(base);
+    let mut statuses = match legacy_store.status_summary() {
+        Ok(value) => value,
         Err(e) => {
             stdout.push_str(&format!("failed to read credentials: {}\n", e));
-            1
+            return 1;
+        }
+    };
+    let oauth_statuses = match oauth_store.status_summary() {
+        Ok(value) => value,
+        Err(e) => {
+            stdout.push_str(&format!("failed to read OAuth credentials: {}\n", e));
+            return 1;
+        }
+    };
+    for oauth_status in oauth_statuses {
+        statuses.retain(|status| status.provider != oauth_status.provider);
+        statuses.push(oauth_status);
+    }
+    if statuses.is_empty() {
+        stdout.push_str("no credentials stored\n");
+    } else {
+        stdout.push_str("Credentials:\n");
+        for s in &statuses {
+            stdout.push_str(&format!("  {} ({}) — {}\n", s.provider, s.method, s.status));
         }
     }
+    0
 }
 
 #[cfg(test)]

@@ -1,0 +1,27 @@
+# Standard Quecto harness image for local rootless Podman.
+# This file is an operator build input; launch never builds or pulls images.
+FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG STANDARD_IMAGE_VERSION=1
+LABEL org.opencontainers.image.title="Quecto standard harness" \
+      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}"
+
+# Deliberately tool-only. No Rust/Cargo/compiler is present in the image.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      bash ca-certificates coreutils findutils grep sed curl jq less git \
+      openssh-client gh ripgrep fd-find python3 python3-venv \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+ && python3 -m venv /opt/quecto-pip-venv \
+ && install --directory --mode=0777 /home/appuser /workspace /socket
+
+# Child binaries and their arguments are supplied by the Podman adapter. An
+# empty entrypoint prevents an image-owned command from bypassing that argv.
+ENTRYPOINT []
+CMD []
+ENV HOME=/home/appuser \
+    PATH=/opt/quecto-pip-venv/bin:$PATH \
+    QUECTO_BASE_DIR=/home/appuser/.quecto
+WORKDIR /workspace

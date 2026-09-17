@@ -48,6 +48,30 @@ fn test_get_nonexistent() {
 }
 
 #[test]
+fn oauth_store_is_narrow_and_migrates_only_oauth_credentials() {
+    let tmp = TempDir::new().unwrap();
+    let legacy = CredentialStore::new(tmp.path());
+    legacy.store(make_credential("openai", "api-secret", AuthMethod::Token)).unwrap();
+    legacy.store(make_credential("anthropic", "oauth-secret", AuthMethod::OAuth)).unwrap();
+
+    let oauth = CredentialStore::oauth(tmp.path());
+    assert_eq!(oauth.path(), tmp.path().join("oauth-credentials.json"));
+    assert_eq!(oauth.get("anthropic").unwrap().unwrap().token, "oauth-secret");
+    assert!(oauth.get("openai").unwrap().is_none());
+
+    // First OAuth mutation provisions the dedicated file with only OAuth data.
+    oauth.store(make_credential("openai", "oauth-openai", AuthMethod::OAuth)).unwrap();
+    let raw: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(oauth.path()).unwrap(),
+    ).unwrap();
+    let credentials = raw.get("credentials").unwrap().as_object().unwrap();
+    assert!(credentials.contains_key("anthropic"));
+    assert!(credentials.contains_key("openai"));
+    assert_eq!(credentials.get("openai").and_then(|v| v.get("token")).and_then(|v| v.as_str()), Some("oauth-openai"));
+    assert_eq!(CredentialStore::new(tmp.path()).get("openai").unwrap().unwrap().token, "api-secret");
+}
+
+#[test]
 fn test_exists() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());

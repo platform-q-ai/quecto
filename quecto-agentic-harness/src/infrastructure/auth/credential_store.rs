@@ -90,14 +90,35 @@ struct CredentialsFile {
 #[derive(Debug)]
 pub struct CredentialStore {
     path: PathBuf,
+    /// Compatibility location used for reads and OAuth migration.
+    migration_path: Option<PathBuf>,
+    /// Whether fallback credentials should be included in a mutation snapshot.
+    migrate_on_write: bool,
 }
 
 impl CredentialStore {
-    /// Create a credential store at the given base directory.
-    /// Credentials will be stored in `<base_dir>/credentials.json`.
+    /// Create the general (legacy-compatible) credential store.
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
+        let base = base_dir.as_ref();
+        // Also read the dedicated store when no legacy file exists. This keeps
+        // callers of the historical constructor source-compatible while OAuth
+        // writes are provisioned in the narrow store.
         Self {
-            path: base_dir.as_ref().join("credentials.json"),
+            path: base.join("credentials.json"),
+            migration_path: Some(base.join("oauth-credentials.json")),
+            migrate_on_write: false,
+        }
+    }
+
+    /// Create the narrow OAuth credential store. OAuth credentials are kept in
+    /// their own file so container runtimes never need access to unrelated
+    /// credentials. The old combined file is read once as a migration fallback.
+    pub fn oauth(base_dir: impl AsRef<Path>) -> Self {
+        let base = base_dir.as_ref();
+        Self {
+            path: base.join("oauth-credentials.json"),
+            migration_path: Some(base.join("credentials.json")),
+            migrate_on_write: true,
         }
     }
 
@@ -106,15 +127,29 @@ impl CredentialStore {
     /// This is intentionally stateless: each call re-reads the file from disk.
     /// Correct for CLI (no stale state); for long-running processes, call once
     /// at startup and pass the snapshot to resolution functions.
-    pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
-        if !self.path.exists() {
-            return Ok(HashMap::new());
-        }
-        let data = std::fs::read_to_string(&self.path)
+    fn read_file(path: &Path) -> Result<HashMap<String, Credential>, DomainError> {
+        let data = std::fs::read_to_string(path)
             .map_err(|e| DomainError::Config(format!("failed to read credentials: {}", e)))?;
         let file: CredentialsFile = serde_json::from_str(&data)
             .map_err(|e| DomainError::Config(format!("failed to parse credentials: {}", e)))?;
         Ok(file.credentials)
+    }
+
+    pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
+        if self.path.exists() { return Self::read_file(&self.path); }
+        if let Some(legacy) = &self.migration_path {
+            if legacy.exists() {
+                return Ok(Self::read_file(legacy)?.into_iter().filter(|(_, c)| c.method == AuthMethod::OAuth).collect());
+            }
+        }
+        Ok(HashMap::new())
+    }
+
+    /// Snapshot used by mutations. It deliberately excludes compatibility
+    /// fallback data: an API-token write must never copy OAuth secrets from the
+    /// dedicated file into the broad legacy file.
+    fn primary_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
+        if self.path.exists() { Self::read_file(&self.path) } else { Ok(HashMap::new()) }
     }
 
     /// Get the path to the credentials file.
@@ -208,7 +243,11 @@ impl CredentialStore {
     /// concurrently serialize here instead of losing each other's writes.
     pub fn store(&self, credential: Credential) -> Result<(), DomainError> {
         let _lock = self.lock_exclusive()?;
-        let mut all = self.load_snapshot()?;
+        let mut all = if self.migrate_on_write {
+            self.load_snapshot()?
+        } else {
+            self.primary_snapshot()?
+        };
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
     }
@@ -229,7 +268,11 @@ impl CredentialStore {
         refreshed_from: &str,
     ) -> Result<Credential, DomainError> {
         let _lock = self.lock_exclusive()?;
-        let mut all = self.load_snapshot()?;
+        let mut all = if self.migrate_on_write {
+            self.load_snapshot()?
+        } else {
+            self.primary_snapshot()?
+        };
         if let Some(existing) = all.get(&credential.provider)
             && existing.refresh_token.as_deref() != Some(refreshed_from)
             && !existing.is_expired()
@@ -257,7 +300,7 @@ impl CredentialStore {
     /// Returns `true` if a credential was actually removed, `false` if none existed.
     pub fn remove(&self, provider: &str) -> Result<bool, DomainError> {
         let _lock = self.lock_exclusive()?;
-        let mut all = self.load_snapshot()?;
+        let mut all = self.primary_snapshot()?;
         let removed = all.remove(provider).is_some();
         self.save_all(&all)?;
         Ok(removed)
