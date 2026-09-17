@@ -21,6 +21,7 @@ fn diagnostics_name_the_untrusted_overlay_and_the_retired_file() {
     let lines = layer_diagnostics(&sources(
         Some(OverlayState::Untrusted {
             fingerprint: "abc".into(),
+            problem: None,
         }),
         true,
     ));
@@ -32,6 +33,41 @@ fn diagnostics_name_the_untrusted_overlay_and_the_retired_file() {
 }
 
 #[test]
+fn diagnostics_carry_the_check_failure_of_an_untrusted_overlay_and_a_refusal() {
+    let lines = layer_diagnostics(&sources(
+        Some(OverlayState::Untrusted {
+            fingerprint: "abc".into(),
+            problem: Some("`providers` is global-only".into()),
+        }),
+        false,
+    ));
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("would refuse it"), "{}", lines[0]);
+    assert!(
+        lines[0].contains("`providers` is global-only"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        !lines[0].contains("then run `quecto config trust`"),
+        "no remedy that would fail: {}",
+        lines[0]
+    );
+    let lines = layer_diagnostics(&sources(
+        Some(OverlayState::Refused {
+            reason: "it is a symbolic link".into(),
+        }),
+        false,
+    ));
+    assert_eq!(lines.len(), 1);
+    assert!(
+        lines[0].contains("was not applied: it is a symbolic link"),
+        "{}",
+        lines[0]
+    );
+}
+
+#[test]
 fn the_overlay_summary_reports_each_state() {
     assert_eq!(
         overlay_summary(&sources(Some(OverlayState::Applied), false)),
@@ -40,11 +76,21 @@ fn the_overlay_summary_reports_each_state() {
     assert_eq!(
         overlay_summary(&sources(
             Some(OverlayState::Untrusted {
-                fingerprint: "x".into()
+                fingerprint: "x".into(),
+                problem: None,
             }),
             false
         )),
         "/work/.quecto/config.json (untrusted)"
+    );
+    assert_eq!(
+        overlay_summary(&sources(
+            Some(OverlayState::Refused {
+                reason: "it is a symbolic link".into()
+            }),
+            false
+        )),
+        "/work/.quecto/config.json (refused)"
     );
     assert_eq!(
         overlay_summary(&sources(Some(OverlayState::Absent), false)),

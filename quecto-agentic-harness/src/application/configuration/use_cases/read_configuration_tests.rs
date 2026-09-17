@@ -25,6 +25,7 @@ fn request(
         selection,
         scope,
         key_path: key_path.map(str::to_string),
+        reveal_secrets: true,
     }
 }
 
@@ -179,4 +180,61 @@ fn failures_are_reported_per_scope() {
             .contains("--config")
     );
     assert!(format!("{read:?}").contains("ReadConfiguration"));
+}
+
+#[test]
+fn secrets_are_redacted_unless_revealed_in_every_scope_and_for_a_bare_leaf() {
+    let global = r#"{"providers":{"openai":{"api_key":"sk-global","api_base":"https://x"}}}"#;
+    let overlay = r#"{"agents":{"defaults":{"model":"local","refresh_token":"t"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, global), (OVERLAY, overlay)]);
+    let read = use_case(store, FakeTrust::trusting(OVERLAY, overlay));
+    let hidden = |scope, key_path: Option<&str>| ConfigReadRequest {
+        reveal_secrets: false,
+        ..request(layered(), scope, key_path)
+    };
+
+    let effective = read
+        .execute(hidden(ConfigReadScope::Effective, None))
+        .unwrap();
+    assert_eq!(effective.redacted, 2);
+    assert_eq!(
+        effective.value["providers"]["openai"]["api_key"],
+        "<redacted>"
+    );
+    assert_eq!(
+        effective.value["providers"]["openai"]["api_base"],
+        "https://x"
+    );
+    assert_eq!(
+        effective.value["agents"]["defaults"]["refresh_token"],
+        "<redacted>"
+    );
+
+    let leaf = read
+        .execute(hidden(
+            ConfigReadScope::Global,
+            Some("providers.openai.api_key"),
+        ))
+        .unwrap();
+    assert_eq!(leaf.value, json!("<redacted>"));
+    assert_eq!(leaf.redacted, 1);
+
+    let model = read
+        .execute(hidden(
+            ConfigReadScope::Overlay,
+            Some("agents.defaults.model"),
+        ))
+        .unwrap();
+    assert_eq!(model.value, json!("local"));
+    assert_eq!(model.redacted, 0);
+
+    let revealed = read
+        .execute(request(
+            layered(),
+            ConfigReadScope::Global,
+            Some("providers.openai.api_key"),
+        ))
+        .unwrap();
+    assert_eq!(revealed.value, json!("sk-global"));
+    assert_eq!(revealed.redacted, 0);
 }

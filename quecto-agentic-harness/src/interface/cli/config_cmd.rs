@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use super::CliContext;
 use super::config_loading::layer_diagnostics;
 use crate::application::configuration::dto::{
-    ConfigLayer, ConfigPatch, ConfigReadRequest, ConfigReadScope, ConfigSelection, ConfigTarget,
+    ConfigLayer, ConfigPatch, ConfigReadRequest, ConfigReadScope, ConfigSelection,
     OverlayTrustRequest,
 };
 
-const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value)\n";
+const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local] [--show-secrets]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value; secret-shaped values print as \"<redacted>\" without --show-secrets)\n";
 
 pub(crate) fn cmd_config(
     ctx: &CliContext,
@@ -49,13 +49,23 @@ struct Parsed {
     positionals: Vec<String>,
     scope_flag: Option<&'static str>,
     path_flag: Option<PathBuf>,
+    show_secrets: bool,
 }
 
-fn parse(args: &[String], scope_flags: &[&'static str], path_flag: bool) -> Result<Parsed, String> {
+/// Which optional flags a subcommand accepts besides its scope flags.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Extra {
+    None,
+    Path,
+    ShowSecrets,
+}
+
+fn parse(args: &[String], scope_flags: &[&'static str], extra: Extra) -> Result<Parsed, String> {
     let mut parsed = Parsed {
         positionals: Vec::new(),
         scope_flag: None,
         path_flag: None,
+        show_secrets: false,
     };
     let mut rest = args.iter();
     let mut options_ended = false;
@@ -72,11 +82,13 @@ fn parse(args: &[String], scope_flags: &[&'static str], path_flag: bool) -> Resu
                 ));
             }
             parsed.scope_flag = Some(flag);
-        } else if path_flag && arg == "--path" {
+        } else if extra == Extra::Path && arg == "--path" {
             let value = rest
                 .next()
                 .ok_or_else(|| format!("--path requires a file\n{USAGE}"))?;
             parsed.path_flag = Some(PathBuf::from(value));
+        } else if extra == Extra::ShowSecrets && arg == "--show-secrets" {
+            parsed.show_secrets = true;
         } else if arg.starts_with('-') && serde_json::from_str::<serde_json::Value>(arg).is_err() {
             // A negative number is a value, not an option.
             return Err(format!("unknown option {arg}\n{USAGE}"));
@@ -101,7 +113,11 @@ fn overlay_target(selection: &ConfigSelection) -> Result<PathBuf, String> {
 }
 
 fn cmd_get(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec<String>, String> {
-    let parsed = parse(args, &["--effective", "--global", "--local"], false)?;
+    let parsed = parse(
+        args,
+        &["--effective", "--global", "--local"],
+        Extra::ShowSecrets,
+    )?;
     if parsed.positionals.len() > 1 {
         return Err(format!("get takes at most one path\n{USAGE}"));
     }
@@ -117,19 +133,29 @@ fn cmd_get(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
             selection: ctx.config_selection()?,
             scope,
             key_path: parsed.positionals.first().cloned(),
+            reveal_secrets: parsed.show_secrets,
         })
         .map_err(|error| error.to_string())?;
     stdout.push_str(&serde_json::to_string_pretty(&readout.value).expect("a JSON value renders"));
     stdout.push('\n');
-    Ok(readout
+    let mut diagnostics = readout
         .sources
         .as_ref()
         .map(layer_diagnostics)
-        .unwrap_or_default())
+        .unwrap_or_default();
+    if readout.redacted > 0 {
+        diagnostics.push(format!(
+            "{} secret value{} printed as \"<redacted>\"; pass --show-secrets to print {}",
+            readout.redacted,
+            if readout.redacted == 1 { "" } else { "s" },
+            if readout.redacted == 1 { "it" } else { "them" }
+        ));
+    }
+    Ok(diagnostics)
 }
 
 fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec<String>, String> {
-    let parsed = parse(args, &["--global", "--local"], false)?;
+    let parsed = parse(args, &["--global", "--local"], Extra::None)?;
     let [key_path, raw_value] = parsed.positionals.as_slice() else {
         return Err(format!("set takes a path and a value\n{USAGE}"));
     };
@@ -138,22 +164,21 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
     let value = serde_json::from_str(raw_value)
         .unwrap_or_else(|_| serde_json::Value::String(raw_value.clone()));
     let selection = ctx.config_selection()?;
-    let target = match parsed.scope_flag {
-        Some("--global") => ConfigTarget {
-            layer: ConfigLayer::Global,
-            path: selection.path().to_path_buf(),
-        },
-        _ => ConfigTarget {
-            layer: ConfigLayer::Overlay,
-            path: overlay_target(&selection)?,
-        },
+    let layer = match parsed.scope_flag {
+        Some("--global") => ConfigLayer::Global,
+        _ => {
+            // The use case refuses a selection without an overlay too; the
+            // check here is for the message that names the flag to use.
+            overlay_target(&selection)?;
+            ConfigLayer::Overlay
+        }
     };
-    let layer = target.layer;
     let receipt = ctx
         .configuration_handles(false)?
         .patch
         .execute(ConfigPatch {
-            target,
+            selection,
+            layer,
             key_path: key_path.clone(),
             value,
         })
@@ -176,7 +201,7 @@ fn cmd_trust(
     args: &[String],
     stdout: &mut String,
 ) -> Result<Vec<String>, String> {
-    let parsed = parse(args, &[], true)?;
+    let parsed = parse(args, &[], Extra::Path)?;
     if !parsed.positionals.is_empty() {
         return Err(format!("trust takes no positional arguments\n{USAGE}"));
     }

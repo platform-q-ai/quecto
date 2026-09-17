@@ -245,3 +245,45 @@ fn local_targets_need_an_overlay_location() {
     assert_eq!(out.exit_code, 1);
     assert!(out.stderr.contains("not composed"));
 }
+
+#[test]
+fn get_redacts_secrets_unless_shown_and_says_so_on_stderr() {
+    let rig = Rig::new();
+    std::fs::write(
+        rig.global(),
+        r#"{"providers":{"openai":{"api_key":"sk-1","api_base":"https://x"},"other":{"token":"t"}}}"#,
+    )
+    .unwrap();
+    let (code, stdout, stderr) = rig.run(&["config", "get", "--global"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !stdout.contains("sk-1") && !stdout.contains("\"t\""),
+        "{stdout}"
+    );
+    assert_eq!(stdout.matches("<redacted>").count(), 2, "{stdout}");
+    assert!(stdout.contains("https://x"), "{stdout}");
+    assert!(
+        stderr.contains(
+            "2 secret values printed as \"<redacted>\"; pass --show-secrets to print them"
+        ),
+        "{stderr}"
+    );
+
+    let (code, stdout, stderr) = rig.run(&["config", "get", "providers.openai.api_key"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "\"<redacted>\"\n");
+    assert!(stderr.contains("1 secret value printed"), "{stderr}");
+
+    let (code, stdout, stderr) = rig.run(&["config", "get", "--show-secrets", "--global"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("sk-1"), "{stdout}");
+    assert!(!stderr.contains("redacted"), "{stderr}");
+
+    // The flag belongs to `get` only.
+    let (code, _, stderr) = rig.run(&["config", "set", "--show-secrets", "a", "1"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("unknown option --show-secrets"), "{stderr}");
+    let (code, _, stderr) = rig.run(&["config", "trust", "--show-secrets"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("unknown option --show-secrets"), "{stderr}");
+}

@@ -33,6 +33,10 @@ impl ConfigDocumentStore for FilesystemConfigDocumentStore {
     fn is_present(&self, path: &Path) -> bool {
         std::fs::symlink_metadata(path).is_ok()
     }
+
+    fn is_symlink(&self, path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
 }
 
 #[cfg(test)]

@@ -32,12 +32,17 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 /// Whether `document` looks like a quecto configuration: a JSON object
-/// carrying at least one known top-level section.
+/// carrying at least one known top-level section *shaped* as one — an
+/// object, or `null` for `admission` (the pre-#2024 way to disable it).
+/// A `"workflow": "build"` or `"tools": [...]` in another tool's
+/// `config.json` shares a name, not a shape.
 pub fn looks_like_config(document: &Value) -> bool {
     document.as_object().is_some_and(|object| {
-        KNOWN_TOP_LEVEL_KEYS
-            .iter()
-            .any(|key| object.contains_key(*key))
+        KNOWN_TOP_LEVEL_KEYS.iter().any(|key| {
+            object.get(*key).is_some_and(|section| {
+                section.is_object() || (*key == "admission" && section.is_null())
+            })
+        })
     })
 }
 

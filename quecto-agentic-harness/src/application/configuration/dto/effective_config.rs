@@ -48,8 +48,16 @@ pub enum OverlayState {
     Absent,
     /// Present, trusted, valid, merged.
     Applied,
-    /// Present but not approved: reported and not applied.
-    Untrusted { fingerprint: String },
+    /// Present but not approved: reported and not applied. `problem` is
+    /// what `quecto config trust` would refuse it for, when it would — so
+    /// the user is never sent to a command that will turn them away.
+    Untrusted {
+        fingerprint: String,
+        problem: Option<String>,
+    },
+    /// Present but never applicable, whatever its content: not a regular
+    /// file. Reported and not applied; `reason` says what it is instead.
+    Refused { reason: String },
 }
 
 /// Why the effective configuration could not be produced. Every variant
@@ -143,13 +151,32 @@ impl ConfigSources {
     /// working-directory file that is a quecto configuration.
     pub fn diagnostics(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        if let Some(overlay) = &self.overlay
-            && let OverlayState::Untrusted { fingerprint } = &overlay.state
-        {
-            lines.push(format!(
+        match self.overlay.as_ref().map(|report| (&report.path, &report.state)) {
+            Some((
+                path,
+                OverlayState::Untrusted {
+                    fingerprint,
+                    problem: None,
+                },
+            )) => lines.push(format!(
                 "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; review it, then run `quecto config trust` from this directory",
-                overlay.path.display()
-            ));
+                path.display()
+            )),
+            Some((
+                path,
+                OverlayState::Untrusted {
+                    fingerprint,
+                    problem: Some(problem),
+                },
+            )) => lines.push(format!(
+                "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; `quecto config trust` would refuse it as it stands: {problem}",
+                path.display()
+            )),
+            Some((path, OverlayState::Refused { reason })) => lines.push(format!(
+                "repo-local config overlay {} was not applied: {reason}",
+                path.display()
+            )),
+            Some((_, OverlayState::Applied | OverlayState::Absent)) | None => {}
         }
         if let Some(legacy) = &self.legacy_local {
             lines.push(format!(

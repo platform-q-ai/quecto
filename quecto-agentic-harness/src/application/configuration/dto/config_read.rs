@@ -20,6 +20,10 @@ pub struct ConfigReadRequest {
     pub scope: ConfigReadScope,
     /// A dotted key path; `None` reads the whole document.
     pub key_path: Option<String>,
+    /// Print secret-shaped leaves (API keys, tokens, passwords) as written.
+    /// Off, they read as `"<redacted>"`: the output of a read lands in
+    /// transcripts and model context.
+    pub reveal_secrets: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +31,9 @@ pub struct ConfigReadout {
     pub value: serde_json::Value,
     /// The layer report, for the effective scope only.
     pub sources: Option<ConfigSources>,
+    /// How many leaves were redacted; zero when secrets were revealed or
+    /// there were none.
+    pub redacted: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,12 +3,21 @@
 //! (`composition::configuration`) fills it through the builder `main`
 //! hands to the CLI. The interface never constructs a use case behind it.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::configuration::use_cases::{
     PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
 };
+use crate::infrastructure::config::Config;
+
+/// The effective document realized into the `Config` the CLI operates on,
+/// with the process's `QUECTO_*` overrides applied. Composition binds it
+/// to the base directory; the interface never maps a document itself.
+pub type ConfigRealizer = Arc<
+    dyn Fn(serde_json::Value, &HashMap<String, String>) -> Result<Config, String> + Send + Sync,
+>;
 
 #[derive(Clone)]
 pub struct ConfigurationHandles {
@@ -23,6 +32,8 @@ pub struct ConfigurationHandles {
     pub patch: Arc<PatchConfiguration>,
     /// `quecto config trust`.
     pub trust: Arc<TrustConfigOverlay>,
+    /// Document → `Config` (#2024): the step after `resolve` on every load.
+    pub realize: ConfigRealizer,
 }
 
 impl std::fmt::Debug for ConfigurationHandles {

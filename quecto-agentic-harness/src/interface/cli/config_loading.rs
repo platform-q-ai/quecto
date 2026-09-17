@@ -35,11 +35,7 @@ pub(crate) fn load_selected_config(
         .resolve
         .execute(selection)
         .map_err(|error| error.to_string())?;
-    let config = crate::infrastructure::config::mapping::realize_config(
-        effective.document,
-        env_overrides,
-        base_dir,
-    )?;
+    let config = (handles.realize)(effective.document, env_overrides)?;
     Ok(LoadedConfig {
         config,
         sources: effective.sources,
@@ -65,6 +61,7 @@ pub(crate) fn overlay_summary(sources: &ConfigSources) -> String {
         Some(report) => match &report.state {
             OverlayState::Applied => format!("{} (trusted)", report.path.display()),
             OverlayState::Untrusted { .. } => format!("{} (untrusted)", report.path.display()),
+            OverlayState::Refused { .. } => format!("{} (refused)", report.path.display()),
             OverlayState::Absent => "none".to_string(),
         },
         None if sources.explicit => "none (--config replaces both layers)".to_string(),

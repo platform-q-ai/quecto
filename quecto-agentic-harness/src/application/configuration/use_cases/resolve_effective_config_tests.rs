@@ -88,7 +88,8 @@ fn an_untrusted_overlay_is_reported_and_not_applied() {
         Some(OverlayReport {
             path: PathBuf::from(OVERLAY),
             state: OverlayState::Untrusted {
-                fingerprint: "fp-41".into()
+                fingerprint: "fp-41".into(),
+                problem: None,
             }
         })
     );
@@ -96,7 +97,144 @@ fn an_untrusted_overlay_is_reported_and_not_applied() {
 }
 
 #[test]
-fn an_untrusted_overlay_is_not_even_parsed() {
+fn an_untrusted_overlay_that_trust_would_refuse_reports_why() {
+    for (content, expected) in [
+        ("{ not json", "failed to parse config"),
+        (r#"{"providers":{}}"#, "`providers` is global-only"),
+        (
+            r#"{"agents":{"defaults":{"effort":"bogus"}}}"#,
+            "invalid effort level 'bogus'",
+        ),
+        ("[1]", "must be a JSON object"),
+    ] {
+        let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
+        let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+        let effective = resolve.execute(&layered()).unwrap();
+        assert_eq!(effective.document, json!({}), "{content}");
+        let lines = effective.sources.diagnostics();
+        let Some(OverlayReport {
+            state:
+                OverlayState::Untrusted {
+                    problem: Some(problem),
+                    ..
+                },
+            ..
+        }) = effective.sources.overlay
+        else {
+            panic!("{content}: expected an untrusted report with a problem");
+        };
+        assert!(problem.contains(expected), "{content}: {problem}");
+        assert!(
+            problem.contains(OVERLAY),
+            "{content}: names the file: {problem}"
+        );
+        assert!(
+            lines[0].contains("would refuse it"),
+            "{content}: {}",
+            lines[0]
+        );
+        assert!(lines[0].contains(expected), "{content}: {}", lines[0]);
+    }
+}
+
+#[test]
+fn a_symbolic_link_at_the_overlay_location_is_refused_even_when_its_target_is_trusted() {
+    let overlay = r#"{"agents":{"defaults":{"model":"local"}}}"#;
+    let mut store = MemoryStore::default();
+    store
+        .files
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(OVERLAY), overlay.as_bytes().to_vec());
+    store.symlinks.insert(PathBuf::from(OVERLAY));
+    let trust = Arc::new(FakeTrust {
+        consents: true,
+        ..Default::default()
+    });
+    trust
+        .approved
+        .lock()
+        .unwrap()
+        .insert((PathBuf::from(OVERLAY), overlay.as_bytes().to_vec()));
+    let (resolve, _) = use_case(Arc::new(store), trust.clone());
+    let effective = resolve.execute(&layered()).unwrap();
+    assert_eq!(effective.document, json!({}), "not applied");
+    assert_eq!(
+        effective.sources.overlay,
+        Some(OverlayReport {
+            path: PathBuf::from(OVERLAY),
+            state: OverlayState::Refused {
+                reason: SYMLINK_REFUSAL.to_string()
+            }
+        })
+    );
+    assert!(trust.offered.lock().unwrap().is_empty(), "never offered");
+    let lines = effective.sources.diagnostics();
+    assert!(lines[0].contains("symbolic link"), "{}", lines[0]);
+    assert!(lines[0].contains(OVERLAY), "{}", lines[0]);
+}
+
+#[test]
+fn a_preview_substitutes_one_layer_and_validates_the_merge() {
+    let store = MemoryStore::with(&[(GLOBAL, r#"{"agents":{"defaults":{"model":"g"}}}"#)]);
+    let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
+    let overlay: Map<String, Value> =
+        serde_json::from_str(r#"{"agents":{"defaults":{"model":"o"}}}"#).unwrap();
+    let effective = resolve
+        .preview(&layered(), ConfigLayer::Overlay, &overlay)
+        .unwrap();
+    assert_eq!(effective.document["agents"]["defaults"]["model"], "o");
+    assert_eq!(
+        effective.sources.applied_overlay(),
+        Some(&PathBuf::from(OVERLAY)),
+        "a substituted overlay is taken as trusted"
+    );
+
+    let bricking: Map<String, Value> =
+        serde_json::from_str(r#"{"container_configs":{"app":{"create":["x"]}}}"#).unwrap();
+    let error = resolve
+        .preview(&layered(), ConfigLayer::Overlay, &bricking)
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            EffectiveConfigError::InvalidMerge {
+                global: Some(_),
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+
+    let smuggling: Map<String, Value> = serde_json::from_str(r#"{"providers":{}}"#).unwrap();
+    assert!(matches!(
+        resolve
+            .preview(&layered(), ConfigLayer::Overlay, &smuggling)
+            .unwrap_err(),
+        EffectiveConfigError::GlobalOnlyKey { .. }
+    ));
+
+    // A substituted global layer is validated on its own, then merged with
+    // the overlay on disk (untrusted here: not applied).
+    let global: Map<String, Value> =
+        serde_json::from_str(r#"{"agents":{"defaults":{"model":"n"}}}"#).unwrap();
+    let effective = resolve
+        .preview(&layered(), ConfigLayer::Global, &global)
+        .unwrap();
+    assert_eq!(effective.document["agents"]["defaults"]["model"], "n");
+    let effective = resolve
+        .preview(
+            &ConfigSelection::Explicit(PathBuf::from("/x/c.json")),
+            ConfigLayer::Global,
+            &global,
+        )
+        .unwrap();
+    assert!(effective.sources.explicit);
+    assert_eq!(effective.document["agents"]["defaults"]["model"], "n");
+}
+
+#[test]
+fn an_untrusted_overlay_is_parsed_only_to_report_the_reason_never_applied() {
     let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, "{ not json")]);
     let (resolve, _) = use_case(store, Arc::new(FakeTrust::default()));
     let effective = resolve.execute(&layered()).unwrap();

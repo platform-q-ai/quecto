@@ -51,11 +51,29 @@ fn a_prompting_adapter_offers_nothing_without_a_terminal_and_records_nothing() {
         trust.decide(&overlay, b"{}"),
         OverlayTrust::Untrusted { .. }
     ));
-    assert!(!trust.offer(&overlay, "abc"));
+    assert!(!trust.offer(&overlay, "abc", b"{}"));
     assert!(!trust.record_path().exists());
-    assert!(!prompt_approval(&overlay, "abc"));
+    assert!(!prompt_approval(&overlay, "abc", b"{}"));
     let silent = PersistentOverlayTrustStore::for_base_dir(base.path(), false);
-    assert!(!silent.offer(&overlay, "abc"));
+    assert!(!silent.offer(&overlay, "abc", b"{}"));
+}
+
+#[test]
+fn the_prompt_shows_the_document_bounded_to_the_preview_limit() {
+    assert_eq!(prompt_preview(b"{\"a\": 1}\n"), "{\"a\": 1}\n");
+    assert_eq!(prompt_preview(b"{}"), "{}\n");
+    let long = "x".repeat(PROMPT_PREVIEW_LIMIT + 10);
+    let shown = prompt_preview(long.as_bytes());
+    assert!(shown.starts_with(&"x".repeat(PROMPT_PREVIEW_LIMIT)));
+    assert!(
+        shown.ends_with("more bytes not shown)\n"),
+        "{}",
+        &shown[shown.len() - 40..]
+    );
+    assert!(!shown.contains(&"x".repeat(PROMPT_PREVIEW_LIMIT + 1)));
+    // A multi-byte character at the boundary is never split.
+    let accented = "é".repeat(PROMPT_PREVIEW_LIMIT + 1);
+    assert!(prompt_preview(accented.as_bytes()).starts_with(&"é".repeat(PROMPT_PREVIEW_LIMIT)));
 }
 
 #[test]

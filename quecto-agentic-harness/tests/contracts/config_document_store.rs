@@ -34,6 +34,9 @@ fn a_symlink_to_a_regular_file_reads_and_a_dangling_one_is_an_error() {
     let good = dir.path().join("good.json");
     std::os::unix::fs::symlink(&target, &good).unwrap();
     assert_eq!(store.read(&good).unwrap(), Some(b"{}".to_vec()));
+    assert!(store.is_symlink(&good), "a link is reported as one");
+    assert!(!store.is_symlink(&target), "its target is not");
+    assert!(!store.is_symlink(&dir.path().join("absent.json")));
 
     let dangling = dir.path().join("dangling.json");
     std::os::unix::fs::symlink(dir.path().join("missing.json"), &dangling).unwrap();
@@ -42,6 +45,7 @@ fn a_symlink_to_a_regular_file_reads_and_a_dangling_one_is_an_error() {
         "a dangling link is present, never absent"
     );
     assert!(store.is_present(&dangling));
+    assert!(store.is_symlink(&dangling), "dangling or not, a link");
 }
 
 #[test]

@@ -46,7 +46,7 @@ fn a_non_interactive_adapter_never_consents_and_a_new_approval_supersedes_the_ol
     let base = TempDir::new().unwrap();
     let store = under_test(base.path());
     let path = base.path().join("x.json");
-    assert!(!store.offer(&path, "abc"));
+    assert!(!store.offer(&path, "abc", b"{}"));
     store.approve(&path, b"v1").unwrap();
     store.approve(&path, b"v2").unwrap();
     assert_eq!(store.decide(&path, b"v2"), OverlayTrust::Trusted);

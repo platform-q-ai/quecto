@@ -5,10 +5,16 @@
 //! `atomic_write`). It serves the configuration capability's
 //! [`ConfigDocumentWriter`] port and the tool-policy persistence hook
 //! (`tool_policy`), which patches only `tools.policy.entries`.
+//!
+//! A rename keeps a file whole but not an *update*: two patchers that read
+//! the same content both rename their own result in, and one's key is
+//! gone. Every read → patch → validate → write cycle therefore runs under
+//! an exclusive `flock(2)` on the sidecar `<file>.lock`
+//! ([`exclusive_hold`]), which blocks across processes and threads alike.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::application::configuration::ports::ConfigDocumentWriter;
+use crate::application::configuration::ports::{ConfigDocumentWriter, DocumentLock};
 use crate::infrastructure::atomic_write::atomic_write;
 
 pub mod tool_policy;
@@ -23,6 +29,71 @@ impl ConfigDocumentWriter for JsonDocumentWriter {
     fn write(&self, path: &Path, document: &serde_json::Value) -> Result<Vec<u8>, String> {
         write_document(path, document)
     }
+
+    fn exclusive(&self, path: &Path) -> Result<Box<dyn DocumentLock>, String> {
+        exclusive_hold(path).map(|hold| Box::new(hold) as Box<dyn DocumentLock>)
+    }
+}
+
+/// The sidecar the exclusive hold on `path` is taken on: `<file>.lock`
+/// beside it (beside the link's target when `path` is a symlink, so every
+/// name of one file shares one lock).
+pub fn lock_path(path: &Path) -> Result<PathBuf, String> {
+    let target = resolve_symlink(path)?;
+    let mut name = target.as_os_str().to_os_string();
+    name.push(".lock");
+    Ok(PathBuf::from(name))
+}
+
+/// An exclusive `flock` on the document's sidecar, released on drop
+/// (explicitly, so a duplicate of the descriptor a forked child still
+/// holds does not keep the lock alive).
+#[derive(Debug)]
+pub struct ExclusiveHold {
+    file: std::fs::File,
+}
+
+impl DocumentLock for ExclusiveHold {}
+
+impl Drop for ExclusiveHold {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+/// Take the exclusive hold on `path`'s sidecar, blocking until any other
+/// holder — in this process or another — releases it. The sidecar is
+/// created 0600 like the document it guards (a world-writable lock would
+/// let any co-resident user wedge every configuration write).
+//
+// `File::lock` stabilized in 1.89; the crate's tests already call it, so
+// 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
+// it and awaits a coordinated MSRV bump.
+#[expect(clippy::incompatible_msrv)]
+pub fn exclusive_hold(path: &Path) -> Result<ExclusiveHold, String> {
+    let lock_path = lock_path(path)?;
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create {} for the config lock: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(NEW_CONFIG_MODE);
+    }
+    let file = options
+        .open(&lock_path)
+        .map_err(|error| format!("failed to open {}: {error}", lock_path.display()))?;
+    file.lock()
+        .map_err(|error| format!("failed to lock {}: {error}", lock_path.display()))?;
+    Ok(ExclusiveHold { file })
 }
 
 /// Render `document` in the layout `path` already uses and replace the

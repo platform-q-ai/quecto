@@ -2,6 +2,9 @@
 
 use std::path::PathBuf;
 
+use super::config_selection::ConfigSelection;
+use super::effective_config::EffectiveConfigError;
+
 /// Which layer a document belongs to; decides which validations apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigLayer {
@@ -12,18 +15,14 @@ pub enum ConfigLayer {
     Overlay,
 }
 
-/// The document to patch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigTarget {
-    pub layer: ConfigLayer,
-    pub path: PathBuf,
-}
-
-/// Set `key_path` (dotted, e.g. `agents.defaults.model`) to `value` in the
-/// target document, creating intermediate objects as needed.
+/// Set `key_path` (dotted, e.g. `agents.defaults.model`) to `value` in
+/// one layer of `selection`, creating intermediate objects as needed. The
+/// selection is what the patched layer is validated *against*: the result
+/// must be a configuration the run in this directory would load.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigPatch {
-    pub target: ConfigTarget,
+    pub selection: ConfigSelection,
+    pub layer: ConfigLayer,
     pub key_path: String,
     pub value: serde_json::Value,
 }
@@ -39,6 +38,12 @@ pub struct ConfigPatchReceipt {
 pub enum ConfigPatchError {
     /// The key path is empty or has an empty segment.
     InvalidKeyPath(String),
+    /// The selection has no overlay location (unknown working directory or
+    /// an explicit `--config`), so there is no overlay to patch.
+    NoOverlayLocation,
+    /// The overlay entry is a symbolic link; the overlay must be a regular
+    /// file (trust is by the file's identity, which a link would borrow).
+    NotARegularFile(PathBuf),
     /// The top-level key is global-only and the target is the overlay.
     GlobalOnlyKey {
         path: PathBuf,
@@ -70,6 +75,13 @@ pub enum ConfigPatchError {
         path: PathBuf,
         reason: String,
     },
+    /// The patched layer is valid on its own, but the effective
+    /// configuration it would produce with the other layer is not; nothing
+    /// was written.
+    InvalidMerge {
+        path: PathBuf,
+        reason: EffectiveConfigError,
+    },
     Write {
         path: PathBuf,
         reason: String,
@@ -91,6 +103,15 @@ impl std::fmt::Display for ConfigPatchError {
                     "invalid config path `{key_path}`: expected dotted keys such as agents.defaults.model"
                 )
             }
+            Self::NoOverlayLocation => write!(
+                f,
+                "no repo-local overlay applies to this run (an explicit --config replaces both layers, and an unknown working directory has none)"
+            ),
+            Self::NotARegularFile(path) => write!(
+                f,
+                "refusing to write {}: it is a symbolic link, and a repo-local overlay must be a regular file (replace the link with a copy)",
+                path.display()
+            ),
             Self::GlobalOnlyKey { path, key } => write!(
                 f,
                 "cannot set `{key}` in {}: `{key}` is global-only; use --global",
@@ -120,6 +141,11 @@ impl std::fmt::Display for ConfigPatchError {
             Self::Invalid { path, reason } => write!(
                 f,
                 "refusing to write {}: the result is not a valid configuration: {reason}",
+                path.display()
+            ),
+            Self::InvalidMerge { path, reason } => write!(
+                f,
+                "refusing to write {}: the configuration this directory would load is not valid: {reason}",
                 path.display()
             ),
             Self::Write { path, reason } => {

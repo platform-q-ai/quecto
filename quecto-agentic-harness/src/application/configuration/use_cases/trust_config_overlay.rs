@@ -1,8 +1,9 @@
 //! Approve the repo-local overlay explicitly (#2024): the non-interactive
 //! counterpart of the startup prompt, so an agent or a script can trust an
 //! overlay it has reviewed. Only an overlay that would actually apply is
-//! approved: a JSON object with no global-only section that validates on
-//! its own.
+//! approved: a regular file (never a symbolic link, whose identity is its
+//! target's) holding a JSON object with no global-only section that
+//! validates on its own.
 
 use std::sync::Arc;
 
@@ -38,6 +39,9 @@ impl TrustConfigOverlay {
         request: OverlayTrustRequest,
     ) -> Result<OverlayApproval, OverlayTrustError> {
         let path = request.path.as_path();
+        if self.store.is_symlink(path) {
+            return Err(OverlayTrustError::NotARegularFile(path.to_path_buf()));
+        }
         let bytes = self
             .store
             .read(path)

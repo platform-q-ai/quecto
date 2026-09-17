@@ -14,4 +14,10 @@ pub trait ConfigDocumentStore: Send + Sync {
 
     /// Whether any directory entry exists at `path`.
     fn is_present(&self, path: &Path) -> bool;
+
+    /// Whether the directory entry at `path` is a symbolic link (to
+    /// anything, resolvable or not). The overlay policy refuses one: trust
+    /// is keyed by the file's identity, and a link would inherit the trust
+    /// of whatever it points at.
+    fn is_symlink(&self, path: &Path) -> bool;
 }

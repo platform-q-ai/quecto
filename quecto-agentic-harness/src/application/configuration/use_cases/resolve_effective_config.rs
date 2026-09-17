@@ -5,6 +5,12 @@
 //! global-only section, and is valid as a layer. An untrusted overlay is
 //! reported, never applied; a trusted one that is broken is an error naming
 //! the file, never a fallback; a merge that is invalid names both files.
+//! An overlay that is a symbolic link is refused whatever it holds: trust
+//! is keyed by the file's identity, and a link would borrow its target's.
+//!
+//! [`ResolveEffectiveConfig::preview`] answers the same question for a
+//! layer that has not been written yet, so the patch use case validates
+//! the merge a write would produce before it writes.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,8 +18,8 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use crate::application::configuration::dto::{
-    ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError, OverlayReport,
-    OverlayState,
+    ConfigLayer, ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError,
+    OverlayReport, OverlayState,
 };
 use crate::application::configuration::overlay_policy::{
     global_only_key, looks_like_config, merge_overlay,
@@ -21,6 +27,9 @@ use crate::application::configuration::overlay_policy::{
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayTrust, OverlayTrustStore,
 };
+
+/// Why a symbolic link at the overlay location never applies.
+pub const SYMLINK_REFUSAL: &str = "it is a symbolic link, and a repo-local overlay must be a regular file (replace the link with a copy, then run `quecto config trust`)";
 
 pub struct ResolveEffectiveConfig {
     store: Arc<dyn ConfigDocumentStore>,
@@ -45,12 +54,44 @@ impl ResolveEffectiveConfig {
         &self,
         selection: &ConfigSelection,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
+        self.resolve(selection, None)
+    }
+
+    /// The effective configuration `selection` would produce if `document`
+    /// (already resolved against its own path) stood in for the `layer`
+    /// file — the file itself is not read for that layer. A substituted
+    /// overlay is taken as trusted: the caller is about to write and
+    /// approve it.
+    pub fn preview(
+        &self,
+        selection: &ConfigSelection,
+        layer: ConfigLayer,
+        document: &Map<String, Value>,
+    ) -> Result<EffectiveConfig, EffectiveConfigError> {
+        self.resolve(selection, Some((layer, document)))
+    }
+
+    fn resolve(
+        &self,
+        selection: &ConfigSelection,
+        substitute: Option<(ConfigLayer, &Map<String, Value>)>,
+    ) -> Result<EffectiveConfig, EffectiveConfigError> {
+        let substituted = |layer: ConfigLayer| {
+            substitute
+                .filter(|(substituted, _)| *substituted == layer)
+                .map(|(_, document)| document.clone())
+        };
         match selection {
             ConfigSelection::Explicit(path) => {
-                let Some(bytes) = self.read(path)? else {
-                    return Err(EffectiveConfigError::Missing(path.clone()));
+                let document = match substituted(ConfigLayer::Global) {
+                    Some(document) => document,
+                    None => {
+                        let Some(bytes) = self.read(path)? else {
+                            return Err(EffectiveConfigError::Missing(path.clone()));
+                        };
+                        self.resolved_object(path, &bytes)?
+                    }
                 };
-                let document = self.resolved_object(path, &bytes)?;
                 self.validate(path, &document)?;
                 Ok(EffectiveConfig {
                     document: Value::Object(document),
@@ -66,17 +107,34 @@ impl ResolveEffectiveConfig {
                 // The global file must be valid on its own, whatever the
                 // overlay adds: the writer, tool-policy persistence and the
                 // admission broker all load it alone.
-                let (global, global_present) = match self.read(&layers.global)? {
-                    Some(bytes) => {
-                        let global = self.resolved_object(&layers.global, &bytes)?;
+                let (global, global_present) = match substituted(ConfigLayer::Global) {
+                    Some(global) => {
                         self.validate(&layers.global, &global)?;
                         (global, true)
                     }
-                    None => (Map::new(), false),
+                    None => match self.read(&layers.global)? {
+                        Some(bytes) => {
+                            let global = self.resolved_object(&layers.global, &bytes)?;
+                            self.validate(&layers.global, &global)?;
+                            (global, true)
+                        }
+                        None => (Map::new(), false),
+                    },
                 };
-                let (document, overlay) = match &layers.overlay {
-                    Some(path) => self.apply_overlay(global, path)?,
-                    None => (global, None),
+                let (document, overlay) = match (&layers.overlay, substituted(ConfigLayer::Overlay))
+                {
+                    (Some(path), Some(overlay)) => {
+                        let overlay = self.checked_overlay_object(path, overlay)?;
+                        (
+                            merge_overlay(global, overlay),
+                            Some(OverlayReport {
+                                path: path.clone(),
+                                state: OverlayState::Applied,
+                            }),
+                        )
+                    }
+                    (Some(path), None) => self.apply_overlay(global, path)?,
+                    (None, _) => (global, None),
                 };
                 match overlay
                     .as_ref()
@@ -126,19 +184,31 @@ impl ResolveEffectiveConfig {
         let Some(bytes) = self.read(path)? else {
             return Ok((global, report(OverlayState::Absent)));
         };
+        // Before any trust decision: a link's canonical path is its
+        // target's, whose approval it must not inherit.
+        if self.store.is_symlink(path) {
+            return Ok((
+                global,
+                report(OverlayState::Refused {
+                    reason: SYMLINK_REFUSAL.to_string(),
+                }),
+            ));
+        }
         let trust = self.trust.decide(path, &bytes);
-        // An untrusted overlay is not parsed before the user is asked about
-        // it — unless an interactive adapter can ask; then it is checked
-        // first so nobody is offered a file that would be refused anyway.
+        // An untrusted overlay is checked before anyone is asked about it,
+        // so nobody is offered — or sent to `quecto config trust` for — a
+        // file that would be refused anyway; the refusal travels with the
+        // report.
         let overlay = match &trust {
             OverlayTrust::Trusted => self.checked_overlay(path, &bytes)?,
             OverlayTrust::Untrusted { fingerprint } => match self.checked_overlay(path, &bytes) {
-                Ok(overlay) if self.trust.offer(path, fingerprint) => overlay,
-                _ => {
+                Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
+                checked => {
                     return Ok((
                         global,
                         report(OverlayState::Untrusted {
                             fingerprint: fingerprint.clone(),
+                            problem: checked.err().map(|error| error.to_string()),
                         }),
                     ));
                 }
@@ -168,6 +238,16 @@ impl ResolveEffectiveConfig {
         bytes: &[u8],
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
         let overlay = self.resolved_object(path, bytes)?;
+        self.checked_overlay_object(path, overlay)
+    }
+
+    /// An already-resolved overlay, free of global-only sections and valid
+    /// as a layer.
+    fn checked_overlay_object(
+        &self,
+        path: &Path,
+        overlay: Map<String, Value>,
+    ) -> Result<Map<String, Value>, EffectiveConfigError> {
         if let Some(key) = global_only_key(&overlay) {
             return Err(EffectiveConfigError::GlobalOnlyKey {
                 path: path.to_path_buf(),

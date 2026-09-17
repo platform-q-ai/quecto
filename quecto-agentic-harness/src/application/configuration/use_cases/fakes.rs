@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::application::configuration::ports::{
-    ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayApproval, OverlayTrust,
-    OverlayTrustStore,
+    ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, DocumentLock, OverlayApproval,
+    OverlayTrust, OverlayTrustStore,
 };
 
 /// Files by path; `broken` paths fail to read (a present, unreadable entry).
@@ -16,7 +16,12 @@ use crate::application::configuration::ports::{
 pub struct MemoryStore {
     pub files: Mutex<BTreeMap<PathBuf, Vec<u8>>>,
     pub broken: BTreeSet<PathBuf>,
+    pub symlinks: BTreeSet<PathBuf>,
     pub fail_writes: bool,
+    /// What each `write` returned, in order — deliberately *not* the bytes
+    /// the store then serves (see the writer impl), so a use case that
+    /// records trust for "what was written" is caught reading back.
+    pub returned: Mutex<Vec<Vec<u8>>>,
 }
 
 impl MemoryStore {
@@ -52,9 +57,17 @@ impl ConfigDocumentStore for MemoryStore {
     fn is_present(&self, path: &Path) -> bool {
         self.broken.contains(path) || self.files.lock().unwrap().contains_key(path)
     }
+
+    fn is_symlink(&self, path: &Path) -> bool {
+        self.symlinks.contains(path)
+    }
 }
 
-/// Writes compact JSON plus a newline into the same in-memory files.
+/// Writes compact JSON plus a newline into the same in-memory files, and
+/// returns the pretty rendering of the same document: a real writer's
+/// return value is the bytes it laid down, but between its rename and any
+/// read-back another writer may have replaced the file, so the two must
+/// never be conflated by a caller.
 impl ConfigDocumentWriter for MemoryStore {
     fn write(&self, path: &Path, document: &Value) -> Result<Vec<u8>, String> {
         if self.fail_writes {
@@ -62,11 +75,15 @@ impl ConfigDocumentWriter for MemoryStore {
         }
         let mut bytes = serde_json::to_vec(document).unwrap();
         bytes.push(b'\n');
-        self.files
-            .lock()
-            .unwrap()
-            .insert(path.to_path_buf(), bytes.clone());
-        Ok(bytes)
+        self.files.lock().unwrap().insert(path.to_path_buf(), bytes);
+        let mut returned = serde_json::to_vec_pretty(document).unwrap();
+        returned.push(b'\n');
+        self.returned.lock().unwrap().push(returned.clone());
+        Ok(returned)
+    }
+
+    fn exclusive(&self, _path: &Path) -> Result<Box<dyn DocumentLock>, String> {
+        Ok(Box::new(()))
     }
 }
 
@@ -157,7 +174,7 @@ impl OverlayTrustStore for FakeTrust {
         }
     }
 
-    fn offer(&self, path: &Path, _fingerprint: &str) -> bool {
+    fn offer(&self, path: &Path, _fingerprint: &str, _content: &[u8]) -> bool {
         self.offered.lock().unwrap().push(path.to_path_buf());
         self.consents
     }

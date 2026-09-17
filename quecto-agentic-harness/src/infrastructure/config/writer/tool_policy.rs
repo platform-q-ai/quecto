@@ -72,6 +72,9 @@ pub fn persist_tool_policy_results(
             overlay.display()
         ));
     }
+    // The same hold `quecto config set` takes: the entries read below are
+    // the ones the write replaces, whatever else is patching this file.
+    let _hold = super::exclusive_hold(config_path)?;
     let mut document = match std::fs::read(config_path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
             format!(

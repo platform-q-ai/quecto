@@ -44,7 +44,12 @@ pub(super) fn help_text(out: &mut String) {
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  config      Read and write configuration\n");
-    out.push_str("              get [<dotted.path>] [--effective|--global|--local]\n");
+    out.push_str(
+        "              get [<dotted.path>] [--effective|--global|--local] [--show-secrets]\n",
+    );
+    out.push_str(
+        "                  (API keys, tokens and passwords print as \"<redacted>\" by default)\n",
+    );
     out.push_str(
         "              set <dotted.path> <json-value> [--global|--local]  (default: --local,\n",
     );

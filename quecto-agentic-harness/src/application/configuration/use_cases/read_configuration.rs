@@ -1,5 +1,10 @@
 //! Read configuration values (#2024): one layer's document as written, or
-//! the effective merge a run would load, narrowed to a dotted key path.
+//! the effective merge a run would load, narrowed to a dotted key path,
+//! with secret-shaped leaves redacted unless the caller reveals them.
+//!
+//! The effective scope is [`ResolveEffectiveConfig`]'s answer: a use case
+//! of the same capability invoked directly — an intra-capability call, not
+//! a cross-capability one (those go through ports).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -9,8 +14,9 @@ use serde_json::Value;
 use crate::application::configuration::dto::{
     ConfigReadError, ConfigReadRequest, ConfigReadScope, ConfigReadout,
 };
-use crate::application::configuration::overlay_policy::get_path;
+use crate::application::configuration::overlay_policy::{get_path, key_segments};
 use crate::application::configuration::ports::ConfigDocumentStore;
+use crate::application::configuration::redaction::redact_secret_leaves;
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 
 pub struct ReadConfiguration {
@@ -41,13 +47,29 @@ impl ReadConfiguration {
                 (self.raw(path)?, None)
             }
         };
-        let value = match &request.key_path {
+        let mut value = match &request.key_path {
             Some(key_path) => get_path(&document, key_path)
                 .cloned()
                 .ok_or_else(|| ConfigReadError::NotSet(key_path.clone()))?,
             None => document,
         };
-        Ok(ConfigReadout { value, sources })
+        let redacted = if request.reveal_secrets {
+            0
+        } else {
+            // A narrowed read yields the leaf itself; the key it was read
+            // under decides whether that leaf is a secret.
+            let leaf_key = request
+                .key_path
+                .as_deref()
+                .and_then(key_segments)
+                .and_then(|segments| segments.last().copied());
+            redact_secret_leaves(&mut value, leaf_key)
+        };
+        Ok(ConfigReadout {
+            value,
+            sources,
+            redacted,
+        })
     }
 
     /// The file as written; an absent file reads as an empty object.

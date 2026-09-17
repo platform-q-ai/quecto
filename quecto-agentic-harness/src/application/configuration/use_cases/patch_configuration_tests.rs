@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::configuration::dto::ConfigTarget;
+use crate::application::configuration::dto::{ConfigLayers, EffectiveConfigError};
 use crate::application::configuration::use_cases::fakes::{FakeTrust, FakeValidator, MemoryStore};
 use serde_json::json;
 use std::path::PathBuf;
@@ -7,24 +7,39 @@ use std::path::PathBuf;
 const GLOBAL: &str = "/home/u/.quecto/config.json";
 const OVERLAY: &str = "/work/.quecto/config.json";
 
+fn layered() -> ConfigSelection {
+    ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(GLOBAL),
+        overlay: Some(PathBuf::from(OVERLAY)),
+        legacy_local: None,
+    })
+}
+
+/// A patch of `layer` in the layered selection; `path` documents which
+/// file the layer addresses and is asserted against the selection.
 fn patch(layer: ConfigLayer, path: &str, key_path: &str, value: Value) -> ConfigPatch {
+    let selection = layered();
+    let expected = match layer {
+        ConfigLayer::Global => selection.path(),
+        ConfigLayer::Overlay => selection.overlay_path().unwrap(),
+    };
+    assert_eq!(expected, Path::new(path));
     ConfigPatch {
-        target: ConfigTarget {
-            layer,
-            path: PathBuf::from(path),
-        },
+        selection,
+        layer,
         key_path: key_path.into(),
         value,
     }
 }
 
 fn use_case(store: Arc<MemoryStore>, trust: Arc<FakeTrust>) -> PatchConfiguration {
-    PatchConfiguration::new(
+    let validator = Arc::new(FakeValidator::default());
+    let resolve = Arc::new(ResolveEffectiveConfig::new(
         store.clone(),
-        store,
-        Arc::new(FakeValidator::default()),
-        trust,
-    )
+        validator.clone(),
+        trust.clone(),
+    ));
+    PatchConfiguration::new(store.clone(), store, validator, trust, resolve)
 }
 
 fn document(store: &MemoryStore, path: &str) -> Value {
@@ -155,14 +170,9 @@ fn key_paths_must_be_dotted_object_keys() {
     );
     let store = MemoryStore::with(&[(GLOBAL, "[1]")]);
     assert_eq!(
-        super::PatchConfiguration::new(
-            store.clone(),
-            store,
-            Arc::new(FakeValidator::default()),
-            Arc::new(FakeTrust::default())
-        )
-        .execute(patch(ConfigLayer::Global, GLOBAL, "a", json!(1)))
-        .unwrap_err(),
+        self::use_case(store, Arc::new(FakeTrust::default()))
+            .execute(patch(ConfigLayer::Global, GLOBAL, "a", json!(1)))
+            .unwrap_err(),
         ConfigPatchError::NotAnObject {
             path: PathBuf::from(GLOBAL),
             at: String::new()
@@ -237,7 +247,7 @@ fn an_overlay_patch_refuses_global_only_keys_before_reading() {
 }
 
 #[test]
-fn an_overlay_patch_creates_the_file_and_records_trust_for_the_bytes_written() {
+fn an_overlay_patch_creates_the_file_and_records_trust_for_the_bytes_the_writer_returned() {
     let store = MemoryStore::with(&[]);
     let trust = Arc::new(FakeTrust::default());
     let receipt = use_case(store.clone(), trust.clone())
@@ -249,9 +259,22 @@ fn an_overlay_patch_creates_the_file_and_records_trust_for_the_bytes_written() {
         ))
         .unwrap();
     assert!(receipt.created);
-    let written = store.content(OVERLAY).unwrap();
-    assert!(trust.is_approved(OVERLAY, written.as_bytes()));
+    // The fake writer returns a rendering that differs from what its store
+    // then serves: the approval must be for the returned bytes, never for
+    // a read-back (a racing writer could have replaced the file by then).
+    let returned = store.returned.lock().unwrap().last().unwrap().clone();
+    let on_disk = store.content(OVERLAY).unwrap();
+    assert_ne!(returned, on_disk.as_bytes());
+    assert!(trust.is_approved(OVERLAY, &returned), "the bytes written");
+    assert!(
+        !trust.is_approved(OVERLAY, on_disk.as_bytes()),
+        "not whatever the store serves afterwards"
+    );
 
+    // The second patch finds the on-disk content: the fake's store serves
+    // compact bytes, so trust it explicitly (as a real writer's read-back
+    // would match) before patching in place.
+    let trust = FakeTrust::trusting(OVERLAY, &on_disk);
     let receipt = use_case(store.clone(), trust.clone())
         .execute(patch(
             ConfigLayer::Overlay,
@@ -261,10 +284,135 @@ fn an_overlay_patch_creates_the_file_and_records_trust_for_the_bytes_written() {
         ))
         .unwrap();
     assert!(!receipt.created, "a trusted overlay is patched in place");
-    assert!(trust.is_approved(OVERLAY, store.content(OVERLAY).unwrap().as_bytes()));
+    let returned = store.returned.lock().unwrap().last().unwrap().clone();
+    assert!(trust.is_approved(OVERLAY, &returned));
     assert_eq!(
         document(&store, OVERLAY),
         json!({"agents":{"defaults":{"model":"m","effort":"low"}}})
+    );
+}
+
+#[test]
+fn an_overlay_patch_that_bricks_the_merge_is_refused_before_anything_is_written() {
+    // Valid as a layer (a non-default container config), invalid as the
+    // effective configuration: no container config is the default.
+    let store = MemoryStore::with(&[(GLOBAL, r#"{"agents":{"defaults":{"model":"g"}}}"#)]);
+    let error = use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "container_configs.app.create",
+            json!(["x"]),
+        ))
+        .unwrap_err();
+    let ConfigPatchError::InvalidMerge { path, reason } = &error else {
+        panic!("expected InvalidMerge, got {error:?}");
+    };
+    assert_eq!(path, Path::new(OVERLAY));
+    assert!(
+        matches!(reason, EffectiveConfigError::InvalidMerge { .. }),
+        "{reason:?}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("refusing to write"), "{message}");
+    assert!(
+        message.contains(OVERLAY) && message.contains(GLOBAL),
+        "{message}"
+    );
+    assert!(
+        message.contains("no container config is labeled"),
+        "{message}"
+    );
+    assert_eq!(store.content(OVERLAY), None, "nothing written");
+    assert!(store.returned.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_global_patch_is_validated_against_the_trusted_overlay_it_merges_with() {
+    let overlay = r#"{"container_configs":{"app":{"create":["x"]}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, r#"{}"#), (OVERLAY, overlay)]);
+    let trust = FakeTrust::trusting(OVERLAY, overlay);
+    let validator = Arc::new(FakeValidator::default());
+    let resolve = Arc::new(ResolveEffectiveConfig::new(
+        store.clone(),
+        validator.clone(),
+        trust.clone(),
+    ));
+    PatchConfiguration::new(
+        store.clone(),
+        store.clone(),
+        validator.clone(),
+        trust,
+        resolve,
+    )
+    .execute(patch(
+        ConfigLayer::Global,
+        GLOBAL,
+        "container_configs.shared",
+        json!({"default": true, "create": ["y"]}),
+    ))
+    .unwrap();
+    let validated = validator.validated.lock().unwrap();
+    assert!(
+        validated.iter().any(|document| {
+            document.pointer("/container_configs/app").is_some()
+                && document.pointer("/container_configs/shared").is_some()
+        }),
+        "the merge with the trusted overlay was validated before the write: {validated:?}"
+    );
+    assert_eq!(
+        document(&store, GLOBAL),
+        json!({"container_configs":{"shared":{"default":true,"create":["y"]}}}),
+        "the overlay's entry is not written into the global file"
+    );
+}
+
+#[test]
+fn an_overlay_patch_refuses_a_symbolic_link_and_a_selection_without_an_overlay() {
+    let mut store = MemoryStore::default();
+    store.symlinks.insert(PathBuf::from(OVERLAY));
+    let store = Arc::new(store);
+    let error = use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "agents.defaults.model",
+            json!("m"),
+        ))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ConfigPatchError::NotARegularFile(PathBuf::from(OVERLAY))
+    );
+    assert!(error.to_string().contains("symbolic link"), "{error}");
+    assert_eq!(store.content(OVERLAY), None);
+
+    let error = use_case(MemoryStore::with(&[]), Arc::new(FakeTrust::default()))
+        .execute(ConfigPatch {
+            selection: ConfigSelection::Explicit(PathBuf::from(GLOBAL)),
+            layer: ConfigLayer::Overlay,
+            key_path: "agents.defaults.model".into(),
+            value: json!("m"),
+        })
+        .unwrap_err();
+    assert_eq!(error, ConfigPatchError::NoOverlayLocation);
+    assert!(error.to_string().contains("no repo-local overlay"));
+}
+
+#[test]
+fn an_explicit_selection_is_patched_as_the_global_layer() {
+    let store = MemoryStore::with(&[("/x/c.json", r#"{"agents":{"defaults":{"model":"e"}}}"#)]);
+    use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .execute(ConfigPatch {
+            selection: ConfigSelection::Explicit(PathBuf::from("/x/c.json")),
+            layer: ConfigLayer::Global,
+            key_path: "agents.defaults.model".into(),
+            value: json!("f"),
+        })
+        .unwrap();
+    assert_eq!(
+        document(&store, "/x/c.json"),
+        json!({"agents":{"defaults":{"model":"f"}}})
     );
 }
 
@@ -334,7 +482,11 @@ fn debug_and_display_are_informative() {
 
 #[test]
 fn an_overlay_patch_may_add_a_non_default_container_config() {
-    let store = MemoryStore::with(&[]);
+    // Valid as a layer, and valid merged: the global file has the default.
+    let store = MemoryStore::with(&[(
+        GLOBAL,
+        r#"{"container_configs":{"shared":{"default":true,"create":["a"]}}}"#,
+    )]);
     use_case(store.clone(), Arc::new(FakeTrust::default()))
         .execute(patch(
             ConfigLayer::Overlay,
@@ -351,13 +503,13 @@ fn an_overlay_patch_may_add_a_non_default_container_config() {
         .execute(patch(
             ConfigLayer::Global,
             GLOBAL,
-            "container_configs.h",
-            json!({"create":["b"]}),
+            "container_configs.shared.default",
+            json!(false),
         ))
         .unwrap_err();
     assert!(
         matches!(error, ConfigPatchError::Invalid { .. }),
-        "the global file is complete: {error}"
+        "the global file is complete on its own: {error}"
     );
     let root = ConfigPatchError::NotAnObject {
         path: PathBuf::from(GLOBAL),

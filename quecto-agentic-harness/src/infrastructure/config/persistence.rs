@@ -55,8 +55,8 @@ impl OverlayTrustStore for PersistentOverlayTrustStore {
 
     /// Consent only: the caller validates the overlay and records the
     /// approval, so a "y" on a broken overlay trusts nothing.
-    fn offer(&self, path: &Path, fingerprint: &str) -> bool {
-        self.prompt_on_miss && prompt_approval(path, fingerprint)
+    fn offer(&self, path: &Path, fingerprint: &str, content: &[u8]) -> bool {
+        self.prompt_on_miss && prompt_approval(path, fingerprint, content)
     }
 
     fn approve(&self, path: &Path, content: &[u8]) -> Result<OverlayApproval, String> {
@@ -90,13 +90,36 @@ fn canonical_identity(path: &Path) -> String {
         .into_owned()
 }
 
-fn prompt_approval(path: &Path, fingerprint: &str) -> bool {
+/// How much of the overlay the prompt shows: overlays are small, and a
+/// bound keeps a pathological file from scrolling the question away.
+pub const PROMPT_PREVIEW_LIMIT: usize = 4096;
+
+/// The document as the prompt shows it: the content up to the limit, cut
+/// on a character boundary, with a note of what was left out.
+pub fn prompt_preview(content: &[u8]) -> String {
+    let text = String::from_utf8_lossy(content);
+    let mut shown: String = text.chars().take(PROMPT_PREVIEW_LIMIT).collect();
+    if !shown.ends_with('\n') {
+        shown.push('\n');
+    }
+    if shown.len() < text.len() {
+        shown.push_str(&format!(
+            "… ({} more bytes not shown)\n",
+            content.len() - shown.len()
+        ));
+    }
+    shown
+}
+
+fn prompt_approval(path: &Path, fingerprint: &str, content: &[u8]) -> bool {
     if !io::stdin().is_terminal() {
         return false;
     }
+    // What is shown is what a "y" approves: the bytes the caller read.
     eprint!(
-        "Trust repo-local config overlay {} (sha256 {fingerprint})? [y/N] ",
-        path.display()
+        "Repo-local config overlay {} (sha256 {fingerprint}):\n{}Trust this overlay? [y/N] ",
+        path.display(),
+        prompt_preview(content)
     );
     let _ = io::stderr().flush();
     let mut input = String::new();

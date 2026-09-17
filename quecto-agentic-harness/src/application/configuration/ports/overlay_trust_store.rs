@@ -31,10 +31,10 @@ pub trait OverlayTrustStore: Send + Sync {
     fn decide(&self, path: &Path, content: &[u8]) -> OverlayTrust;
 
     /// Ask the user, when there is one to ask, whether to trust this
-    /// content; `true` is consent, not a record — the caller validates the
-    /// overlay and then [`approve`](Self::approve)s it. A non-interactive
-    /// adapter answers `false`.
-    fn offer(&self, path: &Path, fingerprint: &str) -> bool;
+    /// content — shown to them, so what they consent to is what the caller
+    /// then [`approve`](Self::approve)s; `true` is consent, not a record.
+    /// A non-interactive adapter answers `false`.
+    fn offer(&self, path: &Path, fingerprint: &str, content: &[u8]) -> bool;
 
     /// Record this exact content at this path as the one trusted content
     /// for the path (an earlier approval of other content is superseded).

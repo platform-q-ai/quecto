@@ -135,9 +135,18 @@ fn dotted_paths_read_and_write_through_objects_only() {
 }
 
 #[test]
-fn a_document_looks_like_a_config_only_with_a_known_section() {
+fn a_document_looks_like_a_config_only_with_a_known_section_shaped_as_one() {
     assert!(looks_like_config(&json!({"agents":{}})));
     assert!(looks_like_config(&json!({"custom":1,"workflow":{}})));
+    assert!(
+        looks_like_config(&json!({"admission":null})),
+        "the #2023 shape: a quecto file that disabled admission"
+    );
     assert!(!looks_like_config(&json!({"name":"app"})));
     assert!(!looks_like_config(&json!([])));
+    // A known name with an unrelated value is another tool's file.
+    assert!(!looks_like_config(&json!({"workflow":"build"})));
+    assert!(!looks_like_config(&json!({"tools":["eslint"]})));
+    assert!(!looks_like_config(&json!({"agents":null})));
+    assert!(!looks_like_config(&json!({"providers":true})));
 }

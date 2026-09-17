@@ -2,6 +2,7 @@
 //! all-or-nothing (no temporary file survives, the previous content stays
 //! on failure), and a document already in the writer's layout changes only
 //! on the lines whose values changed — key order and unknown keys kept.
+//! The exclusive hold it hands out is `document_lock.rs`'s contract.
 use std::sync::Arc;
 use tempfile::TempDir;
 

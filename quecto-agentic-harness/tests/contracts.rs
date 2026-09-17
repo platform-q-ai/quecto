@@ -53,6 +53,8 @@ mod context_spill_store;
 mod credential_status_port;
 #[path = "contracts/delegated_children_roster.rs"]
 mod delegated_children_roster;
+#[path = "contracts/document_lock.rs"]
+mod document_lock;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
 #[path = "contracts/effort_runtime.rs"]

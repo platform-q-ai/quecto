@@ -23,7 +23,7 @@ use crate::infrastructure::config::writer::JsonDocumentWriter;
 use crate::infrastructure::reload::ReloadSource;
 use crate::infrastructure::runtime_configuration::ConfigLoader;
 use crate::interface::cli::configuration_handles::{
-    ConfigurationEnvironment, ConfigurationHandles,
+    ConfigRealizer, ConfigurationEnvironment, ConfigurationHandles,
 };
 
 pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> ConfigurationHandles {
@@ -47,10 +47,19 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
             writer,
             validator.clone(),
             trust.clone(),
+            resolve.clone(),
         )),
         trust: Arc::new(TrustConfigOverlay::new(store, validator, trust)),
         resolve,
+        realize: realizer(&env.base_dir),
     }
+}
+
+/// The document → `Config` step as a handle bound to `base_dir`, so the
+/// interface never reaches into `infrastructure::config::mapping` itself.
+fn realizer(base_dir: &Path) -> ConfigRealizer {
+    let base_dir = base_dir.to_path_buf();
+    Arc::new(move |document, env_overrides| realize_config(document, env_overrides, &base_dir))
 }
 
 /// The run's configuration as one reloadable read (#2024): the selected
@@ -83,17 +92,23 @@ pub fn build_config_loader(
 }
 
 /// The sources a reload must watch for `selection` (#2024): the base file
-/// (required: its removal keeps the last-good runtime), and, when an
-/// overlay applies, the overlay and the overlay trust record (optional:
-/// removing either, or `quecto config trust`, takes effect on the next
-/// reload).
+/// (required: its removal keeps the last-good runtime); when the selection
+/// has an overlay location, the overlay (optional: its creation or removal
+/// is a change); and, only when an overlay file exists as the watch is
+/// seeded, the per-user trust record (optional: `quecto config trust`, or a
+/// `config set` that re-records trust, takes effect on the next reload).
+/// A session with no overlay is not rebuilt every time some other
+/// repository's overlay is trusted — the record is one file for every
+/// overlay on the host.
 pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> Vec<ReloadSource> {
     let mut watched = vec![ReloadSource::new(selection.path())];
     if let Some(overlay) = selection.overlay_path() {
         watched.push(ReloadSource::optional(overlay));
-        watched.push(ReloadSource::optional(
-            base_dir.join(TRUST_RECORD_FILE_NAME),
-        ));
+        if overlay.exists() {
+            watched.push(ReloadSource::optional(
+                base_dir.join(TRUST_RECORD_FILE_NAME),
+            ));
+        }
     }
     watched
 }
