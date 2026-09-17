@@ -52,6 +52,7 @@ async fn client_connect_legacy_writes_newline_commands_not_frames() {
             model: Some("test-model".into()),
             provider: None,
             model_id: None,
+            persist: None,
         })
         .await
         .unwrap();

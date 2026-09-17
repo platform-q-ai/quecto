@@ -174,6 +174,7 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
+        configuration: crate::composition::configuration::build_configuration_handles,
     });
 
     let cmd = AgentCommand::SetToolPolicy {
@@ -232,6 +233,7 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
+        configuration: crate::composition::configuration::build_configuration_handles,
     });
 
     {
@@ -275,6 +277,7 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
+        configuration: crate::composition::configuration::build_configuration_handles,
     });
 
     let cmd = AgentCommand::SetToolPolicy {

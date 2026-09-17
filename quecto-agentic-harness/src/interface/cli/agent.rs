@@ -400,6 +400,7 @@ pub(crate) fn build_agent_from_config(
         env_overrides: env_overrides.clone(),
         http_client: http_client.clone(),
         provider_runtime: build_provider,
+        configuration: build_configuration,
     };
     let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
     let ToolRegistryBuild {

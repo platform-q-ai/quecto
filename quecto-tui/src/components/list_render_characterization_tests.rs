@@ -260,6 +260,9 @@ fn model_selector_wide_pixels_with_current_marker() {
             // label, outside the alignment column, shifting the provider by
             // exactly the marker width — today's pixels.
             "    model-bb-long ●  ProvB".to_string(),
+            // The action footer (#2024 S2) sits under the list after a gap.
+            String::new(),
+            "  Enter: use for this session · Tab: change · Esc: close".to_string(),
         ]
     );
     assert!(lines[3].contains(ACCENT), "selected model id is accented");
@@ -284,7 +287,9 @@ fn model_selector_narrow_truncates_provider_not_drops_it() {
 fn model_selector_overflow_indicator_pixels() {
     let mut sel = ModelSelector::new(None);
     let lines = sel.render(80);
-    let plain = strip_ansi(lines.last().unwrap());
+    // The last two lines are the gap and the action footer (#2024 S2); the
+    // indicator is the last row of the list itself.
+    let plain = strip_ansi(&lines[lines.len() - 3]);
     assert_eq!(
         plain, "  (1/38)",
         "12-row window over the 38 known models shows the indicator"

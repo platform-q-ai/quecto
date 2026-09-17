@@ -59,6 +59,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
         model: Some("fireworks/qwen3p7-plus".into()),
         provider: None,
         model_id: None,
+        persist: None,
     };
     {
         let save_session =

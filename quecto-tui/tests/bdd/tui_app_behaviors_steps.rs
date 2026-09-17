@@ -324,6 +324,54 @@ fn when_filter_model_selector(world: &mut TuiWorld, query: String) {
     });
 }
 
+#[when("I cycle the model selector action once")]
+fn when_cycle_model_selector_action(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Tab);
+    });
+}
+
+#[then(expr = "the model selector footer says {string}")]
+fn then_model_selector_footer(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(frame.contains(&expected), "{frame}");
+}
+
+#[then(expr = "a set model command is sent for {string} with persist {string}")]
+fn then_set_model_command_sent_with_persist(
+    world: &mut TuiWorld,
+    expected: String,
+    persist: String,
+) {
+    then_set_model_command_sent_for(world, expected);
+    let cmd = command_of_type(&world.tui_last_commands, "set_model").expect("set_model command");
+    let value: serde_json::Value = serde_json::from_str(cmd).expect("set_model command json");
+    assert_eq!(
+        value.get("persist").and_then(|v| v.as_str()),
+        Some(persist.as_str()),
+        "{cmd}"
+    );
+}
+
+#[when(expr = "the set model response reports the default persisted at {string} {string}")]
+fn when_set_model_response_persisted(world: &mut TuiWorld, scope: String, path: String) {
+    let request =
+        command_of_type(&world.tui_last_commands, "set_model").expect("set_model command");
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "set_model".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "selection": { "status": "ok", "provider": "openai-api", "generation": 1 },
+                "persisted": { "scope": scope, "path": path }
+            })),
+            error: None,
+        });
+    });
+}
+
 #[when("I accept the selected model")]
 fn when_accept_selected_model(world: &mut TuiWorld) {
     drive(world, |h| {

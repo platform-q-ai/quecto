@@ -684,14 +684,21 @@ Switch the active model at runtime. The new model takes effect on the next promp
 | `model` | string | option A | Qualified model name, e.g. `"anthropic/claude-sonnet-4-6"` |
 | `provider` | string | option B | Provider name (used with `modelId`) |
 | `modelId` | string | option B | Model ID within the provider |
+| `persist` | `"local"` \| `"global"` | no | Also record the model as the configured default of that layer (#2024 S2): `"local"` writes `agents.defaults.model` in the repository overlay `<cwd>/.quecto/config.json` (created if absent, trust recorded), `"global"` in the run's global layer — `<base_dir>/config.json`, or the `--config` file when the run was started with one. Absent: the switch is in-memory, as before. |
 
 You must provide either `model` OR both `provider` + `modelId`. Providing neither (or empty strings) returns an error.
+
+**Persisting a default.** The record goes through the same safe writer as `quecto config set` (exclusive hold, the file and the merged configuration validated before a byte is written, only the addressed key changed, `providers`/`admission` never touched) and happens *before* the switch is applied, so a refused record leaves the session unchanged: `success: false` with the writer's reason and remedy (an untrusted overlay → `run \`quecto config trust\` first`; a symbolic link at the overlay; a run started with an explicit `--config`, which has no overlay; a run without a reloadable configuration). Only a qualified `provider/model` id whose provider the published catalogue lists models for is recorded — a bare id (`select it as provider/model`) and a provider the published catalogue lists no models for (`the published catalogue lists no models for \`X\``: unconfigured, so every later start there would fail its first prompt, or configured but not yet refreshed — a failed source, a custom endpoint before its first `refresh_models`) are refused for persistence, while an id the catalogue does not enumerate on a listed provider, or one that is not runnable *now* (missing credential), is recorded as the switch is applied — and the id recorded is the qualified one the switch resolved, so `provider` + `modelId` persists as `provider/modelId`. Because an unlisted id on a listed provider *is* recorded, the reply's `selection.status` is the typo check when persisting: `unknown_model` there means the catalogue does not enumerate the id you just pinned, so check the spelling (`quecto config unset` rolls it back). Any other `persist` value is an error before anything happens. Two consequences worth knowing: the record is a configuration edit, so the poll before this session's next prompt rebuilds the provider runtime from the files and re-applies the persisted tool policy, which clears live-only `set_tool_policy` overlays exactly as an external `quecto config set` would; and the switch still resets this session's effort for the new model (`low` where accepted) while a previously persisted `agents.defaults.effort` stays as it is — a later start admits that pair through the startup rule (an effort the model does not accept is dropped with a warning). If recording trust fails *after* an overlay write (`wrote … but could not record it as trusted`), the file holds the new default but is untrusted until `quecto config trust` — the one case where a refusal is not "nothing changed". A persisted default is read at startup: every *new* agent started in that directory (local) or anywhere (global) starts on it; other running sessions keep the model they have (a reload rebuilds providers, it does not re-read the default model).
 
 **Model routing:**
 - **Qualified names** (`provider/model`): Routed to the matching provider. If no provider matches the prefix, prompts will fail with `"no configured provider matches model prefix 'X'"` — but the agent stays alive and you can switch to a valid model
 - **Bare names** (`model`): Sent to the first configured provider, which may not support the model
 
-**Response:** `success: true` on valid input, `success: false` with an error message on validation failure.
+**Response:** `success: true` on valid input, `success: false` with an error message on validation failure. With `persist`, the data carries where the default landed beside the selection verdict:
+
+```json
+{"selection":{"status":"ok","provider":"openai-api","generation":3},"persisted":{"scope":"local","path":"/work/app/.quecto/config.json"}}
+```
 
 > **Important:** `set_model` only swaps a string — it performs no validation against the provider. Errors surface on the next `prompt`.
 
@@ -705,6 +712,10 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 {"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-6"}
 ```
 
+```json
+{"type":"set_model","id":"sm-3","model":"openai-api/gpt-5.6-luna","persist":"local"}
+```
+
 ---
 
 ### `set_effort`
@@ -716,6 +727,7 @@ Switch the session reasoning-effort level at runtime (#1067). Applied to every s
 | `type` | `"set_effort"` | yes | |
 | `id` | string | no | Correlation ID |
 | `effort` | string | yes | Effort level string |
+| `persist` | `"local"` \| `"global"` | no | Also record the level as `agents.defaults.effort` of that configuration layer (#2024 S2), with the same writer, ordering and refusals as `set_model`'s `persist`. The level is validated against the active model first; a refused record leaves the session unchanged. |
 
 **Response data (success):**
 
@@ -723,7 +735,9 @@ Switch the session reasoning-effort level at runtime (#1067). Applied to every s
 {"effort": "high"}
 ```
 
-**Error:** `success: false` with a message listing the valid levels for the active model.
+With `persist`: `{"effort":"high","persisted":{"scope":"global","path":"/home/u/.quecto/config.json"}}`.
+
+**Error:** `success: false` with a message listing the valid levels for the active model, or the writer's reason when the record was refused.
 
 **Example:**
 

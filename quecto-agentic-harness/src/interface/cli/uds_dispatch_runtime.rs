@@ -7,6 +7,7 @@ pub(super) struct SetModelArgs {
     pub(super) model: Option<String>,
     pub(super) provider: Option<String>,
     pub(super) model_id: Option<String>,
+    pub(super) persist: Option<String>,
 }
 
 pub(super) fn resolve_set_model_target(
@@ -41,12 +42,31 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             return false;
         }
     };
+    let persist = match crate::interface::uds::catalogue::persist_scope::parse_persist_scope(
+        args.persist.as_deref(),
+    ) {
+        Ok(scope) => scope,
+        Err(msg) => {
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, &msg);
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+    };
     // The change-active-model use case (#1847) republishes the catalogue,
-    // applies the model with its declared limits (#935/#1044) and resets the
-    // effort for the new model (#1067); the reply carries the catalogue's
-    // selection verdict (#1573) — the switch itself proceeds regardless.
+    // records the qualified id as a configured default when asked (#2024
+    // S2), applies the model with its declared limits (#935/#1044) and
+    // resets the effort for the new model (#1067); the reply carries the
+    // catalogue's selection verdict (#1573) — the switch itself proceeds
+    // regardless of the verdict, but not past a refused record.
     let model = ctx.catalogue.model.clone();
-    let switched = model.execute(ctx.agent, &resolved_model);
+    let switched = match model.execute_with_default(ctx.agent, &resolved_model, persist) {
+        Ok(switched) => switched,
+        Err(error) => {
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, error.to_string());
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+    };
     ctx.session.set_model(switched.plan.model.clone());
     if switched.effort_changed {
         ctx.session.bump_visible_generation();
@@ -72,11 +92,22 @@ pub(super) async fn handle_set_effort(
     id: Option<&str>,
     type_name: &str,
     effort: &str,
+    persist: Option<&str>,
 ) -> bool {
     use crate::interface::uds::catalogue::effort_presenter;
+    let persist =
+        match crate::interface::uds::catalogue::persist_scope::parse_persist_scope(persist) {
+            Ok(scope) => scope,
+            Err(msg) => {
+                let ev = AgentEvent::err(id, type_name, &msg);
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                return false;
+            }
+        };
     let request = crate::application::catalogue::dto::EffortChangeRequest {
         model: ctx.session.model().to_string(),
         level: effort.to_string(),
+        persist,
     };
     let before = ctx.agent.effort();
     let ev = match ctx.catalogue.effort.execute(ctx.agent, &request) {

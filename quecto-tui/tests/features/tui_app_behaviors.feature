@@ -51,6 +51,32 @@ Feature: TUI app event routing and command behaviours
     Then a set model command is sent for "anthropic-api/claude-fable-5"
     And the footer shows the master model "anthropic-api/claude-fable-5"
 
+  @model-selector @issue-2024
+  Scenario: The model selector pins the choice as the repository default and reports where it landed
+    Given a fresh TUI app harness
+    When I request the model selector
+    And the model list response contains "openai-api/gpt-5.6-sol" and "openai-api/gpt-5.6-luna"
+    And I cycle the model selector action once
+    Then the model selector footer says "Enter: use and pin as this repo's default"
+    When I filter the model selector with "luna"
+    And I accept the selected model
+    Then a set model command is sent for "openai-api/gpt-5.6-luna" with persist "local"
+    When the set model response reports the default persisted at "local" "/repo/.quecto/config.json"
+    Then the app notification includes "Model switched and pinned as this repo's default (/repo/.quecto/config.json); live tool-policy overlays re-baseline next turn"
+
+  @model-selector @issue-2024
+  Scenario: A pin the harness refuses is reported with the remedy and no default is claimed
+    Given a fresh TUI app harness
+    When I request the model selector
+    And the model list response contains "openai-api/gpt-5.6-sol" and "openai-api/gpt-5.6-luna"
+    And I cycle the model selector action once
+    And I cycle the model selector action once
+    Then the model selector footer says "Enter: use and pin as the global default"
+    When I accept the selected model
+    Then a set model command is sent for "openai-api/gpt-5.6-sol" with persist "global"
+    When a model switch response fails with "model not switched: could not be recorded as the global default: failed to write config"
+    Then the app notification includes "Model switch failed: model not switched"
+
   @model-selector
   Scenario: Failed model list still opens the selector with cached models
     Given a fresh TUI app harness

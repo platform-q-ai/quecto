@@ -1,6 +1,7 @@
 //! Request and outcome of changing the session's reasoning effort (#1848,
 //! #1996).
 
+use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 use crate::domain::provider::EffortLevel;
 
 /// Change the effort applied to subsequent turns of a session.
@@ -10,6 +11,9 @@ pub struct EffortChangeRequest {
     pub model: String,
     /// The requested level, as typed on the wire.
     pub level: String,
+    /// Also record the level as the configured default of this scope
+    /// (#2024 S2); `None` changes the session only.
+    pub persist: Option<DefaultScope>,
 }
 
 /// The level now in effect and the vocabulary it was chosen from.
@@ -17,6 +21,8 @@ pub struct EffortChangeRequest {
 pub struct EffortChangeOutcome {
     pub effective: EffortLevel,
     pub vocabulary: Vec<EffortLevel>,
+    /// Where the level was recorded as a default, when the request asked.
+    pub persisted: Option<PersistedDefault>,
 }
 
 /// Why a requested level was refused. Every variant names what the model
@@ -34,6 +40,13 @@ pub enum EffortChangeError {
     NoEffortControl { requested: String, model: String },
     /// The catalogue does not know the model, so nothing can be affirmed.
     UnknownModel { requested: String, model: String },
+    /// The level is valid but could not be recorded as a default; the
+    /// session is left unchanged (the record comes before the apply).
+    Persist {
+        level: EffortLevel,
+        scope: DefaultScope,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for EffortChangeError {
@@ -62,6 +75,16 @@ impl std::fmt::Display for EffortChangeError {
                 "effort level \"{requested}\" cannot be applied: {model} is not in the model \
                  catalogue (or is a bare id whose providers disagree), so its reasoning-effort \
                  support is unknown; select it as provider/model"
+            ),
+            Self::Persist {
+                level,
+                scope,
+                reason,
+            } => write!(
+                f,
+                "effort not changed: `{}` could not be recorded as the {} default: {reason}",
+                level.as_str(),
+                scope.as_str()
             ),
         }
     }

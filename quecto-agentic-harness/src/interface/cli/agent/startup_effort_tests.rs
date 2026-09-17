@@ -12,7 +12,10 @@ impl EffortVocabularySource for Fixed {
 }
 
 fn control(levels: &[EffortLevel]) -> ChangeReasoningEffort {
-    ChangeReasoningEffort::new(Arc::new(Fixed(levels.to_vec())))
+    ChangeReasoningEffort::new(
+        Arc::new(Fixed(levels.to_vec())),
+        Arc::new(crate::application::catalogue::ports::RecordedDefaults::default()),
+    )
 }
 
 fn config_with(effort: Option<&str>) -> Config {
