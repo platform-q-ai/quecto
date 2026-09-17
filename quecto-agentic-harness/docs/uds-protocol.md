@@ -271,7 +271,9 @@ Grouped worktrees can have different execution directories and are not thereby
 eligible for restore. Global lists all saved identities, including legacy
 unassociated and unavailable-home records. Metadata search is not part of this
 slice. Malformed records and discovery/catalogue failures produce diagnostics;
-one bad record does not hide valid siblings. `rebuilt` reports derived catalogue
+one bad record does not hide valid siblings. A malformed record's diagnostic
+names its file so it can be repaired, e.g.
+`cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6`. `rebuilt` reports derived catalogue
 recovery — an unreadable or version-incompatible index, with a diagnostic — not
 transcript modification: an absent index (first use) is built silently and an
 index superseded by newer authority (a routine autosave) is refreshed silently.

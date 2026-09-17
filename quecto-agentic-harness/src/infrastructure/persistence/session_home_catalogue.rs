@@ -173,9 +173,17 @@ impl FileSessionHomeCatalogue {
                 }
                 result.entries.push((identity, home));
             }
-            Err(e) => result
-                .diagnostics
-                .push(format!("session record unavailable: {e}")),
+            // Name the record file (basename only) so a corrupt legacy
+            // transcript can be found and repaired from the diagnostic alone.
+            Err(e) => {
+                let file = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                result
+                    .diagnostics
+                    .push(format!("{file}: session record unavailable: {e}"));
+            }
         }
     }
     fn projected_identity(

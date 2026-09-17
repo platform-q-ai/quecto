@@ -556,3 +556,38 @@ async fn stale_corrupt_index_recovers_from_authority_without_trusting_disk() {
     assert!(!catalogue.list().unwrap().rebuilt);
     assert_eq!(catalogue.transcript_reads(), after_recovery);
 }
+
+/// A legacy pretty-printed transcript that a second, truncated document was
+/// appended onto (the shape seen in the field, #2018): the diagnostic must
+/// name the record file so the user can find and repair it.
+#[test]
+fn corrupt_legacy_transcript_diagnostic_names_the_record_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path());
+    std::fs::create_dir_all(layout.sessions_dir()).unwrap();
+    let identity = SessionIdentity::from_persisted_key("cli:slippery-keith");
+    let mut doc = String::from("{\n  \"key\": \"cli:slippery-keith\",\n  \"messages\": [\n");
+    for i in 0..18 {
+        doc.push_str(&format!(
+            "    {{\n      \"role\": \"user\",\n      \"content\": \"m{i}\",\n      \"is_pinned\": false\n    }},\n"
+        ));
+    }
+    doc.push_str("    {\n      \"role\": \"user\",\n      \"content\": \"last\"\n    }\n  ]\n}{\n      \"role\": \"user\",\n      \"content\": \"say hello again\",\n      \"is_pinned\": false\n    },\n");
+    std::fs::write(layout.session_file(&identity), doc).unwrap();
+    let file_name = layout
+        .session_file(&identity)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let catalogue = FileSessionHomeCatalogue::with_store(Arc::new(FileSessionStore::new(layout)));
+    let snapshot = catalogue.list().unwrap();
+    assert!(snapshot.entries.is_empty());
+    assert_eq!(snapshot.diagnostics.len(), 1, "{:?}", snapshot.diagnostics);
+    let diagnostic = &snapshot.diagnostics[0];
+    assert!(
+        diagnostic.starts_with(&format!("{file_name}: session record unavailable: ")),
+        "{diagnostic}"
+    );
+    assert!(diagnostic.contains("line "), "{diagnostic}");
+}
