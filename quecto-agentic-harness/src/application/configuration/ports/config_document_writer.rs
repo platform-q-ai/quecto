@@ -3,7 +3,7 @@
 use std::path::Path;
 
 /// An exclusive hold on one configuration document, released on drop.
-/// Whatever the adapter locks with (a sidecar `flock`), holding it means
+/// Whatever the adapter locks with (an `flock` it chooses), holding it means
 /// no other patch of the same document — in this process or another — is
 /// between its read and its write.
 pub trait DocumentLock: Send {}

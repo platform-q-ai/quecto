@@ -10,8 +10,8 @@
 //! writer's exclusive hold on the file so concurrent patches serialise,
 //! and the write is all-or-nothing through the store. An overlay patch
 //! additionally refuses global-only keys, refuses whatever the store's
-//! overlay policy refuses (a symbolic link on the way to the file — before
-//! the hold is taken, so nothing is created on the way either), refuses to
+//! overlay policy refuses (a symbolic link on the way to the file — checked
+//! under the hold, which itself creates nothing on the way), refuses to
 //! touch an overlay whose current content is not trusted, and records
 //! trust for exactly the bytes the writer laid down.
 //!
