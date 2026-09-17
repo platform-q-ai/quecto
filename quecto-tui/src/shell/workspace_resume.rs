@@ -16,7 +16,7 @@ use crate::shell::workspace_manifest::{
 /// Value prefix for workspace rows in the resume selector.
 pub(crate) const WORKSPACE_RESUME_PREFIX: &str = "workspace:";
 /// Value prefix for bare session rows (optional; bare keys still accepted).
-pub(crate) const SESSION_RESUME_PREFIX: &str = "session:";
+pub(crate) const SESSION_RESUME_PREFIX: &str = crate::sessions::resume_rows::SESSION_ROW_PREFIX;
 
 impl super::App {
     /// Open the resume selector with agent-listed sessions only.

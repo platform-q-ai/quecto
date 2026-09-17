@@ -638,10 +638,12 @@ fn then_tui_document_records_unchanged_session_protocol(_world: &mut QuectoWorld
 fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
     let overlay = std::fs::read_to_string("../quecto-tui/src/components/select_overlay.rs")
         .expect("read quecto-tui select_overlay source");
+    let picker = std::fs::read_to_string("../quecto-tui/src/sessions/resume_picker.rs")
+        .expect("read quecto-tui resume_picker source");
     let theme = std::fs::read_to_string("../quecto-tui/src/components/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
-        overlay.contains("build_resume_selector_overlay")
+        picker.contains("build_select_overlay(")
             && overlay.contains('┌')
             && overlay.contains('│')
             && overlay.contains("apply_overlay_bg"),

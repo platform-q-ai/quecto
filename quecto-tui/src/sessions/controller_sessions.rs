@@ -32,7 +32,9 @@ impl super::App {
         match selector.handle_key(&key) {
             ResumePickerEvent::ScopeChanged(scope) => self.request_session_scope(scope),
             ResumePickerEvent::Selected(choice) => {
-                let key = choice.strip_prefix("session:").unwrap_or(&choice);
+                let key = choice
+                    .strip_prefix(crate::sessions::resume_rows::SESSION_ROW_PREFIX)
+                    .unwrap_or(&choice);
                 if self.ac().sessions.eligible_keys.contains(key) {
                     self.ac_mut().sessions.resume_selector = None;
                     self.apply_resume_selection(&choice);

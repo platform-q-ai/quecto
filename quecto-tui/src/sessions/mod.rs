@@ -9,3 +9,8 @@
 mod resume_picker_tests;
 
 pub mod resume_picker;
+pub mod resume_rows;
+
+#[cfg(test)]
+#[path = "resume_rows_tests.rs"]
+mod resume_rows_tests;

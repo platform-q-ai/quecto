@@ -197,51 +197,15 @@ impl App {
         data: &serde_json::Value,
         manifest_path: &std::path::Path,
     ) {
-        let mut sessions = session_payloads::parse_resume_sessions(data);
-        // #1466 fix pass item 3: sessions, like workspaces, list most
-        // recently active first (unknown times sink to the bottom).
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
-        let empty_hint = if sessions.is_empty() {
-            if session_payloads::has_session_entries(data) {
-                Some("No resumable CLI sessions found.")
-            } else {
-                Some("No persisted sessions found.")
-            }
-        } else {
-            None
-        };
-        self.ac_mut().sessions.eligible_keys = sessions
-            .iter()
-            .filter(|s| s.resume_eligible)
-            .map(|s| s.key.clone())
-            .collect();
-        let session_items = sessions
-            .into_iter()
-            .map(|session| {
-                let when = session
-                    .updated_unix_secs
-                    .map(format_unix_minutes)
-                    .unwrap_or_else(|| "unknown time".to_string());
-                SelectItem {
-                    value: format!("session:{}", session.key),
-                    label: session.title,
-                    description: Some(format!(
-                        "{} · {when} ({} msgs) · {}",
-                        session
-                            .execution_dir
-                            .as_deref()
-                            .unwrap_or("Unassociated / unavailable home"),
-                        session.message_count,
-                        if session.resume_eligible {
-                            "Resume"
-                        } else {
-                            "Open original / Fork / Locate unavailable; Cancel"
-                        }
-                    )),
-                }
-            })
-            .collect::<Vec<_>>();
-        self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
+        // Presentation coordination is the sessions feature's: rows, IDs,
+        // safe copy and the eligible allowlist come back projected.
+        let rows = crate::sessions::resume_rows::ResumeRows::project(
+            session_payloads::parse_resume_sessions(data),
+            session_payloads::has_session_entries(data),
+            format_unix_minutes,
+        );
+        self.ac_mut().sessions.eligible_keys = rows.eligible_keys;
+        self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
