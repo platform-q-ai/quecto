@@ -189,3 +189,29 @@ Feature: Environments outlive sessions
     Then the exit code should be 0
     And the persistent runtime should have killed an environment exactly 1 time
     And scenario teardown should leave no fixture processes running
+
+  @done @issue-2024 @container-env
+  Scenario: A retained environment whose container exited survives restore and gc; only container kill ends it
+    Given script-managed child "impl-retained" is running in a shared environment with task "IMPL_RETAINED_MARKER"
+    And the durable environment registry also records a retained environment "C8" named "swarm-env" whose fake container has exited
+    When I run quecto with arguments "container ls"
+    Then the exit code should be 0
+    And the container table should list "C8" with name "swarm-env" status "retained" config "default" and created-by "elsewhere"
+    And stderr should contain "note: C8 could not be verified against the runtime: retained: container exited; only container kill ends it"
+    And the durable environment registry should record "C8" with status "retained" created by "elsewhere"
+    Given the durable environment registry on disk is noted
+    When I run quecto with arguments "container gc --dry-run"
+    Then the exit code should be 0
+    And the durable environment registry on disk should be byte-identical to the noted one
+    And the gc report should keep the environment of "C8" as retained until an explicit kill
+    When I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C8" as retained until an explicit kill
+    And the state dir should still contain the environment of "C8"
+    And the persistent runtime should never have removed the environment of "C8"
+    And the durable environment registry should record "C8" with status "retained" created by "elsewhere"
+    When I run quecto with arguments "container kill C8"
+    Then the exit code should be 0
+    And the output should contain "killed C8 (swarm-env)"
+    And the durable environment registry should record "C8" with status "stopped" created by "elsewhere"
+    And the state dir should no longer contain the environment of "C8"
