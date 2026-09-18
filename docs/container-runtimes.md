@@ -583,8 +583,10 @@ init` materialises it under the repository and binds the repository to it
 through the repo-local overlay; nothing is copied from the source tree and
 no config is hand-edited. Run it from the **repository root** (or pass
 `--project <root>`): the overlay is the working directory's own
-`.quecto/config.json`, so an init run from a subdirectory binds that
-subdirectory, which an agent started at the root never reads.
+`.quecto/config.json`, which an agent started at the root reads only at
+the root, so a project below the checkout's toplevel (`git rev-parse
+--show-toplevel`) is refused, naming the root to pass. A directory that
+is no checkout at all is accepted as it is.
 
 ```
 quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]

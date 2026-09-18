@@ -378,8 +378,15 @@ pub enum InitialiseStandardContainerError {
         reason: String,
         entry_written: bool,
     },
-    /// The checkout's origin could not be read.
+    /// The checkout's origin (or its toplevel) could not be read.
     Origin(String),
+    /// The project lies inside a checkout but is not its root: the
+    /// overlay written there is one an agent started at the root never
+    /// reads. Carries the root to pass instead.
+    NotRepositoryRoot {
+        project: std::path::PathBuf,
+        toplevel: std::path::PathBuf,
+    },
     /// The effective container-config set could not be read, or the
     /// checkout's overlay is withheld (untrusted): init never trusts an
     /// overlay it did not write.
@@ -424,6 +431,13 @@ impl std::fmt::Display for InitialiseStandardContainerError {
                 path.display()
             ),
             Self::Origin(reason) => write!(f, "cannot read the checkout's origin: {reason}"),
+            Self::NotRepositoryRoot { project, toplevel } => write!(
+                f,
+                "{} is not the repository root ({}): the overlay written here would be one an agent started at the root never reads — run init from the root, or pass --project {}",
+                project.display(),
+                toplevel.display(),
+                toplevel.display()
+            ),
             Self::Configuration(reason) => write!(f, "{reason}"),
             Self::Persist(reason) => write!(f, "{reason}"),
         }

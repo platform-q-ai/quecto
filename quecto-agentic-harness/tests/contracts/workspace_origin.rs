@@ -87,3 +87,28 @@ fn a_git_dir_in_the_environment_does_not_redirect_the_question() {
     unsafe { std::env::remove_var("GIT_DIR") };
     assert_eq!(answer.unwrap(), None);
 }
+
+#[test]
+fn the_toplevel_is_the_checkouts_root_from_anywhere_inside_and_none_outside() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    git(&root, &["init", "-q"]);
+    let sub = root.join("a/b");
+    std::fs::create_dir_all(&sub).unwrap();
+    let port = port();
+    assert_eq!(port.toplevel(&root).unwrap(), Some(root.clone()));
+    assert_eq!(port.toplevel(&sub).unwrap(), Some(root.clone()));
+    let outside = tempfile::TempDir::new().unwrap();
+    // A plain directory (no checkout above it) and a missing one are None.
+    let plain = outside.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    if port.toplevel(&plain).unwrap().is_some() {
+        // The temp dir itself lies inside a checkout on this machine;
+        // nothing to assert about "outside" then.
+        return;
+    }
+    assert_eq!(
+        port.toplevel(&outside.path().join("missing")).unwrap(),
+        None
+    );
+}

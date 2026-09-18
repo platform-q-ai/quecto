@@ -175,6 +175,20 @@ Feature: The standard container is landed on master
     And the output should contain "is a symbolic link"
 
   @done @issue-2024
+  Scenario: init from a subdirectory of the checkout is refused naming the root
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the checkout has a subdirectory "crates/inner"
+    When I run quecto with arguments "container init --project <checkout>/crates/inner" where <checkout> is the checkout
+    Then the exit code should be 1
+    And the stderr should contain "/crates/inner is not the repository root"
+    And the stderr should contain "pass --project "
+    And the stderr should name the checkout as the repository root
+    And the checkout should carry no overlay
+    And no standard container asset should exist under "crates/inner/.quecto/containers/standard"
+    When I run quecto with arguments "container init --project <checkout>" where <checkout> is the checkout
+    Then the exit code should be 0
+
+  @done @issue-2024
   Scenario: init refuses to run under an explicit --config
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     When I run quecto with arguments "--config /dev/null container init"

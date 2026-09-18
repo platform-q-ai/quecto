@@ -76,6 +76,19 @@ impl InitialiseStandardContainer {
                 self.base_dir.clone(),
             ));
         }
+        // The project must be the checkout's root: an overlay below it
+        // binds a subdirectory an agent started at the root never reads.
+        if let Some(toplevel) = self
+            .origin
+            .toplevel(&request.project)
+            .map_err(InitialiseStandardContainerError::Origin)?
+            && toplevel != request.project
+        {
+            return Err(InitialiseStandardContainerError::NotRepositoryRoot {
+                project: request.project.clone(),
+                toplevel,
+            });
+        }
         let assets_dir = request.project.join(STANDARD_CONTAINER_DIR);
         let catalogue = self.assets.catalogue();
         // The repository and the effective set are resolved before any

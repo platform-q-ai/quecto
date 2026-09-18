@@ -102,11 +102,20 @@ impl ContainerAssetStore for MemoryAssets {
     }
 }
 
-struct FixedOrigin(Result<Option<String>, String>);
+struct FixedOrigin {
+    origin: Result<Option<String>, String>,
+    /// The toplevel git reports for any checkout asked about; `None` is
+    /// "not a checkout".
+    toplevel: Mutex<Option<PathBuf>>,
+}
 
 impl WorkspaceOrigin for FixedOrigin {
     fn origin(&self, _: &Path) -> Result<Option<String>, String> {
-        self.0.clone()
+        self.origin.clone()
+    }
+
+    fn toplevel(&self, _: &Path) -> Result<Option<PathBuf>, String> {
+        Ok(self.toplevel.lock().unwrap().clone())
     }
 }
 
@@ -185,6 +194,7 @@ fn entry(name: &str, default: bool) -> ContainerConfigEntry {
 struct Rig {
     assets: Arc<MemoryAssets>,
     persistence: Arc<RecordingPersistence>,
+    origin: Arc<FixedOrigin>,
     use_case: InitialiseStandardContainer,
 }
 
@@ -202,9 +212,13 @@ fn build_rig(
         refuse,
         refuse_existing: Mutex::new(None),
     });
+    let origin = Arc::new(FixedOrigin {
+        origin,
+        toplevel: Mutex::new(Some(PathBuf::from("/p"))),
+    });
     let use_case = InitialiseStandardContainer::new(
         assets.clone(),
-        Arc::new(FixedOrigin(origin)),
+        origin.clone(),
         Arc::new(FixedRoster(Ok(roster))),
         persistence.clone(),
         PathBuf::from("/base"),
@@ -212,6 +226,7 @@ fn build_rig(
     Rig {
         assets,
         persistence,
+        origin,
         use_case,
     }
 }
@@ -434,6 +449,34 @@ fn a_kept_existing_repository_is_still_judged_for_credentials() {
         .unwrap_err()
         .to_string();
     assert!(text.contains("overlay unreadable"), "{text}");
+}
+
+#[test]
+fn a_project_below_the_checkouts_toplevel_is_refused_naming_the_toplevel() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    *rig.origin.toplevel.lock().unwrap() = Some(PathBuf::from("/p"));
+    let error = rig.use_case.execute(&request("/p/sub")).unwrap_err();
+    assert_eq!(
+        error,
+        InitialiseStandardContainerError::NotRepositoryRoot {
+            project: PathBuf::from("/p/sub"),
+            toplevel: PathBuf::from("/p"),
+        }
+    );
+    let text = error.to_string();
+    assert!(text.contains("/p/sub is not the repository root"), "{text}");
+    assert!(text.contains("--project /p"), "{text}");
+    assert!(rig.persistence.written.lock().unwrap().is_empty());
+    assert!(rig.assets.disk.lock().unwrap().is_empty());
+    // A dry run refuses the same.
+    let mut dry = request("/p/sub");
+    dry.dry_run = true;
+    assert!(rig.use_case.execute(&dry).is_err());
+    // The toplevel itself, and a directory that is no checkout at all,
+    // are accepted.
+    assert!(rig.use_case.execute(&request("/p")).is_ok());
+    *rig.origin.toplevel.lock().unwrap() = None;
+    assert!(rig.use_case.execute(&request("/p/sub")).is_ok());
 }
 
 #[test]
@@ -771,7 +814,10 @@ fn a_relative_base_dir_is_refused() {
     });
     let use_case = InitialiseStandardContainer::new(
         assets,
-        Arc::new(FixedOrigin(Ok(None))),
+        Arc::new(FixedOrigin {
+            origin: Ok(None),
+            toplevel: Mutex::new(None),
+        }),
         Arc::new(FixedRoster(Ok(ContainerConfigRosterReport::default()))),
         Arc::new(RecordingPersistence::default()),
         PathBuf::from("../base"),

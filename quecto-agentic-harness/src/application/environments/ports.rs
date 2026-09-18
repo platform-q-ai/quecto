@@ -246,6 +246,11 @@ pub trait ContainerAssetStore: Send + Sync {
 /// carries why it could not be asked (git missing).
 pub trait WorkspaceOrigin: Send + Sync {
     fn origin(&self, checkout: &Path) -> Result<Option<String>, String>;
+
+    /// The root of the working tree `checkout` lies in (`git rev-parse
+    /// --show-toplevel`), `None` when it is not inside a checkout.
+    /// `Err` carries why it could not be asked (git missing).
+    fn toplevel(&self, checkout: &Path) -> Result<Option<PathBuf>, String>;
 }
 
 /// Records one `container_configs.<name>` entry in the project's

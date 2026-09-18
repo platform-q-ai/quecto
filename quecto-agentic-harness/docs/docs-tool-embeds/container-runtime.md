@@ -12,7 +12,8 @@ is the operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 The one supported way to give a repository a container: four commands, one
 of them a build. Run them from the repository **root** (or pass
 `--project <root>`): the overlay written is the working directory's own
-`.quecto/config.json`, and an agent started at the root reads only that one.
+`.quecto/config.json`, and an agent started at the root reads only that
+one — so init refuses a subdirectory of a checkout, naming the root.
 
 1. **Initialise** — writes the bundle and binds the repository:
    ```

@@ -511,6 +511,37 @@ fn then_never_pulled(world: &mut QuectoWorld) {
     );
 }
 
+// ─── The project must be the checkout's root (#2024 S4e, review F4) ─────────
+
+#[given(expr = "the checkout has a subdirectory {string}")]
+fn given_subdirectory(world: &mut QuectoWorld, relative: String) {
+    std::fs::create_dir_all(checkout(world).join(relative)).unwrap();
+}
+
+/// `<checkout>` in the arguments is the hermetic checkout's absolute path.
+#[when(expr = "I run quecto with arguments {string} where <checkout> is the checkout")]
+fn when_run_with_checkout(world: &mut QuectoWorld, args_str: String) {
+    let checkout = checkout(world).canonicalize().unwrap();
+    let args = args_str.replace("<checkout>", &checkout.to_string_lossy());
+    let mut argv = vec!["quecto".to_string()];
+    argv.extend(shell_split(&args));
+    let output = cli::run_with_output(argv, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[then("the stderr should name the checkout as the repository root")]
+fn then_stderr_names_root(world: &mut QuectoWorld) {
+    let checkout = checkout(world).canonicalize().unwrap();
+    let expected = format!("pass --project {}", checkout.display());
+    assert!(
+        world.stderr.contains(&expected),
+        "expected {expected:?} in stderr: {}",
+        world.stderr
+    );
+}
+
 // ─── The trust boundary at launch (#2024 S4e, review F2) ─────────────────────
 
 /// The launcher composed for the checkout, over a global file that
