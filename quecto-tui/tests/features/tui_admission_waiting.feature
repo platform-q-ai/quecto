@@ -39,3 +39,10 @@ Feature: Waiting for inference admission is visible without becoming a lifecycle
     Given a fresh TUI harness for admission scenarios
     When a get_state response arrives with a waiting admission view of 7 seconds
     Then the master footer shows "7s"
+
+  Scenario: The footer shows broker health from get_state (#2024 S3)
+    Given a fresh TUI harness for admission scenarios
+    When a get_state response arrives reporting the authority as "connected"
+    Then the master footer badge shows "admission ✓"
+    When a get_state response arrives reporting the authority as "reconnecting"
+    Then the master footer badge shows "admission ⟳"
