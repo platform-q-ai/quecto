@@ -294,9 +294,15 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
             entry.name
         )),
     }
-    out.push_str(
-        "  3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true} from an agent in this project; agent_cmd get_containers lists it\n",
-    );
+    match &entry.existing_default {
+        None => out.push_str(
+            "  3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true} from an agent in this project; agent_cmd get_containers lists it\n",
+        ),
+        Some(_) => out.push_str(&format!(
+            "  3. spawn {{\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":{{\"mode\":\"new\",\"container_config\":\"{}\"}}}} from an agent in this project; agent_cmd get_containers lists it\n",
+            entry.name
+        )),
+    }
 }
 
 pub(crate) fn cmd_status(

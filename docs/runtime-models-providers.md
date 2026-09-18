@@ -24,9 +24,20 @@ The list-models use case (`application/catalogue/use_cases/list_models.rs`, UDS 
 
 Two definitions of one route are a configuration error, not a precedence question: an `openai_compatible` endpoint pointing at a different base URL than the `models.json` entry of the same prefix is reported as a duplicate prefix rather than one silently winning.
 
+## Credentials (`credentials.json`)
+
+`quecto auth login --provider openai|anthropic --token <key>` (or `--oauth`,
+`--device-code`) stores a credential in `<base_dir>/credentials.json`; verify
+with `quecto auth status` (`openai (token) — active`), roll back with
+`quecto auth logout --provider <name>`. The store takes priority over
+`providers.*.api_key` in `config.json`; `quecto status`'s `OpenAI API:` line
+reflects only the latter. The harness doc's
+[credential runbook](../quecto-agentic-harness/docs/runtime-models-providers.md#store-a-credential-runbook)
+and the `docs` tool's `models` page carry the same commands.
+
 ## Global default model (`config.json`)
 
-Set the global model default in `~/.quecto/config.json` at `agents.defaults.model`. Use a qualified `provider/model` id from the effective catalogue:
+Set the global model default with `quecto config set --global agents.defaults.model '"openai-oauth/gpt-5.6-sol"'` (verify: `quecto status` → `Model: …`; rollback: `quecto config unset --global agents.defaults.model`). The key is `agents.defaults.model` in `~/.quecto/config.json`, a qualified `provider/model` id from the effective catalogue:
 
 ```json
 {"agents": {"defaults": {"model": "openai-oauth/gpt-5.6-sol"}}}

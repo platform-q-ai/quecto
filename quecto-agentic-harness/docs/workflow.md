@@ -182,12 +182,14 @@ quecto agent --mode uds --no-workflow -s my-session
 
 ## Per-repo configuration
 
-The workflow section lives inside `config.json`. Quecto selects one config
-file per run: `--config` if given, else `./config.json` in the working
-directory, else the global `~/.quecto/config.json` (see the README's
+The workflow section lives inside `config.json`. Quecto loads the global
+`~/.quecto/config.json` with the working directory's trusted
+`.quecto/config.json` overlay merged over it (`workflow` field-wise), or
+exactly the `--config` file when one is given (see the README's
 [discovery and precedence](../README.md#configuration-discovery-and-precedence)).
-To scope workflow templates to a specific repository, place a `config.json` in
-that repository's root and launch quecto from there, or pass `--config`:
+To scope workflow templates to a specific repository, write them into that
+repository's overlay from its root — `quecto config set workflow.dir
+'"/abs/path/to/workflows"'` — and launch quecto from there, or pass `--config`:
 
 ```bash
 # Use a repo-local config with project-specific workflow templates

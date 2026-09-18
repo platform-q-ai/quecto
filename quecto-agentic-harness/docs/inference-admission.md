@@ -241,33 +241,88 @@ it under `counters.cancelled`.
 
 ## Activation, rollback and quarantine runbook
 
+The same runbook the `docs` tool serves as `admission-broker`: preconditions,
+commands, expected outputs, rollback, failures.
+
+Preconditions: a systemd *user* session for `install-service` (otherwise
+supervise `quecto admission-broker run --config <abs global config>` yourself);
+`quecto status` exits 0 and its `Config:` line is the global file the section
+goes into (`QUECTO_BASE_DIR` moves it and the default `<base_dir>/admission`
+directory, whose path must be short enough for a Unix socket); no other broker
+holds the directory (`quecto admission-broker status --directory <base_dir>/admission`
+→ `not running for directory …`, exit 1, before you start).
+
 Activation (per host, per user):
 
-1. Add the `admission` section (groups, aliases, bindings) to the config;
-   every provider the runtime constructs needs an explicit slot binding,
-   including providers other than the selected model. Measure your own
-   values; none of the numbers in this document are vendor-safe defaults.
-2. Start the authority: `quecto admission-broker run` (a service or a
-   terminal that outlives every session). It refuses to start twice on the
-   same directory.
-3. Verify: `quecto admission-broker status` prints JSON with
-   `"journal_healthy": true`, `"epoch": 1` on a fresh directory and zero
-   active/queued/uncertain counts per group.
-4. Start (or restart) every agent process. Roots register before composing a
+1. Write the section into the global file (never a repo overlay — refused as
+   global-only); with a default binding `"*"` you need not list every
+   constructed provider slot. Measure your own values; none of the numbers
+   here are vendor-safe defaults.
+   ```sh
+   quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
+   ```
+   Expected: `set admission in /home/me/.quecto/config.json` (`(created)`
+   appended when the file did not exist), exit 0.
+2. Plan the service install — stop here when only a plan or dry run was
+   asked for:
+   ```sh
+   quecto admission-broker install-service --dry-run
+   ```
+   Expected dry run:
+   ```
+   admission-broker: would apply quecto-admission-broker.service (directory /home/me/.quecto/admission)
+     - (dry run) write unit /home/me/.config/systemd/user/quecto-admission-broker.service
+     - (dry run) systemctl --user daemon-reload && enable --now quecto-admission-broker.service
+   ```
+3. Install:
+   ```sh
+   quecto admission-broker install-service
+   ```
+   Expected: `applied quecto-admission-broker.service (directory …)`
+   with `wrote unit …`, `reloaded the user daemon`, `enabled and started …`
+   (a second run: `unit … already up to date`). Do not run `quecto
+   admission-broker run` from an agent tool call: it is foreground-only.
+4. Verify: `quecto admission-broker status` prints
+   `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`,
+   exit 0; `systemctl --user status quecto-admission-broker.service` →
+   `active (running)`.
+5. Start (or restart) every agent process. Roots register before composing a
    provider, so a session that cannot reach the authority exits with an error
-   before any inference; a running session never switches policy in place.
-5. Check a session: `get_state` carries `admission`, and a queued attempt
-   shows `progress.state = "waiting"` (TUI: "⏳ waiting for admission").
+   before any inference; a session started before the section existed keeps
+   running unbounded until restarted (a live reload never switches admission
+   on or off; it keeps the last-good runtime).
+6. Check a session: `get_state` carries `admission` (`directory`, `epoch`,
+   `connected`, `authorityStatus`), and a queued attempt shows
+   `progress.state = "waiting"` (TUI: "⏳ waiting for admission").
 
 Rollback:
 
-1. Remove the entire `admission` section. Removing bindings while keeping
-   admission enabled is not a selective bypass: missing bindings for constructed
-   providers cause startup/composition to fail.
+1. `quecto config unset --global admission` (or `config set --global
+   admission null`). Removing bindings while keeping admission enabled is
+   not a selective bypass: missing bindings for constructed providers cause
+   composition to fail.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.
-3. Stop the authority (SIGTERM). Outstanding remote work is no longer
-   bounded from that moment; rollback does not pretend otherwise.
+3. Stop the authority last: `quecto admission-broker uninstall-service
+   --directory <base_dir>/admission` (once the section is gone the command
+   needs `--directory`; idempotent, `no unit to remove at …` on a second
+   run), or SIGTERM a foreground `run`. Outstanding remote work is no longer bounded from that
+   moment; rollback does not pretend otherwise.
+
+If it fails:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
+| ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
+| `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory (os error 2))`, exit 1 | broker not started, or a different directory than expected | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line (`config get --global admission.directory` answers only when set explicitly) |
+| `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path (not the base dir or an ancestor), reinstall |
+| `another admission authority owns …/authority.lock`, exit 3 (not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, `systemctl --user restart quecto-admission-broker.service` |
+| `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |
+| an agent exits with `admission negotiation failed: admission authority unreachable at …` | section present, broker down | start the service, or roll back |
+| a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
+| `journal_healthy: false` | the journal is unwritable or corrupt | fix permissions/storage; never delete the journal to clear a queue |
 
 Quarantine (a group has stopped granting):
 

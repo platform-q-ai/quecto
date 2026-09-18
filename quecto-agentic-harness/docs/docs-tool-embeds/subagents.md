@@ -43,8 +43,8 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 5. `overlay_withheld: true` / `container: true refused` → the overlay is untrusted, refused or unparseable; `diagnostics` names which (`quecto config trust` for untrusted), then retry.
 6. Follow the completion sequence above; `get_containers` lists the environment (`ref` for joins).
 
-- Match the user's phrasing to a config name; if ambiguous, offer the names. Runbook: `docs {"name": "container-runtime"}`.
-- **This repository's container**: effective configs = the global file's plus the working directory's trusted `.quecto/config.json` overlay, merged entry-wise (an overlay `"default": true` un-defaults global entries). Bind: `quecto config set --local container_configs.<name> '{"default":true,…}'`; undo: `config unset --local`. Only for runs started without `--config`, never inside a container child. See `docs {"name": "config"}`.
+- Match the user's phrasing to a config name; if ambiguous, offer the names.
+- **This repository's container**: effective configs = the global file's plus the working directory's trusted `.quecto/config.json` overlay, merged entry-wise (an overlay `"default": true` un-defaults global entries). No entry yet? `quecto container init` (runbook: `docs {"name": "container-runtime"}`); a hand-rolled one: `quecto config set --local container_configs.<name> '{"default":true,…}'`; undo: `config unset --local`. Only for runs started without `--config`, never inside a container child.
 - An untrusted overlay is not applied: `container: true` is **refused** when it declares `container_configs`, is unparseable, fails the trust checks or is a symlink; one without `container_configs` launches the global default with a warning. A named `container_config` launches from the global set, diagnostic in the result.
 - New-container spawns read the effective configuration at every spawn; you normally need no `config`. An explicit `config` replaces both layers and must be an absolute path. Joins use the retained config.
 - Success returns `environment_ref=C1 container_config=<name>` (ref session-scoped); the child is a normal subagent.
