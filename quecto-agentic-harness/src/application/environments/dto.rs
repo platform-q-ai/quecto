@@ -326,8 +326,10 @@ pub enum InitialiseStandardContainerError {
     /// absolute; the argv written must not depend on a later cwd.
     BaseDirNotAbsolute(std::path::PathBuf),
     /// The repository URL (`--repo`, or the checkout's `origin`) embeds a
-    /// password or token; init refuses to bake it into the shareable
-    /// overlay. The URL is carried redacted.
+    /// credential — any userinfo over http(s) (`token@host`,
+    /// `user:password@host`), a password over the other schemes; init
+    /// refuses to bake it into the shareable overlay. The URL is carried
+    /// redacted.
     RepositoryCarriesCredentials {
         url: String,
         origin: RepositoryOrigin,
@@ -364,7 +366,7 @@ impl std::fmt::Display for InitialiseStandardContainerError {
             ),
             Self::RepositoryCarriesCredentials { url, origin } => write!(
                 f,
-                "{} {url} carries credentials (user:password@host); init will not bake them into the repo-local overlay — use a URL without them (a credential helper, an ssh key or `gh auth login` supplies them at clone time)",
+                "{} {url} carries a credential in its userinfo (any `user@` or `user:password@` over http(s) is a token or password); init will not bake it into the repo-local overlay — use a URL without any credential (a credential helper, an ssh key or `gh auth login` supplies it at clone time)",
                 match origin {
                     RepositoryOrigin::Explicit => "the --repo URL",
                     _ => "the checkout's origin remote",

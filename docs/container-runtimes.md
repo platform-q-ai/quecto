@@ -597,9 +597,13 @@ is written, so a refused init leaves the project untouched):
 1. Resolves the repository: `--repo`, else the checkout's `origin` remote
    (`git remote get-url origin`), else none — a **sandbox** entry (empty
    workspace, no clone), which the output names as such. A URL that embeds
-   a password or token (`https://user:secret@host/…`, from either source)
-   is refused — the overlay is a shareable repository file; a bare user
-   (`ssh://git@host/…`) is fine.
+   any credential is refused, from either source — the overlay is a
+   shareable repository file. Over `http`/`https` **any** userinfo is a
+   credential: `https://user:secret@host/…` and GitHub's token form
+   `https://ghp_xxx@github.com/…` alike. Over `ssh://`, `git://` and the
+   scp form a bare user names an account (`ssh://git@host/…`,
+   `git@github.com:org/repo`) and is fine; only `user:password@` there is
+   refused.
 2. Asks the configuration writer whether it would accept the write, and
    reads the effective container-config set (global file plus the trusted
    overlay). An overlay that exists but is **not trusted**, whatever it

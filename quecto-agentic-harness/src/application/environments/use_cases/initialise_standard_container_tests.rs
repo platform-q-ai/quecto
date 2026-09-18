@@ -453,7 +453,7 @@ fn an_origin_with_credentials_is_refused_and_never_written() {
     let error = rig.use_case.execute(&request("/p")).unwrap_err();
     let text = error.to_string();
     assert!(text.contains("checkout's origin remote"), "{text}");
-    assert!(text.contains("carries credentials"), "{text}");
+    assert!(text.contains("carries a credential"), "{text}");
     assert!(text.contains("https://***@example.test/r.git"), "{text}");
     assert!(!text.contains("tok123"), "{text}");
     assert!(rig.persistence.written.lock().unwrap().is_empty());
@@ -475,6 +475,78 @@ fn an_origin_with_credentials_is_refused_and_never_written() {
         report.repository.as_deref(),
         Some("ssh://git@example.test/org/repo.git")
     );
+}
+
+#[test]
+fn a_bare_user_in_an_https_url_is_a_token_and_is_refused_from_either_source() {
+    // GitHub's documented form carries the token as the whole userinfo,
+    // no colon: `https://ghp_xxx@github.com/org/repo`.
+    for url in [
+        "https://ghp_SECRET@github.com/org/repo.git",
+        "http://ghp_SECRET@example.test/r",
+        "HTTPS://ghp_SECRET@example.test/r",
+    ] {
+        let rig = build_rig(
+            Ok(Some(url.into())),
+            ContainerConfigRosterReport::default(),
+            None,
+        );
+        let text = rig
+            .use_case
+            .execute(&request("/p"))
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("checkout's origin remote"), "{url}: {text}");
+        assert!(text.contains("carries a credential"), "{url}: {text}");
+        assert!(!text.contains("ghp_SECRET"), "{url}: {text}");
+        assert!(rig.persistence.written.lock().unwrap().is_empty(), "{url}");
+        assert!(rig.assets.disk.lock().unwrap().is_empty(), "{url}");
+        let mut explicit = request("/p");
+        explicit.repository = Some(url.into());
+        let text = rig.use_case.execute(&explicit).unwrap_err().to_string();
+        assert!(text.contains("the --repo URL"), "{url}: {text}");
+        assert!(!text.contains("ghp_SECRET"), "{url}: {text}");
+        assert!(rig.persistence.written.lock().unwrap().is_empty(), "{url}");
+    }
+    // A bare user in the ssh, git and scp forms names an account.
+    for url in [
+        "ssh://git@example.test/org/repo.git",
+        "git://git@example.test/org/repo.git",
+        "git@github.com:org/repo.git",
+    ] {
+        let rig = build_rig(
+            Ok(Some(url.into())),
+            ContainerConfigRosterReport::default(),
+            None,
+        );
+        let report = rig.use_case.execute(&request("/p")).unwrap();
+        assert_eq!(report.repository.as_deref(), Some(url));
+    }
+    // A password in those forms is still a secret.
+    let rig = build_rig(
+        Ok(Some("ssh://git:pw@example.test/org/repo.git".into())),
+        ContainerConfigRosterReport::default(),
+        None,
+    );
+    let text = rig
+        .use_case
+        .execute(&request("/p"))
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("carries a credential"), "{text}");
+    assert!(!text.contains("pw@"), "{text}");
+    let rig = build_rig(
+        Ok(Some("git:pw@example.test:org/repo.git".into())),
+        ContainerConfigRosterReport::default(),
+        None,
+    );
+    let text = rig
+        .use_case
+        .execute(&request("/p"))
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("***@example.test:org/repo.git"), "{text}");
+    assert!(!text.contains("pw@"), "{text}");
 }
 
 #[test]

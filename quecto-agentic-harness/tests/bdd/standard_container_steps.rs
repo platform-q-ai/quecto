@@ -198,6 +198,28 @@ fn then_no_overlay(world: &mut QuectoWorld) {
     assert!(!overlay_path(world).exists());
 }
 
+#[then(expr = "{string} should appear in no file under the checkout's {string}")]
+fn then_secret_in_no_file(world: &mut QuectoWorld, secret: String, relative: String) {
+    fn walk(dir: &Path, secret: &str) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, secret);
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                assert!(
+                    !String::from_utf8_lossy(&bytes).contains(secret),
+                    "{secret} appears in {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    walk(&checkout(world).join(&relative), &secret);
+}
+
 #[then("the checkout's overlay should be trusted")]
 fn then_overlay_trusted(world: &mut QuectoWorld) {
     let output = cli::run_with_output(vec!["quecto".into(), "status".into()], &world.cli_context);

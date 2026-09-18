@@ -101,14 +101,32 @@ Feature: The standard container is landed on master
     Given the current directory is a git checkout whose origin remote is "https://user:ghp_secret@example.test/x/y"
     When I run quecto with arguments "container init"
     Then the exit code should be 1
-    And the stderr should contain "checkout's origin remote https://***@example.test/x/y carries credentials"
+    And the stderr should contain "checkout's origin remote https://***@example.test/x/y carries a credential"
     And the output should not contain "ghp_secret"
     And the checkout should carry no overlay
     And no standard container asset should exist under ".quecto/containers/standard"
     When I run quecto with arguments "container init --repo https://user:ghp_other@example.test/x/y"
     Then the exit code should be 1
-    And the stderr should contain "the --repo URL https://***@example.test/x/y carries credentials"
+    And the stderr should contain "the --repo URL https://***@example.test/x/y carries a credential"
     And the output should not contain "ghp_other"
+
+  @done @issue-2024
+  Scenario: a token as the whole userinfo of an https URL is a credential and is refused from --repo and origin alike
+    Given the current directory is a git checkout whose origin remote is "https://ghp_ORIGINSECRET@github.com/org/repo.git"
+    When I run quecto with arguments "container init --repo https://ghp_SECRET@github.com/org/repo.git"
+    Then the exit code should be 1
+    And the stderr should contain "the --repo URL https://***@github.com/org/repo.git carries a credential"
+    And the output should not contain "ghp_SECRET"
+    And the checkout should carry no overlay
+    And no standard container asset should exist under ".quecto/containers/standard"
+    And "ghp_SECRET" should appear in no file under the checkout's ".quecto"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 1
+    And the stderr should contain "checkout's origin remote https://***@github.com/org/repo.git carries a credential"
+    And the output should not contain "ghp_ORIGINSECRET"
+    And the checkout should carry no overlay
+    And no standard container asset should exist under ".quecto/containers/standard"
+    And "ghp_ORIGINSECRET" should appear in no file under the checkout's ".quecto"
 
   @done @issue-2024
   Scenario: an ssh origin with a bare user is a repository, not a credential

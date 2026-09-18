@@ -94,11 +94,11 @@ impl InitialiseStandardContainer {
         };
         if let Some(url) = repository
             .as_deref()
-            .filter(|url| url_carries_password(url))
+            .filter(|url| url_carries_credential(url))
         {
             return Err(
                 InitialiseStandardContainerError::RepositoryCarriesCredentials {
-                    url: crate::domain::redaction::redact_url_userinfo(url),
+                    url: redacted_repository(url),
                     origin: repository_origin,
                 },
             );
@@ -271,13 +271,40 @@ impl InitialiseStandardContainer {
     }
 }
 
-/// `scheme://user:password@host/…`: a password (or token) in the URL's
-/// userinfo. A bare user (`ssh://git@host/…`) names an account, not a
-/// secret, and is the everyday ssh form.
-fn url_carries_password(url: &str) -> bool {
-    url.split_once("://")
-        .and_then(|(_, rest)| rest.split('/').next()?.rsplit_once('@'))
-        .is_some_and(|(userinfo, _)| userinfo.contains(':'))
+/// Whether the URL's userinfo is a credential. Over `http`/`https` ANY
+/// non-empty userinfo is one: a bare user there is a token (GitHub's
+/// documented `https://ghp_xxx@github.com/org/repo` has no colon), so
+/// `user@`, `user:password@` and `token@` are all refused. Over the
+/// other schemes (`ssh://git@host/…`, `git://…`) and the scp form
+/// (`git@host:org/repo`) a bare user names an account, the everyday
+/// form, and only a `user:password@` is a secret.
+fn url_carries_credential(url: &str) -> bool {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
+        None => (None, url),
+    };
+    let Some((userinfo, _)) = rest.split('/').next().and_then(|authority| {
+        // The scp form's `host:path` has no slash before the path.
+        authority.rsplit_once('@')
+    }) else {
+        return false;
+    };
+    match scheme.as_deref() {
+        Some("http" | "https") => !userinfo.is_empty(),
+        _ => userinfo.contains(':'),
+    }
+}
+
+/// The URL with its userinfo replaced by `***`, in the scp form
+/// (`user:pw@host:path`, no `://`) as well as the scheme forms.
+fn redacted_repository(url: &str) -> String {
+    if url.contains("://") {
+        return crate::domain::redaction::redact_url_userinfo(url);
+    }
+    match url.split_once('@') {
+        Some((_, rest)) => format!("***@{rest}"),
+        None => url.to_string(),
+    }
 }
 
 impl std::fmt::Debug for InitialiseStandardContainer {

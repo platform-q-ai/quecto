@@ -28,10 +28,11 @@ of them a build. Run them from the repository **root** (or pass
    `<project>/.quecto/config.json` through the config writer, so the overlay
    is trusted for exactly those bytes. The entry's argv name the
    materialised scripts, `--state-dir <base dir>/container-environments`,
-   `--repo <origin>` (omitted = sandbox, and init says so; a URL with a
-   password or token embedded — `user:secret@host` — is refused from
-   either source, so use a credential-free URL; `ssh://git@host/…` is
-   fine),
+   `--repo <origin>` (omitted = sandbox, and init says so; a URL with any
+   credential embedded is refused from either source — over http(s) any
+   userinfo is one, `user:secret@host` and GitHub's `ghp_xxx@github.com`
+   alike — so use a credential-free URL; a bare user over ssh
+   (`ssh://git@host/…`, `git@host:org/repo`) is fine),
    `--image <tag>`; it is the default unless another entry already is (then
    init adds it without the label and says so — select it with
    `container: {"mode":"new","container_config":"standard"}` and diagnose
