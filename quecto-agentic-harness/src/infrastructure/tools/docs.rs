@@ -21,6 +21,12 @@ use std::pin::Pin;
 /// package embed folder. A renamed/removed doc fails the build — the embed
 /// cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
+    // The setup index is listed first: it routes every "set up X" task to
+    // one area page, one goal command, one verification and one rollback.
+    (
+        "setup",
+        include_str!("../../../docs/docs-tool-embeds/setup.md"),
+    ),
     (
         "admission-broker",
         include_str!("../../../docs/docs-tool-embeds/admission-broker.md"),
@@ -162,6 +168,8 @@ impl Tool for DocsTool {
         let description = "Quecto operating manual (embedded in the binary, CWD-independent). \
             Call with no name (or {}) for the table of contents (name + title per page). \
             Pass a name to read one page. \
+            Setting quecto up (credentials, a repo default model, the admission broker, \
+            a container for a repo)? Start with the setup index: docs {\"name\": \"setup\"}. \
             Open deep-dive pages only when needed. Do not read docs from the filesystem. \
             Example: docs {\"name\": \"workflow\"}"
             .into();

@@ -256,3 +256,177 @@ async fn admission_broker_manual_is_discoverable_and_actionable() {
         }
     }
 }
+
+/// #2024 S5: the `setup` index is the first page of the manual and routes
+/// every situation to one area page, one goal command, one verification
+/// and one rollback — all of them concrete commands.
+#[tokio::test]
+async fn setup_index_is_first_and_routes_every_area() {
+    let tool = DocsTool::new();
+    let toc = tool.execute("{}").await.unwrap();
+    let first = toc
+        .content
+        .lines()
+        .find(|line| line.starts_with("- "))
+        .expect("table of contents lists pages");
+    assert!(
+        first.starts_with("- setup — Setting up quecto"),
+        "setup must be listed first: {first}"
+    );
+    assert!(tool.definition().description.contains("setup"));
+    let doc = lookup_doc("setup").expect("setup embed");
+    assert!(doc.len() < 10_000, "setup index is {} B", doc.len());
+    for needle in [
+        "quecto auth login --provider",
+        "quecto auth status",
+        "quecto config set agents.defaults.model",
+        "quecto config get --effective agents.defaults.model",
+        "quecto config unset agents.defaults.model",
+        "quecto config set --global admission",
+        "quecto admission-broker install-service",
+        "quecto admission-broker status",
+        "quecto admission-broker uninstall-service --directory",
+        "quecto admission-broker install-service` (`--dry-run` first)",
+        "Do not run `quecto admission-broker run`",
+        "quecto container init",
+        "quecto container doctor",
+        "quecto container status",
+        "quecto config unset --local container_configs.standard",
+        "docs {\"name\": \"config\"}",
+        "docs {\"name\": \"models\"}",
+        "docs {\"name\": \"admission-broker\"}",
+        "docs {\"name\": \"container-runtime\"}",
+        "docs {\"name\": \"swarm\"}",
+        "never pass `--show-secrets`",
+        "never `cat`",
+        "always `--token`",
+        "Overlay: … (untrusted)",
+        "quecto config trust",
+        "QUECTO_BASE_DIR",
+    ] {
+        assert!(doc.contains(needle), "setup index misses {needle}");
+    }
+}
+
+/// #2024 S5: the four area pages are runbooks of one fixed shape, so an
+/// agent that follows one literally always knows what to run, what to
+/// expect, and how to undo it.
+#[test]
+fn area_pages_share_the_runbook_shape() {
+    for name in ["config", "models", "admission-broker", "container-runtime"] {
+        let doc = lookup_doc(name).expect("area embed");
+        let mut last = 0;
+        for heading in [
+            "\n## Preconditions\n",
+            "\n## Do\n",
+            "\n## Verify\n",
+            "\n## Rollback\n",
+            "\n## If it fails\n",
+        ] {
+            let at = doc
+                .find(heading)
+                .unwrap_or_else(|| panic!("{name} embed lacks {heading:?}"));
+            assert!(
+                at > last,
+                "{name} embed has {heading:?} out of runbook order"
+            );
+            last = at;
+        }
+        assert!(
+            !doc.contains("container-config-trust"),
+            "{name} names the retired container trust record"
+        );
+    }
+    let models = lookup_doc("models").expect("models embed");
+    for needle in [
+        "quecto auth login --provider openai --token",
+        "quecto auth login --provider anthropic --token",
+        "always pass `--token`",
+        "--oauth",
+        "--device-code",
+        "have no effort control (`set_effort` is refused)",
+        "accepts any of `none, low, medium, high, xhigh, max`",
+        "quecto auth status",
+        "quecto auth logout --provider",
+        "quecto models discover",
+        "<base_dir>/models.json",
+        "quecto config set agents.defaults.model",
+        "quecto config set --global agents.defaults.model",
+        "\"persist\":\"local\"",
+    ] {
+        assert!(models.contains(needle), "models embed misses {needle}");
+    }
+    let config = lookup_doc("config").expect("config embed");
+    for needle in [
+        "quecto config trust",
+        "quecto config get --local",
+        "quecto config get --global",
+        "Overlay: ",
+        "(trusted)",
+        "(untrusted)",
+        "config-overlay-trust.json",
+        "global-only",
+    ] {
+        assert!(config.contains(needle), "config embed misses {needle}");
+    }
+    let container = lookup_doc("container-runtime").expect("container-runtime embed");
+    for needle in [
+        "quecto container init",
+        "podman build -t quecto-box:local",
+        "quecto container status",
+        "quecto container doctor",
+        "\"container\":true",
+        "get_containers",
+        "kill_container",
+        "init --refresh",
+        "## Trust boundary",
+        "## Upgrades",
+        "only `doctor` accepts one",
+    ] {
+        assert!(
+            container.contains(needle),
+            "container-runtime embed misses {needle}"
+        );
+    }
+    assert_in_order(
+        "container-runtime",
+        container,
+        "1. **Initialise**",
+        "2. **Build the image**",
+    );
+    let admission = lookup_doc("admission-broker").expect("admission-broker embed");
+    for needle in [
+        "quecto config set --global admission",
+        "quecto admission-broker install-service --dry-run",
+        "quecto admission-broker uninstall-service --directory",
+        "quecto config unset --global admission",
+        "\"bindings\":{\"*\":\"account\"}",
+        "systemctl --user status quecto-admission-broker.service",
+        "not running for directory",
+        "Do not run `quecto admission-broker run`",
+        "--accept-missing-ledger",
+    ] {
+        assert!(
+            admission.contains(needle),
+            "admission-broker embed misses {needle}"
+        );
+    }
+    assert_in_order(
+        "admission-broker",
+        admission,
+        "1. **Write the section**",
+        "3. **Install**",
+    );
+}
+
+/// Both needles are present and `first` precedes `second`, so a step order an
+/// agent must follow literally cannot be silently reversed.
+fn assert_in_order(name: &str, doc: &str, first: &str, second: &str) {
+    let a = doc
+        .find(first)
+        .unwrap_or_else(|| panic!("{name} embed misses {first}"));
+    let b = doc
+        .find(second)
+        .unwrap_or_else(|| panic!("{name} embed misses {second}"));
+    assert!(a < b, "{name} embed orders {second} before {first}");
+}

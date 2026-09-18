@@ -490,6 +490,12 @@ fn a_sandbox_checkout_and_a_global_default_are_both_said_and_the_preflight_refus
         "{out}"
     );
     assert!(
+        out.contains(
+            "3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":{\"mode\":\"new\",\"container_config\":\"standard\"}}"
+        ),
+        "{out}"
+    );
+    assert!(
         rig.overlay()["container_configs"]["standard"]
             .get("default")
             .is_none(),

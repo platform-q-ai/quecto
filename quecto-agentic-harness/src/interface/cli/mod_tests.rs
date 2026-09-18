@@ -12,6 +12,17 @@ fn live_cli_commands_keep_help_version_and_unknown_dispatch() {
     assert_eq!(help.exit_code, 0);
     assert!(help.stdout.contains("Usage: quecto [command]"));
     assert!(help.stdout.contains("agent"));
+    // #2024 S5: the help text names every broker action and the flags the
+    // runbooks tell an agent to pass.
+    for needle in [
+        "admission-broker run|status|reset|install-service|uninstall-service",
+        "--directory <dir>",
+        "--config <file>",
+        "--accept-missing-ledger",
+        "install-service|uninstall-service [--dry-run]",
+    ] {
+        assert!(help.stdout.contains(needle), "help text misses {needle}");
+    }
 
     let version = run_with_output(args("--version"), &CliContext::default());
     assert_eq!(version.exit_code, 0);
