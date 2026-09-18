@@ -26,6 +26,11 @@ fn inventory(configs: Vec<ContainerConfigEntry>, withheld: bool) -> ContainerCon
 }
 
 #[test]
+fn the_budget_is_the_documented_120_characters() {
+    assert_eq!(ROSTER_LINE_MAX_CHARS, 120);
+}
+
+#[test]
 fn names_the_default_first_with_its_layer() {
     let line = format_roster_line(&inventory(
         vec![

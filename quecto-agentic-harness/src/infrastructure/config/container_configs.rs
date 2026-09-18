@@ -129,3 +129,7 @@ impl std::fmt::Debug for ContainerConfigsFromEffectiveConfig {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+#[path = "container_configs_tests.rs"]
+mod tests;
