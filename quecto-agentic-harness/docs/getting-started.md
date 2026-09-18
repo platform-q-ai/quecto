@@ -79,6 +79,27 @@ warns while one exists; move its settings to `./.quecto/config.json`. See the
 README's
 [Configuration discovery and precedence](../README.md#configuration-discovery-and-precedence).
 
+## Set up by an agent (or by hand, in the same order)
+
+Every setup step is a `quecto` command that prints the file it wrote and
+exits 0, or prints why it refused and exits 1 with the file unchanged. An
+agent with the `docs` tool starts at `docs {"name": "setup"}`, which routes
+each situation to one runbook page; these are the same commands:
+
+| Situation | Do | Verify (expected) | Rollback |
+|---|---|---|---|
+| Credential | `quecto auth login --provider openai --token <key>` | `quecto auth status` → `openai (token) — active` | `quecto auth logout --provider openai` |
+| Default model for this repo | `quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'` | `quecto config get --effective agents.defaults.model` → the id; `quecto agent --no-session -m "Reply with exactly OK"` → `OK` | `quecto config unset agents.defaults.model` |
+| Default model everywhere | `quecto config set --global agents.defaults.model '"…"'` | `quecto status` → `Model: …` | `quecto config unset --global agents.defaults.model` |
+| Admission broker (one per host) | `quecto config set --global admission '{…}'`, `quecto admission-broker install-service` | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto admission-broker uninstall-service`, `quecto config unset --global admission` |
+| Container for this repo | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → `ready: …`; `quecto container doctor` → every line `✓` | `quecto config unset --local container_configs.standard`, `rm -r .quecto/containers/standard` |
+
+Order on a fresh machine: credential → (global model) → repo overlay →
+admission → container, then `quecto status` once more. Details, expected
+outputs and failure tables: the [README](../README.md#commands),
+[inference-admission.md](inference-admission.md#activation-rollback-and-quarantine-runbook)
+and [container-runtimes.md](../../docs/container-runtimes.md#the-standard-container-quecto-container-init-2024-s4e).
+
 ## Next steps
 
 | Need | Where |

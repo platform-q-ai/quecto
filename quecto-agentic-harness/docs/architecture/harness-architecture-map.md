@@ -376,6 +376,26 @@ and presents the outcome (naming the directory), addressing the global config
 `connected` and `authorityStatus` (`uds_admission_projection.rs`,
 `uds_execution_state.rs`), which quecto-tui renders as a footer health badge.
 
+## Agent-facing manual (`docs` tool)
+
+The operating manual an agent reads is content, not a use case (#2024 S5):
+`src/infrastructure/tools/docs.rs` embeds every page under
+`docs/docs-tool-embeds/` with `include_str!` (a renamed page fails the
+build) and lists them in registry order — `setup` first, the decision tree
+that routes "set up X" to one area page — then serves a page by normalised
+name. The four area pages `config`, `models`, `admission-broker` and
+`container-runtime` are runbooks of one fixed shape (*Preconditions · Do ·
+Verify · Rollback · If it fails*), every step a command with its expected
+output; `subagents` (≤ 8000 B) and `swarm` carry only their setup-relevant
+parts. The needles that keep them truthful live in
+`src/infrastructure/tools/docs_tests.rs` (shape, first-listed index, size
+caps, the commands each page must name) and `tests/docs/repo_docs.rs`; the
+human guides (`README.md`, `docs/getting-started.md`,
+`docs/inference-admission.md`, `docs/runtime-models-providers.md`,
+`../docs/container-runtimes.md`) mirror the same commands and expected
+outputs. Each slice of #2024 ends with an agent run recorded in its PR that
+follows the pages with only the `docs` tool and `bash`.
+
 ## Baseline subsystem checks
 
 Use these focused checks while hardening the architecture. The full pre-push gate

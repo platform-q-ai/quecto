@@ -593,6 +593,25 @@ quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--re
 quecto container status [--project <abs dir>]
 ```
 
+**Runbook** (the same the `docs` tool serves as `container-runtime`; every
+step is a command with its expected output):
+
+| Step | Command (from the repository root) | Expected |
+|---|---|---|
+| Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
+| 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
+| 2. build | the printed `podman build -t quecto-box:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-box:local` |
+| 3. verify | `quecto container status` | five lines ending `ready: spawn {"container":true} from an agent in this project`, exit 0 |
+| 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
+| 5. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
+| 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |
+| 7. kill | `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` | the environment gone from `get_containers` |
+| Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-box:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
+| Upgrade | `quecto container init --refresh`, rebuild if the Containerfile changed, `quecto container doctor` | each differing file `refreshed` |
+
+Failures and their fixes are in the [troubleshooting runbook](#troubleshooting-runbook)
+below; the trust boundary and upgrade rules follow.
+
 What `init` does, in order (every refusal below happens before anything
 is written, so a refused init leaves the project untouched):
 
@@ -1045,6 +1064,10 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `container config '<name>': create script … printed a malformed check line …` / `… without reporting the mandatory check …` | — (exit 1) | A custom create script's `--preflight-only` output is not the contract (see "Script contract"); the doctor never presents a partial report as healthy. |
 | `… status exit status: 1: …` after the preflight (clone, `podman run`) | all `✓` | Read the quoted stderr: the clone or the runtime refused. The create rolled its environment back; `kill.log` in the state dir lists every kill/cleanup. |
 | `script-managed exec failed with status …: …` | — | The join's own stderr is quoted; the environment may have exited — `agent_cmd get_containers` shows its status. |
+| `container config 'standard' refused: …/scripts/create.sh differs from the standard bundle this quecto embeds …` (spawn, doctor, a retained kill → `cleanup-failed`) | — (exit 1, before any check) | A script under `.quecto/containers/standard/` was edited, pulled, or written by an older quecto: `git diff .quecto/containers/standard`, then `quecto container init --refresh`; retry. |
+| init: `… is not the repository root (<root>): … run init from the root, or pass --project <root>` | — | `cd` to the checkout's toplevel, or pass `--project <root>`. |
+| init: `… carries a credential in its userinfo …` | — | `git remote set-url origin <credential-free url>` or `quecto container init --repo <url>`; a helper, ssh key or `gh auth login` supplies the credential at clone time. |
+| init: `overlay … is not trusted (sha256 …); review it and run \`quecto config trust\` first` | — | Review `quecto config get --local`, `quecto config trust`, run init again (init never adopts content it did not write). |
 
 Eight create-then-rollback cycles in one afternoon with nothing but
 `status 1` to show for them is what this runbook replaces (#2024).

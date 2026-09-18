@@ -11,7 +11,7 @@ Quecto's runtime model registry lives at `~/.quecto/models.json`. It is the user
 **How hot reload works (mechanics):**
 
 1. The reload use case (`src/application/catalogue/use_cases/reload_runtime_configuration.rs`, #1849) owns the policy in two phases: a rebuild phase (`rebuild_if_changed` for the pull-based poll, `rebuild` for the forced UDS `reload`) that borrows no runtime and yields a `ReloadStep`, and an `apply` phase that swaps the step into the loop. It drives two ports — a `RuntimeConfigurationSource` and the agent loop as `ReloadRuntime` — and never reads a file or touches a scheduler itself. The UDS dispatch loop (`src/interface/cli/uds_dispatch_reload.rs`) runs the rebuild phase under `tokio::task::spawn_blocking`, so the current-thread UDS runtime keeps accepting, reading and flushing for other clients while a rebuild is in flight (their commands are dispatched in order once it completes), and applies on the dispatch task.
-2. The source adapter (`src/infrastructure/runtime_configuration.rs`) watches both the config file the run selected (`--config`, else `./config.json` in the working directory, else `~/.quecto/config.json`) and `~/.quecto/models.json` through the reload gate (`src/infrastructure/reload.rs`) by mtime + length + content hash. On a poll, if metadata is unchanged it does **not** read the file (cheap). If metadata changed, it reads and hashes; only a changed hash rebuilds.
+2. The source adapter (`src/infrastructure/runtime_configuration.rs`) watches the configuration the run selected (`--config`, else the global `~/.quecto/config.json` plus the working directory's `.quecto/config.json` overlay and, while an overlay exists, its trust record) and `~/.quecto/models.json` through the reload gate (`src/infrastructure/reload.rs`) by mtime + length + content hash. On a poll, if metadata is unchanged it does **not** read the file (cheap). If metadata changed, it reads and hashes; only a changed hash rebuilds.
 3. A rebuild parses the config **once**, composes and publishes the provider runtime through the same injected provider-runtime builder startup used (`ProviderRuntimeBuilder`, threaded from `CliComposition` into the reload inputs), and returns it together with the persisted `tools.policy.entries`; the use case swaps the provider on the loop and re-applies that policy baseline (clearing live-only overlays). The rebuild observes the files before reading them, so a forced `reload` never triggers a second rebuild at the next poll.
 4. Polls happen automatically before each prompt, before `set_model`, when `/model` is opened (TUI re-requests the list), and on an explicit UDS `reload`.
 5. Reload is **fail-safe**: if the new file is malformed, nothing is published and the last-good provider router stays active — a poll logs a warning and proceeds, an explicit `reload` reports the error — and the session does not crash.
@@ -44,6 +44,28 @@ or install an external scheduler, for example cron:
 ```
 
 A systemd timer should invoke the same one-shot command. Because writes use a same-directory temporary file plus rename, running agents see either the previous complete registry or the next complete registry; malformed JSON is never intentionally published.
+
+## Store a credential (runbook)
+
+Preconditions: `quecto version` works; the agents you will run share the
+same `QUECTO_BASE_DIR` (the credential store is `<base_dir>/credentials.json`,
+0600, written only by `quecto auth`).
+
+```bash
+quecto auth login --provider openai --token sk-proj-…     # → Credential stored for openai
+quecto auth login --provider anthropic --token sk-ant-…   # → Credential stored for anthropic
+quecto auth login --provider openai --oauth                # browser flow
+quecto auth login --provider openai --device-code          # headless: prints a URL and a code
+quecto auth status                                         # → Credentials:  openai (token) — active
+quecto agent --no-session -m "Reply with exactly the word OK"   # → OK  (proves the default model runs)
+quecto auth logout --provider openai                       # rollback → Credential removed for openai
+```
+
+`quecto status`'s `OpenAI API:` / `Anthropic API:` lines reflect
+`providers.*.api_key` in the global file only, not the credential store —
+trust `quecto auth status`. The store takes priority over a config key. An
+agent doing this asks the user for the key, never echoes it, never writes
+it into a file itself, and never passes `--show-secrets`.
 
 ## Where keys go (do not mix these up)
 
@@ -215,7 +237,7 @@ Verify with `quecto config get --effective agents.defaults.model` and `quecto st
 2. Use explicit auth-specific provider keys (`*-api`, `*-oauth`).
 3. OAuth references must be one of the kernel-known identities (`openai`, `anthropic`); otherwise the provider must be an API-key/sidecar provider.
 4. Changes are hot-loaded on consume; no restart is required.
-5. When in doubt about the schema, read this doc with `docs {"name": "models-providers"}` rather than guessing.
+5. When in doubt about the schema, read the `docs` tool's `models` page (`docs {"name": "models"}`) rather than guessing; this file is the full human reference.
 
 ## Retry-After hints and the wait budget
 

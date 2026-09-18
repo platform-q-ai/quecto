@@ -369,6 +369,39 @@ the global value, which is why removal is its own command). See
 [discovery and precedence](#configuration-discovery-and-precedence) for the
 merge rules and the writer's guarantees.
 
+### `quecto admission-broker` — One host-wide inference broker
+
+```bash
+quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
+quecto admission-broker install-service --dry-run   # the plan: unit path, daemon-reload, enable --now
+quecto admission-broker install-service             # systemd user unit quecto-admission-broker.service
+quecto admission-broker status                      # {"directory":…,"epoch":1,"journal_healthy":true,…}
+quecto admission-broker reset                       # new epoch: roots re-register, children are respawned
+quecto admission-broker uninstall-service           # then: quecto config unset --global admission
+```
+
+`status`, `reset`, `run`, `install-service` and `uninstall-service` address
+the global file (`--config <file>` / `--directory <dir>` to pick another),
+never the repo overlay; every output names the directory. Sessions started
+before the section existed run unbounded until restarted. Runbook with
+expected outputs and failure table: [inference-admission.md](docs/inference-admission.md)
+(the same runbook the `docs` tool serves as `admission-broker`).
+
+### `quecto container` — Standard container for a repository
+
+```bash
+quecto container init                 # bundle under .quecto/containers/standard + container_configs.standard in the trusted overlay
+podman build -t quecto-box:local -f .quecto/containers/standard/Containerfile .quecto/containers/standard
+quecto container status               # assets, entry, trust, image — ends with "ready: …" when all are in place
+quecto container doctor               # the create's preflight, one ✓/✗ line per check, exit 0 when none failed
+quecto container init --refresh       # after upgrading quecto, or to restore an edited script
+quecto config unset --local container_configs.standard && rm -r .quecto/containers/standard   # rollback
+```
+
+Run from the repository root. Runbook with expected outputs and failure
+table: [container-runtimes.md](../docs/container-runtimes.md#the-standard-container-quecto-container-init-2024-s4e)
+(the `docs` tool serves it as `container-runtime`).
+
 ### First run — zero config
 
 quecto needs no setup step. With no config file it runs on defaults; supply a
@@ -1007,7 +1040,7 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ## Documentation
 
-Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (concise deep dives) — not these full files.
+Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (concise deep dives) — not these full files. Its first page, `setup`, is a decision tree that routes "set up X in this repo" to one runbook page (`config`, `models`, `admission-broker`, `container-runtime`, `swarm`), each of the shape *Preconditions · Do · Verify · Rollback · If it fails*; the human guides below carry the same commands and expected outputs, so an agent given only the `docs` tool and a prompt like "pin the default model for this repo" can do it without a human editing files (#2024 S5).
 
 | Guide | Description |
 |---|---|
