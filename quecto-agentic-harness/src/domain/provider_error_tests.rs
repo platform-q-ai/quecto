@@ -372,3 +372,45 @@ fn synthetic_empty_stream_retains_retryability_without_http_attribution() {
         );
     }
 }
+
+#[test]
+fn admission_refusals_and_rejected_capabilities_are_terminal_client_errors() {
+    for msg in [
+        "admission: admission refused: capability revoked by an authority reset; a child cannot re-register on its own — its parent must respawn it",
+        "admission: admission refused: admission policy at the broker differs from the one this session composed against; restart required",
+        "admission: admission capability rejected",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        // Terminal, and not `Auth`: no key-check hint or OAuth refresh for an
+        // admission decision (the "authority" wording used to trip the `auth`
+        // keyword).
+        assert_eq!(class, ProviderErrorClass::Client, "{msg}");
+        assert!(!class.is_retryable(), "{msg}");
+    }
+}
+
+#[test]
+fn admission_transport_failures_are_retryable_network() {
+    for msg in [
+        "admission: admission transport failure: reconnect to /run/q/client.sock (No such file or directory)",
+        // No transport keyword in the detail: the class comes from the
+        // admission prefix, not from incidental words.
+        "admission: admission transport failure: task cancelled",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        assert_eq!(class, ProviderErrorClass::Network, "{msg}");
+        assert!(class.is_retryable(), "{msg}");
+    }
+}
+
+#[test]
+fn admission_rules_apply_only_to_admission_prefixed_errors() {
+    // A provider body that merely echoes the phrase is not an admission error.
+    let class = classify_provider_error(&provider(
+        "HTTP 503 Service Unavailable: admission transport failure mentioned in body",
+    ));
+    assert_eq!(class, ProviderErrorClass::Server);
+    // Other admission outcomes still take the generic paths.
+    let class = classify_provider_error(&provider("admission: admission request cancelled"));
+    assert_eq!(class, ProviderErrorClass::Cancelled);
+}

@@ -69,6 +69,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         return ProviderErrorClass::EmptyStream;
     }
 
+    if let Some(class) = classify_admission_error(msg) {
+        return class;
+    }
+
     let lowered = msg.to_ascii_lowercase();
 
     if declares_billing_or_quota_error(&lowered) {
@@ -211,6 +215,36 @@ fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
 /// (already lowercased) to avoid catching genuine permission failures.
 fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
     lowered.contains("access to the chat endpoint is denied")
+}
+
+/// Errors raised by the inference-admission gate (#2024 S3) before any
+/// provider request is made, prefixed `admission: ` by the remote gate. They
+/// are classified by what the gate said, not by incidental keywords:
+///
+/// * `admission refused: …` — a policy or capability decision (a child whose
+///   capability was revoked, a root facing a changed policy, a refused scope):
+///   nothing inside this attempt loop changes it, so it is terminal `Client`.
+///   Not `Auth`: that class means the *provider* rejected the credentials
+///   and would prompt a key check and an OAuth refresh, neither of which
+///   applies; the message itself says what to do (respawn, restart).
+/// * `admission capability rejected` — the authority no longer honours this
+///   process's credential: terminal `Client`, for the same reason.
+/// * `admission transport failure: …` — the link to the broker failed (socket
+///   gone, reconnection exhausted): retryable `Network`, since a later attempt
+///   reconnects when the broker is back.
+///
+/// Any other admission message falls through to the generic classification.
+fn classify_admission_error(msg: &str) -> Option<ProviderErrorClass> {
+    let detail = msg.strip_prefix("admission: ")?;
+    if detail.starts_with("admission refused:")
+        || detail.starts_with("admission capability rejected")
+    {
+        Some(ProviderErrorClass::Client)
+    } else if detail.starts_with("admission transport failure") {
+        Some(ProviderErrorClass::Network)
+    } else {
+        None
+    }
 }
 
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
