@@ -1,16 +1,20 @@
 //! Contract for the `ContainerRuntimePreflight` port (#2024 S4b): the
 //! create script of the config is asked for its own checks with
 //! `--preflight-only` appended and no child command; every status/check/
-//! detail/remedy line it prints is a check, in order, whatever its exit
-//! status; a script that refuses the flag, prints no checks, or is
-//! missing is an error carrying its own words — never an empty, healthy
-//! report; nothing is created.
+//! detail/remedy line it prints is a check, in order; a script that
+//! refuses the flag, prints no checks, or is missing is an error carrying
+//! its own words — never an empty, healthy report; nothing is created.
+//! The port fails closed: a non-zero exit without a failed check (the
+//! script died mid-report) is an error carrying its stderr, a malformed
+//! check line refuses the report naming it, and a successful report must
+//! carry the checks every shipped script makes (`MANDATORY_CHECKS`).
 use std::path::Path;
 use std::sync::Arc;
 
 use quecto::application::environments::dto::{CheckStatus, DiagnosableContainerConfig};
 use quecto::application::environments::ports::ContainerRuntimePreflight;
 use quecto::composition::environments::build_container_runtime_preflight;
+use quecto::infrastructure::processes::containers::preflight::MANDATORY_CHECKS;
 
 fn port() -> Arc<dyn ContainerRuntimePreflight> {
     build_container_runtime_preflight()
@@ -79,6 +83,63 @@ fn a_script_that_refuses_the_flag_is_an_error_carrying_its_own_words() {
     );
     assert!(
         error.contains("legacy create: unknown argument --preflight-only"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_script_that_dies_mid_report_is_an_error_carrying_its_stderr() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let dies = script(
+        dir.path(),
+        "dies.sh",
+        "printf 'ok\\truntime-cli\\tpodman\\t\\nok\\tjq\\tjq\\t\\n'; echo 'usage: bad timeout' >&2; exit 2",
+    );
+    let error = port().preflight(&config(dies)).unwrap_err();
+    assert!(
+        error.contains("exited exit status: 2 after 2 checks without reporting a failure")
+            && error.ends_with(": usage: bad timeout"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_malformed_check_line_refuses_the_report_naming_it() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let malformed = script(
+        dir.path(),
+        "malformed.sh",
+        "printf 'ok\\tjq\\tjq\\t\\nfail\\timage\\n'; exit 1",
+    );
+    let error = port().preflight(&config(malformed)).unwrap_err();
+    assert!(
+        error.contains("malformed check line \"fail\\timage\""),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_successful_report_must_carry_every_mandatory_check() {
+    assert_eq!(MANDATORY_CHECKS, ["jq", "git", "repo", "state-dir"]);
+    let dir = tempfile::TempDir::new().unwrap();
+    let lines: String = MANDATORY_CHECKS
+        .iter()
+        .map(|name| format!("ok\\t{name}\\tfine\\t\\n"))
+        .collect();
+    let complete = script(
+        dir.path(),
+        "complete.sh",
+        &format!("printf '{lines}'; exit 0"),
+    );
+    assert_eq!(port().preflight(&config(complete)).unwrap().len(), 4);
+    let short = script(
+        dir.path(),
+        "short.sh",
+        "printf 'ok\\tjq\\tjq\\t\\nok\\tgit\\tgit\\t\\nok\\trepo\\tfine\\t\\n'; exit 0",
+    );
+    let error = port().preflight(&config(short)).unwrap_err();
+    assert!(
+        error.contains("without reporting the mandatory check state-dir"),
         "{error}"
     );
 }

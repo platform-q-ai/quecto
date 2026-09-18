@@ -202,8 +202,10 @@ fn drain_tail(mut pipe: impl Read, sink: &Mutex<VecDeque<u8>>) {
 
 /// The tail as a report may carry it: ANSI escape sequences removed,
 /// `\r\n` folded to `\n`, every other control character dropped, tabs
-/// widened to a space, surrounding whitespace trimmed. A script's colours
-/// and cursor moves are for a terminal, not a tool result.
+/// widened to a space, surrounding whitespace trimmed, and the userinfo of
+/// every URL replaced by `***` (a script that echoes its `--repo` must not
+/// hand an embedded token to the model or the terminal). A script's
+/// colours and cursor moves are for a terminal, not a tool result.
 pub fn sanitise(tail: &str) -> String {
     let mut out = String::with_capacity(tail.len());
     let mut chars = tail.chars().peekable();
@@ -216,7 +218,7 @@ pub fn sanitise(tail: &str) -> String {
             c => out.push(c),
         }
     }
-    out.trim().to_string()
+    crate::domain::redaction::redact_url_userinfo(out.trim())
 }
 
 /// Skip the body of an escape sequence: a CSI (`ESC [ … final`) whole, an

@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::application::environments::dto::{ContainerRuntimeTarget, DiagnosableContainerConfig};
 use crate::application::environments::ports::ContainerConfigLookup;
-use crate::application::subagents::dto::{ContainerConfigSource, SelectContainerConfigRequest};
+use crate::application::subagents::dto::{
+    ContainerConfigSource, SelectContainerConfigError, SelectContainerConfigRequest,
+};
 use crate::application::subagents::use_cases::SelectContainerConfig;
 
 pub struct SelectedConfigLookup {
@@ -32,7 +34,16 @@ impl ContainerConfigLookup for SelectedConfigLookup {
                 source: ContainerConfigSource::LaunchingAgent,
                 name: target.name.clone(),
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| match error {
+                // The launch's wording ("container: true refused … to
+                // launch") is not the doctor's: name the command and
+                // its own way out.
+                SelectContainerConfigError::OverlayWithheld { diagnostics } => format!(
+                    "container doctor refused: the checkout's repo-local config overlay was not applied, so the container config it labels default is unknown ({}); trust it (`quecto config trust`), or diagnose a global configuration's entry with --name",
+                    diagnostics.join("; ")
+                ),
+                other => other.to_string(),
+            })?;
         Ok(DiagnosableContainerConfig {
             name: selected.config.name,
             create: selected.config.create,

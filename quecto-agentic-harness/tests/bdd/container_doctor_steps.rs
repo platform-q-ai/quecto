@@ -96,6 +96,16 @@ fn then_spawn_result_has_no_control_chars(world: &mut QuectoWorld) {
     );
 }
 
+#[then(expr = "the spawn result should not contain {string}")]
+fn then_spawn_result_not_contains(world: &mut QuectoWorld, needle: String) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    assert!(
+        !result.content.contains(&needle),
+        "{needle:?} in: {:?}",
+        result.content
+    );
+}
+
 #[then(expr = "the spawn result should be shorter than {int} bytes")]
 fn then_spawn_result_shorter_than(world: &mut QuectoWorld, bound: usize) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
@@ -119,7 +129,7 @@ struct Toolbox {
 const TOOLBOX_PROGRAMS: &[&str] = &[
     "bash", "sh", "env", "jq", "git", "dirname", "basename", "mktemp", "realpath", "readlink",
     "id", "mkdir", "rm", "cat", "head", "tail", "tr", "grep", "timeout", "stat", "touch", "printf",
-    "sleep", "true", "false",
+    "sleep", "true", "false", "sed",
 ];
 
 impl Toolbox {
@@ -291,6 +301,18 @@ fn when_preflight_reachable(world: &mut QuectoWorld, image: String) {
     run_preflight(world, &official_create_script(), Some(&image), &repo);
 }
 
+#[when(
+    expr = "I run the official docker create script with --preflight-only for image {string} and repository {string}"
+)]
+fn when_preflight_repository(world: &mut QuectoWorld, image: String, repo: String) {
+    run_preflight(
+        world,
+        &official_create_script(),
+        Some(&image),
+        Path::new(&repo),
+    );
+}
+
 /// A state dir the preflight is asked about but must never create.
 fn preflight_state_dir(world: &QuectoWorld) -> PathBuf {
     base_path(world).join("doctor-state")
@@ -425,13 +447,21 @@ fn then_podman_never_pulled(world: &mut QuectoWorld) {
 /// behind a wrapper that pins PATH to the toolbox, with a state dir, the
 /// reachable repository and the image under test.
 fn bind_official_config(world: &mut QuectoWorld, toolbox: &Toolbox) {
-    let repo = reachable_repository(world);
+    let repo = reachable_repository(world).to_string_lossy().into_owned();
+    bind_official_config_with_repo(world, toolbox, &repo);
+}
+
+/// The wrapper script `bind_official_config` writes.
+fn official_wrapper(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("official-create.sh")
+}
+
+fn bind_official_config_with_repo(world: &mut QuectoWorld, toolbox: &Toolbox, repo: &str) {
     // The wrapper pins PATH and clears every knob the host's environment
     // could leak into an in-process doctor run, so the scenario alone
     // decides what the preflight finds.
-    let wrapper = base_path(world).join("official-create.sh");
     let mut create = write_script(
-        &wrapper,
+        &official_wrapper(world),
         &format!(
             "export PATH='{}'\nunset QUECTO_CONTAINER_CLI QUECTO_DOCKER_IMAGE QUECTO_REPO_CHECK_TIMEOUT\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null\nexec '{}' \"$@\"\n",
             toolbox.dir.display(),
@@ -445,7 +475,7 @@ fn bind_official_config(world: &mut QuectoWorld, toolbox: &Toolbox) {
             .to_string_lossy()
             .into_owned(),
         "--repo".to_string(),
-        repo.to_string_lossy().into_owned(),
+        repo.to_string(),
         "--image".to_string(),
         "quecto-box:local".to_string(),
     ]);
@@ -472,6 +502,68 @@ fn given_bound_without_runtime(world: &mut QuectoWorld) {
 fn given_bound_with_fake_podman(world: &mut QuectoWorld, state: String) {
     let toolbox = toolbox_with_fake_podman(world, image_state(&state));
     bind_official_config(world, &toolbox);
+}
+
+#[given(
+    expr = "the checkout binds itself to the official docker create script with repository {string} under a controlled PATH whose fake podman reports every image as {word}"
+)]
+fn given_bound_with_repository(world: &mut QuectoWorld, repo: String, state: String) {
+    let toolbox = toolbox_with_fake_podman(world, image_state(&state));
+    bind_official_config_with_repo(world, &toolbox, &repo);
+}
+
+/// The wrapper exports `QUECTO_REPO_CHECK_TIMEOUT` for the real script,
+/// after the `unset` that keeps the host's value out.
+#[given(expr = "the bound create script runs with QUECTO_REPO_CHECK_TIMEOUT set to {string}")]
+fn given_bound_script_timeout(world: &mut QuectoWorld, value: String) {
+    let wrapper = official_wrapper(world);
+    let body = std::fs::read_to_string(&wrapper).unwrap();
+    assert!(body.contains("\nexec '"), "{body}");
+    std::fs::write(
+        &wrapper,
+        body.replace(
+            "\nexec '",
+            &format!("\nexport QUECTO_REPO_CHECK_TIMEOUT='{value}'\nexec '"),
+        ),
+    )
+    .unwrap();
+}
+
+/// Bind the checkout to a fake create script whose `--preflight-only`
+/// answer is `body`; the doctor's fail-closed rules are what the scenario
+/// exercises, so the runtime never matters.
+fn bind_fake_preflight(world: &mut QuectoWorld, body: &str) {
+    let create = write_script(&base_path(world).join("fake-create.sh"), body);
+    let cleanup = write_script(&base_path(world).join("fake-cleanup.sh"), "exit 0\n");
+    let entry = serde_json::json!({
+        "default": true,
+        "create": create,
+        "cleanup": cleanup,
+    });
+    config_set_local(world, "fake", &entry);
+}
+
+#[given(
+    expr = "the checkout binds itself to a create script that prints {int} passing checks then exits 2 with usage text {string}"
+)]
+fn given_bound_dies_after_ok_lines(world: &mut QuectoWorld, count: usize, usage: String) {
+    let lines: String = (0..count)
+        .map(|i| format!("printf 'ok\\tcheck-{i}\\tfine\\t\\n'\n"))
+        .collect();
+    bind_fake_preflight(
+        world,
+        &format!("{lines}printf '%s\\n' '{usage}' >&2\nexit 2\n"),
+    );
+}
+
+#[given(
+    expr = "the checkout binds itself to a create script whose preflight prints a cut-short {string} line for check {string}"
+)]
+fn given_bound_malformed_line(world: &mut QuectoWorld, status: String, check: String) {
+    bind_fake_preflight(
+        world,
+        &format!("printf 'ok\\tjq\\tjq at /usr/bin/jq\\t\\n{status}\\t{check}\\n'\nexit 1\n"),
+    );
 }
 
 #[when(expr = "the fake podman is fixed to report every image as {word}")]

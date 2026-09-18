@@ -419,6 +419,9 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "ContainerLaunchConfig"
                     | "EffectiveContainerConfigSet"
                     | "SelectContainerConfigRequest"
+                    // The doctor's lookup rewords the withheld-overlay
+                    // refusal for its own command (#2024 S4b review).
+                    | "SelectContainerConfigError"
                     | "SelectedContainerConfig",
                     ..,
                 ]

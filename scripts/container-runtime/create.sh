@@ -28,6 +28,11 @@
 set -euo pipefail
 
 log() { printf 'container-runtime create: %s\n' "$*" >&2; }
+# A --repo URL may carry credentials (https://user:token@host/…); every
+# message that names it shows the URL with its userinfo replaced by ***.
+# The token stays in the config file and the clone; never in a preflight
+# line, a log line, or the create result.
+redact_url() { printf '%s' "$1" | sed -E 's#(://)[^/]+@#\1***@#g'; }
 EXIT_USAGE=2
 EXIT_NO_JQ=4
 EXIT_NO_GIT=5
@@ -69,6 +74,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || usage "--state-dir is required"
+repo_shown="$(redact_url "$repo")"
 
 # --- Preflight ------------------------------------------------------------
 preflight_failed=0
@@ -97,7 +103,7 @@ if [ -n "$repo" ]; then
   if git_path="$(command -v git 2>/dev/null)"; then
     report ok git "git at $git_path" ""
   else
-    report fail git "git is not on PATH (needed to clone --repo $repo)" "install git" "$EXIT_NO_GIT"
+    report fail git "git is not on PATH (needed to clone --repo $repo_shown)" "install git" "$EXIT_NO_GIT"
   fi
 else
   report ok git "not needed: sandbox config (no --repo)" ""
@@ -115,12 +121,12 @@ if [ -n "$repo" ] && [ -n "$git_path" ]; then
   repo_error="$(GIT_ALLOW_PROTOCOL="file:https:ssh:git" GIT_TERMINAL_PROMPT=0 \
     "${ls_remote[@]}" 2>&1 >/dev/null)" || repo_rc=$?
   if [ "$repo_rc" = 0 ]; then
-    report ok repo "--repo $repo is reachable" ""
+    report ok repo "--repo $repo_shown is reachable" ""
   elif [ "$repo_rc" = 2 ] && [ -z "$repo_error" ]; then
-    report warn repo "--repo $repo is reachable but empty (no HEAD)" \
+    report warn repo "--repo $repo_shown is reachable but empty (no HEAD)" \
       "push an initial commit if members are expected to find one"
   elif [ "$repo_rc" = 124 ]; then
-    report fail repo "--repo $repo did not answer within ${probe_timeout}s" \
+    report fail repo "--repo $repo_shown did not answer within ${probe_timeout}s" \
       "check the host, your network and credentials; QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_REPO_UNREACHABLE"
   else
     repo_cause=""
@@ -128,11 +134,11 @@ if [ -n "$repo" ] && [ -n "$git_path" ]; then
       case "$line" in fatal:*) repo_cause="$line"; break ;; esac
     done <<<"$repo_error"
     repo_error="${repo_cause:-$(printf '%s' "$repo_error" | tr -d '\r' | tail -n 1)}"
-    report fail repo "--repo $repo is unreachable: ${repo_error:-git ls-remote exited $repo_rc}" \
+    report fail repo "--repo $repo_shown is unreachable: ${repo_error:-git ls-remote exited $repo_rc}" \
       "check the URL, your network and credentials, or fix --repo in the container config" "$EXIT_REPO_UNREACHABLE"
   fi
 elif [ -n "$repo" ]; then
-  report warn repo "--repo $repo was not checked: git is missing" "fix the git check first"
+  report warn repo "--repo $repo_shown was not checked: git is missing" "fix the git check first"
 else
   report ok repo "not needed: sandbox config (no --repo)" ""
 fi
@@ -212,7 +218,7 @@ printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 child_cwd="$workspace_path"
 source="none"
 if [ -n "$repo" ]; then
-  log "checking out $repo"
+  log "checking out $repo_shown"
   git clone --quiet -- "$repo" "$workspace_path/repo"
   child_cwd="$workspace_path/repo"
   source="repo"
@@ -242,6 +248,6 @@ jq -cn \
   --arg socket "$socket_path" \
   --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg source "$source" \
-  --arg repository "$repo" \
+  --arg repository "$repo_shown" \
   --arg checkout "$child_cwd" \
   '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "host-local", config: $config, source: $source, checkout: $checkout} +(if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'

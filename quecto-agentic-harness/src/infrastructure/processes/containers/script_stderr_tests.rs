@@ -33,6 +33,15 @@ fn sanitise_strips_escapes_and_control_characters_but_keeps_newlines() {
 }
 
 #[test]
+fn sanitise_redacts_the_userinfo_of_an_echoed_url() {
+    assert_eq!(
+        sanitise("create: --repo https://user:ghp_secret@host/x/y is unreachable\n"),
+        "create: --repo https://***@host/x/y is unreachable"
+    );
+    assert_eq!(sanitise("https://host/x/y"), "https://host/x/y");
+}
+
+#[test]
 fn failure_message_keeps_the_status_prefix_and_appends_the_tail_when_present() {
     let status = std::process::Command::new("false").status().unwrap();
     assert_eq!(

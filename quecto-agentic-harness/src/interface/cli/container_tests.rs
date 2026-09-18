@@ -15,23 +15,43 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// The `ok` lines of every check the adapter requires of a successful
+/// report, as a `printf` body.
+const MANDATORY_OK_LINES: &str = "ok\\tjq\\tjq at /usr/bin/jq\\t\\nok\\tgit\\tgit at /usr/bin/git\\t\\nok\\trepo\\tnot needed\\t\\nok\\tstate-dir\\tstate dir /s is writable\\t\\n";
+
 /// A base dir whose global file names one default config whose create
-/// script answers `--preflight-only` with `lines`.
+/// script answers `--preflight-only` with the mandatory checks then
+/// `lines`, exiting the way the shipped scripts do (1 after a failed
+/// check, else 0); an empty `lines` is a script that prints nothing and
+/// exits 1.
 fn composed(lines: &str) -> (tempfile::TempDir, CliContext) {
+    let (body, exit) = if lines.is_empty() {
+        (String::new(), 1)
+    } else {
+        (
+            format!("{MANDATORY_OK_LINES}{lines}"),
+            i32::from(lines.contains("fail\\t")),
+        )
+    };
+    composed_with_script(
+        &format!("[ \"${{@: -1}}\" = --preflight-only ] || exit 9\nprintf '{body}'\nexit {exit}"),
+        &["--state-dir", "/s"],
+    )
+}
+
+fn composed_with_script(script_body: &str, extra_argv: &[&str]) -> (tempfile::TempDir, CliContext) {
     let dir = tempfile::TempDir::new().unwrap();
     let base = dir.path().join("base");
     let cwd = dir.path().join("cwd");
     std::fs::create_dir_all(&base).unwrap();
     std::fs::create_dir_all(&cwd).unwrap();
-    let create = script(
-        dir.path(),
-        "create.sh",
-        &format!("[ \"${{@: -1}}\" = --preflight-only ] || exit 9\nprintf '{lines}'\nexit 1"),
-    );
+    let create = script(dir.path(), "create.sh", script_body);
+    let mut argv = vec!["bash".to_string(), create];
+    argv.extend(extra_argv.iter().map(|s| s.to_string()));
     std::fs::write(
         base.join("config.json"),
         serde_json::json!({"container_configs": {"box": {
-            "default": true, "create": ["bash", create, "--state-dir", "/s"], "cleanup": ["/bin/true"]
+            "default": true, "create": argv, "cleanup": ["/bin/true"]
         }}})
         .to_string(),
     )
@@ -97,6 +117,44 @@ fn doctor_exits_zero_when_nothing_failed_and_prints_no_remedy_for_a_pass() {
     assert!(!output.stdout.contains("remedy"), "{}", output.stdout);
     assert!(
         output.stdout.ends_with("0 checks failed, 0 warnings\n"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[test]
+fn doctor_exits_one_with_the_script_s_last_words_when_it_dies_mid_report() {
+    let (_dir, ctx) = composed_with_script(
+        "printf 'ok\\truntime-cli\\tpodman\\t\\nok\\tjq\\tjq\\t\\n'\necho 'usage: QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)' >&2\nexit 2",
+        &[],
+    );
+    let output = run(&["container", "doctor"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(output.stdout.is_empty(), "{}", output.stdout);
+    assert!(
+        output.stderr.contains("exited exit status: 2 after 2 checks without reporting a failure: usage: QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)"),
+        "{}",
+        output.stderr
+    );
+}
+
+#[test]
+fn doctor_never_prints_a_token_embedded_in_the_repo_url() {
+    let (_dir, ctx) = composed_with_script(
+        &format!(
+            "printf '{MANDATORY_OK_LINES}fail\\trepo\\t--repo %s is unreachable\\tcheck the URL\\n' \"$2\"\necho \"create: $2\" >&2\nexit 1"
+        ),
+        &["--repo", "https://user:ghp_secret@host/x/y"],
+    );
+    let output = run(&["container", "doctor"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    let combined = format!("{}{}", output.stdout, output.stderr);
+    assert!(!combined.contains("ghp_secret"), "{combined}");
+    assert!(
+        output.stdout.contains("--repo https://***@host/x/y)\n")
+            && output
+                .stdout
+                .contains("--repo https://***@host/x/y is unreachable"),
         "{}",
         output.stdout
     );
