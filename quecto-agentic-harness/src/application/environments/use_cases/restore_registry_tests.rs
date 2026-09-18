@@ -11,7 +11,7 @@ use crate::domain::environment_registry::{
 struct FakeStore {
     records: Mutex<Vec<EnvironmentRecord>>,
     next: Mutex<u64>,
-    fail_load: bool,
+    fail_load: std::sync::atomic::AtomicBool,
     fail_writes: bool,
     forgotten: Mutex<Vec<String>>,
     corrections: Mutex<Vec<String>>,
@@ -35,7 +35,7 @@ impl EnvironmentRegistryStore for FakeStore {
         Ok(*next)
     }
     fn load(&self) -> Result<Vec<EnvironmentRecord>, String> {
-        if self.fail_load {
+        if self.fail_load.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("corrupt".into());
         }
         Ok(self.records.lock().unwrap().clone())
@@ -223,7 +223,7 @@ fn a_kill_in_flight_is_reported_not_relabelled_and_an_explicit_kill_retries_it()
 #[test]
 fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the_store() {
     let store = Arc::new(FakeStore {
-        fail_load: true,
+        fail_load: true.into(),
         ..Default::default()
     });
     let process = process(|_| EnvironmentLiveness::Running);
@@ -237,7 +237,7 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
     assert_eq!(*store.next.lock().unwrap(), 1);
     // Round 2 F-B (#2033): the registry carries the error — a lookup of
     // a ref it could not have loaded answers with it, not `unknown`.
-    assert_eq!(registry.read_error(), Some(read_error));
+    assert_eq!(registry.read_error().as_deref(), Some(read_error));
     let lookup = registry
         .resolve(&crate::domain::environment_registry::EnvironmentTarget::Ref("C7".into()))
         .unwrap_err();
@@ -443,4 +443,56 @@ fn an_observing_restore_seeds_its_corrections_in_memory_and_writes_none() {
     assert_eq!(on_file[0].status, EnvironmentStatus::Running);
     assert_eq!(on_file[0].last_error, None);
     assert_eq!(on_file[1].status, EnvironmentStatus::Retained);
+}
+
+/// Round 3 L2 (#2033): the registry a session started with an unreadable
+/// store retries the read on its next lookup. Once the document is
+/// repaired in place, what it holds is seeded — judged and corrected as
+/// at a restore — and `get_containers` stops reporting the stale error.
+#[test]
+fn a_store_repaired_in_place_is_seen_on_the_next_lookup_without_a_restart() {
+    let store = store_with(vec![
+        record("C1", EnvironmentStatus::Running),
+        record("C2", EnvironmentStatus::Running),
+    ]);
+    store
+        .fail_load
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let process = process(|record| match record.environment_ref.as_str() {
+        "C1" => EnvironmentLiveness::Running,
+        _ => EnvironmentLiveness::Gone,
+    });
+    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    assert!(report.read_error.is_some());
+    let query = super::ListEnvironmentsQuery::new(registry.clone());
+    assert_eq!(query.diagnostics().len(), 1, "unreadable: reported");
+    assert!(query.execute().is_empty());
+    // Repaired.
+    store
+        .fail_load
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let listed: Vec<(String, EnvironmentStatus)> = query
+        .execute()
+        .into_iter()
+        .map(|r| (r.environment_ref, r.status))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("C1".to_string(), EnvironmentStatus::Running),
+            ("C2".to_string(), EnvironmentStatus::Stopped)
+        ],
+        "seeded, judged against the runtime"
+    );
+    assert!(query.diagnostics().is_empty(), "the stale error is gone");
+    assert_eq!(registry.read_error(), None);
+    assert_eq!(
+        store.corrections.lock().unwrap().as_slice(),
+        ["C2"],
+        "the late correction is written like a restore's"
+    );
+    let c1 = registry
+        .resolve(&crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()))
+        .unwrap();
+    assert_eq!(c1.origin, EnvironmentOrigin::Restored);
 }

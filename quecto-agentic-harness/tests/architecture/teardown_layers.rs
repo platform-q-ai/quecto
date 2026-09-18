@@ -348,6 +348,7 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "src/domain/harness_lifetime.rs",
         "src/domain/environment_retention.rs",
         "src/domain/environment_registry.rs",
+        "src/domain/environment_registry_inspect.rs",
     ] {
         assert!(!legacy_baseline.contains(pure), "{pure} is pure by design");
         assert!(Path::new(pure).exists(), "{pure} exists");

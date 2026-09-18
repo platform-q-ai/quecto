@@ -71,11 +71,34 @@ impl RestoreRegistry {
     /// panic — the session keeps its in-memory registry. A write made with
     /// an expected status is the store's conditional `correct` (review F5):
     /// applied only while the record on file still has that status.
-    fn journal(&self) -> EnvironmentJournal {
+    fn journal(&self, mode: RestoreMode) -> EnvironmentJournal {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
+        let reload = self.clone();
         EnvironmentJournal {
+            reload: Arc::new(move || {
+                let records = reload
+                    .store
+                    .load()
+                    .map_err(|error| format!("{READ_FAILED}: {error}"))?;
+                // The startup read has succeeded late (round 3 L2): the
+                // records are judged and corrected as they would have
+                // been then; the account goes to the log, there being
+                // no report to carry it.
+                let mut report = RestoredRegistry::default();
+                let seeded = reload.seed(records, mode, &mut report);
+                for line in &report.diagnostics {
+                    tracing::info!(%line, "durable environment registry read late");
+                }
+                tracing::info!(
+                    restored = report.restored.len(),
+                    stopped = report.stopped.len(),
+                    unverified = report.unverified.len(),
+                    "durable environment registry readable again; seeded"
+                );
+                Ok(seeded)
+            }),
             allocate_ref: Arc::new(move || {
                 allocate.allocate_ref().map_err(|error| {
                     tracing::warn!(%error, "durable environment ref could not be allocated; the create is refused");
@@ -122,7 +145,7 @@ impl RestoreRegistry {
     /// inherits nothing (a spawned child's registry — the fleet is its
     /// parent's to show).
     pub fn unseeded(&self, session: &str) -> EnvironmentRegistry {
-        EnvironmentRegistry::with_journal(self.journal(), session)
+        EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct), session)
     }
 
     /// Build the durable registry for `session`: seeded with the store's
@@ -159,12 +182,12 @@ impl RestoreRegistry {
                 // #2033): the model's listing shows it and a lookup of
                 // anything this session did not create answers with it.
                 let registry =
-                    EnvironmentRegistry::unreadable(self.journal(), session, &read_error);
+                    EnvironmentRegistry::unreadable(self.journal(mode), session, &read_error);
                 report.read_error = Some(read_error);
                 return (registry, report);
             }
         };
-        let registry = EnvironmentRegistry::with_journal(self.journal(), session);
+        let registry = EnvironmentRegistry::with_journal(self.journal(mode), session);
         registry.restore(self.seed(records, mode, &mut report));
         (registry, report)
     }

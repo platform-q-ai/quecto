@@ -152,6 +152,7 @@ fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
             let forgotten = forgotten.clone();
             move |env_ref: &str| forgotten.lock().unwrap().push(env_ref.to_string())
         }),
+        reload: Arc::new(|| Err("environments.json: permission denied".into())),
     };
     (journal, recorded, forgotten)
 }
@@ -411,7 +412,7 @@ fn an_unreadable_registry_answers_lookups_with_the_read_error_not_unknown() {
     let registry =
         EnvironmentRegistry::unreadable(journal, "s", "environments.json: permission denied");
     assert_eq!(
-        registry.read_error(),
+        registry.read_error().as_deref(),
         Some("environments.json: permission denied")
     );
     let by_ref = registry
@@ -449,4 +450,78 @@ fn an_unreadable_registry_answers_lookups_with_the_read_error_not_unknown() {
             .unwrap_err(),
         EnvironmentLookupError::Unknown("C3".into())
     );
+}
+
+/// Round 3 L2 (#2033): a registry whose store could not be read at
+/// startup retries the read on its next lookup. While the store stays
+/// unreadable the error is refreshed with its current account; once it
+/// reads, what it holds is seeded (what this session created stands as
+/// it is) and the error clears — the listing stops reporting it.
+#[test]
+fn an_unreadable_registry_reads_the_store_again_on_a_lookup_and_clears_the_error_once_it_reads() {
+    let (mut journal, _, _) = test_journal();
+    let readable = Arc::new(Mutex::new(Err("still corrupt".to_string())));
+    let reloads = Arc::new(Mutex::new(0usize));
+    journal.reload = Arc::new({
+        let readable = readable.clone();
+        let reloads = reloads.clone();
+        move || {
+            *reloads.lock().unwrap() += 1;
+            readable.lock().unwrap().clone()
+        }
+    });
+    let registry = EnvironmentRegistry::unreadable(journal, "s", "corrupt at startup");
+    registry.commit(record("C5", "env-mine"));
+    // Still unreadable: the error is the store's current account.
+    assert_eq!(registry.read_error().as_deref(), Some("still corrupt"));
+    assert_eq!(
+        registry
+            .resolve(&EnvironmentTarget::Ref("C1".into()))
+            .unwrap_err(),
+        EnvironmentLookupError::Unreadable("still corrupt".into())
+    );
+    assert_eq!(*reloads.lock().unwrap(), 2, "every lookup retries");
+    // Repaired in place: the next lookup seeds it.
+    let mut on_file = record("C1", "env-theirs");
+    on_file.members = vec!["their-member".into()];
+    let mut stale_mine = record("C5", "env-mine-on-file");
+    stale_mine.status = EnvironmentStatus::Stopped;
+    *readable.lock().unwrap() = Ok(vec![on_file, stale_mine]);
+    let listed: Vec<String> = registry
+        .entries()
+        .into_iter()
+        .map(|r| format!("{}:{}", r.environment_ref, r.environment_id))
+        .collect();
+    assert_eq!(
+        listed,
+        ["C1:env-theirs", "C5:env-mine"],
+        "mine stands as it is"
+    );
+    assert_eq!(registry.read_error(), None);
+    let c1 = registry
+        .resolve(&EnvironmentTarget::Ref("C1".into()))
+        .unwrap();
+    assert_eq!(c1.origin, EnvironmentOrigin::Restored);
+    assert!(
+        c1.members.is_empty(),
+        "a seeded record arrives without members"
+    );
+    assert_eq!(
+        registry
+            .resolve(&EnvironmentTarget::Ref("C9".into()))
+            .unwrap_err(),
+        EnvironmentLookupError::Unknown("C9".into()),
+        "a miss is a miss again"
+    );
+    // Recovered once: no further reloads.
+    let before = *reloads.lock().unwrap();
+    registry.entries();
+    registry.read_error();
+    assert_eq!(
+        *reloads.lock().unwrap(),
+        before,
+        "a readable registry never reloads"
+    );
+    // A journal-less registry never reloads either.
+    assert_eq!(EnvironmentRegistry::new().read_error(), None);
 }

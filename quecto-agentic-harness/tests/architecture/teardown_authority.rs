@@ -441,6 +441,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/domain/harness_lifetime.rs",
     "src/domain/environment_retention.rs",
     "src/domain/environment_registry.rs",
+    "src/domain/environment_registry_inspect.rs",
     "src/application/subagents/mod.rs",
     "src/application/subagents/dto.rs",
     "src/application/subagents/ports.rs",

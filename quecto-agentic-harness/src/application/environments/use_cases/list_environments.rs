@@ -25,7 +25,8 @@ impl ListEnvironmentsQuery {
     /// Why the inventory may be incomplete (round 2 F-B, #2033): the
     /// durable store could not be read, so only what this session created
     /// is listed. One line for the caller's diagnostics; none when the
-    /// store read cleanly.
+    /// store read cleanly — or reads cleanly now (round 3 L2): asking
+    /// retries the read, so a repaired document is seen and seeded.
     pub fn diagnostics(&self) -> Vec<String> {
         self.registry
             .read_error()

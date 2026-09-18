@@ -1,8 +1,9 @@
 //! The durable side of the environment registry (#2024 S4d): the journal
 //! the application installs over its store, what its writes come to, and
 //! why a ref could not be minted through it. The registry
-//! ([`super::environment_registry::EnvironmentRegistry`]) only reports
-//! through these; it never reads the journal back.
+//! ([`super::environment_registry::EnvironmentRegistry`]) reports
+//! through these and reads the journal back only to retry a startup read
+//! that failed (round 3 L2, #2033).
 
 use std::sync::Arc;
 
@@ -38,8 +39,9 @@ pub type RecordedFn =
 
 /// The durable side of the registry (#2024 S4d): where refs are allocated
 /// and where every committed record and transition is written. Installed
-/// by the application over its store; the registry only reports — it never
-/// reads the journal back (restore is the application's, at startup).
+/// by the application over its store; the registry reports, and reads the
+/// journal back only through `reload`, to retry a startup read that failed
+/// (restore is the application's, at startup).
 #[derive(Clone)]
 pub struct EnvironmentJournal {
     /// Allocate the next ref number, unique across every session sharing the
@@ -55,6 +57,11 @@ pub struct EnvironmentJournal {
     pub recorded: Arc<RecordedFn>,
     /// A record was removed (a rolled-back create).
     pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
+    /// Retry a startup read that failed (round 3 L2, #2033): the store's
+    /// records as a restore would seed them, or the store's account of
+    /// why it still cannot be read. Called by a registry that carries a
+    /// read error, on its next lookup.
+    pub reload: Arc<dyn Fn() -> Result<Vec<EnvironmentRecord>, String> + Send + Sync>,
 }
 
 impl std::fmt::Debug for EnvironmentJournal {

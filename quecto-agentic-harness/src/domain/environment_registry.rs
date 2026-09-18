@@ -12,7 +12,9 @@
 //! store, refs are allocated through it (unique across every session of one
 //! base directory), and a harness restart seeds the registry with the
 //! records of earlier sessions as *restored* records — reachable for a
-//! join, a listing or a kill, but never torn down by a joiner's exit.
+//! join, a listing or a kill, but never torn down by a joiner's exit. A
+//! startup read that failed is retried on the next lookup (round 3 L2,
+//! #2033), so a document repaired in place is seen without a restart.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -207,6 +209,13 @@ struct EnvironmentRegistryState {
     /// journal write it supersedes updates what the journal is known to
     /// hold, never the in-memory `killing` (round 2 F-A, #2033).
     kill_claims: std::collections::BTreeSet<String>,
+    /// Why the durable store could not be read at startup (round 2 F-B,
+    /// #2033): set, the registry holds only what this session created,
+    /// every other lookup answers with this error, and the listing
+    /// carries it as a diagnostic — until a lookup finds the store
+    /// readable again (round 3 L2): the journal's reload then seeds what
+    /// it holds and the error clears.
+    read_error: Option<Arc<str>>,
 }
 
 /// Cloneable handle to one session's environment registry.
@@ -222,11 +231,6 @@ pub struct EnvironmentRegistry {
     /// Key of the session this registry belongs to; stamped on every
     /// record it creates.
     session: Arc<str>,
-    /// Why the durable store could not be read at startup (round 2 F-B,
-    /// #2033): set, the registry holds only what this session created,
-    /// every other lookup answers with this error, and the listing
-    /// carries it as a diagnostic.
-    read_error: Option<Arc<str>>,
 }
 
 impl EnvironmentRegistry {
@@ -242,7 +246,6 @@ impl EnvironmentRegistry {
             journal: Some(journal),
             journal_order: Arc::default(),
             session: Arc::from(session),
-            read_error: None,
         }
     }
 
@@ -252,16 +255,59 @@ impl EnvironmentRegistry {
     /// `error`, the store's own account — and reports the error through
     /// [`Self::read_error`].
     pub fn unreadable(journal: EnvironmentJournal, session: &str, error: &str) -> Self {
-        Self {
-            read_error: Some(Arc::from(error)),
-            ..Self::with_journal(journal, session)
-        }
+        let registry = Self::with_journal(journal, session);
+        registry
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_error = Some(Arc::from(error));
+        registry
     }
 
-    /// Why the durable store could not be read at startup, when it could
-    /// not: what the listing shows and every miss answers with.
-    pub fn read_error(&self) -> Option<&str> {
-        self.read_error.as_deref()
+    /// Why the durable store still cannot be read, when it cannot: what
+    /// the listing shows and every miss answers with. Asking retries the
+    /// read (round 3 L2, #2033), so a document repaired in place is seen
+    /// — and seeded — without a restart.
+    pub fn read_error(&self) -> Option<String> {
+        self.recover_unread();
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.read_error.as_deref().map(str::to_string)
+    }
+
+    /// Retry the startup read while it is known to have failed (round 3
+    /// L2, #2033). A readable store seeds the records this session did
+    /// not create (what it created stands as it is) and clears the error;
+    /// one still unreadable refreshes the error with the store's current
+    /// account. A registry that never failed to read does nothing.
+    fn recover_unread(&self) {
+        let unread = {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.read_error.is_some()
+        };
+        let Some(journal) = &self.journal else {
+            return;
+        };
+        if !unread {
+            return;
+        }
+        // Serialised with the journal's writes: nothing this session
+        // records slips between the reload and the seeding.
+        let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
+        match (journal.reload)() {
+            Ok(records) => {
+                let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                let fresh: Vec<EnvironmentRecord> = records
+                    .into_iter()
+                    .filter(|record| !state.entries.contains_key(&record.environment_ref))
+                    .collect();
+                Self::seed_locked(&mut state, fresh);
+                state.read_error = None;
+            }
+            Err(error) => {
+                let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.read_error = Some(Arc::from(error.as_str()));
+            }
+        }
     }
 
     /// The session this registry creates environments for.
@@ -320,6 +366,10 @@ impl EnvironmentRegistry {
     /// past every seeded ref.
     pub fn restore(&self, records: Vec<EnvironmentRecord>) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Self::seed_locked(&mut state, records);
+    }
+
+    fn seed_locked(state: &mut EnvironmentRegistryState, records: Vec<EnvironmentRecord>) {
         for mut record in records {
             record.origin = EnvironmentOrigin::Restored;
             record.members.clear();
@@ -416,7 +466,10 @@ impl EnvironmentRegistry {
         state.entries.get(environment_ref).cloned()
     }
 
+    /// Every record, seeded afresh first when the store was unreadable
+    /// at startup and can be read now (round 3 L2, #2033).
     pub fn entries(&self) -> Vec<EnvironmentRecord> {
+        self.recover_unread();
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.entries.values().cloned().collect()
     }
@@ -426,8 +479,9 @@ impl EnvironmentRegistry {
         &self,
         target: &EnvironmentTarget,
     ) -> Result<EnvironmentRecord, EnvironmentLookupError> {
+        self.recover_unread();
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        match (Self::resolve_locked(&state, target), &self.read_error) {
+        match (Self::resolve_locked(&state, target), &state.read_error) {
             // Nothing is known of what the store holds: a miss is not an
             // unknown target, it is the store's read error (round 2 F-B).
             (Err(EnvironmentLookupError::Unknown(_)), Some(error)) => {
@@ -615,69 +669,6 @@ impl EnvironmentRegistry {
         self.journal_ref(&claim.environment_ref);
     }
 
-    /// Claim the exclusive right to run this environment's retained inspect
-    /// for one dead member. Exactly one death signal per member claims it;
-    /// repeated EOF/reset for the same member claims nothing. Unknown
-    /// environments claim nothing.
-    pub fn begin_inspect(&self, environment_ref: &str, agent_uuid: &str) -> Option<InspectClaim> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if !state.entries.contains_key(environment_ref) {
-            return None;
-        }
-        let key = (environment_ref.to_string(), agent_uuid.to_string());
-        if !state.inspect_claims.insert(key) {
-            return None;
-        }
-        Some(InspectClaim {
-            environment_ref: environment_ref.to_string(),
-        })
-    }
-
-    /// Commit a successful inspect outcome onto the authoritative environment
-    /// aggregate: the inspect result's metadata object is merged over the
-    /// create-time metadata (create keys survive unless the inspect names
-    /// them). Callers invoke this BEFORE member removal; the outcome also
-    /// survives an environment that is already empty. A removed environment
-    /// is a no-op, never a panic.
-    pub fn record_inspect_success(&self, claim: InspectClaim, metadata: serde_json::Value) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        // A later successful inspect supersedes a previously persisted
-        // inspect failure: clear the sticky flag so the environment's most
-        // recent inspect outcome is what get_containers reports, and drop
-        // the stale inspect error unless a kill failure now owns last_error.
-        let had_inspect_failure = state.inspect_failures.remove(&claim.environment_ref);
-        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
-            if had_inspect_failure && record.status != EnvironmentStatus::CleanupFailed {
-                record.last_error = None;
-            }
-            match (record.metadata.as_object_mut(), metadata) {
-                (Some(existing), serde_json::Value::Object(incoming)) => {
-                    for (key, value) in incoming {
-                        existing.insert(key, value);
-                    }
-                }
-                (_, incoming) => record.metadata = incoming,
-            }
-        }
-        drop(state);
-        self.journal_ref(&claim.environment_ref);
-    }
-
-    /// Persist an inspect failure truthfully: the actionable error is
-    /// retained on the aggregate, and the retained inspect argv survives so
-    /// the inspect can be retried. A removed environment is a no-op.
-    pub fn record_inspect_failure(&self, claim: InspectClaim, error: &str) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.entries.contains_key(&claim.environment_ref) {
-            state.inspect_failures.insert(claim.environment_ref.clone());
-            if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
-                record.last_error = Some(error.to_string());
-            }
-        }
-        drop(state);
-        self.journal_ref(&claim.environment_ref);
-    }
-
     /// Withhold the claimed final-member kill (#1924): the environment stays
     /// alive as `Retained`, with `reason` recorded on its metadata under
     /// `retained`, until an explicit `kill_container`.
@@ -719,6 +710,9 @@ pub fn ref_number(environment_ref: &str) -> Option<u64> {
     }
     digits.parse().ok()
 }
+
+#[path = "environment_registry_inspect.rs"]
+mod inspect;
 
 #[cfg(test)]
 #[path = "environment_registry_tests.rs"]

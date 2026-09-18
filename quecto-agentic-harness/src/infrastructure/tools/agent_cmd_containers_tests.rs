@@ -353,6 +353,7 @@ fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
         allocate_ref: Arc::new(|| Ok(1)),
         recorded: Arc::new(|_, _| crate::domain::environment_registry::JournalWrite::Written),
         forgotten: Arc::new(|_| {}),
+        reload: Arc::new(|| Err("environments.json: corrupt".into())),
     };
     let registry = EnvironmentRegistry::unreadable(journal, "s", "environments.json: corrupt");
     let query = Arc::new(ListEnvironmentsQuery::new(registry.clone()));

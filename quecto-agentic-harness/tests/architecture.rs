@@ -4214,6 +4214,7 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
     );
     for path in [
         "src/domain/environment_registry.rs",
+        "src/domain/environment_registry_inspect.rs",
         "src/domain/environment_retention.rs",
     ] {
         let source = production_source(path);
