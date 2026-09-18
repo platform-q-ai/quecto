@@ -662,33 +662,62 @@ files those argv point at. The scripts under
 before any container exists (`create.sh` clones the repository and
 starts the container; `exec.sh`, `inspect.sh` and `kill.sh` drive it),
 so a change to them that arrives with a `git pull` is as consequential as
-a change to the overlay itself. The launch therefore judges them the way
-`status` does: before a create runs, every script the selected entry
-names that lies under a `.quecto/containers/standard/` directory is
-compared with the bytes this quecto embeds, and the launch is refused —
-`spawn container: true` and `quecto container doctor` alike, before the
-host runs anything — when one differs, is missing, or is a symbolic
-link, naming the file and the way back:
+a change to the overlay itself. What is verified is precisely **the
+program — the first argv element — of each argv the host is about to
+run**, whenever it lies under a `.quecto/containers/standard/`
+directory, compared with the bytes this quecto embeds the way `status`
+compares them:
+
+- at **create**, every program the selected entry names (`create`,
+  `exec`, `inspect`, `kill`, `cleanup`), before the create runs —
+  `spawn container: true` and `quecto container doctor` alike;
+- at **join** (`container: {mode: existing}`), the program of the
+  environment's *retained* exec argv, before the exec runs;
+- at **inspect**, **kill** and **cleanup**, the program of the retained
+  argv, before it runs.
+
+The arguments after the program (`--state-dir`, `--repo`, `--image`,
+`--op`) are the overlay's, covered by its trust record; a path that
+reaches the bundle through `..` is refused outright rather than treated
+as a script of the entry's own. A program that differs, is missing, or is
+a symbolic link refuses the operation naming the file and the way back:
 
 ```
-container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds; it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)
+container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds (or this quecto embeds a newer bundle than the one that wrote it — run `quecto container init --refresh`); it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)
 ```
+
+A refused create or join is a plain tool error and nothing ran. A
+refused kill leaves the environment in the retryable `cleanup-failed`
+state with the same reason as its last error (`environment C1 cleanup
+failed: retained kill refused: … ; state is cleanup-failed, retry
+kill_container`); a refused inspect is an inspect failure with the argv
+kept for retry; a refused cleanup is logged and skipped. In every case
+the altered script did not run: restore the bundle, then retry.
 
 `quecto container status` keeps listing the file as `differs` (and the
 image line carries the same refusal). Review a pulled change to
 `.quecto/containers/standard/` exactly as you would review one to
-`.quecto/config.json` — `git diff` the directory before `init --refresh`
-— and remember that `--refresh` restores *this binary's* bundle, so a
-newer quecto's assets replace an older one's. An entry that names its
-own scripts elsewhere is vouched for by the overlay's trust alone: the
-integrity check is the standard bundle's, not a general one. The
-Containerfile is not a host-side script and is not checked at launch;
-`status` still reports it. The Containerfile's base is pinned by tag
-(``docker.io/library/debian:trixie-slim`), not by digest: a rebuild can pick up a newer base
-under the same tag. Pin the digest in the materialised Containerfile
-(`FROM debian@sha256:…`) if you need a reproducible base; `status` will
-then list it as `differs`, which is expected and does not affect a
-launch.
+`.quecto/config.json` — `git diff` the directory before `init --refresh`.
+An entry that names its own scripts elsewhere is vouched for by the
+overlay's trust alone: the integrity check is the standard bundle's, not
+a general one. The Containerfile is not a host-side script and is not
+checked at launch; `status` still reports it. The Containerfile's base is
+pinned by tag (`docker.io/library/debian:trixie-slim`), not by digest: a
+rebuild can pick up a newer base under the same tag. Pin the digest in
+the materialised Containerfile (`FROM debian@sha256:…`) if you need a
+reproducible base; `status` will then list it as `differs`, which is
+expected and does not affect a launch.
+
+**Upgrades.** The comparison is against *this binary's* bundle, so a
+quecto that embeds a newer bundle than the one that materialised the
+files sees every changed script as `differs` — indistinguishable from an
+edit, and refused the same way (the message says so). After upgrading
+quecto, run `quecto container init --refresh` in each checkout: it
+renames the embedded bytes over every differing file, reports each as
+`refreshed`, and a newer quecto's assets replace an older one's. Review
+the diff first if the checkout's copy carries local changes you meant to
+keep; environments created before the refresh are torn down by the
+refreshed scripts, which is what the check is for.
 
 **Image approval.** The image only has to exist locally under the tag the
 entry names: the create's preflight checks `podman image exists` /

@@ -78,18 +78,26 @@ ready: spawn {"container":true} from an agent in this project
 ```
 **Trust boundary.** The overlay's trust covers `.quecto/config.json`, not
 the scripts it names, and those scripts run on the host before any
-container exists. So a launch (`spawn container: true`, `container
-doctor`) first compares every standard-bundle script the entry names
-with the bytes this binary embeds and refuses — before running anything —
-when one differs, is missing or is a symbolic link:
-`container config 'standard' refused: <path>/scripts/create.sh differs
-from the standard bundle this quecto embeds; … restore the bundle with
-`quecto container init --refresh``. `status` lists the file as `differs`.
+container exists. So the program (first argv element) of every argv the
+host is about to run is compared with the bytes this binary embeds when
+it lies under `.quecto/containers/standard/`: every script the entry
+names at create (`spawn container: true`, `container doctor`), the
+retained exec argv at a join, and the retained inspect/kill/cleanup argv
+before each runs. One that differs, is missing or is a symbolic link is
+refused before it runs:
+
+```
+container config 'standard' refused: <path>/scripts/create.sh differs from the standard bundle this quecto embeds (or this quecto embeds a newer bundle than the one that wrote it — run `quecto container init --refresh`); … restore the bundle with `quecto container init --refresh`
+```
+
+A refused kill leaves `cleanup-failed` with the same reason
+(retry after the refresh). `status` lists the file as `differs`.
 Review a pulled change to `.quecto/containers/standard/` as you would one
 to `.quecto/config.json` (`git diff` it), then `quecto container init
---refresh`. The Containerfile is not run on the host and is not checked
-at launch; its base is tag-pinned (`debian:trixie-slim`), so pin a digest
-in the materialised file if the build must be reproducible.
+--refresh` — also after upgrading quecto, whose newer bundle otherwise
+reads as `differs`. The Containerfile is not run on the host and is not
+checked at launch; its base is tag-pinned (`debian:trixie-slim`), so pin
+a digest in the materialised file if the build must be reproducible.
 
 Rollback: `quecto config unset --local container_configs.standard` and
 delete `.quecto/containers/standard`.
