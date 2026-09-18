@@ -326,6 +326,10 @@ fn query_dependencies_allowed(content: &str) -> bool {
                     | "ListEnvironmentsQuery"
                     | "Self"
                     | "Vec"
+                    // The read-error diagnostic line (round 2 F-B, #2033)
+                    // is a formatted String, still over the registry alone.
+                    | "String"
+                    | "format"
                     | "Clone"
                     | "Debug"
                     | "registry"
