@@ -16,7 +16,7 @@ The `spawn` tool's `container` field selects the launch adapter:
 | `container` value | Behavior |
 | --- | --- |
 | omitted or `false` | Local child process (default, unchanged) |
-| `true` | New container via the config labeled `"default": true` |
+| `true` | New container via this repo's `standard` config when its overlay declares one (#2035: no default elsewhere overrides it), else the config labeled `"default": true` |
 | `{"mode": "new", "container_config"?: "...", "name"?: "..."}` | New container via the named config, with an optional container name |
 | `{"mode": "existing", "ref": "C1"}` | Join the existing session environment `C1` via its retained `exec` script |
 | `{"mode": "existing", "name": "review-env"}` | Join an existing environment by its (unambiguous) name |
@@ -431,7 +431,11 @@ touch a live environment.
 
 Each entry is a named **container config**: a complete, self-contained
 definition of a working context. Exactly one entry must carry
-`"default": true` — the config `container: true` selects; zero or multiple
+`"default": true` — the config `container: true` selects when the checkout's
+overlay declares no `standard` entry (a repo's `standard`, written by
+`quecto container init`, is its default by rule: `container: true` selects
+it whatever the global file or another overlay entry labels, even after a
+hand edit removed its own label); zero or multiple
 default labels fail at config **load** time with an error naming the
 configured entries. Operations are argv arrays executed directly — no
 shell interpolation — and the repository (with any auth it needs) is part
@@ -455,9 +459,11 @@ metadata); and
 same effective set with detail, live at each call:
 `{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}`
 — the `container: true` default first; `default` is what a launch would
-honour (none while the overlay is withheld, none when more than one entry
-is labelled, never an entry with a `problem` — a missing or unsafe argv,
-diagnosed in `diagnostics`); `source` says which layer declared the entry,
+honour (a repo-bound `standard` whatever the labels say, none while the
+overlay is withheld, none when more than one entry is labelled and no
+repo-bound `standard` exists, never an entry with a `problem` — a missing
+or unsafe argv, diagnosed in `diagnostics`; an unlabelled repo-bound
+`standard` is diagnosed with the remedy); `source` says which layer declared the entry,
 `repository` is the create argv's `--repo` (`null` for a sandbox),
 `joinable` whether the config carries an `exec` argv for
 `{"mode":"existing"}` joins. Operators
@@ -836,11 +842,13 @@ is written, so a refused init leaves the project untouched):
    overlay). An overlay that exists but is **not trusted**, whatever it
    declares, is refused with the way out (`quecto config trust`), on a
    `--dry-run` too: init never adopts content it did not write. An
-   explicit `--config` is refused (it replaces the overlay). If another
-   entry is already the default, the standard entry is added **without**
-   the `default` label and the output says so, with the `container:
-   {"mode":"new","container_config":"standard"}` selector and `quecto
-   container doctor --name standard`.
+   explicit `--config` is refused (it replaces the overlay). The standard
+   entry is **always** written with `"default": true` (#2035): a global
+   default is overridden in this repo only (`the global default <name>
+   does not apply in this repo` — the global file is untouched); another
+   overlay entry carrying the label loses it in the same write and the
+   output names it (`displaced default: <name>`; select it by name with
+   `container: {"mode":"new","container_config":"<name>"}`).
 3. Judges every destination under `<project>/.quecto/containers/standard/`
    — `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
    `scripts/inspect.sh`, `scripts/kill.sh`: missing, identical to the
@@ -965,8 +973,13 @@ carry a glibc the binary runs on (Debian trixie does for current builds).
 
 `quecto container status` reports, one line each and exit 1 while anything
 is missing: the assets (`present (5 of 5, version 2)`, or which differ or
-are missing), the `standard` entry of the effective set (default or not,
-declared by the overlay or globally, its `--repo`), the trust of the overlay
+are missing), the `standard` entry of the effective set (`default` with a
+`this repo's default` line when the overlay declares it labelled; `default
+by rule` plus a `note:` with the remedy — `quecto container init --refresh`
+or `quecto config set --local container_configs.standard.default true` —
+when a hand edit removed the label, since launch policy still selects it;
+`default`/`not default` by label for a global entry of that name, which is
+nobody's standard; its `--repo`), the trust of the overlay
 (`trusted`, or `withheld` with the remedy; a destination init would refuse,
 such as a symbolic link in a file's place, is listed as `refused` with a
 `note:`), and the image as the entry's own

@@ -32,7 +32,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
    container config "standard" written as container_configs.standard in /repo/.quecto/config.json (trusted for exactly these bytes)
-     default: true — `spawn container: true` selects it
+     default: true — this repo's default: `spawn container: true` selects it in this repo (no default elsewhere overrides a repo's standard container)
      --repo https://github.com/org/app.git (the checkout's origin remote): a new container is a fresh clone of it
      --state-dir under the quecto base directory; --image quecto-box:local
    next:
@@ -40,7 +40,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
      2. quecto container doctor   — every check ✓
      3. spawn {"agent_id":"probe","task":"run pwd","container":true} …
    ```
-   If another entry is already the default, init adds `standard` without the label and says so (select it with `container: {"mode":"new","container_config":"standard"}`, diagnose with `doctor --name standard`). A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:` lines).
+   **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even if a hand edit removed its label or re-labelled the global file — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:` lines).
 2. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-box:local is present`:
    ```
    podman build -t quecto-box:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
@@ -61,6 +61,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while any line is no
 standard container at /repo/.quecto/containers/standard
   assets:  present (5 of 5, version 2)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
+           this repo's default: `spawn container: true` selects it whatever the global file labels
   trust:   trusted (the repo-local overlay is applied)
   image:   image quecto-box:local is present
 ready: spawn {"container":true} from an agent in this project
@@ -125,7 +126,7 @@ The comparison is against *this binary's* bundle, so after upgrading quecto ever
 
 ## How to find configs and refs
 
-- **Which configs exist for this checkout** (global file plus the trusted overlay): the `spawn` tool description carries one line — `Available container configs: standard (default, repo-bound), quecto (global), …` (`repo-bound` = declared by this repository's overlay; `+N more` folds a long list; `(repo overlay untrusted — run quecto config trust)` means `container: true` is refused until then). Live detail: `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}` — the `container: true` default first; `repository` is what a new container clones (`null` = sandbox). Operators: `quecto config get --effective container_configs`.
+- **Which configs exist for this checkout** (global file plus the trusted overlay): the `spawn` tool description carries one line — `Available container configs: standard (default, repo-bound), quecto (global), …` (`repo-bound` = declared by this repository's overlay; `+N more` folds a long list; `(repo overlay untrusted — run quecto config trust)` means `container: true` is refused until then; a repo-bound `standard` is listed `default` whatever the labels say, because it is what `container: true` selects there). Live detail: `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}` — the `container: true` default first; `repository` is what a new container clones (`null` = sandbox). Operators: `quecto config get --effective container_configs`.
 - **Which environments are running** (for `{"mode":"existing"}` joins and `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}` → `containers[]` with `ref` (`C1`, durable per base dir, never reused), `name`, `status`, `workspace`, `repository`, `members`. A spawn result names its ref and config: `environment_ref=C1 container_config=<name>`.
 - **What a new container is**: a fresh clone of the config's `--repo` at its default branch. Your working tree, branch and uncommitted changes are not inside; push a branch and tell the child to fetch/checkout it.
 
