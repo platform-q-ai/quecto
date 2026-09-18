@@ -435,6 +435,14 @@ fn an_altered_standard_script_refuses_the_selection_naming_the_file_and_the_refr
     );
     assert!(text.contains("host-side"), "{text}");
     assert!(text.contains("quecto container init --refresh"), "{text}");
+    // A differing file is as likely a bundle newer than the binary's as
+    // an edit; the text says so (review round 2).
+    assert!(
+        text.contains(
+            "(or this quecto embeds a newer bundle than the one that wrote it — run `quecto container init --refresh`)"
+        ),
+        "{text}"
+    );
     // The first altered script names the refusal; nothing else is asked.
     assert_eq!(integrity.asked.lock().unwrap().as_slice(), &[create]);
 }

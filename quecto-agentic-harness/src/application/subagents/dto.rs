@@ -568,27 +568,7 @@ impl fmt::Display for ContainerConfigsError {
 
 impl std::error::Error for ContainerConfigsError {}
 
-/// The standard bundle's verdict on a script a container config's argv
-/// names (#2024 S4e): whether it is one of the bundle's materialised
-/// host-side scripts and, if so, whether it still carries the bytes this
-/// binary embeds. The scripts run on the host before any container
-/// exists, so a launch trusts them only while they are the bundle's.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StandardScriptVerdict {
-    /// Not a standard-bundle asset: the entry brought its own script,
-    /// vouched for by the configuration's trust alone.
-    NotStandard,
-    /// The bundle's bytes exactly.
-    Intact,
-    /// A standard asset's path holding other bytes (an edit, a pull,
-    /// another version).
-    Differs,
-    /// A standard asset's path with nothing there.
-    Missing,
-    /// A standard asset's path that cannot be judged (a symbolic link in
-    /// its place or on the way); the reason.
-    Refused(String),
-}
+pub use super::standard_script::StandardScriptVerdict;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
@@ -720,27 +700,10 @@ impl fmt::Display for SelectContainerConfigError {
                 script,
                 verdict,
             } => {
-                let script = script.display();
-                match verdict {
-                    StandardScriptVerdict::Differs => write!(
-                        f,
-                        "container config '{name}' refused: {script} differs from the standard bundle this quecto embeds; it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)"
-                    ),
-                    StandardScriptVerdict::Missing => write!(
-                        f,
-                        "container config '{name}' refused: {script} is missing from the standard bundle; run `quecto container init` to materialise it"
-                    ),
-                    StandardScriptVerdict::Refused(reason) => write!(
-                        f,
-                        "container config '{name}' refused: {script} cannot be judged: {reason}; restore a regular file there and run `quecto container init --refresh`"
-                    ),
-                    StandardScriptVerdict::NotStandard | StandardScriptVerdict::Intact => {
-                        write!(
-                            f,
-                            "container config '{name}' refused: {script} is not the standard bundle's"
-                        )
-                    }
-                }
+                let reason = verdict.refusal(script).unwrap_or_else(|| {
+                    format!("{} is not the standard bundle's", script.display())
+                });
+                write!(f, "container config '{name}' refused: {reason}")
             }
         }
     }
