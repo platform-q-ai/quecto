@@ -531,11 +531,12 @@ pub struct StandardEntryOutcome {
     /// The overlay file the entry lives in; `None` on a dry run without
     /// a known location.
     pub path: Option<std::path::PathBuf>,
-    /// Whether the entry carries `"default": true`.
-    pub default: bool,
-    /// The name of the entry that is already the default, when ours is
-    /// not.
-    pub existing_default: Option<String>,
+    /// The overlay entry that carried the `"default": true` label before
+    /// this init and lost it to `standard` in the same write (#2035).
+    pub displaced_default: Option<String>,
+    /// The global entry labelled default, which the repo's standard now
+    /// overrides here (the global file is untouched).
+    pub overridden_global_default: Option<String>,
     /// The entry as written, so the presenter can show it verbatim.
     pub entry: ContainerConfigDocument,
 }
@@ -657,6 +658,21 @@ impl std::fmt::Display for InitialiseStandardContainerError {
 
 impl std::error::Error for InitialiseStandardContainerError {}
 
+/// What the `standard` entry is to `container: true` in this project
+/// (#2035): the checkout's own entry is its default by rule, label or
+/// not; a global entry of that name is nobody's standard and goes by its
+/// label like any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardDefault {
+    /// The overlay declares it with the label init writes.
+    RepoDefault,
+    /// The overlay declares it but the label was removed by hand: still
+    /// selected by rule; the status says how to restore the label.
+    LabelRemoved,
+    /// The global file (or the explicit `--config` file) declares it.
+    GlobalEntry { labelled: bool },
+}
+
 /// `quecto container status`: where the standard bundle stands for a
 /// project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -666,6 +682,8 @@ pub struct StandardContainerStatus {
     pub assets: Vec<(std::path::PathBuf, AssetState)>,
     /// The `standard` entry of the effective set, when present.
     pub entry: Option<ContainerConfigEntry>,
+    /// What that entry is to `container: true` here; `None` without one.
+    pub standard_default: Option<StandardDefault>,
     /// The checkout's overlay was not applied (untrusted or refused).
     pub overlay_withheld: bool,
     pub diagnostics: Vec<String>,

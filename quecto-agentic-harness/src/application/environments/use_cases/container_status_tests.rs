@@ -5,7 +5,7 @@ use super::ContainerStatus;
 use crate::application::environments::dto::{
     AssetOutcome, AssetState, CheckStatus, ContainerAsset, ContainerAssetCatalogue,
     ContainerConfigEntry, ContainerConfigLayer, ContainerRuntimeTarget, DiagnosableContainerConfig,
-    PreflightCheck,
+    PreflightCheck, StandardDefault,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigLookup, ContainerConfigRoster, ContainerConfigRosterReport,
@@ -234,4 +234,81 @@ fn a_failed_image_check_a_withheld_overlay_and_a_silent_preflight_are_reported_n
     let unreadable = build(Err("no configuration".into()), Ok(vec![]));
     assert!(unreadable.entry.is_none());
     assert_eq!(unreadable.diagnostics, ["no configuration"]);
+}
+
+// ─── Standard is this repo's default (#2035) ─────────────────────────────────
+
+fn status_for(
+    entries: Vec<ContainerConfigEntry>,
+) -> crate::application::environments::dto::StandardContainerStatus {
+    ContainerStatus::new(
+        Arc::new(FixedAssets(vec![AssetState::Identical])),
+        Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+            configs: entries,
+            ..Default::default()
+        }))),
+        Arc::new(RecordingLookup {
+            answer: Ok(config()),
+            seen: Mutex::new(vec![]),
+        }),
+        Arc::new(FixedPreflight(Ok(vec![check(
+            "image",
+            CheckStatus::Passed,
+        )]))),
+    )
+    .execute(Path::new("/p"))
+}
+
+#[test]
+fn a_labelled_overlay_standard_entry_is_the_repos_default() {
+    let status = status_for(vec![
+        entry("other", ContainerConfigLayer::Global),
+        entry("standard", ContainerConfigLayer::Overlay),
+    ]);
+    assert_eq!(status.standard_default, Some(StandardDefault::RepoDefault));
+    assert!(status.healthy());
+}
+
+#[test]
+fn an_overlay_standard_entry_whose_label_was_removed_is_still_the_default_by_rule_and_says_so() {
+    let mut unlabelled = entry("standard", ContainerConfigLayer::Overlay);
+    unlabelled.default = false;
+    let status = status_for(vec![
+        entry("other", ContainerConfigLayer::Global),
+        unlabelled,
+    ]);
+    assert_eq!(status.standard_default, Some(StandardDefault::LabelRemoved));
+    assert!(status.healthy(), "the rule keeps container: true working");
+    assert_eq!(
+        status.diagnostics,
+        [
+            "the overlay's standard entry lost its \"default\": true label; container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`"
+        ]
+    );
+}
+
+#[test]
+fn a_global_standard_entry_is_not_the_repos_and_its_label_is_reported_as_is() {
+    let labelled = status_for(vec![entry("standard", ContainerConfigLayer::Global)]);
+    assert_eq!(
+        labelled.standard_default,
+        Some(StandardDefault::GlobalEntry { labelled: true })
+    );
+    let mut unlabelled = entry("standard", ContainerConfigLayer::Global);
+    unlabelled.default = false;
+    let status = status_for(vec![
+        entry("other", ContainerConfigLayer::Global),
+        unlabelled,
+    ]);
+    assert_eq!(
+        status.standard_default,
+        Some(StandardDefault::GlobalEntry { labelled: false })
+    );
+    assert!(status.diagnostics.is_empty(), "{:?}", status.diagnostics);
+}
+
+#[test]
+fn no_entry_means_no_default_state() {
+    let status = status_for(vec![entry("other", ContainerConfigLayer::Global)]);
+    assert_eq!(status.standard_default, None);
 }

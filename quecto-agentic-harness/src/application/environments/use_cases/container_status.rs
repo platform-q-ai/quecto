@@ -1,7 +1,9 @@
 //! `quecto container status` (#2024 S4e): where the standard bundle
 //! stands for a project — which assets are present and whether they are
 //! the embedded ones, whether the effective set carries the `standard`
-//! entry and which layer declared it, whether the checkout's overlay was
+//! entry, which layer declared it and what it is to `container: true`
+//! here (the checkout's own is its default by rule, #2035 — a label
+//! removed by hand is diagnosed with the remedy), whether the checkout's overlay was
 //! applied, and whether the image is present, asked of the entry's own
 //! create preflight (the S4b contract) so status and doctor never
 //! disagree. A status is a report, never an error: what could not be
@@ -11,8 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetState, ContainerRuntimeTarget, STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR,
-    StandardContainerStatus,
+    AssetState, ContainerConfigLayer, ContainerRuntimeTarget, STANDARD_CONTAINER_CONFIG,
+    STANDARD_CONTAINER_DIR, StandardContainerStatus, StandardDefault,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigLookup, ContainerConfigRoster, ContainerRuntimePreflight,
@@ -72,6 +74,18 @@ impl ContainerStatus {
             ),
             Err(reason) => (None, false, vec![reason]),
         };
+        let standard_default = entry.as_ref().map(|entry| match entry.layer {
+            ContainerConfigLayer::Overlay if entry.default => StandardDefault::RepoDefault,
+            ContainerConfigLayer::Overlay => StandardDefault::LabelRemoved,
+            ContainerConfigLayer::Global => StandardDefault::GlobalEntry {
+                labelled: entry.default,
+            },
+        });
+        if standard_default == Some(StandardDefault::LabelRemoved) {
+            diagnostics.push(format!(
+                "the overlay's {STANDARD_CONTAINER_CONFIG} entry lost its \"default\": true label; container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
+            ));
+        }
         let (image, preflight_error) = if entry.is_some() {
             match self.image_check() {
                 Ok(check) => (check, None),
@@ -89,6 +103,7 @@ impl ContainerStatus {
             version: catalogue.version,
             assets,
             entry,
+            standard_default,
             overlay_withheld,
             diagnostics,
             image,

@@ -74,7 +74,7 @@ Feature: The standard container is landed on master
   @done @issue-2035
   Scenario: init over an overlay that labels another entry default moves the label to standard and names what it displaced
     Given the current directory is a git checkout whose origin remote is a reachable local repository
-    And the checkout binds itself to container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    And the checkout binds itself to default container config "r" with repository "https://example.test/repo-r" through quecto config set --local
     When I run quecto with arguments "container init"
     Then the exit code should be 0
     And the overlay entry "standard" should be the default
@@ -232,7 +232,7 @@ Feature: The standard container is landed on master
     And the output should contain "`spawn container: true` selects it in this repo"
     And the output should not contain "select it with container: {"
     And the output should contain "quecto container doctor   — every check"
-    And the output should contain "\"container\":true}"
+    And the output should contain ":true} from an agent in this project"
 
   @done @issue-2024
   Scenario: status before init says what is missing
@@ -413,7 +413,8 @@ Feature: The standard container is landed on master
     When I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 0
     And the output should contain "config:  standard (default by rule, overlay) in"
-    And the output should contain "note:    the overlay's standard entry lost its \"default\": true label"
+    And the output should contain "note:    the overlay's standard entry lost its"
+    And the output should contain "container: true still selects it (a repo's standard container is its default)"
     And the output should contain "quecto container init --refresh"
     And the output should contain "quecto config set --local container_configs.standard.default true"
     When I run quecto with arguments "container init --refresh"

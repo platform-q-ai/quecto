@@ -136,6 +136,8 @@ impl ContainerConfigRoster for FixedRoster {
 #[derive(Default)]
 pub(super) struct RecordingPersistence {
     pub(super) written: Mutex<Vec<(String, ContainerConfigDocument)>>,
+    /// The `displace_default` of each persist, in order.
+    pub(super) displaced: Mutex<Vec<Option<String>>>,
     pub(super) refuse: Option<String>,
     pub(super) refuse_existing: Mutex<Option<String>>,
 }
@@ -149,10 +151,15 @@ impl ContainerConfigPersistence for RecordingPersistence {
         &self,
         name: &str,
         entry: &ContainerConfigDocument,
+        displace_default: Option<&str>,
     ) -> Result<PersistedContainerConfig, String> {
         if let Some(reason) = &self.refuse {
             return Err(reason.clone());
         }
+        self.displaced
+            .lock()
+            .unwrap()
+            .push(displace_default.map(str::to_string));
         self.written
             .lock()
             .unwrap()
@@ -211,6 +218,7 @@ pub(super) fn build_rig(
     });
     let persistence = Arc::new(RecordingPersistence {
         written: Mutex::new(vec![]),
+        displaced: Mutex::new(vec![]),
         refuse,
         refuse_existing: Mutex::new(None),
     });

@@ -125,6 +125,21 @@ fn given_global_default(world: &mut QuectoWorld, name: String) {
     .unwrap();
 }
 
+/// An overlay entry carrying the default label, written the agent's way
+/// (`quecto config set --local`, trusted), over a global file with no
+/// container config: the label init must take over (#2035).
+#[given(
+    expr = "the checkout binds itself to default container config {string} with repository {string} through quecto config set --local"
+)]
+fn given_checkout_binds_default_entry(world: &mut QuectoWorld, name: String, repo: String) {
+    let entry = serde_json::json!({
+        "default": true,
+        "create": ["/bin/true", "--repo", repo],
+        "cleanup": ["/bin/true"],
+    });
+    crate::container_mapping_steps::config_set_local(world, &name, &entry);
+}
+
 #[given(expr = "the checkout carries an untrusted overlay declaring container config {string}")]
 fn given_untrusted_overlay(world: &mut QuectoWorld, name: String) {
     let overlay = overlay_path(world);

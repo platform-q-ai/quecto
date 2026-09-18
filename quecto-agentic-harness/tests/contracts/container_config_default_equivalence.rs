@@ -4,8 +4,10 @@
 //! `SelectContainerConfig` launches for `container: true` with no name —
 //! and where the launch is refused (the overlay withheld, more than one
 //! labelled default, the default's argv broken, an empty set) the
-//! inventory marks none. An agent that reads the roster and then launches
-//! is never told one thing and served another.
+//! inventory marks none — and where the set carries a repo-bound
+//! `standard` entry (#2035) both name it whatever the labels say. An
+//! agent that reads the roster and then launches is never told one thing
+//! and served another.
 use std::sync::Arc;
 
 use quecto::application::environments::use_cases::ListContainerConfigs;
@@ -153,4 +155,120 @@ fn a_default_with_a_broken_argv_is_not_listed_as_default_and_is_refused() {
 #[test]
 fn an_empty_set_has_no_default_and_no_launch() {
     assert_agree("empty", set(vec![], false), None);
+}
+
+// ─── A repo-bound `standard` entry is the repo's default (#2035) ─────────────
+
+fn repo_standard(default: bool) -> ContainerLaunchConfig {
+    ContainerLaunchConfig {
+        repo_bound: true,
+        repository: Some("https://example.test/repo".into()),
+        ..config("standard", default, &["/bin/create"])
+    }
+}
+
+#[test]
+fn the_two_capabilities_spell_the_standard_name_the_same() {
+    assert_eq!(
+        quecto::application::subagents::dto::REPO_STANDARD_CONTAINER,
+        quecto::application::environments::dto::STANDARD_CONTAINER_CONFIG
+    );
+}
+
+#[test]
+fn a_global_default_beside_a_repo_bound_standard_yields_standard() {
+    assert_agree(
+        "global default + overlay standard",
+        set(
+            vec![
+                config("quecto", true, &["/bin/create"]),
+                repo_standard(true),
+            ],
+            false,
+        ),
+        Some("standard"),
+    );
+}
+
+#[test]
+fn a_repo_bound_standard_un_defaulted_by_hand_still_yields_standard() {
+    assert_agree(
+        "overlay standard un-defaulted",
+        set(
+            vec![
+                config("quecto", true, &["/bin/create"]),
+                repo_standard(false),
+            ],
+            false,
+        ),
+        Some("standard"),
+    );
+}
+
+#[test]
+fn a_repo_bound_standard_beside_another_overlay_default_yields_standard() {
+    let other = ContainerLaunchConfig {
+        repo_bound: true,
+        ..config("r", true, &["/bin/create"])
+    };
+    assert_agree(
+        "overlay standard + overlay other default",
+        set(
+            vec![
+                other,
+                repo_standard(false),
+                config("g", false, &["/bin/create"]),
+            ],
+            false,
+        ),
+        Some("standard"),
+    );
+}
+
+#[test]
+fn a_global_entry_named_standard_is_not_the_repos() {
+    assert_agree(
+        "global standard, global default",
+        set(
+            vec![
+                config("standard", false, &["/bin/create"]),
+                config("quecto", true, &["/bin/create"]),
+            ],
+            false,
+        ),
+        Some("quecto"),
+    );
+}
+
+#[test]
+fn a_broken_repo_bound_standard_refuses_and_lists_no_default() {
+    assert_agree(
+        "overlay standard broken",
+        set(
+            vec![
+                config("quecto", true, &["/bin/create"]),
+                ContainerLaunchConfig {
+                    create: vec![],
+                    ..repo_standard(true)
+                },
+            ],
+            false,
+        ),
+        None,
+    );
+}
+
+#[test]
+fn a_withheld_overlay_clears_a_repo_bound_standard_too() {
+    assert_agree(
+        "withheld with standard",
+        set(
+            vec![
+                config("quecto", true, &["/bin/create"]),
+                repo_standard(true),
+            ],
+            true,
+        ),
+        None,
+    );
 }

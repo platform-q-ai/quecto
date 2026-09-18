@@ -4,8 +4,12 @@
 //! capability's effective configuration for the launching agent's checkout
 //! (or an explicit file the spawn call named) through the
 //! [`EffectiveContainerConfigs`] port; this use case owns the rules —
-//! an explicit name wins, otherwise the one entry labelled `"default":
-//! true`; an implicit default is refused while the checkout's overlay is
+//! an explicit name wins; otherwise the checkout's own `standard` entry
+//! (the one `quecto container init` writes into its overlay, #2035) is
+//! the repo's default whatever entry the global file or another overlay
+//! entry labels `"default": true` — a rule here, not a label, so a
+//! hand-edited file cannot flip it; otherwise the one entry labelled
+//! `"default": true`; an implicit default is refused while the checkout's overlay is
 //! withheld — not applied and able to have changed the default (refused,
 //! unparseable, or declaring `container_configs`) — because the default
 //! it labels is unknown; an explicit name launches from the global set and carries
@@ -71,24 +75,29 @@ impl SelectContainerConfig {
                     available: available.clone(),
                     diagnostics: set.diagnostics.clone(),
                 })?,
-            None => {
-                // The configuration capability enforces exactly one default
-                // for a non-empty set, so the only way to arrive here without
-                // one is an empty set; the arm still enumerates so a bypass
-                // cannot fail silently.
-                let mut defaults: Vec<&ContainerLaunchConfig> =
-                    set.configs.iter().filter(|config| config.default).collect();
-                defaults.sort_by(|a, b| a.name.cmp(&b.name));
-                match defaults.as_slice() {
-                    [only] => *only,
-                    _ => {
-                        return Err(SelectContainerConfigError::NoDefault {
-                            available,
-                            diagnostics: set.diagnostics.clone(),
-                        });
+            // The checkout's own standard entry is its default by rule
+            // (#2035): no label anywhere is consulted while one exists.
+            None => match set.repo_standard() {
+                Some(standard) => standard,
+                None => {
+                    // The configuration capability enforces exactly one
+                    // default for a non-empty set, so the only way to arrive
+                    // here without one is an empty set; the arm still
+                    // enumerates so a bypass cannot fail silently.
+                    let mut defaults: Vec<&ContainerLaunchConfig> =
+                        set.configs.iter().filter(|config| config.default).collect();
+                    defaults.sort_by(|a, b| a.name.cmp(&b.name));
+                    match defaults.as_slice() {
+                        [only] => *only,
+                        _ => {
+                            return Err(SelectContainerConfigError::NoDefault {
+                                available,
+                                diagnostics: set.diagnostics.clone(),
+                            });
+                        }
                     }
                 }
-            }
+            },
         };
         validate_argv(config)?;
         self.verify_standard_scripts(config)?;

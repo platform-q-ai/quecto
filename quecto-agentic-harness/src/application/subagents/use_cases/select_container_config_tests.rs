@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use super::SelectContainerConfig;
 use crate::application::subagents::dto::{
     ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
-    EffectiveContainerConfigSet, SelectContainerConfigError, SelectContainerConfigRequest,
-    StandardScriptVerdict,
+    EffectiveContainerConfigSet, REPO_STANDARD_CONTAINER, SelectContainerConfigError,
+    SelectContainerConfigRequest, StandardScriptVerdict,
 };
 use crate::application::subagents::ports::{ContainerScriptIntegrity, EffectiveContainerConfigs};
 
@@ -527,4 +527,112 @@ fn intact_standard_scripts_and_non_standard_entries_launch() {
             PathBuf::from("/bin/cleanup"),
         ]
     );
+}
+
+// ─── A repo-bound `standard` entry is the repo's default (#2035) ─────────────
+
+fn repo_standard(default: bool) -> ContainerLaunchConfig {
+    ContainerLaunchConfig {
+        repo_bound: true,
+        repository: Some("https://example.test/repo".into()),
+        ..entry(REPO_STANDARD_CONTAINER, default)
+    }
+}
+
+fn select_default(configs: Vec<ContainerLaunchConfig>) -> Result<String, String> {
+    let (select, _) = use_case(Ok(set(configs, vec![])));
+    select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .map(|selected| selected.config.name)
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn a_repo_bound_standard_entry_is_selected_over_a_labelled_global_default() {
+    assert_eq!(
+        select_default(vec![entry("quecto", true), repo_standard(false)]),
+        Ok("standard".to_string())
+    );
+}
+
+#[test]
+fn a_repo_bound_standard_entry_is_selected_over_a_labelled_overlay_default() {
+    let other = ContainerLaunchConfig {
+        repo_bound: true,
+        ..entry("r", true)
+    };
+    assert_eq!(
+        select_default(vec![other, repo_standard(false)]),
+        Ok("standard".to_string())
+    );
+}
+
+#[test]
+fn a_repo_bound_standard_entry_wins_even_over_more_than_one_labelled_default() {
+    assert_eq!(
+        select_default(vec![
+            entry("a", true),
+            entry("b", true),
+            repo_standard(false)
+        ]),
+        Ok("standard".to_string())
+    );
+}
+
+#[test]
+fn a_global_entry_named_standard_is_not_the_repos_and_the_label_decides() {
+    assert_eq!(
+        select_default(vec![entry("quecto", true), entry("standard", false)]),
+        Ok("quecto".to_string())
+    );
+}
+
+#[test]
+fn a_repo_bound_standard_entry_with_a_broken_argv_is_refused_not_bypassed() {
+    let broken = ContainerLaunchConfig {
+        create: vec![],
+        ..repo_standard(false)
+    };
+    let (select, _) = use_case(Ok(set(vec![entry("quecto", true), broken], vec![])));
+    let error = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        SelectContainerConfigError::InvalidArgv {
+            name: "standard".into(),
+            what: "missing create argv"
+        },
+        "the repo's standard is the selection, so its refusal is the error"
+    );
+}
+
+#[test]
+fn an_explicit_name_still_wins_beside_a_repo_bound_standard_entry() {
+    let (select, _) = use_case(Ok(set(
+        vec![entry("quecto", true), repo_standard(true)],
+        vec![],
+    )));
+    let selected = select
+        .execute(&request(
+            ContainerConfigSource::LaunchingAgent,
+            Some("quecto"),
+        ))
+        .unwrap();
+    assert_eq!(selected.config.name, "quecto");
+}
+
+#[test]
+fn a_withheld_overlay_still_refuses_the_implicit_selection_beside_a_repo_bound_standard_entry() {
+    let (select, _) = use_case(Ok(withheld(
+        vec![entry("quecto", true), repo_standard(true)],
+        "overlay untrusted",
+    )));
+    let error = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        SelectContainerConfigError::OverlayWithheld { .. }
+    ));
 }

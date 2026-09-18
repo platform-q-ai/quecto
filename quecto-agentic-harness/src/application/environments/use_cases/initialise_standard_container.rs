@@ -4,8 +4,11 @@
 //! decides where the bundle goes (`<project>/.quecto/containers/standard`),
 //! what the entry says (the script paths exactly where the assets were
 //! materialised, the state dir, the repository baked in, the image), and
-//! whether the entry is the default (only when the effective set has no
-//! other default: a valid configuration labels exactly one). The
+//! that the entry is the default — always (#2035: a repo's standard
+//! container is its default): a global default is overridden for this
+//! repo by the overlay's label and named in the report, and an overlay
+//! entry carrying the label loses it in the same write and is named as
+//! displaced. The
 //! repository is `--repo`, else the checkout's `origin` remote, else the
 //! entry is a sandbox and the report says so. Nothing here reads a file
 //! or runs a program: the asset store, the origin and the persistence
@@ -17,10 +20,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument, EntryValueChange,
-    InitialiseStandardContainerError, RepositoryOrigin, STANDARD_CONTAINER_CONFIG,
-    STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE, StandardContainerReport,
-    StandardContainerRequest, StandardEntryOutcome,
+    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument, ContainerConfigLayer,
+    EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
+    STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
+    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster, WorkspaceOrigin,
@@ -165,17 +168,18 @@ impl InitialiseStandardContainer {
         self.persistence
             .check()
             .map_err(InitialiseStandardContainerError::Persist)?;
-        let existing_default = roster
-            .configs
-            .iter()
-            .find(|entry| entry.default && entry.name != STANDARD_CONTAINER_CONFIG)
-            .map(|entry| entry.name.clone());
-        let entry = self.entry(
-            &assets_dir,
-            repository.as_deref(),
-            &image,
-            existing_default.is_none(),
-        );
+        let labelled_other = |layer: ContainerConfigLayer| {
+            roster
+                .configs
+                .iter()
+                .find(|entry| {
+                    entry.default && entry.layer == layer && entry.name != STANDARD_CONTAINER_CONFIG
+                })
+                .map(|entry| entry.name.clone())
+        };
+        let displaced_default = labelled_other(ContainerConfigLayer::Overlay);
+        let overridden_global_default = labelled_other(ContainerConfigLayer::Global);
+        let entry = self.entry(&assets_dir, repository.as_deref(), &image);
 
         // Every destination is judged before anything is written: a
         // symbolic link on the way, a directory in a file's place, is a
@@ -193,7 +197,11 @@ impl InitialiseStandardContainer {
         } else {
             Some(
                 self.persistence
-                    .persist(STANDARD_CONTAINER_CONFIG, &entry)
+                    .persist(
+                        STANDARD_CONTAINER_CONFIG,
+                        &entry,
+                        displaced_default.as_deref(),
+                    )
                     .map_err(InitialiseStandardContainerError::Persist)?
                     .path,
             )
@@ -256,8 +264,8 @@ impl InitialiseStandardContainer {
             entry: StandardEntryOutcome {
                 name: STANDARD_CONTAINER_CONFIG.to_string(),
                 path,
-                default: existing_default.is_none(),
-                existing_default,
+                displaced_default,
+                overridden_global_default,
                 entry,
             },
             dry_run: request.dry_run,
@@ -280,16 +288,16 @@ impl InitialiseStandardContainer {
             })
     }
 
-    /// The entry: every argv names the materialised script by absolute
-    /// path, `--state-dir` under the base directory, the repository baked
-    /// into `create` (#1410), the image explicit, no trailing `--` (the
-    /// launcher appends it before the child command).
+    /// The entry: the default label (#2035), every argv naming the
+    /// materialised script by absolute path, `--state-dir` under the base
+    /// directory, the repository baked into `create` (#1410), the image
+    /// explicit, no trailing `--` (the launcher appends it before the
+    /// child command).
     fn entry(
         &self,
         assets_dir: &Path,
         repository: Option<&str>,
         image: &str,
-        default: bool,
     ) -> ContainerConfigDocument {
         let script = |name: &str| assets_dir.join(name).to_string_lossy().into_owned();
         let state_dir = self
@@ -311,7 +319,7 @@ impl InitialiseStandardContainer {
         let mut cleanup = with_state(KILL_SCRIPT);
         cleanup.extend(["--op".to_string(), "cleanup".to_string()]);
         ContainerConfigDocument {
-            default,
+            default: true,
             create,
             exec: with_state(EXEC_SCRIPT),
             inspect: with_state(INSPECT_SCRIPT),

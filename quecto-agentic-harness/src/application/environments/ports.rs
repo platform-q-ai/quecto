@@ -352,10 +352,16 @@ pub trait ContainerConfigPersistence: Send + Sync {
     /// is written. Nothing is written.
     fn check(&self) -> Result<(), String>;
 
+    /// Write `container_configs.<name>` as `entry`; when
+    /// `displace_default` names another overlay entry, its `"default":
+    /// true` label is removed in the same write (#2035: the merge accepts
+    /// one default, so the two changes must land together). Naming an
+    /// entry the overlay does not declare is an error, nothing written.
     fn persist(
         &self,
         name: &str,
         entry: &ContainerConfigDocument,
+        displace_default: Option<&str>,
     ) -> Result<PersistedContainerConfig, String>;
 
     /// The overlay file a persist would write, when the run has one.

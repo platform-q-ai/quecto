@@ -14,7 +14,7 @@ use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     AssetState, CheckStatus, ContainerConfigLayer, EntryValueChange, RepositoryOrigin,
-    StandardContainerReport, StandardContainerRequest, StandardContainerStatus,
+    StandardContainerReport, StandardContainerRequest, StandardContainerStatus, StandardDefault,
 };
 use crate::domain::redaction::redact_url_userinfo;
 
@@ -225,12 +225,18 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
             " (trusted for exactly these bytes)"
         }
     ));
-    match &entry.existing_default {
-        None => out.push_str("  default: true — `spawn container: true` selects it\n"),
-        Some(other) => out.push_str(&format!(
-            "  not the default: {other} is already the default; select it with container: {{\"mode\":\"new\",\"container_config\":\"{}\"}} or move the label with `quecto config set`\n",
-            entry.name
-        )),
+    out.push_str(
+        "  default: true — this repo's default: `spawn container: true` selects it in this repo (no default elsewhere overrides a repo's standard container)\n",
+    );
+    if let Some(displaced) = &entry.displaced_default {
+        out.push_str(&format!(
+            "  displaced default: {displaced} (the overlay entry lost its \"default\": true label in the same write; select it by name with container: {{\"mode\":\"new\",\"container_config\":\"{displaced}\"}})\n"
+        ));
+    }
+    if let Some(global) = &entry.overridden_global_default {
+        out.push_str(&format!(
+            "  the global default {global} does not apply in this repo (the global file is untouched; other repos keep it)\n"
+        ));
     }
     match (&report.repository, &report.repository_origin) {
         (Some(url), RepositoryOrigin::Explicit) => out.push_str(&format!(
@@ -287,22 +293,10 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         "  1. build the image (a create never builds or pulls; the scripts drive whichever runtime `quecto container doctor` names on its runtime-cli line — run the same command with that runtime's CLI):\n     {}\n",
         report.build_command
     ));
-    match &entry.existing_default {
-        None => out.push_str("  2. quecto container doctor   — every check ✓\n"),
-        Some(_) => out.push_str(&format!(
-            "  2. quecto container doctor --name {}   — every check ✓\n",
-            entry.name
-        )),
-    }
-    match &entry.existing_default {
-        None => out.push_str(
-            "  3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true} from an agent in this project; agent_cmd get_containers lists it\n",
-        ),
-        Some(_) => out.push_str(&format!(
-            "  3. spawn {{\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":{{\"mode\":\"new\",\"container_config\":\"{}\"}}}} from an agent in this project; agent_cmd get_containers lists it\n",
-            entry.name
-        )),
-    }
+    out.push_str("  2. quecto container doctor   — every check ✓\n");
+    out.push_str(
+        "  3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true} from an agent in this project; agent_cmd get_containers lists it\n",
+    );
 }
 
 pub(crate) fn cmd_status(
@@ -374,16 +368,26 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
                 ContainerConfigLayer::Overlay => "overlay",
                 ContainerConfigLayer::Global => "global",
             };
+            let default = match status.standard_default {
+                Some(StandardDefault::RepoDefault) => "default",
+                Some(StandardDefault::LabelRemoved) => "default by rule",
+                Some(StandardDefault::GlobalEntry { labelled: true }) => "default",
+                Some(StandardDefault::GlobalEntry { labelled: false }) | None => "not default",
+            };
             out.push_str(&format!(
-                "  config:  {} ({}, {layer}) in the effective configuration{}\n",
+                "  config:  {} ({default}, {layer}) in the effective configuration{}\n",
                 entry.name,
-                if entry.default { "default" } else { "not default" },
                 entry
                     .repository
                     .as_ref()
                     .map(|repo| format!("; --repo {repo}"))
                     .unwrap_or_else(|| "; sandbox (no --repo)".to_string())
             ));
+            if status.standard_default == Some(StandardDefault::RepoDefault) {
+                out.push_str(
+                    "           this repo's default: `spawn container: true` selects it whatever the global file labels\n",
+                );
+            }
         }
         None if status.overlay_withheld => out.push_str(
             "  config:  unknown — the repo-local overlay was not applied (see trust)\n",
