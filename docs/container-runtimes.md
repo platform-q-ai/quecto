@@ -574,6 +574,82 @@ failure) — even when a `kill` is configured. For script sets without a
 configured `kill`, the retained `cleanup` argv also serves as the
 final-member teardown fallback.
 
+## The standard container (`quecto container init`) (#2024 S4e)
+
+The supported way to give a repository a container is the standard bundle
+the binary carries: the official Docker/Podman adapter scripts (below) plus
+a Containerfile for the image they launch by default. `quecto container
+init` materialises it under the repository and binds the repository to it
+through the repo-local overlay; nothing is copied from the source tree and
+no config is hand-edited.
+
+```
+quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]
+quecto container status [--project <abs dir>]
+```
+
+What `init` does, in order (a refusal leaves the project untouched):
+
+1. Resolves the repository: `--repo`, else the checkout's `origin` remote
+   (`git remote get-url origin`), else none — a **sandbox** entry (empty
+   workspace, no clone), which the output names as such.
+2. Reads the effective container-config set (global file plus the trusted
+   overlay). An overlay that exists but is **not trusted** is refused with
+   the way out (`quecto config trust`): init never adopts content it did
+   not write. If another entry is already the default, the standard entry
+   is added **without** the `default` label and the output says so.
+3. Materialises `<project>/.quecto/containers/standard/` —
+   `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
+   `scripts/inspect.sh`, `scripts/kill.sh` (the scripts byte-identical to
+   `scripts/container-runtime/docker/*.sh`, executable). Files are written
+   whole (temporary file, fsync, rename) and **never replaced**: an edited
+   file is kept and reported as differing from the embedded version
+   (delete it to have init refresh it). A symbolic link in a file's place
+   is refused.
+4. Writes `container_configs.standard` into `<project>/.quecto/config.json`
+   through the configuration writer (`quecto config set --local` path):
+   exclusive hold, validated as a layer and as the merge, trust recorded
+   for exactly the bytes written. Every argv names the materialised
+   scripts by absolute path; `create` carries `--state-dir
+   <base dir>/container-environments`, `--repo <url>` when there is one and
+   `--image quecto-box:local` (or `--image` as given); `kill`/`cleanup`
+   carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
+   appends it before the child command).
+5. Prints the files, the entry and the one step left — the exact build
+   command:
+   `podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`.
+
+Running `init` twice changes nothing (no files, byte-identical overlay).
+
+**Image approval.** The image only has to exist locally under the tag the
+entry names: the create's preflight checks `podman image exists` and the
+`run` passes `--pull=never`, so nothing is ever fetched implicitly. An
+earlier draft (PR #2020) bound a digest-pinned image to a signed approval
+record through four `QUECTO_PODMAN_*` variables; that ritual is not carried
+over: it had to be performed by hand for every rebuild, put four
+environment variables between an operator and a working container, and
+sat *before* the preflight, so `quecto container doctor` could never have
+reported on it. Pin a digest in `--image` if you want one.
+
+**Image contents.** Debian trixie-slim with bash, ca-certificates,
+coreutils, curl, jq, git, openssh-client, gh, ripgrep, fd, python3 and
+procps; `ENTRYPOINT []` so the create's argv is the container's main
+process; no compiler or Cargo. A project that needs a toolchain derives its
+own image `FROM` this one and passes `--image <tag>` to `init`. The host
+`quecto` binary is identity-mounted into the container, so the image must
+carry a glibc the binary runs on (Debian trixie does for current builds).
+
+`quecto container status` reports, one line each and exit 1 while anything
+is missing: the assets (`present (5 of 5, version 1)`, or which differ or
+are missing), the `standard` entry of the effective set (default or not,
+declared by the overlay or globally, its `--repo`), the trust of the overlay
+(`trusted`, or `withheld` with the remedy), and the image as the entry's own
+create preflight reports it (`--preflight-only`, the S4b contract — the
+same line `quecto container doctor` shows).
+
+Rollback: `quecto config unset --local container_configs.standard`, then
+delete `.quecto/containers/standard`.
+
 ## The canonical reference runtime
 
 The repository ships one canonical reference runtime — a script set that
@@ -702,7 +778,10 @@ Design properties:
   OAuth providers. The scripts carry a comment warning against this.
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
-  (`quecto-box:local`).
+  (`quecto-box:local`, whose Containerfile `quecto container init`
+  materialises). The `run` passes `--pull=never`: a tag that vanished
+  between the preflight and the run fails instead of fetching whatever a
+  registry serves under that name.
 - **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;
   `QUECTO_CONTAINER_PIDS_LIMIT` overrides, `-1` defers to the user slice,
   `0` is refused). Threads count against the container's pid cgroup and the
