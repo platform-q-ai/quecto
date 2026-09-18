@@ -341,12 +341,14 @@ fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
                     default: false,
                     layer: ContainerConfigLayer::Global,
                     repository: None,
+                    problem: None,
                 },
                 ContainerConfigEntry {
                     name: "r".into(),
                     default: true,
                     layer: ContainerConfigLayer::Overlay,
                     repository: Some("https://example.test/r".into()),
+                    problem: None,
                 },
             ],
             overlay_withheld: false,
@@ -360,8 +362,8 @@ fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
         parsed,
         serde_json::json!({
             "container_configs": [
-                {"name":"r","default":true,"source":"overlay","repository":"https://example.test/r"},
-                {"name":"alpha","default":false,"source":"global","repository":null}
+                {"name":"r","default":true,"source":"overlay","repository":"https://example.test/r","problem":null},
+                {"name":"alpha","default":false,"source":"global","repository":null,"problem":null}
             ],
             "overlay_withheld": false,
             "diagnostics": ["warning: legacy"]

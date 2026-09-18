@@ -6,8 +6,12 @@
 //! comes first and is the ONLY entry marked default; while the checkout's
 //! overlay is withheld (untrusted, refused or unparseable and able to have
 //! changed the set) no entry is marked default — an implicit selection is
-//! refused until `quecto config trust`, and the diagnostics say so; the
-//! rest follow by name so the listing is stable between calls.
+//! refused until `quecto config trust`, and the diagnostics say so; an
+//! entry a launch would refuse (missing or unsafe argv) is never marked
+//! default and carries its problem, and more than one labelled default
+//! marks none (a launch would refuse the implicit selection) — each with
+//! a diagnostic line; the rest follow by name so the listing is stable
+//! between calls.
 
 use std::sync::Arc;
 
@@ -26,19 +30,41 @@ impl ListContainerConfigs {
     pub fn execute(&self) -> Result<ContainerConfigInventory, String> {
         let report = self.roster.roster()?;
         let mut configs = report.configs;
+        let mut diagnostics = report.diagnostics;
         if report.overlay_withheld {
             for entry in &mut configs {
                 entry.default = false;
             }
         }
-        // Exactly one default is the configuration capability's rule for a
-        // non-empty applied set; the query still orders defensively so a
-        // bypass cannot present two "defaults" ahead of the rest.
+        for entry in &mut configs {
+            if let Some(problem) = &entry.problem {
+                diagnostics.push(format!(
+                    "container config '{}' cannot launch as configured: {problem}",
+                    entry.name
+                ));
+                entry.default = false;
+            }
+        }
+        let mut defaults: Vec<String> = configs
+            .iter()
+            .filter(|entry| entry.default)
+            .map(|entry| entry.name.clone())
+            .collect();
+        defaults.sort_unstable();
+        if defaults.len() > 1 {
+            diagnostics.push(format!(
+                "multiple container configs are labeled \"default\": true ({}); container: true is refused until exactly one is",
+                defaults.join(", ")
+            ));
+            for entry in &mut configs {
+                entry.default = false;
+            }
+        }
         configs.sort_by(|a, b| b.default.cmp(&a.default).then_with(|| a.name.cmp(&b.name)));
         Ok(ContainerConfigInventory {
             configs,
             overlay_withheld: report.overlay_withheld,
-            diagnostics: report.diagnostics,
+            diagnostics,
         })
     }
 }

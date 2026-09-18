@@ -108,22 +108,18 @@ pub fn launch_configs(config: &Config, overlay_entries: &[String]) -> Vec<Contai
 }
 
 /// The repository a create argv bakes in, by the shipped scripts'
-/// convention: the value after `--repo` (or `--repo=<url>`) before the
-/// `--` that separates the script's own arguments from the child command.
-/// Descriptive only — the argv is executed as written, whatever this reads.
+/// convention: the non-empty value after `--repo`, before the `--` that
+/// separates the script's own arguments from the child command (the
+/// scripts accept no `--repo=<url>` form, so none is read). Descriptive
+/// only — the argv is executed as written, whatever this reads.
 pub fn repository_from_argv(create: &[String]) -> Option<String> {
-    let own = create.iter().take_while(|arg| *arg != "--");
-    let mut previous: Option<&str> = None;
-    for arg in own {
-        if previous == Some("--repo") {
-            return Some(arg.clone());
-        }
-        if let Some(url) = arg.strip_prefix("--repo=") {
-            return Some(url.to_string());
-        }
-        previous = Some(arg.as_str());
-    }
-    None
+    create
+        .iter()
+        .take_while(|arg| *arg != "--")
+        .skip_while(|arg| *arg != "--repo")
+        .nth(1)
+        .filter(|url| !url.is_empty())
+        .cloned()
 }
 
 impl std::fmt::Debug for ContainerConfigsFromEffectiveConfig {

@@ -26,7 +26,8 @@ pub fn roster_line(query: Option<&ListContainerConfigs>) -> Option<String> {
 
 /// `Available container configs: <name> (default, repo-bound|global), …`
 /// with the trailing entries folded into `+N more` when the line would
-/// exceed the budget; the withheld-overlay note is never dropped.
+/// exceed the budget, and the one remaining entry cut with an ellipsis
+/// when it alone exceeds it; the withheld-overlay note is never dropped.
 pub fn format_roster_line(inventory: &ContainerConfigInventory) -> String {
     let note = if inventory.overlay_withheld {
         WITHHELD_NOTE
@@ -60,8 +61,11 @@ pub fn format_roster_line(inventory: &ContainerConfigInventory) -> String {
         }
         line.push_str(note);
         line.push('.');
-        if line.chars().count() <= ROSTER_LINE_MAX_CHARS || shown == 1 {
+        if line.chars().count() <= ROSTER_LINE_MAX_CHARS {
             return line;
+        }
+        if shown == 1 {
+            return fit(format!("{ROSTER_PREFIX}{}", entries[0]), note);
         }
         shown -= 1;
     }

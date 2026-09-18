@@ -18,6 +18,7 @@ fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerCon
         default,
         layer,
         repository: Some(format!("https://example.test/{name}")),
+        problem: None,
     }
 }
 
@@ -94,4 +95,47 @@ fn the_ports_failure_is_the_result() {
 fn layer_wire_words_are_stable() {
     assert_eq!(ContainerConfigLayer::Overlay.as_str(), "overlay");
     assert_eq!(ContainerConfigLayer::Global.as_str(), "global");
+}
+
+#[test]
+fn an_entry_a_launch_would_refuse_is_never_default_and_is_diagnosed() {
+    let mut broken = entry("broken", true, ContainerConfigLayer::Overlay);
+    broken.problem = Some("missing cleanup argv".into());
+    let query = ListContainerConfigs::new(Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+        configs: vec![broken, entry("alpha", false, ContainerConfigLayer::Global)],
+        overlay_withheld: false,
+        diagnostics: vec![],
+    }))));
+    let inventory = query.execute().unwrap();
+    assert!(inventory.default_entry().is_none());
+    assert_eq!(names(&inventory), ["alpha", "broken"]);
+    assert_eq!(
+        inventory.diagnostics,
+        ["container config 'broken' cannot launch as configured: missing cleanup argv"]
+    );
+    assert_eq!(
+        inventory.configs[1].problem.as_deref(),
+        Some("missing cleanup argv")
+    );
+}
+
+#[test]
+fn more_than_one_labelled_default_marks_none_and_is_diagnosed() {
+    let query = ListContainerConfigs::new(Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+        configs: vec![
+            entry("b", true, ContainerConfigLayer::Global),
+            entry("a", true, ContainerConfigLayer::Global),
+        ],
+        overlay_withheld: false,
+        diagnostics: vec![],
+    }))));
+    let inventory = query.execute().unwrap();
+    assert!(inventory.configs.iter().all(|e| !e.default));
+    assert_eq!(names(&inventory), ["a", "b"]);
+    assert_eq!(inventory.diagnostics.len(), 1);
+    assert!(
+        inventory.diagnostics[0].contains("(a, b)"),
+        "{:?}",
+        inventory.diagnostics
+    );
 }

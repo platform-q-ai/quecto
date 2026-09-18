@@ -371,7 +371,7 @@ pub(crate) fn build_agent_from_config(
         return None;
     };
     let Some(build_container_config_handles) = flags.container_configs else {
-        stderr.push_str("agent: container-config selection capability not composed\n");
+        stderr.push_str("agent: container-config handles capability not composed\n");
         return None;
     };
     if !admission_startup::negotiate_from_flags(&config, flags, stderr) {

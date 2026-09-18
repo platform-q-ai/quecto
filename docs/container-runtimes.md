@@ -259,13 +259,16 @@ offer the menu. Agents see the names before spawning in two places (#2024
 S4c): the `spawn` tool description carries one bounded roster line
 (`Available container configs: <name> (default, repo-bound|global), …`,
 at most 120 characters, the tail folded into `+N more`; a withheld overlay
-adds `(repo overlay untrusted — run quecto config trust)`), rendered once
-when the session's tools are composed; and
+adds `(repo overlay untrusted — run quecto config trust)`; one entry alone
+over the budget is cut with an ellipsis), rendered whenever the tool
+definitions are built (registration and every rebuild); and
 `agent_cmd {"agent_id":"*","command":"get_container_configs"}` returns the
 same effective set with detail, live at each call:
-`{"container_configs":[{"name","default","source":"overlay"|"global","repository"}],"overlay_withheld":bool,"diagnostics":[…]}`
-— the `container: true` default first (no entry is marked default while
-the overlay is withheld), `source` says which layer declared the entry,
+`{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem"}],"overlay_withheld":bool,"diagnostics":[…]}`
+— the `container: true` default first; `default` is what a launch would
+honour (none while the overlay is withheld, none when more than one entry
+is labelled, never an entry with a `problem` — a missing or unsafe argv,
+diagnosed in `diagnostics`); `source` says which layer declared the entry,
 `repository` is the create argv's `--repo` (`null` for a sandbox). Operators
 see the same set with `quecto config get --effective container_configs`.
 

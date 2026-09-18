@@ -33,6 +33,7 @@ impl ContainerConfigRoster for EffectiveConfigRoster {
                 .configs
                 .into_iter()
                 .map(|config| ContainerConfigEntry {
+                    problem: config.argv_problem().map(str::to_string),
                     name: config.name,
                     default: config.default,
                     layer: if config.repo_bound {

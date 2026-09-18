@@ -116,13 +116,12 @@ pub struct SpawnTool {
         Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
     /// Composition's container-config listing (#2024 S4c): the effective
     /// set of the launching agent's checkout, as the description's roster
-    /// line shows it. `None` (unit rigs) leaves the description without a
-    /// roster.
+    /// line shows it — read whenever the definition is rendered (the
+    /// registry renders at registration and at every rebuild), so a trust
+    /// or binding change reaches the line at the next rebuild. `None`
+    /// (unit rigs) leaves the description without a roster.
     pub(super) container_config_roster:
         Option<Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
-    /// The roster line rendered once per tool (a session-start snapshot,
-    /// like the rest of the definition the registry caches).
-    pub(super) roster_line: std::sync::OnceLock<Option<String>>,
     /// The one owner of every process this tool spawns (#1935): the
     /// process-wide supervisor unless composition injects another, so no
     /// tool ever owns a throwaway supervisor whose drop abandons reaps.
@@ -182,7 +181,6 @@ impl SpawnTool {
             parent_config_path: None,
             container_config_selection: None,
             container_config_roster: None,
-            roster_line: std::sync::OnceLock::new(),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -208,7 +206,6 @@ impl SpawnTool {
             parent_config_path: None,
             container_config_selection: None,
             container_config_roster: None,
-            roster_line: std::sync::OnceLock::new(),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -253,7 +250,7 @@ impl SpawnTool {
     }
 
     /// Install composition's container-config listing (#2024 S4c): the
-    /// description's roster line reads it once.
+    /// description's roster line reads it.
     pub fn with_container_config_roster(
         mut self,
         roster: Option<Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
@@ -592,12 +589,7 @@ impl Tool for SpawnTool {
     }
 
     fn definition(&self) -> ToolDefinition {
-        let roster = self
-            .roster_line
-            .get_or_init(|| {
-                super::spawn_discovery::roster_line(self.container_config_roster.as_deref())
-            })
-            .as_deref()
+        let roster = super::spawn_discovery::roster_line(self.container_config_roster.as_deref())
             .map(|line| format!("\n{line}"))
             .unwrap_or_default();
         ToolDefinition {

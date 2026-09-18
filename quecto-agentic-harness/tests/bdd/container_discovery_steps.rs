@@ -175,9 +175,8 @@ fn then_spawn_description_says(world: &mut QuectoWorld, needle: String) {
 }
 
 #[then(expr = "the swarm description should say {string}")]
-fn then_swarm_description_says(_world: &mut QuectoWorld, needle: String) {
-    let description =
-        include_str!("../../src/infrastructure/tools/swarm_helpers/tool_description.txt");
+fn then_swarm_description_says(world: &mut QuectoWorld, needle: String) {
+    let description = crate::swarm_steps::tool(world).definition().description;
     assert!(
         description.contains(&needle),
         "swarm description misses {needle:?}:\n{description}"
@@ -521,21 +520,32 @@ fn then_provider_saw_listing(_world: &mut QuectoWorld, name: String, source: Str
     );
 }
 
-#[then("the fake provider's first spawn call should have used container true")]
-fn then_provider_first_spawn_container_true(_world: &mut QuectoWorld) {
-    let transcript = transcript();
-    let transcript = transcript.lock().unwrap();
-    let (_, arguments) = transcript
-        .calls
+#[then(
+    "the tool results the fake provider received should answer get_container_configs before the spawn"
+)]
+fn then_provider_results_ordered(_world: &mut QuectoWorld) {
+    // Judged on what the HARNESS returned, in the order the model received
+    // it: the listing first, then a spawn result — never the reverse, never
+    // a spawn error.
+    let run = REAL_AGENT_RUN.lock().unwrap();
+    let run = run.as_ref().expect("the real agent ran");
+    let results = run.tool_results.lock().unwrap();
+    let listing = results.iter().position(|content| {
+        serde_json::from_str::<serde_json::Value>(content)
+            .is_ok_and(|value| value["container_configs"].is_array())
+    });
+    let spawned = results
         .iter()
-        .find(|(name, _)| name == "spawn")
-        .expect("the model issued a spawn call");
-    let arguments: serde_json::Value = serde_json::from_str(arguments).unwrap();
-    assert_eq!(arguments["container"], serde_json::json!(true));
-    assert_eq!(
-        transcript.calls.first().map(|(name, _)| name.as_str()),
-        Some("agent_cmd"),
-        "the model consulted get_container_configs first: {:?}",
-        transcript.calls
+        .position(|content| content.contains("is running (uuid="));
+    assert!(
+        matches!((listing, spawned), (Some(first), Some(second)) if first < second),
+        "expected the listing then a spawn result, got: {results:?}\nstderr: {}",
+        run.stderr
+    );
+    assert!(
+        !results
+            .iter()
+            .any(|content| content.contains("Failed to spawn subagent")),
+        "the first spawn must succeed: {results:?}"
     );
 }

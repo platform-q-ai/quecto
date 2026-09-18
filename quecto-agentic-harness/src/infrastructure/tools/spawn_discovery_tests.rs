@@ -13,6 +13,7 @@ fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerCon
         default,
         layer,
         repository: None,
+        problem: None,
     }
 }
 
@@ -87,13 +88,21 @@ fn a_long_roster_folds_the_tail_into_a_count() {
 }
 
 #[test]
-fn one_entry_is_never_dropped_even_when_over_budget() {
+fn one_entry_alone_over_budget_is_cut_within_the_budget() {
     let long = "x".repeat(200);
     let line = format_roster_line(&inventory(
         vec![entry(&long, true, ContainerConfigLayer::Global)],
-        false,
+        true,
     ));
-    assert!(line.contains(&long));
+    assert!(line.chars().count() <= ROSTER_LINE_MAX_CHARS, "{line}");
+    assert!(
+        line.starts_with("Available container configs: xxxx"),
+        "{line}"
+    );
+    assert!(
+        line.ends_with("… (repo overlay untrusted — run quecto config trust)."),
+        "{line}"
+    );
 }
 
 #[test]

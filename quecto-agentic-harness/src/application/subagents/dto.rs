@@ -474,6 +474,29 @@ pub struct ContainerLaunchConfig {
     pub repository: Option<String>,
 }
 
+impl ContainerLaunchConfig {
+    /// Why launch policy would refuse this entry's argv, if it would:
+    /// `create` and `cleanup` are required, and no argument of any set may
+    /// be empty or carry a NUL. One rule for the selection and the roster.
+    pub fn argv_problem(&self) -> Option<&'static str> {
+        if self.create.is_empty() {
+            return Some("missing create argv");
+        }
+        if self.cleanup.is_empty() {
+            return Some("missing cleanup argv");
+        }
+        let unsafe_arg = |arg: &String| arg.is_empty() || arg.contains('\0');
+        self.create
+            .iter()
+            .chain(&self.cleanup)
+            .chain(&self.exec)
+            .chain(&self.kill)
+            .chain(&self.inspect)
+            .any(unsafe_arg)
+            .then_some("unsafe argv")
+    }
+}
+
 /// The container configs in effect for a source, sorted by name, and the
 /// layer diagnostics the configuration capability reported while
 /// resolving them (an untrusted or refused overlay that was not applied,

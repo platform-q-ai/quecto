@@ -126,14 +126,19 @@ impl ContainerConfigLayer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerConfigEntry {
     pub name: String,
-    /// What `container: true` selects. False on every entry while the
-    /// checkout's overlay is withheld: the default is then unknown to
-    /// launch policy and an implicit selection is refused.
+    /// What `container: true` selects — exactly as launch policy would:
+    /// false on every entry while the checkout's overlay is withheld
+    /// (the default is then unknown and an implicit selection refused),
+    /// on an entry a launch would refuse, and on all of them when more
+    /// than one is labelled default.
     pub default: bool,
     pub layer: ContainerConfigLayer,
     /// The repository a new environment clones, when the config bakes
     /// one in; `None` for a sandbox (empty workspace).
     pub repository: Option<String>,
+    /// Why a launch would refuse this entry as configured (a missing or
+    /// unsafe argv); `None` when it is launchable.
+    pub problem: Option<String>,
 }
 
 /// The container configs in effect for the launching agent (#2024 S4c),

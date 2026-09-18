@@ -67,8 +67,9 @@ pub(crate) struct AgentFlags {
     /// Composition's admission-operation builder (#2024 S3), from CliContext;
     /// startup negotiation (root/child/disabled) runs through its use case.
     pub(crate) admission: Option<crate::interface::cli::AdmissionHandlesBuilder>,
-    /// Composition's container-config selection builder (#2024 S4a), from
-    /// CliContext; the spawn tool selects container configs through it.
+    /// Composition's container-config handles builder (#2024 S4a, S4c),
+    /// from CliContext; the spawn tool selects container configs through
+    /// its selection and, with agent_cmd, lists them through its roster.
     pub(crate) container_configs: Option<crate::interface::cli::ContainerConfigHandlesBuilder>,
     /// Whether stdin is a terminal (from CliContext): the only case in which
     /// an unrecorded overlay may be offered for trust at startup.

@@ -164,10 +164,10 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
     }
 }
 
-/// `{"container_configs":[{name, default, source, repository}],
+/// `{"container_configs":[{name, default, source, repository, problem}],
 /// "overlay_withheld": bool, "diagnostics": [..]}` — the default first,
 /// `source` is `overlay` (repo-bound) or `global`, `repository` null for a
-/// sandbox config.
+/// sandbox config, `problem` null unless a launch would refuse the entry.
 fn encode_config_inventory(inventory: &ContainerConfigInventory) -> ToolResult {
     let configs: Vec<serde_json::Value> = inventory
         .configs
@@ -178,6 +178,7 @@ fn encode_config_inventory(inventory: &ContainerConfigInventory) -> ToolResult {
                 "default": entry.default,
                 "source": entry.layer.as_str(),
                 "repository": entry.repository,
+                "problem": entry.problem,
             })
         })
         .collect();

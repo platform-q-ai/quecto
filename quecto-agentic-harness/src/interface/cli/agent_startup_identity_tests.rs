@@ -153,7 +153,7 @@ fn an_agent_run_refuses_to_start_without_composed_container_configs() {
     flags.adopt_context(&ctx);
     assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
     assert!(
-        stderr.contains("agent: container-config selection capability not composed"),
+        stderr.contains("agent: container-config handles capability not composed"),
         "{stderr}"
     );
 }

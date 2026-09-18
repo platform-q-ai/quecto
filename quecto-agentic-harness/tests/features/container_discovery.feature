@@ -83,6 +83,6 @@ Feature: Agents can discover which container configs and environments exist
     Then the real agent should have exited successfully
     And the spawn description the fake provider received should carry "Available container configs: r (default, repo-bound)"
     And the fake provider's get_container_configs result should list entry "r" from source "overlay"
-    And the fake provider's first spawn call should have used container true
+    And the tool results the fake provider received should answer get_container_configs before the spawn
     And the tool result the fake provider received should name container config "r"
     And the script-managed runtime should have used container script "r"
