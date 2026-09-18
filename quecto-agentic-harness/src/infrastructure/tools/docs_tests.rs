@@ -285,7 +285,9 @@ async fn setup_index_is_first_and_routes_every_area() {
         "quecto config set --global admission",
         "quecto admission-broker install-service",
         "quecto admission-broker status",
-        "quecto admission-broker uninstall-service",
+        "quecto admission-broker uninstall-service --directory",
+        "quecto admission-broker install-service` (`--dry-run` first)",
+        "Do not run `quecto admission-broker run`",
         "quecto container init",
         "quecto container doctor",
         "quecto container status",
@@ -296,6 +298,10 @@ async fn setup_index_is_first_and_routes_every_area() {
         "docs {\"name\": \"container-runtime\"}",
         "docs {\"name\": \"swarm\"}",
         "never pass `--show-secrets`",
+        "never `cat`",
+        "always `--token`",
+        "Overlay: … (untrusted)",
+        "quecto config trust",
         "QUECTO_BASE_DIR",
     ] {
         assert!(doc.contains(needle), "setup index misses {needle}");
@@ -309,14 +315,22 @@ async fn setup_index_is_first_and_routes_every_area() {
 fn area_pages_share_the_runbook_shape() {
     for name in ["config", "models", "admission-broker", "container-runtime"] {
         let doc = lookup_doc(name).expect("area embed");
+        let mut last = 0;
         for heading in [
-            "## Preconditions",
-            "## Do",
-            "## Verify",
-            "## Rollback",
-            "## If it fails",
+            "\n## Preconditions\n",
+            "\n## Do\n",
+            "\n## Verify\n",
+            "\n## Rollback\n",
+            "\n## If it fails\n",
         ] {
-            assert!(doc.contains(heading), "{name} embed lacks {heading}");
+            let at = doc
+                .find(heading)
+                .unwrap_or_else(|| panic!("{name} embed lacks {heading:?}"));
+            assert!(
+                at > last,
+                "{name} embed has {heading:?} out of runbook order"
+            );
+            last = at;
         }
         assert!(
             !doc.contains("container-config-trust"),
@@ -330,6 +344,8 @@ fn area_pages_share_the_runbook_shape() {
         "always pass `--token`",
         "--oauth",
         "--device-code",
+        "have no effort control (`set_effort` is refused)",
+        "accepts any of `none, low, medium, high, xhigh, max`",
         "quecto auth status",
         "quecto auth logout --provider",
         "quecto models discover",
@@ -365,25 +381,52 @@ fn area_pages_share_the_runbook_shape() {
         "init --refresh",
         "## Trust boundary",
         "## Upgrades",
+        "only `doctor` accepts one",
     ] {
         assert!(
             container.contains(needle),
             "container-runtime embed misses {needle}"
         );
     }
+    assert_in_order(
+        "container-runtime",
+        container,
+        "1. **Initialise**",
+        "2. **Build the image**",
+    );
     let admission = lookup_doc("admission-broker").expect("admission-broker embed");
     for needle in [
         "quecto config set --global admission",
         "quecto admission-broker install-service --dry-run",
-        "quecto admission-broker uninstall-service",
+        "quecto admission-broker uninstall-service --directory",
         "quecto config unset --global admission",
         "\"bindings\":{\"*\":\"account\"}",
         "systemctl --user status quecto-admission-broker.service",
         "not running for directory",
+        "Do not run `quecto admission-broker run`",
+        "--accept-missing-ledger",
     ] {
         assert!(
             admission.contains(needle),
             "admission-broker embed misses {needle}"
         );
     }
+    assert_in_order(
+        "admission-broker",
+        admission,
+        "1. **Write the section**",
+        "3. **Install**",
+    );
+}
+
+/// Both needles are present and `first` precedes `second`, so a step order an
+/// agent must follow literally cannot be silently reversed.
+fn assert_in_order(name: &str, doc: &str, first: &str, second: &str) {
+    let a = doc
+        .find(first)
+        .unwrap_or_else(|| panic!("{name} embed misses {first}"));
+    let b = doc
+        .find(second)
+        .unwrap_or_else(|| panic!("{name} embed misses {second}"));
+    assert!(a < b, "{name} embed orders {second} before {first}");
 }
