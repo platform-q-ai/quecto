@@ -38,6 +38,12 @@ fn model_variant_takes_exactly_one_plain_id() {
         SetupCommand::parse("model openai-api/gpt-5.5"),
         SetupCommand::Walkthrough(SetupArea::Model("openai-api/gpt-5.5".into()))
     );
+    assert_eq!(
+        SetupCommand::parse("model anthropic/claude-opus-5:latest_v1.2"),
+        SetupCommand::Walkthrough(SetupArea::Model(
+            "anthropic/claude-opus-5:latest_v1.2".into()
+        ))
+    );
     for bad in [
         "model",
         "model a b",
@@ -45,6 +51,15 @@ fn model_variant_takes_exactly_one_plain_id() {
         "model a`b",
         "model a'b",
         "model a\\b",
+        "model x$(y)",
+        "model p/x$(y)",
+        "model no-slash",
+        "model --show-secrets",
+        "model /m",
+        "model p/",
+        "model a/b/c",
+        "model p/m;rm",
+        "model p/m\u{e9}",
     ] {
         assert_eq!(SetupCommand::parse(bad), SetupCommand::Usage, "{bad:?}");
     }
@@ -112,7 +127,7 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
             &[
                 "quecto container init",
                 "quecto container doctor",
-                "`podman build …`",
+                "image-build line it prints",
             ],
         ),
         (
@@ -140,6 +155,21 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
             );
         }
     }
+}
+
+#[test]
+fn prompt_prose_never_names_a_container_runtime() {
+    // The `setup` page names podman; the prompt only points at the page and
+    // the runbook's own output, so the TUI text stays runtime-neutral.
+    for area in [SetupArea::All, SetupArea::Container] {
+        let prompt = setup_walkthrough_prompt(&area).to_lowercase();
+        for word in ["podman", "docker"] {
+            assert!(!prompt.contains(word), "{area:?} names {word}:\n{prompt}");
+        }
+    }
+    assert!(SETUP_FROM_MASTER.starts_with(
+        "Run /setup from the master session: select it (Esc from the sub-agent), then /setup again"
+    ));
 }
 
 #[test]

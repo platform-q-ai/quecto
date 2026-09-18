@@ -322,23 +322,28 @@ fn canonical_scripts_keep_runtime_knowledge_out_of_rust_core() {
     );
 }
 
+/// The one exempt production file: `quecto-tui/src/setup/mod.rs` (#2024 S6)
+/// holds the `/setup` parser, whose `podman` alias and usage line mirror the
+/// runbook the user reads; the prompt prose itself stays runtime-neutral and
+/// no other file under `setup/` is exempt.
+fn is_tui_setup_prompts(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n == "mod.rs")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "setup")
+        && path
+            .ancestors()
+            .nth(3)
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "quecto-tui")
+}
+
 fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir").flatten() {
         let path = entry.path();
         if path.is_dir() {
-            // The TUI's `/setup` prompt templates (#2024 S6) are user-facing
-            // text that quotes the `container-runtime` runbook (`/setup
-            // podman`, "the `podman build …` line init prints"); they hold
-            // no runtime logic. Only that leaf module is exempt.
-            let is_tui_setup_prompts = path.file_name().is_some_and(|n| n == "setup")
-                && path
-                    .parent()
-                    .and_then(Path::parent)
-                    .and_then(Path::file_name)
-                    .is_some_and(|n| n == "quecto-tui");
-            if !is_tui_setup_prompts {
-                scan_rust_sources(&path, offenders);
-            }
+            scan_rust_sources(&path, offenders);
         } else if path.extension().is_some_and(|e| e == "rs")
             // In-tree test modules may use runtime names as inert fixture
             // data (e.g. exec-allowlist matching examples); the boundary
@@ -346,6 +351,7 @@ fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
             && !path
                 .file_name()
                 .is_some_and(|n| n.to_string_lossy().ends_with("_tests.rs"))
+            && !is_tui_setup_prompts(&path)
         {
             let content = fs::read_to_string(&path).unwrap_or_default();
             for needle in ["docker", "podman", "devcontainer"] {

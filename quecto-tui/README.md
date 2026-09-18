@@ -162,7 +162,7 @@ opens links natively, that help line is the single place to update first.
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |
 | `/session` | Show session statistics |
-| `/setup` | Ask the agent to walk through quecto setup for this folder/machine (credential, repo overlay, default model, admission broker, container): it submits a walkthrough prompt as your turn; the agent reads the `setup` docs page, reports each area's state, proposes the runbook commands and asks before writing anything. Variants: `/setup model <model-id>`, `/setup admission`, `/setup podman` (alias `container`), `/setup auth` |
+| `/setup` | Ask the agent to walk through quecto setup for this folder/machine (credential, repo overlay, default model, admission broker, container): it submits a walkthrough prompt as your turn; the agent reads the `setup` docs page, reports each area's state, proposes the runbook commands and asks before writing anything. Variants: `/setup model <model-id>`, `/setup admission`, `/setup podman` (alias `container`), `/setup auth`. Master-session only: with a sub-agent focused it refuses with a toast (Esc back to the master, then `/setup` again) and sends nothing to the child |
 | `/workflow-auto` | Toggle core workflow auto-continue |
 | `/workflow-nudge` | Toggle core workflow completion nudge |
 | `/help` or `/hotkeys` | Show built-in help |

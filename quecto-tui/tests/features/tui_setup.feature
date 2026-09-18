@@ -42,6 +42,21 @@ Feature: /setup submits the agent-executable setup walkthrough (#2024 S6)
     Then a setup usage toast lists the variants
     And no prompt command is sent
 
+  Scenario: /setup while the master is streaming queues the walkthrough as a follow-up
+    Given the master assistant is currently streaming
+    When I submit the master prompt "/setup"
+    Then the master follow-up command is sent with the setup walkthrough prompt for "all areas"
+    And no prompt command is sent
+    And the master transcript shows the setup walkthrough prompt for "all areas" as the user's turn
+
+  Scenario: /setup with a sub-agent focused refuses and submits nothing
+    Given a TUI viewing sub-agent "a1"
+    When I submit the master prompt "/setup" expecting no agent command
+    Then the app notification includes "Run /setup from the master session: select it (Esc from the sub-agent), then /setup again"
+    And no prompt command is sent
+    And sub-agent "a1" received no setup command
+    And the selected sub-agent transcript has no user turn
+
   Scenario: every setup prompt is safe by construction
     Then every setup walkthrough prompt asks before writing, forbids secrets and dry-runs the service install
 

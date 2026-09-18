@@ -80,6 +80,75 @@ fn then_prompt_command_sent(world: &mut TuiWorld, variant: String) {
     );
 }
 
+#[then(
+    expr = "the master follow-up command is sent with the setup walkthrough prompt for {string}"
+)]
+fn then_follow_up_carries_prompt(world: &mut TuiWorld, variant: String) {
+    let expected = expected_prompt(&variant);
+    let follow_ups: Vec<serde_json::Value> = world
+        .tui_last_commands
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("follow_up"))
+        .collect();
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "a streaming master must queue exactly one follow_up, got {:?}",
+        world.tui_last_commands
+    );
+    assert_eq!(
+        follow_ups[0].get("message").and_then(|m| m.as_str()),
+        Some(expected.as_str()),
+        "the follow_up must carry the walkthrough verbatim"
+    );
+}
+
+#[then(expr = "sub-agent {string} received no setup command")]
+fn then_subagent_received_nothing(world: &mut TuiWorld, id: String) {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    let cmds: Vec<String> = handle.block_on(async {
+        let mut cmds = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            cmds.push(cmd);
+        }
+        cmds
+    });
+    // The attach handshake (`get_state`/`sync`) is fine; no user text may
+    // reach the child.
+    let user_text: Vec<&String> = cmds
+        .iter()
+        .filter(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
+                .is_some_and(|t| t == "prompt" || t == "follow_up")
+        })
+        .collect();
+    assert!(
+        user_text.is_empty(),
+        "sub-agent {id} must receive no prompt/follow_up from /setup, got {cmds:?}"
+    );
+}
+
+#[then("the selected sub-agent transcript has no user turn")]
+fn then_subagent_no_user_turn(world: &mut TuiWorld) {
+    let entries = drive(world, |h| h.active_user_entries());
+    assert!(
+        entries.is_empty(),
+        "the focused sub-agent must not get the walkthrough, got {entries:?}"
+    );
+}
+
 #[then(expr = "the setup walkthrough prompt for {string} names the docs page {string}")]
 fn then_prompt_names_page(_world: &mut TuiWorld, variant: String, page: String) {
     let prompt = expected_prompt(&variant);

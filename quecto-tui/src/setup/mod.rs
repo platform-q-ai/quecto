@@ -44,11 +44,18 @@ pub enum SetupCommand {
 pub const SETUP_USAGE: &str =
     "Usage: /setup | /setup model <model-id> | /setup admission | /setup podman | /setup auth";
 
+/// The refusal toast when `/setup` is typed while a sub-agent is focused.
+/// Setup is a decision about the master session and the files it runs from,
+/// so the walkthrough is never routed to a child (possibly inside a
+/// container); the wording mirrors the S2 `/model` pin refusal.
+pub const SETUP_FROM_MASTER: &str = "Run /setup from the master session: select it (Esc from the \
+sub-agent), then /setup again — nothing was sent to the focused sub-agent";
+
 impl SetupCommand {
     /// Parse the text after `/setup`. Variants are case-sensitive single
-    /// words; `model` takes exactly one whitespace-free model id (a
-    /// `provider/model` token as `models` lists them) — quotes and backticks
-    /// are refused so the id cannot break out of the prompt's own quoting.
+    /// words; `model` takes exactly one model id in the `provider/model`
+    /// shape `models` lists (see [`model_id_is_plain`]) so the id cannot
+    /// break out of the prompt's own quoting or smuggle a flag.
     pub fn parse(args: &str) -> Self {
         let mut words = args.split_whitespace();
         match (words.next(), words.next(), words.next()) {
@@ -66,11 +73,20 @@ impl SetupCommand {
     }
 }
 
+/// Shape check for a `provider/model` id: exactly one `/`, both halves
+/// non-empty, and only `[A-Za-z0-9._:-]` — an allowlist, so quotes,
+/// backticks, `$(…)`, leading `--flags` and bare words never reach the prompt.
 fn model_id_is_plain(model: &str) -> bool {
-    !model.is_empty()
-        && !model
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '"' | '\'' | '`' | '\\'))
+    let plain = |half: &str| {
+        !half.is_empty()
+            && half
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+    };
+    match model.split_once('/') {
+        Some((provider, name)) => plain(provider) && plain(name),
+        None => false,
+    }
 }
 
 /// The affirmative rules every walkthrough carries — the same wording the
@@ -91,6 +107,11 @@ Prefer the repo overlay (`<repo>/.quecto/config.json`); write the global file on
 started after the change, not to this session — say so instead of claiming this session changed.";
 
 /// Compose the walkthrough prompt the TUI submits as the user's turn.
+///
+/// The quoted row titles ("Pin the default model", "Enable the admission
+/// broker", "First install") are cross-references to the runbook table in
+/// `docs-tool-embeds/setup.md`; nothing here verifies them at build time, so
+/// a rename of that page's rows must be mirrored by hand.
 pub fn setup_walkthrough_prompt(area: &SetupArea) -> String {
     let goal = match area {
         SetupArea::All => "Set up quecto for this folder/machine. First read the docs page `setup` \
@@ -119,12 +140,12 @@ and report it in one line; then propose the exact commands from the runbook — 
 before writing or installing anything. Never print secrets. Finish with a summary of what changed, \
 which sessions must restart to be bounded, and how to roll it back."
             .to_string(),
-        SetupArea::Container => "Set up the standard podman container for this repo. First read the \
-docs page `container-runtime` (`docs {\"name\":\"container-runtime\"}`) and the \"A podman/docker \
-container for this app\" row of the docs page `setup` (`docs {\"name\":\"setup\"}`). Check the current \
+        SetupArea::Container => "Set up the standard container for this repo. First read the \
+docs page `container-runtime` (`docs {\"name\":\"container-runtime\"}`) and the container row of the \
+docs page `setup` (`docs {\"name\":\"setup\"}`). Check the current \
 state (`quecto container status`, `quecto container doctor`) and report it in one line; then propose \
-the exact commands from the runbook — `quecto container init` (`--dry-run` first), then the `podman \
-build …` line it prints — and ASK before writing or installing anything. Never print secrets. Finish \
+the exact commands from the runbook — `quecto container init` (`--dry-run` first), then the \
+image-build line it prints — and ASK before writing or installing anything. Never print secrets. Finish \
 with a summary of what changed, how to verify it with one `spawn {\"container\":true}` probe, and how \
 to roll it back."
             .to_string(),
