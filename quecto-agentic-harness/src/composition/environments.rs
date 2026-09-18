@@ -144,6 +144,11 @@ pub fn build_environment_registry(
 }
 
 fn report_restore(report: &RestoredRegistry) {
+    if let Some(read_error) = &report.read_error {
+        // The session starts with an empty registry and every container
+        // create refused (the store fails to allocate the same way).
+        eprintln!("{read_error}; container creates are refused until it is repaired");
+    }
     for line in &report.diagnostics {
         eprintln!("{line}");
     }
@@ -171,10 +176,10 @@ pub fn build_container_inventory(
     base_dir: &Path,
     selection: &ConfigSelection,
 ) -> ContainerInventoryHandles {
+    // The restore's account (diagnostics, a read error) is the handles'
+    // to carry: the command's presenter reports it and refuses on the
+    // read error; composition prints nothing.
     let (registry, restore) = build_restore_registry(base_dir).execute("cli");
-    for line in &restore.diagnostics {
-        eprintln!("{line}");
-    }
     ContainerInventoryHandles {
         list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
         kill: Arc::new(KillEnvironment::new(

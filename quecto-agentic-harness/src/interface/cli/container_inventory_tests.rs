@@ -318,3 +318,50 @@ fn a_real_gc_run_presents_removed_and_kept_entries() {
         "{out}"
     );
 }
+
+/// Review F3 (#2033): an unreadable registry is not an empty one. `gc`
+/// must refuse — every exited state dir would otherwise read as "no
+/// registry record" and be collected, including one a live session
+/// records as retained — and `ls` must fail rather than print an empty
+/// table; both name the read error on stderr.
+#[test]
+fn an_unreadable_registry_refuses_gc_and_fails_ls_naming_the_read_error() {
+    let (_dir, ctx, _) = composed();
+    std::fs::write(ctx.base_dir().join("environments.json"), "{not json").unwrap();
+    let output = run(&["container", "gc", "--dry-run"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("durable environment registry could not be read"),
+        "{output:?}"
+    );
+    assert!(
+        output
+            .stderr
+            .contains("is not a valid environment registry"),
+        "{output:?}"
+    );
+    assert!(!output.stdout.contains("would remove"), "{output:?}");
+    assert!(!output.stdout.contains("orphaned"), "{output:?}");
+    let output = run(&["container", "ls"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("durable environment registry could not be read"),
+        "{output:?}"
+    );
+    assert!(
+        !output.stdout.contains("no live environments"),
+        "{output:?}"
+    );
+    let output = run(&["container", "kill", "C1"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("durable environment registry could not be read"),
+        "{output:?}"
+    );
+}

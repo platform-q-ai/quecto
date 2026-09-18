@@ -22,7 +22,26 @@ fn inventory(ctx: &CliContext) -> Result<ContainerInventoryHandles, String> {
     // alone, otherwise the working directory's layers (the collector's
     // scripts come from it, as the doctor's do).
     let selection = ctx.config_selection()?;
-    Ok(build(&ctx.base_dir(), &selection))
+    let handles = build(&ctx.base_dir(), &selection);
+    // An unreadable registry is not an empty one (review F3, #2033): a
+    // listing would show nothing, a kill find nothing and the collector
+    // would read every exited state dir as unrecorded — refuse all three
+    // in the store's own words.
+    if let Some(read_error) = &handles.restore.read_error {
+        return Err(format!(
+            "{read_error}
+nothing is listed, killed or collected until it is repaired (or moved aside)"
+        ));
+    }
+    Ok(handles)
+}
+
+/// The restore's notes belong on stderr, after the command's own output.
+fn present_restore_notes(handles: &ContainerInventoryHandles, stderr: &mut String) {
+    for line in &handles.restore.diagnostics {
+        stderr.push_str(line);
+        stderr.push('\n');
+    }
 }
 
 fn fail(stderr: &mut String, error: &str) -> i32 {
@@ -62,6 +81,7 @@ pub(crate) fn cmd_ls(
                 .filter(|record| all || record.status != EnvironmentStatus::Stopped)
                 .collect();
             present_table(&shown, all, records.len(), stdout);
+            present_restore_notes(&handles, stderr);
             for (environment_ref, reason) in &handles.restore.unverified {
                 stderr.push_str(&format!(
                     "note: {environment_ref} could not be verified against the runtime: {reason}\n"
@@ -192,6 +212,7 @@ pub(crate) fn cmd_kill(
             .enable_all()
             .build()
             .map_err(|error| format!("runtime: {error}"))?;
+        present_restore_notes(&handles, stderr);
         runtime
             .block_on(handles.kill.kill_container(&target))
             .map_err(|error| error.to_string())
@@ -245,6 +266,7 @@ pub(crate) fn cmd_gc(
 ) -> i32 {
     let outcome = parse_gc(args).and_then(|request| {
         let handles = inventory(ctx)?;
+        present_restore_notes(&handles, stderr);
         handles
             .gc
             .execute(&request)

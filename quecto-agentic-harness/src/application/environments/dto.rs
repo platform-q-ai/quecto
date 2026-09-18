@@ -152,6 +152,11 @@ pub struct RestoredRegistry {
     /// Why nothing (or not everything) could be restored: the store's own
     /// account. Empty when the store read cleanly.
     pub diagnostics: Vec<String>,
+    /// The store could not be read at all (review F3, #2033): the registry
+    /// is empty because nothing is known, not because nothing exists.
+    /// Anything that judges environments by their record must refuse
+    /// while this is set.
+    pub read_error: Option<String>,
 }
 
 /// One environment the runtime knows, as the config's `inspect --list`

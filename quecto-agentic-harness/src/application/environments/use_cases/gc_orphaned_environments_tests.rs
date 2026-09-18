@@ -530,3 +530,79 @@ fn the_collector_debug_names_its_registry_only() {
     assert!(shown.starts_with("GcOrphanedEnvironments"), "{shown}");
     assert!(shown.contains("registry"), "{shown}");
 }
+
+/// Review F4 (#2033): a state dir that has lost (or never wrote) its
+/// `container` file is not thereby gone — the runtime's own listing may
+/// still name a running container labelled with that environment id.
+/// Its liveness comes from the listing: running is kept, exited is an
+/// orphan with the listed container named (no create grace: the runtime
+/// has already answered for it).
+#[test]
+fn a_dir_without_a_container_file_takes_its_liveness_from_the_listing() {
+    let rig = Rig::new();
+    *rig.host.dirs.lock().unwrap() = vec![
+        dir("env-nofile-live", None),
+        dir("env-nofile-dead", None),
+        dir("env-nofile-unlisted", None),
+    ];
+    *rig.host.containers.lock().unwrap() = vec![
+        container("env-nofile-live", true),
+        container("env-nofile-dead", false),
+    ];
+    // The config's inspect would say gone (it reads the missing file);
+    // the listing must win.
+    let report = rig.dry_run();
+    let kept: Vec<&str> = report
+        .kept
+        .iter()
+        .map(|k| k.environment_id.as_str())
+        .collect();
+    assert_eq!(kept, ["env-nofile-live"], "{report:?}");
+    assert!(
+        report.kept[0]
+            .reason
+            .contains("container quecto-env-nofile-live is running"),
+        "{report:?}"
+    );
+    let removable: Vec<(&str, Option<&str>)> = report
+        .removable
+        .iter()
+        .map(|c| (c.environment_id.as_str(), c.container.as_deref()))
+        .collect();
+    assert_eq!(
+        removable,
+        [
+            ("env-nofile-dead", Some("quecto-env-nofile-dead")),
+            ("env-nofile-unlisted", None),
+        ],
+        "{report:?}"
+    );
+    assert!(
+        report.removable[0]
+            .reason
+            .contains("container quecto-env-nofile-dead gone or exited"),
+        "{report:?}"
+    );
+    // Nothing is ever removed on a dry run, least of all the live one.
+    let report = rig
+        .use_case()
+        .execute(&GcRequest {
+            dry_run: false,
+            config: None,
+        })
+        .unwrap();
+    assert_eq!(
+        rig.host.removed.lock().unwrap().as_slice(),
+        ["env-nofile-dead", "env-nofile-unlisted"],
+        "{report:?}"
+    );
+    assert!(
+        rig.host
+            .containers
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.environment_id == "env-nofile-live"),
+        "the running container survives the collection"
+    );
+}

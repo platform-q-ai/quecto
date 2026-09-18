@@ -89,16 +89,17 @@ impl RestoreRegistry {
     /// Build the durable registry for `session`: seeded with the store's
     /// records, each judged against the runtime, and journalling through
     /// the store from here on. When the store cannot be read the registry
-    /// starts empty and the report says why; refs are still allocated
-    /// through the store, so nothing this session creates can collide
-    /// with what it could not read.
+    /// starts empty and the report carries the read error; refs are
+    /// still allocated through the store (which fails the same way), so
+    /// nothing this session creates can collide with what it could not
+    /// read — creates are refused instead (review F9, #2033).
     pub fn execute(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
         let registry = EnvironmentRegistry::with_journal(self.journal(), session);
         let mut report = RestoredRegistry::default();
         let records = match self.store.load() {
             Ok(records) => records,
             Err(error) => {
-                report.diagnostics.push(format!(
+                report.read_error = Some(format!(
                     "durable environment registry could not be read: {error}"
                 ));
                 return (registry, report);

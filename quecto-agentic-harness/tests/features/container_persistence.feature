@@ -112,6 +112,7 @@ Feature: Environments outlive sessions
     And an orphaned environment state dir "env-orphan02" without any container is planted in the state dir
     And a fresh environment state dir "env-fresh04" without any container is planted in the state dir
     And an exited fake container "quecto-env-ghost03" with no state dir is left in the fake runtime
+    And an environment state dir "env-nofile05" without a container file but with a running fake container is planted in the state dir
     When I run quecto with arguments "container gc --dry-run"
     Then the exit code should be 0
     And the gc report should list "env-orphan01" as removable
@@ -119,6 +120,7 @@ Feature: Environments outlive sessions
     And the gc report should list "env-ghost03" as removable
     And the gc report should keep the environment of "C1" as live
     And the gc report should keep "env-fresh04" as a create in flight
+    And the gc report should keep "env-nofile05" because container "quecto-env-nofile05" is running
     And the state dir should still contain "env-orphan01"
     And the state dir should still contain "env-orphan02"
     And the fake runtime should still know container "quecto-env-ghost03"
@@ -130,7 +132,25 @@ Feature: Environments outlive sessions
     And the fake runtime should no longer know container "quecto-env-ghost03"
     And the state dir should still contain the environment of "C1"
     And the state dir should still contain "env-fresh04"
+    And the state dir should still contain "env-nofile05"
+    And the fake runtime should still know container "quecto-env-nofile05"
     And the fake runtime should still know the container of "C1"
+
+  @done @issue-2024 @container-env
+  Scenario: quecto container gc refuses while the durable registry cannot be read
+    Given script-managed child "impl-gc-corrupt" is running in a shared environment with task "IMPL_GC_CORRUPT_MARKER"
+    And an orphaned environment state dir "env-orphan09" with an exited fake container is planted in the state dir
+    And the durable environment registry on disk is corrupted
+    When I run quecto with arguments "container gc --dry-run"
+    Then the exit code should be 1
+    And stderr should contain "durable environment registry could not be read"
+    And stderr should contain "is not a valid environment registry"
+    And the output should not contain "would remove"
+    And the state dir should still contain "env-orphan09"
+    And the state dir should still contain the environment of "C1" as first created
+    When I run quecto with arguments "container ls"
+    Then the exit code should be 1
+    And stderr should contain "durable environment registry could not be read"
 
   @done @issue-2024 @container-env
   Scenario: quecto container gc runs the retained cleanup of a stopped record whose state dir lingers

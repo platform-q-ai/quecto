@@ -161,17 +161,23 @@ impl GcOrphanedEnvironments {
             for dir in dirs {
                 judged.insert(dir.environment_id.clone());
                 // The config's own inspect is the authority for a state
-                // dir (it reads the dir's container and asks the runtime);
-                // the listing only names the container when the dir has
-                // not recorded one.
-                let liveness = if dir.container.is_some() {
-                    self.inventory.inspect(&config, &dir.environment_id)
-                } else {
-                    EnvironmentLiveness::Gone
+                // dir (it reads the dir's container and asks the runtime).
+                // A dir without a `container` file is not thereby gone
+                // (review F4, #2033): the listing may still name a
+                // container labelled with its id, and that entry's
+                // liveness stands — running is kept, exited is an orphan
+                // with the container named. Only a dir the listing knows
+                // nothing about is judged container-less.
+                let listed = by_environment.get(dir.environment_id.as_str()).copied();
+                let liveness = match (&dir.container, listed) {
+                    (Some(_), _) => self.inventory.inspect(&config, &dir.environment_id),
+                    (None, Some(container)) if container.running => EnvironmentLiveness::Running,
+                    (None, _) => EnvironmentLiveness::Gone,
                 };
-                let container_name = dir.container.as_deref().or(by_environment
-                    .get(dir.environment_id.as_str())
-                    .map(|c| c.container.as_str()));
+                let container_name = dir
+                    .container
+                    .as_deref()
+                    .or(listed.map(|c| c.container.as_str()));
                 self.judge(
                     Sighting {
                         environment_id: &dir.environment_id,

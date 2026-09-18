@@ -610,3 +610,54 @@ fn then_runtime_knows_env(world: &mut QuectoWorld, env_ref: String) {
     let path = runtime_dir(world).join(format!("quecto-{id}"));
     assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "running");
 }
+
+// ─── Review F3 (#2033): an unreadable registry refuses gc/ls ───────────────
+
+/// Corrupt the registry document in place, keeping a copy of what it held
+/// so later steps can still name the environments it recorded.
+#[given("the durable environment registry on disk is corrupted")]
+fn given_registry_corrupted(world: &mut QuectoWorld) {
+    let path = base_path(world).join("environments.json");
+    std::fs::copy(&path, path.with_extension("json.pre-corrupt")).unwrap();
+    std::fs::write(&path, "{not json").unwrap();
+}
+
+#[then(expr = "the state dir should still contain the environment of {string} as first created")]
+fn then_state_dir_contains_env_as_created(world: &mut QuectoWorld, env_ref: String) {
+    let path = base_path(world).join("environments.json.pre-corrupt");
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let id = document["environments"][&env_ref]["environment_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("registry should have recorded {env_ref}"))
+        .to_string();
+    assert!(
+        state_dir(world).join(&id).is_dir(),
+        "{id} should still exist"
+    );
+}
+
+// ─── Review F4 (#2033): a dir without a container file is judged by the listing ─
+
+#[given(
+    expr = "an environment state dir {string} without a container file but with a running fake container is planted in the state dir"
+)]
+fn given_dir_without_file_but_running(world: &mut QuectoWorld, id: String) {
+    let dir = state_dir(world).join(&id);
+    std::fs::create_dir_all(dir.join("workspace")).unwrap();
+    std::fs::write(runtime_dir(world).join(format!("quecto-{id}")), "running\n").unwrap();
+    age_dir(&dir);
+}
+
+#[then(expr = "the gc report should keep {string} because container {string} is running")]
+fn then_gc_keeps_running(world: &mut QuectoWorld, id: String, container: String) {
+    let kept = world
+        .stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("kept"))
+        .any(|line| {
+            line.starts_with(&format!("  {id}  "))
+                && line.contains(&format!("container {container} is running"))
+        });
+    assert!(kept, "gc report should keep {id}:\n{}", world.stdout);
+}

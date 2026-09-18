@@ -211,8 +211,10 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
     let process = process(|_| EnvironmentLiveness::Running);
     let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
     assert!(registry.entries().is_empty());
-    assert_eq!(report.diagnostics.len(), 1);
-    assert!(report.diagnostics[0].contains("corrupt"), "{report:?}");
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    let read_error = report.read_error.as_deref().expect("read error reported");
+    assert!(read_error.contains("could not be read"), "{report:?}");
+    assert!(read_error.contains("corrupt"), "{report:?}");
     assert_eq!(registry.mint_ref(), "C1");
     assert_eq!(*store.next.lock().unwrap(), 1);
 }
