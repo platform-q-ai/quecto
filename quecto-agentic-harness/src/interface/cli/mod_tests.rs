@@ -31,6 +31,7 @@ fn test_composition() -> CliComposition {
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,
+        admission: crate::composition::admission::build_admission_handles,
         catalogue: crate::composition::catalogue::build_catalogue_handles,
         provider_runtime: crate::composition::runtime::build_agent_provider,
         tool_policy_persistence: crate::composition::tool_policy::build_tool_policy_persistence,
@@ -168,6 +169,7 @@ fn composed_context_layers_the_working_directory_overlay_over_the_global_config(
         base_dir: Some(tmp.path().to_path_buf()),
         cwd: Some(cwd.clone()),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(

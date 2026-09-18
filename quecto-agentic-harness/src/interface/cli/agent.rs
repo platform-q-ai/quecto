@@ -205,6 +205,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         provider_runtime: None,
         tool_policy_persistence: None,
         configuration: None,
+        admission: None,
         stdin_is_tty: false,
         admission_context,
         parent_control,
@@ -369,7 +370,17 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: tool-policy persistence capability not composed\n");
         return None;
     };
-    if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
+    let Some(build_admission) = flags.admission else {
+        stderr.push_str("agent: admission capability not composed\n");
+        return None;
+    };
+    let admission_handles = build_admission();
+    if !admission_startup::negotiate(
+        &config,
+        flags.admission_context.as_deref(),
+        &admission_handles.negotiate,
+        stderr,
+    ) {
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();

@@ -10,24 +10,56 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 
 use super::client::{ClientError, Inner};
+use super::link::AuthorityLink;
 use super::protocol::{Body, Op};
 use crate::application::ports::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
 use crate::domain::error::DomainError;
 use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
 
+/// Where a gate reads its live connection from.
+#[derive(Debug)]
+enum Source {
+    /// A fixed connection (the direct `AuthorityConnection::gate` path, used
+    /// by the broker's own in-process tests and fixtures).
+    Direct(Arc<Inner>),
+    /// The process's reconnecting link (#2024 S3): each acquire reads the
+    /// current live connection, reconnecting a root after a broker restart or
+    /// reset; a child fails closed.
+    Linked(Arc<AuthorityLink>),
+}
+
 #[derive(Debug)]
 pub struct RemoteAdmission {
-    inner: Arc<Inner>,
+    source: Source,
     alias: String,
     max_cooldown_ms: u64,
 }
 
 impl RemoteAdmission {
+    /// A gate over one fixed connection.
     pub(super) fn new(inner: Arc<Inner>, alias: String, max_cooldown_ms: u64) -> Self {
         Self {
-            inner,
+            source: Source::Direct(inner),
             alias,
             max_cooldown_ms,
+        }
+    }
+
+    /// A gate over the reconnecting process link (#2024 S3).
+    pub(super) fn linked(link: Arc<AuthorityLink>, alias: String, max_cooldown_ms: u64) -> Self {
+        Self {
+            source: Source::Linked(link),
+            alias,
+            max_cooldown_ms,
+        }
+    }
+
+    /// The live connection inner for this attempt, reconnecting a linked root
+    /// if its broker went away.
+    async fn inner(&self) -> Result<Arc<Inner>, ClientError> {
+        match &self.source {
+            Source::Direct(inner) => Ok(inner.clone()),
+            Source::Linked(link) => link.live_inner().await,
         }
     }
 }
@@ -50,7 +82,12 @@ impl Drop for CancelOnDrop {
 impl AttemptAdmission for RemoteAdmission {
     fn acquire(&self) -> AttemptAcquisition<'_> {
         Box::pin(async move {
-            let inner = self.inner.clone();
+            // Reconnect a root here if the broker restarted/reset; a child
+            // whose parent authority is gone fails closed with a clear error.
+            let inner = self
+                .inner()
+                .await
+                .map_err(|error| DomainError::Provider(format!("admission: {error}")))?;
             let notify = Arc::new(Notify::new());
             let (sequence, receiver) = inner
                 .send_acquire(&self.alias, notify.clone())

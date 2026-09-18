@@ -48,6 +48,7 @@ fn workflow_flags() -> AgentFlags {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         stdin_is_tty: false,
     }
 }

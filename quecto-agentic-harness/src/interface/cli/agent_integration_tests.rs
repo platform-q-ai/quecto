@@ -50,6 +50,7 @@ pub(super) fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -100,6 +101,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         stdin_is_tty: false,
     }
 }

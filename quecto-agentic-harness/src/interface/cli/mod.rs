@@ -1,4 +1,5 @@
 mod admission_broker;
+pub mod admission_handles;
 mod agent;
 mod auth;
 pub mod catalogue_handles;
@@ -357,6 +358,12 @@ pub type ConfigurationHandlesBuilder = fn(
     &configuration_handles::ConfigurationEnvironment,
 ) -> configuration_handles::ConfigurationHandles;
 
+/// Composition's builder of the admission-operation handles (#2024 S3):
+/// inspect/reset the authority, install/uninstall its service, and the
+/// startup negotiation decision. Injected through the CLI context; the
+/// interface never opens the admin socket or runs `systemctl` itself.
+pub type AdmissionHandlesBuilder = fn() -> admission_handles::AdmissionHandles;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -403,6 +410,11 @@ pub struct CliContext {
     /// [`CliComposition`]; any command that loads or writes configuration
     /// refuses to run without it.
     pub configuration: Option<ConfigurationHandlesBuilder>,
+    /// Composition's admission-operation handles builder (#2024 S3).
+    /// Supplied by the binary's `main`; the `admission-broker` command
+    /// refuses to run without it, since the interface never opens the admin
+    /// socket or runs `systemctl` itself.
+    pub admission: Option<AdmissionHandlesBuilder>,
     /// Composition's catalogue handles builder (#1845). Supplied by the
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
@@ -421,6 +433,14 @@ impl CliContext {
     /// The composed configuration handles (#2024). `prompt_for_trust`
     /// lets an unrecorded overlay be offered to an interactive user; only
     /// an agent run started from a terminal asks for it.
+    /// The composed admission-operation handles (#2024 S3).
+    pub(crate) fn admission_handles(&self) -> Result<admission_handles::AdmissionHandles, String> {
+        let Some(build) = self.admission else {
+            return Err("admission capability not composed".to_string());
+        };
+        Ok(build())
+    }
+
     pub(crate) fn configuration_handles(
         &self,
         prompt_for_trust: bool,
@@ -477,6 +497,7 @@ pub struct CliComposition {
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
+    pub admission: AdmissionHandlesBuilder,
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
@@ -504,6 +525,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),
+        admission: Some(composition.admission),
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),

@@ -301,6 +301,8 @@ pub struct QuectoWorld {
     /// per-scenario CPU delta is meaningful only under QUECTO_BDD_CONCURRENCY=1.
     pub scenario_cpu_started: f64,
     pub admission: inference_admission_steps::AdmissionState,
+    /// #2024 S3 one host-wide broker, agent-operable.
+    pub one_broker: admission_one_broker_steps::OneBrokerState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
     /// #1935 launch-bound parent control and owned-child supervisor state.
@@ -1735,6 +1737,7 @@ impl QuectoWorld {
         world.cli_context.retention = Some(quecto::composition::sessions::build_retention_handles);
         world.cli_context.configuration =
             Some(quecto::composition::configuration::build_configuration_handles);
+        world.cli_context.admission = Some(quecto::composition::admission::build_admission_handles);
         world.cli_context.catalogue = Some(quecto::composition::catalogue::build_catalogue_handles);
         world.cli_context.provider_runtime =
             Some(quecto::composition::runtime::build_agent_provider);
@@ -1797,6 +1800,7 @@ impl Drop for QuectoWorld {
     }
 }
 
+mod admission_one_broker_steps;
 mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
 mod inference_admission_matrix_steps;

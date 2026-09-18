@@ -468,6 +468,27 @@ impl AuthorityConnection {
         self.inner.credential.lock().expect("credential").clone()
     }
 
+    /// Whether the connection's I/O loop is still live (the authority has not
+    /// dropped the socket and the client has not closed it).
+    pub fn is_open(&self) -> bool {
+        !self.inner.closed.load(Ordering::Acquire)
+    }
+
+    /// The connection's shared inner, for the reconnecting link (#2024 S3):
+    /// gates route through the link and read the current connection's inner
+    /// per attempt, so a swapped-in reconnection is transparent to them.
+    pub(super) fn inner_arc(&self) -> Arc<Inner> {
+        self.inner.clone()
+    }
+
+    /// Test-only: mark the connection closed, simulating the peer (a killed
+    /// broker) dropping the socket, so the reconnecting link's loss path is
+    /// exercised without racing a real process death.
+    #[cfg(test)]
+    pub(super) fn close_for_test(&self) {
+        self.inner.close();
+    }
+
     /// Mint a root with the owner token read from the authority directory.
     /// A process that can only see the mounted client directory fails here.
     pub async fn register_root(&self, class: WorkloadClass) -> Result<Credential, ClientError> {

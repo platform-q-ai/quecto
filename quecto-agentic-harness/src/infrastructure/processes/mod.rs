@@ -4,6 +4,7 @@
 
 pub mod child_stderr_tail;
 pub mod direct_child_routing;
+pub mod local;
 pub mod owned_child_supervisor;
 pub mod owned_child_termination;
 pub mod parent_control;

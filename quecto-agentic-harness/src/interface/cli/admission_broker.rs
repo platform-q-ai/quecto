@@ -1,11 +1,115 @@
-//! `quecto admission-broker run|status|reset`: the same-user shared inference
-//! admission authority (#1679 P3). `run` owns the singleton lock and sockets
-//! until SIGTERM/SIGINT; `status` and `reset` are owner-only administration.
+//! `quecto admission-broker run|status|reset|install-service|uninstall-service`:
+//! the one host-wide inference-admission authority (#1679 P3, #2024 S3).
+//!
+//! `run` owns the singleton lock and sockets until SIGTERM/SIGINT. Every other
+//! action is owner-only administration invoked through one `application/admission`
+//! use case (`status`→inspect, `reset`, `install-service`, `uninstall-service`).
+//! `status`/`reset`/`install-service`/`uninstall-service` (and `run`) address
+//! the **global** config file (or an explicit `--config`/`--directory`), never
+//! the cwd overlay — S1 made `admission` global-only — so the working directory
+//! no longer changes which broker you address. Every output names the directory
+//! it addressed.
+use std::path::PathBuf;
+
 use super::CliContext;
-use crate::infrastructure::admission::{
-    AdminConnection, AuthorityDirectory, AuthorityServer, ServerError,
+use crate::application::admission::dto::{
+    AuthorityAdminError, InstallServiceRequest, ServiceAction, ServiceReport,
 };
+use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
 use crate::infrastructure::config::Config;
+use crate::infrastructure::config_admission::default_admission_directory;
+
+/// Parsed options shared by the broker actions.
+struct BrokerArgs {
+    config: Option<PathBuf>,
+    directory: Option<PathBuf>,
+    dry_run: bool,
+    accept_missing_ledger: bool,
+}
+
+fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
+    let mut parsed = BrokerArgs {
+        config: None,
+        directory: None,
+        dry_run: false,
+        accept_missing_ledger: false,
+    };
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" => {
+                let Some(value) = args.get(i + 1) else {
+                    stderr.push_str("admission-broker: --config needs a path\n");
+                    return None;
+                };
+                parsed.config = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--directory" => {
+                let Some(value) = args.get(i + 1) else {
+                    stderr.push_str("admission-broker: --directory needs a path\n");
+                    return None;
+                };
+                parsed.directory = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--dry-run" => {
+                parsed.dry_run = true;
+                i += 1;
+            }
+            "--accept-missing-ledger" => {
+                parsed.accept_missing_ledger = true;
+                i += 1;
+            }
+            other => {
+                stderr.push_str(&format!("admission-broker: unknown option '{other}'\n"));
+                return None;
+            }
+        }
+    }
+    Some(parsed)
+}
+
+/// The global config path a broker command addresses: an explicit `--config`,
+/// else `<base_dir>/config.json` (never the cwd overlay).
+fn global_config_path(ctx: &CliContext, opts: &BrokerArgs) -> PathBuf {
+    opts.config
+        .clone()
+        .unwrap_or_else(|| ctx.base_dir().join("config.json"))
+}
+
+/// The authority directory a command addresses: an explicit `--directory`
+/// wins; otherwise the global config's `admission.directory` (or the default
+/// `<base_dir>/admission` when no section is configured).
+fn resolve_directory(ctx: &CliContext, opts: &BrokerArgs) -> Result<PathBuf, String> {
+    if let Some(directory) = &opts.directory {
+        if !directory.is_absolute() {
+            return Err(format!(
+                "admission-broker: --directory {} must be absolute",
+                directory.display()
+            ));
+        }
+        return Ok(directory.clone());
+    }
+    let base_dir = ctx.base_dir();
+    let config_path = global_config_path(ctx, opts);
+    if config_path.exists() {
+        let config = Config::load(config_path.to_str().unwrap_or(""))
+            .map_err(|e| {
+                format!(
+                    "admission-broker: failed to load config {}: {e}",
+                    config_path.display()
+                )
+            })?
+            .with_admission_base_dir(&base_dir);
+        match config.admission_proposal() {
+            Ok(Some((directory, _))) => return Ok(directory),
+            Ok(None) => {}
+            Err(error) => return Err(format!("admission-broker: {error}")),
+        }
+    }
+    Ok(default_admission_directory(&base_dir))
+}
 
 pub(crate) fn cmd_admission_broker(
     ctx: &CliContext,
@@ -15,27 +119,290 @@ pub(crate) fn cmd_admission_broker(
 ) -> i32 {
     crate::infrastructure::logging::install_redacting_subscriber();
     let Some(action) = args.first().map(String::as_str) else {
-        stderr.push_str("admission-broker: expected one of run, status, reset\n");
+        stderr.push_str(
+            "admission-broker: expected one of run, status, reset, install-service, uninstall-service\n",
+        );
         return 2;
     };
-    let base_dir = ctx.base_dir();
-    let selection = match ctx.config_selection() {
-        Ok(selection) => selection,
+    let Some(opts) = parse_args(&args[1..], stderr) else {
+        return 2;
+    };
+    match action {
+        "run" => cmd_run(ctx, &opts, stdout, stderr),
+        "status" => cmd_status(ctx, &opts, stdout, stderr),
+        "reset" => cmd_reset(ctx, &opts, stdout, stderr),
+        "install-service" => cmd_install(ctx, &opts, stdout, stderr),
+        "uninstall-service" => cmd_uninstall(ctx, &opts, stdout, stderr),
+        other => {
+            stderr.push_str(&format!(
+                "admission-broker: unknown action '{other}' (expected run, status, reset, install-service, uninstall-service)\n"
+            ));
+            2
+        }
+    }
+}
+
+fn cmd_status(
+    ctx: &CliContext,
+    opts: &BrokerArgs,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let directory = match resolve_directory(ctx, opts) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
         Err(error) => {
             stderr.push_str(&format!("admission-broker: {error}\n"));
             return 1;
         }
     };
-    if let Some(msg) = super::selected_config_missing(selection.path(), selection.must_exist()) {
-        stderr.push_str(&format!("admission-broker: {msg}\n"));
+    match handles.inspect.execute(&directory) {
+        Ok(report) => {
+            stdout.push_str(&status_json(&report).to_string());
+            stdout.push('\n');
+            0
+        }
+        Err(AuthorityAdminError::NotRunning { directory, reason }) => {
+            stderr.push_str(&format!(
+                "admission-broker: not running for directory {} ({reason})\n",
+                directory.display()
+            ));
+            1
+        }
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            1
+        }
+    }
+}
+
+fn cmd_reset(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mut String) -> i32 {
+    let directory = match resolve_directory(ctx, opts) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
+    match handles.reset.execute(&directory) {
+        Ok(report) => {
+            stdout.push_str(
+                &serde_json::json!({"directory": report.directory, "epoch": report.epoch})
+                    .to_string(),
+            );
+            stdout.push('\n');
+            stderr.push_str(&format!(
+                "admission-broker: reset acknowledged for {}: old-epoch remote work is no longer claimed bounded; every session reconnects\n",
+                report.directory.display()
+            ));
+            0
+        }
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            1
+        }
+    }
+}
+
+fn cmd_install(
+    ctx: &CliContext,
+    opts: &BrokerArgs,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let directory = match resolve_directory(ctx, opts) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let config = match install_config_path(ctx, opts) {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let binary = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            stderr.push_str(&format!(
+                "admission-broker: cannot resolve the quecto binary path: {error}\n"
+            ));
+            return 1;
+        }
+    };
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
+    match handles.install.execute(InstallServiceRequest {
+        binary,
+        config,
+        directory,
+        dry_run: opts.dry_run,
+    }) {
+        Ok(report) => {
+            print_service_report(&report, stdout);
+            0
+        }
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: install-service: {error}\n"));
+            1
+        }
+    }
+}
+
+fn cmd_uninstall(
+    ctx: &CliContext,
+    opts: &BrokerArgs,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let directory = match resolve_directory(ctx, opts) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
+    match handles.uninstall.execute(directory, opts.dry_run) {
+        Ok(report) => {
+            print_service_report(&report, stdout);
+            0
+        }
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: uninstall-service: {error}\n"));
+            1
+        }
+    }
+}
+
+/// The config path baked into the installed unit: an explicit `--config`, else
+/// the global `<base_dir>/config.json`, canonicalized to an absolute path so
+/// the unit never depends on a working directory.
+fn install_config_path(ctx: &CliContext, opts: &BrokerArgs) -> Result<PathBuf, String> {
+    let path = global_config_path(ctx, opts);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&path))
+            .map_err(|e| format!("admission-broker: cannot resolve cwd for --config: {e}"))?
+    };
+    Ok(absolute)
+}
+
+fn print_service_report(report: &ServiceReport, stdout: &mut String) {
+    stdout.push_str(&format!(
+        "admission-broker: {} {} (directory {})\n",
+        if report.dry_run {
+            "would apply"
+        } else {
+            "applied"
+        },
+        report.unit,
+        report.directory.display()
+    ));
+    for action in &report.actions {
+        stdout.push_str("  - ");
+        stdout.push_str(&describe_action(action));
+        stdout.push('\n');
+    }
+}
+
+fn describe_action(action: &ServiceAction) -> String {
+    match action {
+        ServiceAction::WroteUnit { path } => format!("wrote unit {}", path.display()),
+        ServiceAction::UnitUnchanged { path } => {
+            format!("unit {} already up to date", path.display())
+        }
+        ServiceAction::RemovedUnit { path } => format!("removed unit {}", path.display()),
+        ServiceAction::NoUnitToRemove { path } => {
+            format!("no unit to remove at {}", path.display())
+        }
+        ServiceAction::DaemonReloaded => "reloaded the user daemon".to_string(),
+        ServiceAction::EnabledAndStarted { unit } => format!("enabled and started {unit}"),
+        ServiceAction::DisabledAndStopped { unit } => format!("disabled and stopped {unit}"),
+        ServiceAction::NothingToDisable { unit } => format!("{unit} was not enabled"),
+        ServiceAction::Planned { description } => format!("(dry run) {description}"),
+    }
+}
+
+fn status_json(report: &crate::application::admission::dto::AuthorityReport) -> serde_json::Value {
+    let groups: serde_json::Map<String, serde_json::Value> = report
+        .groups
+        .iter()
+        .map(|(id, s)| {
+            (
+                id.clone(),
+                serde_json::json!({
+                    "active": s.active,
+                    "queued": s.queued,
+                    "uncertain": s.uncertain,
+                    "cooldown_until_ms": s.cooldown_until_ms,
+                    "unavailable": s.unavailable,
+                }),
+            )
+        })
+        .collect();
+    serde_json::json!({
+        "directory": report.directory,
+        "epoch": report.epoch,
+        "journal_healthy": report.journal_healthy,
+        "live_scopes": report.live_scopes,
+        "groups": groups,
+    })
+}
+
+fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mut String) -> i32 {
+    let base_dir = ctx.base_dir();
+    // `run` needs the full proposal, so it loads the global config (or an
+    // explicit --config); `--directory` alone cannot serve a policy.
+    let config_path = global_config_path(ctx, opts);
+    if opts.directory.is_some() && opts.config.is_none() {
+        stderr.push_str(
+            "admission-broker: run needs a config (--config or the global file), not just --directory\n",
+        );
         return 1;
     }
-    let config = match Config::load(selection.path().to_str().unwrap_or("")) {
+    if !config_path.exists() {
+        stderr.push_str(&format!(
+            "admission-broker: config {} not found; nothing to serve\n",
+            config_path.display()
+        ));
+        return 1;
+    }
+    let config = match Config::load(config_path.to_str().unwrap_or("")) {
         Ok(config) => config.with_admission_base_dir(&base_dir),
         Err(error) => {
             stderr.push_str(&format!(
                 "admission-broker: failed to load config {}: {error}\n",
-                selection.path().display()
+                config_path.display()
             ));
             return 1;
         }
@@ -53,16 +420,10 @@ pub(crate) fn cmd_admission_broker(
             return 1;
         }
     };
-    let accept_missing_ledger = args[1..]
-        .iter()
-        .any(|flag| flag == "--accept-missing-ledger");
-    if let Some(unknown) = args[1..]
-        .iter()
-        .find(|flag| flag.as_str() != "--accept-missing-ledger")
-    {
-        stderr.push_str(&format!("admission-broker: unknown option '{unknown}'\n"));
-        return 2;
-    }
+    stderr.push_str(&format!(
+        "admission-broker: serving authority directory {}\n",
+        directory.display()
+    ));
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -84,80 +445,13 @@ pub(crate) fn cmd_admission_broker(
             return 1;
         }
     };
-    match action {
-        "run" => runtime.block_on(run(dir, proposal, accept_missing_ledger, stdout, stderr)),
-        "status" => runtime.block_on(async {
-            match AdminConnection::connect(&dir.admin_socket()).await {
-                Ok(admin) => match admin.inspect().await {
-                    Ok(status) => {
-                        stdout.push_str(&status_json(&status).to_string());
-                        stdout.push('\n');
-                        0
-                    }
-                    Err(error) => {
-                        stderr.push_str(&format!("admission-broker: {error}\n"));
-                        1
-                    }
-                },
-                Err(error) => {
-                    stderr.push_str(&format!("admission-broker: not running ({error})\n"));
-                    1
-                }
-            }
-        }),
-        "reset" => runtime.block_on(async {
-            match AdminConnection::connect(&dir.admin_socket()).await {
-                Ok(admin) => match admin.reset().await {
-                    Ok(epoch) => {
-                        stdout.push_str(&format!("{{\"epoch\":{epoch}}}\n"));
-                        stderr.push_str(
-                            "admission-broker: reset acknowledged: old-epoch remote work is no longer claimed bounded; every session must reconnect\n",
-                        );
-                        0
-                    }
-                    Err(error) => {
-                        stderr.push_str(&format!("admission-broker: {error}\n"));
-                        1
-                    }
-                },
-                Err(error) => {
-                    stderr.push_str(&format!("admission-broker: not running ({error})\n"));
-                    1
-                }
-            }
-        }),
-        other => {
-            stderr.push_str(&format!(
-                "admission-broker: unknown action '{other}' (expected run, status, reset)\n"
-            ));
-            2
-        }
-    }
-}
-
-fn status_json(status: &crate::application::ports::AuthorityStatus) -> serde_json::Value {
-    let groups: serde_json::Map<String, serde_json::Value> = status
-        .groups
-        .iter()
-        .map(|(id, s)| {
-            (
-                id.as_str().to_owned(),
-                serde_json::json!({
-                    "active": s.active,
-                    "queued": s.queued,
-                    "uncertain": s.uncertain,
-                    "cooldown_until_ms": s.cooldown_until,
-                    "unavailable": s.unavailable,
-                }),
-            )
-        })
-        .collect();
-    serde_json::json!({
-        "epoch": status.epoch,
-        "journal_healthy": status.journal_healthy,
-        "live_scopes": status.live_scopes,
-        "groups": groups,
-    })
+    runtime.block_on(run(
+        dir,
+        proposal,
+        opts.accept_missing_ledger,
+        stdout,
+        stderr,
+    ))
 }
 
 async fn run(

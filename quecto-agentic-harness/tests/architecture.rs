@@ -462,6 +462,21 @@ fn application_dependencies_allowed(content: &str) -> bool {
                 // (#1940); the spawn adapter implements it. The swarm ports
                 // live in `application::swarm::ports` (#1960), covered above.
                 ["crate", "application", "subagent_launch", "SubagentLaunchPorts"] => true,
+                // The admission-operation capability (#2024 S3): the admin
+                // adapter implements its `AuthorityAdmin` port and builds the
+                // port's own result/error DTOs; the service manager
+                // implements `AuthorityServiceManager` and builds its spec/
+                // status types. (The ports themselves are covered by the
+                // generic `application/<capability>/ports` rule above.)
+                [
+                    "crate",
+                    "application",
+                    "admission",
+                    "dto",
+                    "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
+                    | "AuthorityAdminError",
+                    ..,
+                ] => true,
                 ["crate", "application", ..] => false,
                 _ => true,
             }
@@ -3365,6 +3380,12 @@ fn processes_dependency_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", "ports", ..]
+        // The local service manager (#2024 S3) implements the admission
+        // capability's own service-manager port over an atomic unit-file
+        // write and the shared home-dir helper.
+        | ["crate", "application", "admission", "ports", ..]
+        | ["crate", "infrastructure", "atomic_write", ..]
+        | ["crate", "infrastructure", "tools", "path_utils", ..]
         | ["crate", "infrastructure", "processes", ..]
         | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
         ["crate", ..] => false,

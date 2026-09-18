@@ -82,6 +82,7 @@ fn an_agent_run_refuses_to_start_without_a_composed_provider_runtime() {
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         provider_runtime: None,
         ..Default::default()
     };
@@ -106,6 +107,7 @@ fn an_agent_run_refuses_to_start_without_composed_tool_policy_persistence() {
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: None,
         ..Default::default()

@@ -203,6 +203,7 @@ async fn actual_runtime_oauth_refresh(enabled: bool) {
                 &AdmissionRuntimeCandidate {
                     providers: &config,
                     admission: Some(&proposal),
+                    inherit: false,
                 },
                 &inputs,
             )

@@ -62,12 +62,23 @@ pub fn compose_and_publish_runtime(
     // or binding set is rejected instead of replacing live budgets (#1679).
     let composed = match crate::infrastructure::admission::process::current() {
         Some(admission) => {
-            let proposal = admission_candidate(config);
+            // A child inherits the parent's authority unconditionally (#2024
+            // S3, #2023): it composes against the published policy and never
+            // compares its own config's `admission` section (which S1 made
+            // global-only, so a child's explicit `--config` may differ or be
+            // `null`). Only a root validates its reload candidate.
+            let inherit = admission.inherits_authority();
+            let proposal = if inherit {
+                None
+            } else {
+                admission_candidate(config)
+            };
             ComposeProviderRuntimeUseCase::new().compose_and_publish(
                 &AdmissionProviderRuntimeFactory::new(admission.runtime_context().clone()),
                 &AdmissionRuntimeCandidate {
                     providers: config,
                     admission: proposal.as_ref(),
+                    inherit,
                 },
                 &inputs,
                 &ports,

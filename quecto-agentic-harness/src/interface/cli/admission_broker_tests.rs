@@ -9,6 +9,7 @@ fn ctx(dir: &std::path::Path) -> CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -37,9 +38,12 @@ fn administration_requires_a_section_an_action_and_a_running_authority() {
         r#"{"providers":{"anthropic":{"api_key":"k"}}}"#,
     )
     .unwrap();
+    // With no admission section, status addresses the default directory
+    // (`<base_dir>/admission`) and reports it as not running rather than
+    // erroring on the missing section (#2024 S3: status is cwd-independent).
     let (code, _, err) = run(&ctx, &["status"]);
     assert_eq!(code, 1);
-    assert!(err.contains("no `admission` section"), "{err}");
+    assert!(err.contains("not running"), "{err}");
     let (code, _, err) = run(&ctx, &[]);
     assert_eq!(code, 2);
     assert!(err.contains("expected one of"), "{err}");
@@ -93,7 +97,12 @@ fn status_and_reset_talk_to_the_running_authority() {
     assert_eq!(status["groups"]["g"]["active"], 0);
     let (code, out, err) = run(&ctx, &["reset"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out.trim(), r#"{"epoch":2}"#);
+    let reset: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(reset["epoch"], 2);
+    assert!(
+        reset["directory"].is_string(),
+        "reset names the directory: {out}"
+    );
     assert!(err.contains("reset acknowledged"), "{err}");
     rt.block_on(server.shutdown());
 }

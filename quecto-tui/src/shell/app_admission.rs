@@ -82,6 +82,13 @@ impl App {
             .master_session
             .footer
             .set_admission(label.clone(), view.compact_label());
+        // Broker health (#2024 S3): shown whenever the agent reports an
+        // authority status, independent of whether an attempt is waiting.
+        let health = view.authority_badge();
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_health(health);
         match label.filter(|_| waiting) {
             Some(label) => {
                 let message = format!("⏳ {} (Esc to interrupt)", capitalize(&label));
@@ -115,6 +122,10 @@ impl App {
             .master_session
             .footer
             .set_admission(None, None);
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_health(None);
         self.restore_spinner_after_wait();
     }
 

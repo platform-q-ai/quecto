@@ -52,6 +52,15 @@ impl AuthorityDirectory {
         Ok(dir)
     }
 
+    /// Wrap a path as an authority directory without validating or creating
+    /// it (#2024 S3): the reconnecting link keeps the path and re-validates
+    /// via [`existing`](Self::existing) on each reconnection.
+    pub fn from_directory(path: &Path) -> Self {
+        Self {
+            root: path.to_path_buf(),
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.root
     }
@@ -63,6 +72,12 @@ impl AuthorityDirectory {
     }
     pub fn admin_socket(&self) -> PathBuf {
         self.root.join(ADMIN_SOCKET)
+    }
+    /// The admin socket path for a directory without opening or validating it
+    /// (the admin client just tries to connect; a stale/missing socket
+    /// surfaces as "not running"). Used by the operator status/reset ops.
+    pub fn admin_socket_for(directory: &Path) -> PathBuf {
+        directory.join(ADMIN_SOCKET)
     }
     pub fn lock_path(&self) -> PathBuf {
         self.root.join(LOCK_FILE)

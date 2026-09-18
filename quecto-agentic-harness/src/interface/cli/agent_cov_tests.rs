@@ -443,6 +443,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         stdin_is_tty: false,
     };
     let ctx = CliContext::default();
@@ -488,6 +489,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         stdin_is_tty: false,
     };
     flags.persist = true;

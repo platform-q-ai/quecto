@@ -58,6 +58,49 @@ pub(crate) fn project(activity: &AdmissionActivity) -> AdmissionSnapshot {
         },
         hidden: activity.hidden,
         revision: activity.revision,
+        // Authority-level facts are folded in by the execution-state snapshot
+        // (which holds the process binding); the pushed event carries only the
+        // bounded activity.
+        directory: None,
+        epoch: None,
+        connected: None,
+        authority_status: None,
+    }
+}
+
+/// The authority-level view a `get_state` projection carries beside the
+/// bounded activity (#2024 S3): where the authority is, which epoch this
+/// process's capability came from, and whether it is reachable.
+#[derive(Debug, Clone)]
+pub(crate) struct AuthorityView {
+    pub directory: String,
+    pub epoch: u64,
+    pub connected: bool,
+    /// Whether this process can re-register on its own after a loss (a root
+    /// can; a child depends on its parent).
+    pub can_reconnect: bool,
+}
+
+impl AuthorityView {
+    /// `connected` when the link is open, `reconnecting` when a root can
+    /// re-register on its own, `unavailable` otherwise (a child whose parent
+    /// authority is gone).
+    pub(crate) fn status(&self) -> &'static str {
+        if self.connected {
+            "connected"
+        } else if self.can_reconnect {
+            "reconnecting"
+        } else {
+            "unavailable"
+        }
+    }
+
+    /// Fold this authority view into an admission snapshot.
+    pub(crate) fn apply(&self, snapshot: &mut AdmissionSnapshot) {
+        snapshot.directory = Some(self.directory.clone());
+        snapshot.epoch = Some(self.epoch);
+        snapshot.connected = Some(self.connected);
+        snapshot.authority_status = Some(self.status().to_string());
     }
 }
 
@@ -105,10 +148,23 @@ pub(crate) fn attach_process_admission(
     process: &crate::infrastructure::admission::ProcessAdmission,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
 ) {
-    execution_state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .set_admission_source(process.observation());
+    {
+        let mut state = execution_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.set_admission_source(process.observation());
+        // Directory/epoch are fixed for the binding; the connection is probed
+        // live so health reflects a broker that has since gone away. A root can
+        // re-register on its own; a child depends on its parent (#2024 S3).
+        let connection = process.connection().clone();
+        let can_reconnect = process.kind() == crate::infrastructure::admission::BindingKind::Root;
+        state.set_admission_authority(super::uds_execution_state::AuthorityProbe::new(
+            process.directory().display().to_string(),
+            process.epoch(),
+            can_reconnect,
+            std::sync::Arc::new(move || connection.is_open()),
+        ));
+    }
     process.on_transition(admission_event_hook(broadcast_tx.clone()));
 }
 

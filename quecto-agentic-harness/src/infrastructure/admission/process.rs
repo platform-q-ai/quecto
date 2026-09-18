@@ -70,12 +70,29 @@ pub fn read_admission_context(path: &Path) -> Result<AdmissionContext, String> {
 /// The installed binding. The runtime thread owns the connection's I/O so the
 /// binding is independent of whichever runtime the agent loop uses.
 pub struct ProcessAdmission {
-    connection: Arc<AuthorityConnection>,
+    /// The reconnecting link every gate routes through (#2024 S3): a root
+    /// re-registers after a broker restart/reset; a child fails closed.
+    link: Arc<super::link::AuthorityLink>,
     context: Arc<AdmissionRuntimeContext>,
     proposal: AdmissionRuntimeProposal,
     client_dir: PathBuf,
     recorder: Arc<super::observed_gate::AdmissionRecorder>,
     runtime: tokio::runtime::Runtime,
+    /// How this process joined: a child inherits the parent's authority and
+    /// never validates its own config against the published policy (#2024 S3,
+    /// #2023); a root validates its reload candidate.
+    kind: BindingKind,
+    /// The authority directory this process is bound to (root: its own; child:
+    /// derived from the mounted client directory), surfaced in `get_state`.
+    directory: PathBuf,
+}
+
+/// Whether this process owns the authority connection as a root or inherits it
+/// from a parent as a child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingKind {
+    Root,
+    Child,
 }
 
 impl std::fmt::Debug for ProcessAdmission {
@@ -87,14 +104,36 @@ impl std::fmt::Debug for ProcessAdmission {
 }
 
 impl ProcessAdmission {
-    pub fn connection(&self) -> &Arc<AuthorityConnection> {
-        &self.connection
+    /// The current authority connection (whatever a reconnection last
+    /// installed). Cloned per call so callers never hold a stale one.
+    pub fn connection(&self) -> Arc<AuthorityConnection> {
+        self.link.connection()
     }
     pub fn runtime_context(&self) -> &Arc<AdmissionRuntimeContext> {
         &self.context
     }
     pub fn proposal(&self) -> &AdmissionRuntimeProposal {
         &self.proposal
+    }
+    /// Whether this process inherits the authority from a parent (a child) and
+    /// so must never validate its own config against the published policy.
+    pub fn inherits_authority(&self) -> bool {
+        self.kind == BindingKind::Child
+    }
+    pub fn kind(&self) -> BindingKind {
+        self.kind
+    }
+    /// The authority directory this process is bound to.
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+    /// The authority epoch this process's current capability was minted in.
+    pub fn epoch(&self) -> u64 {
+        self.link.connection().hello().epoch
+    }
+    /// Whether the authority connection is currently open.
+    pub fn connected(&self) -> bool {
+        self.link.connection().is_open()
     }
     /// Directory containing the client socket; the only path a container
     /// child needs mounted.
@@ -210,13 +249,41 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
         .join()
         .map_err(|_| "admission negotiation thread panicked".to_string())?;
     let (connection, client_dir) = joined?;
+    let (kind, directory) = match &negotiation {
+        Negotiation::Root { directory } => (BindingKind::Root, directory.clone()),
+        // The client directory is `<authority>/client`; its parent is the
+        // authority directory a child is bound to.
+        Negotiation::Child { .. } => (
+            BindingKind::Child,
+            client_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| client_dir.clone()),
+        ),
+    };
     let proposal = connection.hello().proposal.clone();
+    // Every gate routes through one link so a root can reconnect after a
+    // broker restart/reset without the agent restarting (#2024 S3). A child
+    // link has no reconnect and fails closed on loss.
+    let link = match kind {
+        BindingKind::Root => super::link::AuthorityLink::root(
+            connection,
+            AuthorityDirectory::from_directory(&directory),
+            WorkloadClass::Interactive,
+            runtime.handle().clone(),
+        ),
+        BindingKind::Child => super::link::AuthorityLink::child(connection),
+    };
     let recorder = Arc::new(super::observed_gate::AdmissionRecorder::new());
     let mut gates: BTreeMap<String, Arc<dyn AttemptAdmission>> = BTreeMap::new();
     for (alias, group) in &proposal.policy.aliases {
-        let gate = connection
-            .gate(alias)
-            .map_err(|e| format!("admission gate for '{alias}': {e}"))?;
+        let max_cooldown_ms = proposal.policy.groups[group].max_cooldown_ms;
+        let gate: Arc<dyn AttemptAdmission> =
+            Arc::new(super::remote_gate::RemoteAdmission::linked(
+                link.clone(),
+                alias.clone(),
+                max_cooldown_ms,
+            ));
         gates.insert(
             alias.clone(),
             Arc::new(super::observed_gate::ObservedAdmission::new(
@@ -231,12 +298,14 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
         .map_err(|e| format!("admission HTTP client: {e}"))?;
     let context = AdmissionRuntimeContext::new(proposal.clone(), gates, client)?;
     Ok(ProcessAdmission {
-        connection: Arc::new(connection),
+        link,
         context: Arc::new(context),
         proposal,
         client_dir,
         recorder,
         runtime,
+        kind,
+        directory,
     })
 }
 
@@ -268,7 +337,7 @@ impl ProcessAdmission {
     /// refused as busy is reported, never forced.
     pub fn shutdown(&self, limit: std::time::Duration) -> (bool, Result<(), ClientError>) {
         let handle = self.runtime.handle().clone();
-        let connection = self.connection.clone();
+        let connection = self.link.connection();
         std::thread::spawn(move || {
             handle.block_on(async move {
                 let drained = connection.drain(limit).await;

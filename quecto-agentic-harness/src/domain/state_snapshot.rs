@@ -42,6 +42,29 @@ pub struct AdmissionSnapshot {
     pub hidden: usize,
     /// Advances on every transition (a delta cursor for `admission_state_changed`).
     pub revision: u64,
+    /// The authority directory this process is bound to (#2024 S3). Absent on
+    /// the pushed `admission_state_changed` event (which carries only the
+    /// bounded activity), present on `get_state`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub directory: Option<String>,
+    /// The authority epoch this process's capability was minted in (#2024 S3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
+    /// Whether the authority connection is currently open (#2024 S3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connected: Option<bool>,
+    /// `connected` | `reconnecting` | `unavailable` (#2024 S3): the health the
+    /// TUI footer renders. Absent when unknown (the pushed event).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "authorityStatus"
+    )]
+    pub authority_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
