@@ -444,6 +444,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/subagents/mod.rs",
     "src/application/subagents/dto.rs",
     "src/application/subagents/ports.rs",
+    "src/application/subagents/standard_script.rs",
     "src/application/environments/mod.rs",
     "src/application/environments/use_cases/mod.rs",
     "src/application/environments/use_cases/list_environments.rs",
