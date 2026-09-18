@@ -60,3 +60,30 @@ fn then_response_error(world: &mut QuectoWorld, id: String, error: String) {
     assert_eq!(resp["success"], false, "response {id}: {resp}");
     assert_eq!(resp["error"], error, "response {id}: {resp}");
 }
+
+// ── #1995: a refused resume of the loop's own key keeps its ownership ───────
+
+#[then(expr = "the live resume is refused with the error {string}")]
+fn then_live_resume_refused(world: &mut QuectoWorld, error: String) {
+    let ack = super::restore_lifetime_steps::state(world)
+        .harness
+        .as_ref()
+        .and_then(|harness| harness.resume_ack.clone())
+        .expect("a resume acknowledgement from the live harness");
+    assert_eq!(ack["success"], false, "{ack}");
+    assert_eq!(ack["error"], error, "{ack}");
+}
+
+/// A second claimant — an independent ownership registry, so an independent
+/// open file description, exactly as another process would claim — while
+/// the harness is still serving.
+#[then(expr = "a second claimant is refused session key {string} while the harness serves")]
+fn then_second_claimant_refused(world: &mut QuectoWorld, key: String) {
+    use quecto::infrastructure::persistence::session_ownership::SessionOwnershipRegistry;
+    let base = super::restore_lifetime_steps::base(world);
+    let identity = SessionIdentity::from_persisted_key(key.as_str());
+    let claimant = SessionOwnershipRegistry::default();
+    let claim = claimant.claim(&FlatSessionLayout::new(&base), &identity);
+    let error = claim.expect_err("the serving loop must still own its session key");
+    assert!(error.to_string().contains(&key), "{error}");
+}

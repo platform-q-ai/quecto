@@ -329,6 +329,18 @@ Feature: UDS mode for headless agent operation
     And the session keys of the responses with ids "gs-0" and "gs-1" should match
     And the agent output should contain a response command "prompt" with success true
 
+  # #1995: the claim step of a same-key resume takes nothing new (the loop
+  # already owns its key), so no refusal after it may release that claim.
+  @done @issue-1995 @issue-1863
+  Scenario: resume_session of the loop's own key with no saved file keeps the loop's ownership of it
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    And a restoring UDS harness with a subagent registry
+    When the client resumes session "restoring-master"
+    Then the live resume is refused with the error "session not found: restoring-master"
+    And a second claimant is refused session key "cli:restoring-master" while the harness serves
+    When the client disconnects from the restoring harness
+    Then the restoring harness exits within 10 seconds
+
   @done @issue-1977 @issue-1863
   Scenario: resume_session is refused on an ephemeral loop
     Given a temp base directory
