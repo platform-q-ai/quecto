@@ -215,7 +215,7 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
     let read_error = report.read_error.as_deref().expect("read error reported");
     assert!(read_error.contains("could not be read"), "{report:?}");
     assert!(read_error.contains("corrupt"), "{report:?}");
-    assert_eq!(registry.mint_ref(), "C1");
+    assert_eq!(registry.mint_ref().unwrap(), "C1");
     assert_eq!(*store.next.lock().unwrap(), 1);
 }
 
@@ -224,7 +224,7 @@ fn the_journal_writes_every_transition_and_forgets_a_rolled_back_create() {
     let store = store_with(vec![]);
     let process = process(|_| EnvironmentLiveness::Running);
     let (registry, _) = RestoreRegistry::new(store.clone(), process).execute("s");
-    let reference = registry.mint_ref();
+    let reference = registry.mint_ref().unwrap();
     assert_eq!(reference, "C1");
     let mut created = record(&reference, EnvironmentStatus::Running);
     created.members.clear();
@@ -245,16 +245,19 @@ fn the_journal_writes_every_transition_and_forgets_a_rolled_back_create() {
     assert!(store.load().unwrap().is_empty());
 }
 
+/// Review F9 (#2033): a store that cannot allocate refuses the mint in
+/// its own words; the rest of the journal fails soft (no panic).
 #[test]
-fn a_failing_store_never_panics_and_the_in_memory_counter_takes_over() {
+fn a_failing_store_never_panics_and_refuses_to_mint() {
     let store = Arc::new(FakeStore {
         fail_writes: true,
         ..Default::default()
     });
     let process = process(|_| EnvironmentLiveness::Running);
     let (registry, _) = RestoreRegistry::new(store, process).execute("s");
-    assert_eq!(registry.mint_ref(), "C1");
-    assert_eq!(registry.mint_ref(), "C2");
+    let refused = registry.mint_ref().unwrap_err();
+    assert!(refused.to_string().contains("disk full"), "{refused}");
+    assert!(registry.mint_ref().is_err());
     registry.commit(record("C2", EnvironmentStatus::Running));
     let claim = registry.begin_kill("C2").unwrap();
     registry.complete_kill(claim);
@@ -269,7 +272,7 @@ fn an_unseeded_registry_journals_but_inherits_nothing() {
     assert!(registry.entries().is_empty());
     assert_eq!(registry.session(), "child");
     // Refs still come from the shared store: no collision with C5.
-    assert_eq!(registry.mint_ref(), "C6");
+    assert_eq!(registry.mint_ref().unwrap(), "C6");
     registry.commit(record("C6", EnvironmentStatus::Running));
     assert_eq!(store.load().unwrap().len(), 2);
 }

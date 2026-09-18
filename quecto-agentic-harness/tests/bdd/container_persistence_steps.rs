@@ -661,3 +661,13 @@ fn then_gc_keeps_running(world: &mut QuectoWorld, id: String, container: String)
         });
     assert!(kept, "gc report should keep {id}:\n{}", world.stdout);
 }
+
+#[then(expr = "the persistent runtime should have created an environment exactly {int} time(s)")]
+fn then_created_times(world: &mut QuectoWorld, n: usize) {
+    assert_eq!(
+        invocations(world, "create"),
+        n,
+        "log: {}",
+        std::fs::read_to_string(log_path(world)).unwrap_or_default()
+    );
+}

@@ -725,11 +725,11 @@ fn spawn_tool_environment_registry_and_inherited_policy_builders_are_observed() 
     use std::collections::BTreeMap;
 
     let registry = EnvironmentRegistry::new();
-    let first = registry.mint_ref();
+    let first = registry.mint_ref().unwrap();
     let tool = SpawnTool::new(vec![]).with_environment_registry(registry.clone());
-    let second = tool.environment_registry().mint_ref();
+    let second = tool.environment_registry().mint_ref().unwrap();
     assert_ne!(first, second);
-    assert_eq!(registry.mint_ref(), "C3");
+    assert_eq!(registry.mint_ref().unwrap(), "C3");
 
     let mut tools = BTreeMap::new();
     tools.insert("bash".to_string(), ProfileAvailabilityScope::Both);

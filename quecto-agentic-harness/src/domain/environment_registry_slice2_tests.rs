@@ -4,7 +4,7 @@
 use super::*;
 
 fn commit_env(reg: &EnvironmentRegistry, name: Option<&str>) -> String {
-    let env_ref = reg.mint_ref();
+    let env_ref = reg.mint_ref().unwrap();
     reg.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: format!("runtime-{env_ref}"),

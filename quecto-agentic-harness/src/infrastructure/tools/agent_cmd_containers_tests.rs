@@ -44,7 +44,7 @@ fn use_case(registry: EnvironmentRegistry) -> Arc<KillEnvironment> {
 
 fn committed_registry() -> EnvironmentRegistry {
     let registry = EnvironmentRegistry::new();
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(EnvironmentRecord {
         environment_ref: env_ref,
         environment_id: "env-tool".into(),
@@ -232,7 +232,7 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
     .enumerate()
     {
         let mut record = committed_registry().get("C1").unwrap();
-        record.environment_ref = registry.mint_ref();
+        record.environment_ref = registry.mint_ref().unwrap();
         record.status = status;
         record.name = (index % 2 == 0).then(|| format!("name-{index}"));
         record.repository = format!("https://example.test/repo-{index}.git");

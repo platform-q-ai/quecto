@@ -153,3 +153,59 @@ fn the_store_names_its_document_under_the_base_dir() {
     let error = store.load().unwrap_err();
     assert!(error.contains("environments.json"), "{error}");
 }
+
+/// Review F5 (#2033): a joiner's journal writes on a *restored* record are
+/// compare-and-set on the status it last loaded or wrote, never a whole
+/// record replacement — so a joiner's inspect racing the creator's
+/// retention leaves the creator's `Retained` on file, and a joiner's
+/// later kill (a real transition from what is now on file) still lands.
+#[test]
+fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
+    use crate::application::environments::dto::EnvironmentLiveness;
+    use crate::application::environments::ports::EnvironmentProcess;
+    use crate::application::environments::use_cases::RestoreRegistry;
+    use std::sync::Arc;
+
+    struct AlwaysRunning;
+    impl EnvironmentProcess for AlwaysRunning {
+        fn observe(&self, _: &EnvironmentRecord) -> EnvironmentLiveness {
+            EnvironmentLiveness::Running
+        }
+        fn cleanup(&self, _: &EnvironmentRecord) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let store: Arc<dyn EnvironmentRegistryStore> =
+        Arc::new(FileEnvironmentRegistryStore::for_base_dir(dir.path()));
+    let restore = RestoreRegistry::new(store.clone(), Arc::new(AlwaysRunning));
+    // The creator's session: its own record, one member.
+    let creator = restore.unseeded("creator");
+    let mut created = record("C1", EnvironmentStatus::Running);
+    created.members.clear();
+    creator.commit(created);
+    creator.add_member("C1", "member-1").unwrap();
+    // The joiner's session restores C1 (running) and joins it.
+    let (joiner, report) = restore.execute("joiner");
+    assert_eq!(report.restored, ["C1"]);
+    joiner.add_member("C1", "observer").unwrap();
+    let inspect = joiner.begin_inspect("C1", "observer").expect("claim");
+    // Meanwhile the creator's last member leaves and the run retains it.
+    let claim = creator.remove_member("C1", "member-1").unwrap().unwrap();
+    creator.retain(claim, "run ended: complete");
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Retained);
+    // The joiner's inspect lands after: metadata only, status untouched.
+    joiner.record_inspect_success(inspect, serde_json::json!({"cause": "observed"}));
+    let on_file = &store.load().unwrap()[0];
+    assert_eq!(
+        on_file.status,
+        EnvironmentStatus::Retained,
+        "the joiner's inspect must not revert the creator's retention: {on_file:?}"
+    );
+    assert_eq!(on_file.metadata["retained"], "run ended: complete");
+    // A joiner's explicit kill is a transition from what is on file now.
+    let claim = joiner.begin_kill("C1").unwrap();
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Killing);
+    joiner.complete_kill(claim);
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Stopped);
+}

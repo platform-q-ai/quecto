@@ -90,7 +90,7 @@ fn rig(rows: Vec<(&str, SubagentEntry)>) -> Rig {
 fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<String>) -> Rig {
     let registry: SubagentRegistry = Arc::new(Mutex::new(Default::default()));
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-contract".into(),

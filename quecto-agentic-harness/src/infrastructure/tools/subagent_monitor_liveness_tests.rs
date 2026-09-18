@@ -46,7 +46,7 @@ fn write_inspect_script_with_body(dir: &std::path::Path, body: &str) -> std::pat
 
 fn environment_with_inspect(inspect: Vec<String>) -> (EnvironmentRegistry, String) {
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-live".into(),

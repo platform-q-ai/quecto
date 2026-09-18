@@ -26,25 +26,25 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
 #[test]
 fn refs_are_monotonic_never_reused_and_scoped_per_registry() {
     let registry = EnvironmentRegistry::new();
-    let first = registry.mint_ref();
-    let second = registry.mint_ref();
+    let first = registry.mint_ref().unwrap();
+    let second = registry.mint_ref().unwrap();
     assert_eq!(first, "C1");
     assert_eq!(second, "C2");
 
     // A failed launch consumes its ref: removal never recycles it.
     registry.commit(record(&second, "env-a"));
     registry.remove(&second);
-    assert_eq!(registry.mint_ref(), "C3");
+    assert_eq!(registry.mint_ref().unwrap(), "C3");
 
     // Registries are session-scoped, not process-global.
     let other_session = EnvironmentRegistry::new();
-    assert_eq!(other_session.mint_ref(), "C1");
+    assert_eq!(other_session.mint_ref().unwrap(), "C1");
 }
 
 #[test]
 fn commit_get_remove_round_trip() {
     let registry = EnvironmentRegistry::new();
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(record(&env_ref, "env-a"));
     assert_eq!(registry.get(&env_ref).unwrap().environment_id, "env-a");
     assert_eq!(registry.entries().len(), 1);
@@ -70,7 +70,7 @@ fn lock_poison_recovery_keeps_registry_usable() {
     // Every accessor must recover from the poisoned lock without losing state.
     // The committed C1 advanced the counter (#2024 S4d: a seeded ref is
     // never re-minted), so the next mint is C2.
-    assert_eq!(registry.mint_ref(), "C2");
+    assert_eq!(registry.mint_ref().unwrap(), "C2");
     registry.commit(record("C2", "env-b"));
     assert_eq!(registry.get("C1").unwrap().environment_id, "env-a");
     assert_eq!(registry.entries().len(), 2);
@@ -82,7 +82,7 @@ fn lock_poison_recovery_keeps_registry_usable() {
 #[test]
 fn lock_poison_recovery_covers_member_kill_and_inspect_paths() {
     let registry = EnvironmentRegistry::new();
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(record(&env_ref, "env-a"));
 
     let poisoner = registry.clone();
@@ -130,17 +130,22 @@ fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
             move || {
                 let mut counter = counter.lock().unwrap();
                 *counter += 1;
-                Some(*counter)
+                Ok(*counter)
             }
         }),
         recorded: Arc::new({
             let recorded = recorded.clone();
-            move |record: &EnvironmentRecord| {
-                recorded.lock().unwrap().push(format!(
-                    "{}:{}",
-                    record.environment_ref,
-                    record.status_label()
-                ))
+            move |record: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
+                recorded.lock().unwrap().push(match expected {
+                    None => format!("{}:{}", record.environment_ref, record.status_label()),
+                    Some(expected) => format!(
+                        "{}:{}?{}",
+                        record.environment_ref,
+                        record.status_label(),
+                        expected_label(expected)
+                    ),
+                });
+                JournalWrite::Written
             }
         }),
         forgotten: Arc::new({
@@ -157,8 +162,8 @@ fn a_journalled_registry_allocates_through_the_journal_and_reports_every_transit
     let registry = EnvironmentRegistry::with_journal(journal, "cli:one");
     assert!(registry.is_durable());
     assert_eq!(registry.session(), "cli:one");
-    assert_eq!(registry.mint_ref(), "C11");
-    assert_eq!(registry.mint_ref(), "C12");
+    assert_eq!(registry.mint_ref().unwrap(), "C11");
+    assert_eq!(registry.mint_ref().unwrap(), "C12");
     registry.commit(record("C12", "env-a"));
     registry.add_member("C12", "m1").unwrap();
     let claim = registry.remove_member("C12", "m1").unwrap().unwrap();
@@ -187,19 +192,36 @@ fn a_journalled_registry_allocates_through_the_journal_and_reports_every_transit
     assert!(format!("{registry:?}").contains("EnvironmentJournal"));
 }
 
+fn expected_label(status: &EnvironmentStatus) -> &'static str {
+    let mut probe = record("Cx", "probe");
+    probe.status = status.clone();
+    probe.status_label()
+}
+
+/// Review F9 (#2033): a durable registry whose journal cannot allocate
+/// refuses to mint — never a counter that could collide with a ref a live
+/// session holds in the base directory's registry.
 #[test]
-fn a_journal_that_cannot_allocate_falls_back_to_the_counter_past_every_seen_ref() {
+fn a_journal_that_cannot_allocate_refuses_the_mint() {
     let (mut journal, _, _) = test_journal();
-    journal.allocate_ref = Arc::new(|| None);
+    journal.allocate_ref = Arc::new(|| Err("registry unreadable".into()));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.restore(vec![record("C7", "env-seven")]);
-    assert_eq!(registry.mint_ref(), "C8");
+    let refused = registry.mint_ref().unwrap_err();
+    assert_eq!(
+        refused,
+        RefAllocationError::JournalUnavailable("registry unreadable".into())
+    );
+    assert!(refused.to_string().contains("registry unreadable"));
+    // A journal-less registry still counts in memory.
+    let registry = EnvironmentRegistry::new();
+    assert_eq!(registry.mint_ref().unwrap(), "C1");
     // A journal answering below the counter never moves it backwards.
     let (mut journal, _, _) = test_journal();
-    journal.allocate_ref = Arc::new(|| Some(1));
+    journal.allocate_ref = Arc::new(|| Ok(1));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C3", "env-three"));
-    assert_eq!(registry.mint_ref(), "C4");
+    assert_eq!(registry.mint_ref().unwrap(), "C4");
 }
 
 #[test]
@@ -241,4 +263,58 @@ fn ref_numbers_parse_only_well_formed_refs() {
     assert_eq!(ref_number("C1a"), None);
     assert_eq!(ref_number("D1"), None);
     assert_eq!(ref_number(""), None);
+}
+
+/// Review F5 (#2033): a restored record is journalled compare-and-set on
+/// the status the journal is known to hold — what was loaded, then what
+/// this registry last wrote, or what it learnt superseded it — while a
+/// record this session created is written as it is.
+#[test]
+fn restored_records_are_journalled_compare_and_set_on_the_last_known_status() {
+    let (mut journal, recorded, _) = test_journal();
+    let superseded = Arc::new(Mutex::new(false));
+    journal.recorded = Arc::new({
+        let recorded = recorded.clone();
+        let superseded = superseded.clone();
+        move |record: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
+            recorded.lock().unwrap().push(format!(
+                "{}:{}?{}",
+                record.environment_ref,
+                record.status_label(),
+                expected.map(expected_label).unwrap_or("-")
+            ));
+            if *superseded.lock().unwrap() {
+                JournalWrite::Superseded {
+                    current: EnvironmentStatus::Retained,
+                }
+            } else {
+                JournalWrite::Written
+            }
+        }
+    });
+    let registry = EnvironmentRegistry::with_journal(journal, "joiner");
+    registry.restore(vec![record("C2", "env-two")]);
+    registry.commit(record("C9", "env-nine"));
+    registry.add_member("C2", "observer").unwrap();
+    // An inspect on the restored record expects what was loaded.
+    let claim = registry.begin_inspect("C2", "observer").unwrap();
+    registry.record_inspect_success(claim, serde_json::json!({}));
+    // The creator moved it on meanwhile: this write is superseded, and
+    // the next one expects what the creator wrote.
+    *superseded.lock().unwrap() = true;
+    let claim = registry.begin_inspect("C2", "observer-2").unwrap();
+    registry.record_inspect_failure(claim, "late");
+    *superseded.lock().unwrap() = false;
+    let claim = registry.begin_kill("C2").unwrap();
+    registry.complete_kill(claim);
+    assert_eq!(
+        recorded.lock().unwrap().as_slice(),
+        [
+            "C9:empty?-",
+            "C2:running?empty",
+            "C2:running?empty",
+            "C2:killing?retained",
+            "C2:stopped?killing",
+        ]
+    );
 }

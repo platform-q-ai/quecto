@@ -153,6 +153,16 @@ Feature: Environments outlive sessions
     And stderr should contain "durable environment registry could not be read"
 
   @done @issue-2024 @container-env
+  Scenario: A container create is refused while the durable registry cannot be read
+    Given script-managed child "impl-refuse-a" is running in a shared environment with task "IMPL_REFUSE_A_MARKER"
+    And the durable environment registry on disk is corrupted
+    When the harness is restarted as session "session-two"
+    And I spawn script-managed subagent "impl-refuse-b" into a new shared environment with task "IMPL_REFUSE_B_MARKER"
+    Then the spawn result should be an error mentioning "container create refused"
+    And the spawn result should be an error mentioning "is not a valid environment registry"
+    And the persistent runtime should have created an environment exactly 1 time
+
+  @done @issue-2024 @container-env
   Scenario: quecto container gc runs the retained cleanup of a stopped record whose state dir lingers
     Given script-managed child "impl-gc-stopped" is running in a shared environment with task "IMPL_GC_STOPPED_MARKER"
     And the fake runtime loses the container of "C1" behind the harness's back

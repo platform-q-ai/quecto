@@ -161,7 +161,7 @@ fn committed_env_with_scripts(
     retained_kill_argv: Vec<String>,
     retained_inspect_argv: Vec<String>,
 ) -> String {
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: format!("runtime-{env_ref}"),

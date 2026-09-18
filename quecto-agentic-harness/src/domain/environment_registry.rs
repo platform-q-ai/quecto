@@ -161,6 +161,29 @@ pub fn mint_environment_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// What a journal write came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JournalWrite {
+    /// The record is on file as given.
+    Written,
+    /// The record on file no longer had the status the write expected
+    /// (another session moved it on); nothing was written and `current`
+    /// is what stands.
+    Superseded { current: EnvironmentStatus },
+    /// The journal could not be written; the account is the journal's own.
+    Unavailable,
+}
+
+/// Why a ref could not be minted.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RefAllocationError {
+    /// A durable registry's journal could not allocate: the base
+    /// directory's registry is unreadable or unwritable, so a ref minted
+    /// from memory could collide with one a live session holds there.
+    #[error("environment ref could not be allocated from the durable registry: {0}")]
+    JournalUnavailable(String),
+}
+
 /// The durable side of the registry (#2024 S4d): where refs are allocated
 /// and where every committed record and transition is written. Installed
 /// by the application over its store; the registry only reports — it never
@@ -168,13 +191,17 @@ pub fn mint_environment_uuid() -> String {
 #[derive(Clone)]
 pub struct EnvironmentJournal {
     /// Allocate the next ref number, unique across every session sharing the
-    /// base directory. `None` means the journal could not allocate; the
-    /// registry then falls back to its in-memory counter (seeded past every
-    /// restored ref) and the caller's account of the failure is the
-    /// journal's own to report.
-    pub allocate_ref: Arc<dyn Fn() -> Option<u64> + Send + Sync>,
-    /// A record was committed or one of its persisted fields changed.
-    pub recorded: Arc<dyn Fn(&EnvironmentRecord) + Send + Sync>,
+    /// base directory. `Err` means the journal could not allocate; the
+    /// registry then refuses to mint (review F9, #2033) — a counter minted
+    /// from memory could collide with a ref a live session holds.
+    pub allocate_ref: Arc<dyn Fn() -> Result<u64, String> + Send + Sync>,
+    /// A record was committed or one of its persisted fields changed. With
+    /// `expected` the write is compare-and-set: applied only while the
+    /// record on file still has that status (review F5, #2033 — a record
+    /// another session created is written conditionally, never replaced
+    /// whole, so a joiner's inspect cannot revert its creator's `retained`).
+    pub recorded:
+        Arc<dyn Fn(&EnvironmentRecord, Option<&EnvironmentStatus>) -> JournalWrite + Send + Sync>,
     /// A record was removed (a rolled-back create).
     pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
 }
@@ -213,6 +240,10 @@ struct EnvironmentRegistryState {
     /// Environments carrying a recorded inspect failure. A later successful
     /// kill must not erase that truthfully persisted error.
     inspect_failures: std::collections::BTreeSet<String>,
+    /// For every restored record, the status the journal is known to hold:
+    /// what was loaded, then what this registry last wrote (or learnt it
+    /// was superseded by). The expectation each journal write is made on.
+    journalled: BTreeMap<String, EnvironmentStatus>,
 }
 
 /// Cloneable handle to one session's environment registry.
@@ -260,19 +291,23 @@ impl EnvironmentRegistry {
     /// session, even when the launch they were minted for later fails or the
     /// environment is stopped. A durable registry allocates through its
     /// journal, so the ref is unique across every session of the base
-    /// directory; when the journal cannot allocate, the in-memory counter
-    /// (already past every ref seen) takes over.
-    pub fn mint_ref(&self) -> String {
-        let allocated = self
-            .journal
-            .as_ref()
-            .and_then(|journal| (journal.allocate_ref)());
+    /// directory; when the journal cannot allocate, minting is refused
+    /// (review F9, #2033) — never a counter that could collide with a ref
+    /// another session holds. A registry without a journal counts in
+    /// memory.
+    pub fn mint_ref(&self) -> Result<String, RefAllocationError> {
+        let allocated = match &self.journal {
+            Some(journal) => {
+                Some((journal.allocate_ref)().map_err(RefAllocationError::JournalUnavailable)?)
+            }
+            None => None,
+        };
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.next_ref = match allocated {
             Some(number) if number > state.next_ref => number,
             _ => state.next_ref + 1,
         };
-        format!("C{}", state.next_ref)
+        Ok(format!("C{}", state.next_ref))
     }
 
     /// Commit a created environment under its minted ref. A ref numbered
@@ -304,6 +339,9 @@ impl EnvironmentRegistry {
             if let Some(number) = ref_number(&record.environment_ref) {
                 state.next_ref = state.next_ref.max(number);
             }
+            state
+                .journalled
+                .insert(record.environment_ref.clone(), record.status.clone());
             state.entries.insert(record.environment_ref.clone(), record);
         }
     }
@@ -311,19 +349,41 @@ impl EnvironmentRegistry {
     /// Report the record under `environment_ref` as changed, after the
     /// state lock is released: the snapshot and the write happen under
     /// the journal order lock, so a later transition never reaches the
-    /// journal before an earlier one.
+    /// journal before an earlier one. A record this session created is
+    /// written as it is; a restored one is written compare-and-set on the
+    /// status the journal is known to hold, and when another session has
+    /// moved it on meanwhile nothing is written — their state stands, and
+    /// the next write of this session expects it.
     fn journal_ref(&self, environment_ref: &str) {
         let Some(journal) = &self.journal else {
             return;
         };
         let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
-        let record = {
+        let (record, expected) = {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.entries.get(environment_ref).cloned()
+            (
+                state.entries.get(environment_ref).cloned(),
+                state.journalled.get(environment_ref).cloned(),
+            )
         };
-        if let Some(record) = record {
-            (journal.recorded)(&record);
+        let Some(record) = record else {
+            return;
+        };
+        let expected = match record.origin {
+            EnvironmentOrigin::Created => None,
+            EnvironmentOrigin::Restored => expected,
+        };
+        let outcome = (journal.recorded)(&record, expected.as_ref());
+        if record.origin != EnvironmentOrigin::Restored {
+            return;
         }
+        let known = match outcome {
+            JournalWrite::Written => record.status,
+            JournalWrite::Superseded { current } => current,
+            JournalWrite::Unavailable => return,
+        };
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.journalled.insert(environment_ref.to_string(), known);
     }
 
     /// Remove a committed environment. Used only when the launch that

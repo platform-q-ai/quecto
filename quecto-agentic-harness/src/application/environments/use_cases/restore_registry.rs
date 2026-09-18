@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use crate::domain::environment_registry::{
-    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
+    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
 };
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoredRegistry};
@@ -50,26 +50,50 @@ impl RestoreRegistry {
         Self { store, process }
     }
 
-    /// The journal a durable registry writes through: refs from the store,
-    /// every record change to it. A store failure is reported, never a
-    /// panic — the session keeps its in-memory registry.
+    /// The journal a durable registry writes through: refs from the store
+    /// (a store that cannot allocate refuses the mint — review F9, #2033),
+    /// every record change to it. A failed write is reported, never a
+    /// panic — the session keeps its in-memory registry. A write made with
+    /// an expected status is the store's conditional `correct` (review F5):
+    /// applied only while the record on file still has that status.
     fn journal(&self) -> EnvironmentJournal {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
         EnvironmentJournal {
-            allocate_ref: Arc::new(move || match allocate.allocate_ref() {
-                Ok(number) => Some(number),
-                Err(error) => {
-                    tracing::warn!(%error, "durable environment ref could not be allocated; using the in-memory counter");
-                    None
-                }
+            allocate_ref: Arc::new(move || {
+                allocate.allocate_ref().map_err(|error| {
+                    tracing::warn!(%error, "durable environment ref could not be allocated; the create is refused");
+                    error
+                })
             }),
-            recorded: Arc::new(move |entry: &EnvironmentRecord| {
-                if let Err(error) = record.record(entry) {
-                    tracing::warn!(environment_ref = %entry.environment_ref, %error, "environment record could not be persisted");
-                }
-            }),
+            recorded: Arc::new(
+                move |entry: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
+                    let outcome = match expected {
+                        None => record.record(entry).map(|()| JournalWrite::Written),
+                        Some(expected) => {
+                            record.correct(entry, expected).map(|outcome| match outcome {
+                                CorrectionOutcome::Applied => JournalWrite::Written,
+                                CorrectionOutcome::Superseded(current) => {
+                                    tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another session moved the environment on; its state stands");
+                                    JournalWrite::Superseded {
+                                        current: current.status,
+                                    }
+                                }
+                                // Forgotten by its creator (a rolled-back
+                                // create): nothing of it to keep.
+                                CorrectionOutcome::Forgotten => JournalWrite::Superseded {
+                                    current: EnvironmentStatus::Stopped,
+                                },
+                            })
+                        }
+                    };
+                    outcome.unwrap_or_else(|error| {
+                        tracing::warn!(environment_ref = %entry.environment_ref, %error, "environment record could not be persisted");
+                        JournalWrite::Unavailable
+                    })
+                },
+            ),
             forgotten: Arc::new(move |environment_ref: &str| {
                 if let Err(error) = forget.forget(environment_ref) {
                     tracing::warn!(environment_ref, %error, "environment record could not be removed from the durable registry");

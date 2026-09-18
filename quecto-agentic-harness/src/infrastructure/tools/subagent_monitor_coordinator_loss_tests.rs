@@ -74,7 +74,7 @@ fn environment(
     checkout: &std::path::Path,
 ) -> (EnvironmentRegistry, String) {
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-coordinator".into(),
