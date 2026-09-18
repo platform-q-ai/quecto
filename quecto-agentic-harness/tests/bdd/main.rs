@@ -1729,8 +1729,8 @@ impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
     /// capability (#1970), its retained-context graph (#1978), the catalogue
     /// handles (#1845), the provider-runtime builder, the tool-policy
-    /// persistence builder (#1849) and the container-config selection
-    /// builder (#2024 S4a): every
+    /// persistence builder (#1849), the container-config selection builder
+    /// (#2024 S4a) and the admission builder (#2024 S3): every
     /// `quecto agent …` run through `run_with_output` needs them or exits
     /// with "… capability not composed", exactly as the binary's `main`
     /// supplies them.
