@@ -19,7 +19,7 @@ First bare `get_messages` returns the latest substantive assistant message, not 
 - Never poll `get_subagents` / `get_subagents_all` / `get_state` as a wait loop; never bash-sleep for a child.
 - `get_state` = occasional live state/effort/model/progress (+ slim workflow identity/step if selected), with `generation`; `since` returns `{ "unchanged": true, "generation": N }` when nothing changed.
 - `get_subagents_all` (`agent_id: "*"`) is session-wide inventory of top-level children; `get_subagents` lists one live subagent's nested children only.
-- Reviewers / non-editors: `read_only: true` (**not a sandbox**: `bash` can still mutate).
+- Reviewers / non-editors: `read_only: true` (**not a hard sandbox**: `bash` can still mutate).
 - Exact multi-step process: `workflow_spec` or `workflow: true` (`docs {"name":"workflow"}`).
 
 ## Reuse
