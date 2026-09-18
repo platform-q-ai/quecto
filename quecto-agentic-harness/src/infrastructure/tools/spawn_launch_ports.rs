@@ -157,13 +157,14 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
-        // PR #1401 review: a container child must launch with the SAME config
-        // that authorized/created its environment. When the spawn call omits
-        // `config`, the container path (`load_container_config`) falls back to
-        // the parent's effective config — mirror that exact chain here so the
-        // child is never silently started on its default config while its
-        // environment was defined by the parent's. Local spawns keep the
-        // pre-existing explicit→inherited chain unchanged.
+        // The `--config` a container child is started with (PR #1401
+        // review, #2024 S4a): the spawn call's `config`, else the parent's
+        // own config file, else the inherited runtime path — the GLOBAL
+        // file only. The environment itself was created from the parent's
+        // effective configuration (global plus its checkout's trusted
+        // overlay); the child, running inside the container, has no
+        // checkout overlay to bind and never inherits one. Local spawns
+        // keep the pre-existing explicit→inherited chain unchanged.
         let effective_config = match config.container {
             crate::domain::subagent::ContainerSelection::Local => {
                 effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())

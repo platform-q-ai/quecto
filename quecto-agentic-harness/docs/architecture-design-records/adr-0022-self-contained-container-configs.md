@@ -80,4 +80,8 @@ only and require a trust gate before repo-supplied argv may execute
 capability) and the one trust record (`config-overlay-trust.json`,
 approved by `quecto config trust`); selection is launch policy in
 `application/subagents` over the launching agent's *checkout*, never the
-quecto base directory.
+quecto base directory. An overlay that exists but is withheld (untrusted
+or refused) makes an implicit `container: true` a refusal — the default it
+labels is unknown, so the launch must not quietly land in the global
+one — while an explicitly named config launches from the global set; the
+spawn result names the selected config and carries the layer diagnostics.

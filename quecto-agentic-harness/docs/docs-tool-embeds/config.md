@@ -102,7 +102,9 @@ quecto config set --local container_configs.app '{"default":true,"create":["/abs
 
 Omit `"default":true` to add a config that is only selected by name (`container: {"mode":"new","container_config":"app"}`). A merge that would leave no default, or two, is refused before the file is written.
 
-**Verify**: `quecto config get --effective container_configs` shows `app` with `"default": true` and the global entries un-defaulted; `quecto status` shows `Overlay: … (trusted)`. Then `spawn {"agent_id":"…","task":"…","container":true}` from an agent started in this directory: the result names `environment_ref=C1` and `agent_cmd get_containers` lists the repository the create script reported.
+**Verify**: `quecto config get --effective container_configs` shows `app` with `"default": true` and the global entries un-defaulted; `quecto status` shows `Overlay: … (trusted)`. Then `spawn {"agent_id":"…","task":"…","container":true}` from an agent started in this directory: the result names `environment_ref=C1 container_config=app` and `agent_cmd get_containers` lists the repository the create script reported.
+
+**Scope**: the binding applies only to runs started in this directory *without* `--config` (an explicit `--config` file replaces both layers, as a spawn `config` argument does), and never inside a container child — the child is started with the global file and has no checkout overlay to bind. An overlay that is not trusted (hand-written, or committed by someone else) is not applied: `container: true` is then refused with the diagnostic in the tool result (it names the overlay and `quecto config trust`), while a named `container_config` launches from the global set and carries the same diagnostic; `quecto config trust` from this directory, after review, is the one approval.
 
 **Rollback**: `quecto config unset --local container_configs.app` (the global default applies again), or `rm ./.quecto/config.json` to drop the whole overlay. Other repositories are never affected: the overlay is read from the working directory only.
 

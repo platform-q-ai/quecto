@@ -286,12 +286,17 @@ quecto config set --local container_configs.app '{"default":true,"create":["/abs
 
 Then, from an agent started in that checkout, `spawn` with
 `container: true` creates the container with `app`'s `create` argv; from
-any other directory the global default still applies.
+any other directory the global default still applies. The binding applies
+only to runs started *without* `--config` (an explicit `--config` file
+replaces both layers, as a spawn `config` argument does) and never inside
+a container child: the child is started with the global file and has no
+checkout overlay to bind, so a container spawned from inside a container
+selects from the global entries.
 
 **Verify**: `quecto config get --effective container_configs` shows `app`
 as the one default; `quecto status` shows `Overlay: … (trusted)`; a spawn
-result names `environment_ref=C1` and `agent_cmd get_containers` lists the
-repository the create script reported.
+result names `environment_ref=C1 container_config=app` and
+`agent_cmd get_containers` lists the repository the create script reported.
 
 **Rollback**: `quecto config unset --local container_configs.app`, or
 delete `.quecto/config.json` to drop the whole overlay.
@@ -301,9 +306,14 @@ in `<base_dir>/config-overlay-trust.json` (canonical path + SHA-256).
 `quecto config set` records trust for what it writes; an overlay written
 by hand, or committed by someone else, needs `quecto config trust` from
 the checkout after review — an explicit, non-interactive command an agent
-can run. Until then the overlay contributes nothing to container spawns
-and the spawn prints the same stderr diagnostic as `quecto status`. There
-is no separate container trust record and no `[y/N]` prompt on the spawn
+can run. Until then the overlay contributes nothing to container spawns:
+`container: true` is **refused** (the default the overlay labels is
+unknown, so an implicit selection must not quietly land in the global
+one) with a tool error naming the overlay and `quecto config trust`; a
+named `container_config` launches from the global set and its result
+carries the same diagnostic under `Configuration diagnostics:`. The spawn
+also prints the diagnostic to stderr, as `quecto status` does. There is
+no separate container trust record and no `[y/N]` prompt on the spawn
 path any more (the pre-#2024 `container-config-trust.json` is not read;
 approve such an overlay once with `quecto config trust`). Container
 repository and auth semantics remain self-contained in the selected

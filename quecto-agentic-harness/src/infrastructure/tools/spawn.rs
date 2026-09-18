@@ -103,8 +103,9 @@ pub struct SpawnTool {
     /// once at composition and injected).
     pub(super) environment_registry: EnvironmentRegistry,
     /// The parent agent's own config path, plumbed from the composition root
-    /// (#1369 follow-up). Container spawns without an explicit `config`
-    /// argument fall back to it for loading `container_configs`.
+    /// (#1369 follow-up): the `--config` a container child is started with
+    /// when the spawn call names none. Container-config *selection* never
+    /// reads it (#2024 S4a): that is `container_config_selection` below.
     pub(super) parent_config_path: Option<PathBuf>,
     /// Composition's container-config selection (#2024 S4a): launch policy
     /// over the launching agent's effective configuration for its checkout
@@ -202,10 +203,8 @@ impl SpawnTool {
         }
     }
 
-    /// Plumb the parent agent's own config path from the composition root so
-    /// container spawns can fall back to it when `config` is omitted
-    /// (#1369 follow-up). `None` leaves only the inherited runtime config
-    /// (`QUECTO_RUNTIME_CONFIG_PATH`) as a fallback source.
+    /// Composition's change-reasoning-effort use case (#1848), validating a
+    /// spawn `effort` for an explicit `model`; `None` checks syntax only.
     pub fn with_effort_control(
         mut self,
         effort_control: Option<
@@ -216,6 +215,11 @@ impl SpawnTool {
         self
     }
 
+    /// Plumb the parent agent's own config path from the composition root:
+    /// the `--config` forwarded to a container child whose spawn call names
+    /// none (`None` leaves the inherited `QUECTO_RUNTIME_CONFIG_PATH` as
+    /// the only forwarded source). It plays no part in selecting the
+    /// container config (#2024 S4a).
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
         self.parent_config_path = parent_config_path;
         self

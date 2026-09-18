@@ -522,7 +522,11 @@ every spawn — so a repository binds itself to a container config with
 and rolls back with `quecto config unset --local container_configs.<name>`.
 There is no separate container trust record or `[y/N]` prompt: `quecto
 config trust` is the one approval, and an untrusted overlay contributes
-nothing (the spawn prints the same diagnostic as `status`). The pre-#2024
+nothing — `container: true` is then refused with the diagnostic in the tool
+result, a named `container_config` launches from the global set and carries
+it (the spawn also prints it to stderr, as `status` does). The binding
+applies only to runs started without `--config` and never inside a
+container child, which is started with the global file. The pre-#2024
 `container-config-trust.json` is not read; approve such an overlay once with
 `quecto config trust`. See [Container runtimes](../docs/container-runtimes.md).
 
