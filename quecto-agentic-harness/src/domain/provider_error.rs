@@ -17,6 +17,10 @@ pub enum ProviderErrorClass {
     Client,
     Network,
     Cancelled,
+    /// The inference-admission gate refused the attempt before any request
+    /// was made (#2024 S3): a policy or capability decision, terminal for
+    /// this process. Never a malformed request, never a provider credential.
+    Admission,
     Unknown,
 }
 
@@ -48,6 +52,7 @@ impl ProviderErrorClass {
             Self::Client => "client",
             Self::Network => "network",
             Self::Cancelled => "cancelled",
+            Self::Admission => "admission",
             Self::Unknown => "unknown",
         }
     }
@@ -223,12 +228,12 @@ fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
 ///
 /// * `admission refused: …` — a policy or capability decision (a child whose
 ///   capability was revoked, a root facing a changed policy, a refused scope):
-///   nothing inside this attempt loop changes it, so it is terminal `Client`.
-///   Not `Auth`: that class means the *provider* rejected the credentials
-///   and would prompt a key check and an OAuth refresh, neither of which
-///   applies; the message itself says what to do (respawn, restart).
+///   nothing inside this attempt loop changes it, so it is terminal
+///   `Admission`. Not `Auth` (a provider credential rejection: key-check hint,
+///   OAuth refresh) and not `Client` (a malformed request: repaired and
+///   re-sent); the message itself says what to do (respawn, restart).
 /// * `admission capability rejected` — the authority no longer honours this
-///   process's credential: terminal `Client`, for the same reason.
+///   process's credential: terminal `Admission`, for the same reason.
 /// * `admission transport failure: …` — the link to the broker failed (socket
 ///   gone, reconnection exhausted): retryable `Network`, since a later attempt
 ///   reconnects when the broker is back.
@@ -239,7 +244,7 @@ fn classify_admission_error(msg: &str) -> Option<ProviderErrorClass> {
     if detail.starts_with("admission refused:")
         || detail.starts_with("admission capability rejected")
     {
-        Some(ProviderErrorClass::Client)
+        Some(ProviderErrorClass::Admission)
     } else if detail.starts_with("admission transport failure") {
         Some(ProviderErrorClass::Network)
     } else {

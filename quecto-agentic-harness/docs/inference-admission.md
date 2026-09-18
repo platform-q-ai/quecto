@@ -147,7 +147,13 @@ unadmitted. A child link has no reconnect: its `authorityStatus` becomes
 `unavailable` and its next attempt fails closed once
 (`admission refused: capability revoked by an authority reset; a child cannot
 re-register on its own — its parent must respawn it`, or
-`admission authority connection closed` after a broker death). The parent sees
+`admission authority connection closed` after a broker death). "Once" is a
+classification rule, not luck: `admission refused: …` and
+`admission capability rejected` map to the terminal `admission` provider-error
+class (no provider retry, no malformed-request repair, no credential hint),
+while `admission transport failure: …` is retryable `network`. The `admission`
+class is additive on the audit wire (`AuditEvent::ProviderError.class`), like
+`empty_stream`. The parent sees
 the child's `agent_error`, the forwarded `admission_state_changed` with
 `authorityStatus: "unavailable"`, and `agent_cmd get_state` with the same plus
 `counters.refused`; it spawns a replacement (its own link re-registers first,

@@ -34,6 +34,7 @@ fn is_retryable_only_for_transient_classes() {
     assert!(!Auth.is_retryable());
     assert!(!Client.is_retryable());
     assert!(!Cancelled.is_retryable());
+    assert!(!Admission.is_retryable());
     assert!(!Unknown.is_retryable());
 }
 
@@ -48,6 +49,7 @@ fn as_str_and_display_match() {
         (Client, "client"),
         (Network, "network"),
         (Cancelled, "cancelled"),
+        (Admission, "admission"),
         (Unknown, "unknown"),
     ];
     for (class, text) in cases {
@@ -374,17 +376,17 @@ fn synthetic_empty_stream_retains_retryability_without_http_attribution() {
 }
 
 #[test]
-fn admission_refusals_and_rejected_capabilities_are_terminal_client_errors() {
+fn admission_refusals_and_rejected_capabilities_are_terminal_admission_errors() {
     for msg in [
         "admission: admission refused: capability revoked by an authority reset; a child cannot re-register on its own — its parent must respawn it",
         "admission: admission refused: admission policy at the broker differs from the one this session composed against; restart required",
         "admission: admission capability rejected",
     ] {
         let class = classify_provider_error(&provider(msg));
-        // Terminal, and not `Auth`: no key-check hint or OAuth refresh for an
-        // admission decision (the "authority" wording used to trip the `auth`
-        // keyword).
-        assert_eq!(class, ProviderErrorClass::Client, "{msg}");
+        // Terminal in its own class: not `Auth` (no key-check hint or OAuth
+        // refresh; the "authority" wording used to trip the `auth` keyword)
+        // and not `Client` (no malformed-request repair and re-send).
+        assert_eq!(class, ProviderErrorClass::Admission, "{msg}");
         assert!(!class.is_retryable(), "{msg}");
     }
 }
