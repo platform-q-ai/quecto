@@ -50,7 +50,7 @@ impl SetupCommand {
     /// are refused so the id cannot break out of the prompt's own quoting.
     pub fn parse(args: &str) -> Self {
         let mut words = args.split_whitespace();
-        let command = match (words.next(), words.next(), words.next()) {
+        match (words.next(), words.next(), words.next()) {
             (None, _, _) => Self::Walkthrough(SetupArea::All),
             (Some("model"), Some(model), None) if model_id_is_plain(model) => {
                 Self::Walkthrough(SetupArea::Model(model.to_string()))
@@ -61,8 +61,7 @@ impl SetupCommand {
             }
             (Some("auth"), None, _) => Self::Walkthrough(SetupArea::Auth),
             _ => Self::Usage,
-        };
-        command
+        }
     }
 }
 
