@@ -154,11 +154,17 @@ pub enum Command {
         provider: Option<String>,
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
+        /// `"local"` | `"global"` (#2024 S2): also record the model as
+        /// that layer's default; absent switches the session only.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        persist: Option<String>,
     },
     SetEffort {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         effort: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        persist: Option<String>,
     },
     SetWorkflowAutomation {
         #[serde(skip_serializing_if = "Option::is_none")]

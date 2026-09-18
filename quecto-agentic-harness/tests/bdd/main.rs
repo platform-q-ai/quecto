@@ -529,6 +529,9 @@ pub struct QuectoWorld {
     /// TUI sub-agent session-parity BDD (#805): the headless render harness.
     pub tui_parity: Option<TuiParityHarness>,
     pub session_scope_process: Option<session_scope_steps::ScopeProcess>,
+    /// Default model per repository BDD (#2024 S2): the production agent
+    /// started in the scenario's repository (or its sibling).
+    pub model_default_process: Option<model_default_steps::ModelDefaultProcess>,
     /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
     /// each is read-only, used to exercise selective departure.
     pub tui_expected_subagents: Vec<(String, bool)>,
@@ -1801,4 +1804,5 @@ mod inference_admission_projection_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
 mod list_sessions_steps;
+mod model_default_steps;
 mod session_scope_steps;

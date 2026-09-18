@@ -37,9 +37,14 @@ impl EffortStateView {
     }
 }
 
-/// The `set_effort` ok payload.
+/// The `set_effort` ok payload, with where the level was recorded as a
+/// default when the request asked (#2024 S2).
 pub fn render_change(outcome: &EffortChangeOutcome) -> serde_json::Value {
-    serde_json::json!({ "effort": outcome.effective.as_str() })
+    let mut data = serde_json::json!({ "effort": outcome.effective.as_str() });
+    if let Some(persisted) = &outcome.persisted {
+        data["persisted"] = super::model_presenter::render_persisted(persisted);
+    }
+    data
 }
 
 /// The `set_effort` error message.

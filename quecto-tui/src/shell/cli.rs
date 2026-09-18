@@ -2,6 +2,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+pub(crate) use super::agent_args::build_agent_args;
 pub(crate) use super::socket_path::validate_socket_path;
 #[cfg(test)]
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
@@ -17,6 +18,11 @@ pub(crate) struct CliFlags {
     pub(crate) disable_tools: Vec<String>,
     pub(crate) persist: bool,
     pub(crate) kill_on_exit: bool,
+    /// `--model <m>` (#2024 S2): the spawned agent starts on this model
+    /// for this run only (in-memory, like `quecto agent --model`).
+    pub(crate) model: Option<String>,
+    /// `--effort <e>`: the spawned agent's startup effort for this run.
+    pub(crate) effort: Option<String>,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -45,6 +51,8 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         disable_tools: Vec::new(),
         persist: true,
         kill_on_exit: true,
+        model: None,
+        effort: None,
     };
     let mut system_literal_seen = false;
     let mut i = 1;
@@ -57,6 +65,18 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
             "--config" if i + 1 < args.len() => {
                 flags.config_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
+            }
+            "--model" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
+                flags.model = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--effort" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
+                flags.effort = Some(args[i + 1].clone());
+                i += 2;
+            }
+            flag @ ("--model" | "--effort") => {
+                eprintln!("warning: {flag} requires a value; ignoring it");
+                i += 1;
             }
             "--system" if i + 1 < args.len() => {
                 flags.system_prompt = Some(args[i + 1].clone());
@@ -216,35 +236,6 @@ async fn run_tui(flags: CliFlags) -> i32 {
     drop(child_watch);
 
     exit_code
-}
-
-pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
-    let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
-    if flags.persist {
-        args.push("--persist".to_string());
-    }
-    if flags.workflow {
-        args.push("--workflow".to_string());
-    }
-    if flags.workflow_disabled {
-        args.push("--no-workflow".to_string());
-    }
-    if flags.workflow_guards {
-        args.push("--workflow-guards".to_string());
-    }
-    if let Some(ref path) = flags.config_path {
-        args.push("--config".to_string());
-        args.push(path.to_string_lossy().to_string());
-    }
-    if let Some(ref prompt) = flags.system_prompt {
-        args.push("--system".to_string());
-        args.push(prompt.clone());
-    }
-    for tool in &flags.disable_tools {
-        args.push("--disable-tool".to_string());
-        args.push(tool.clone());
-    }
-    args
 }
 
 pub const AGENT_SOCKET_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);

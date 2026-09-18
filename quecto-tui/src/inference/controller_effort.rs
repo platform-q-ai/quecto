@@ -88,9 +88,12 @@ impl App {
     /// only a successful response switches it, so a rejected or failed
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
+        // The TUI offers no pin for effort (#2024 S2 pins the model from
+        // `/model`; effort defaults are the CLI's `quecto config set`).
         let cmd = Command::SetEffort {
             id: Some(self.ac().namespaced_id("se")),
             effort: effort.to_string(),
+            persist: None,
         };
         if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {

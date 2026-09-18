@@ -27,10 +27,9 @@ pub struct ConfigPatch {
     pub value: serde_json::Value,
 }
 
-/// Remove `key_path` from one layer of `selection` (the inverse of
-/// [`ConfigPatch`]): the same validation, hold, write and trust rules
-/// apply; a key that is not there is an error, so a rollback that did
-/// nothing is never reported as done.
+/// Remove `key_path` from one layer of `selection` (#2024 S2): the
+/// rollback of a `set`. A key that is not set in that layer is an error,
+/// never a silent no-op (the caller may be looking at the other layer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigUnset {
     pub selection: ConfigSelection,
@@ -78,17 +77,17 @@ pub enum ConfigPatchError {
         path: PathBuf,
         reason: String,
     },
-    /// An unset addressed a key the layer does not carry; nothing was
-    /// written.
-    MissingKey {
-        path: PathBuf,
-        key_path: String,
-    },
     /// The document, or an intermediate value on the key path, is not an
     /// object.
     NotAnObject {
         path: PathBuf,
         at: String,
+    },
+    /// An unset of a key the layer does not set (or a file that does not
+    /// exist); nothing to remove.
+    NotSet {
+        path: PathBuf,
+        key_path: String,
     },
     /// The patched document does not pass schema validation; nothing was
     /// written.
@@ -133,7 +132,7 @@ impl std::fmt::Display for ConfigPatchError {
             }
             Self::GlobalOnlyKey { path, key } => write!(
                 f,
-                "cannot set `{key}` in {}: `{key}` is global-only; use --global",
+                "cannot change `{key}` in {}: `{key}` is global-only; use --global",
                 path.display()
             ),
             Self::UntrustedOverlay { path, fingerprint } => write!(
@@ -147,19 +146,19 @@ impl std::fmt::Display for ConfigPatchError {
             Self::Parse { path, reason } => {
                 write!(f, "failed to parse config {}: {reason}", path.display())
             }
-            Self::MissingKey { path, key_path } => write!(
-                f,
-                "cannot unset `{key_path}` in {}: the key is not set there",
-                path.display()
-            ),
             Self::NotAnObject { path, at } if at.is_empty() => write!(
                 f,
-                "cannot set a key in {}: the document is not a JSON object",
+                "cannot address a key in {}: the document is not a JSON object",
                 path.display()
             ),
             Self::NotAnObject { path, at } => write!(
                 f,
-                "cannot set a key under `{at}` in {}: it is not a JSON object",
+                "cannot address a key under `{at}` in {}: it is not a JSON object",
+                path.display()
+            ),
+            Self::NotSet { path, key_path } => write!(
+                f,
+                "`{key_path}` is not set in {}; nothing to unset (the other layer may set it: check `quecto config get --global` / `--local`)",
                 path.display()
             ),
             Self::Invalid { path, reason } => write!(

@@ -52,7 +52,43 @@ quecto config trust                 # ./.quecto/config.json
 quecto config trust --path <file>
 ```
 
-**Rollback**: set the key back, or remove the overlay file (`rm ./.quecto/config.json`) to return to the global file alone. Only the addressed key's value changes in a patched file: the writer keeps every other key and their order, validates the result before writing — the file on its own *and* the configuration this directory would then load (global merged with the trusted overlay), so an overlay change that would leave, say, no default container config is refused before it can break every later run — and replaces the file atomically (tmp + fsync + rename). It normalises layout: pretty-printed JSON in the file's own indentation (two spaces for a new or compact file), LF line endings, one trailing newline; a file already in that layout changes only on the touched line. A refused value (for example an unknown effort level) leaves the file byte-identical and exits 1 with the reason. Concurrent `config set`s of one file serialise on a lock under `<base_dir>/locks/` (never beside the file: a refused `config set --local` in a clean checkout creates nothing there, not even `.quecto/`), so none loses another's key. `.quecto/` holds only `config.json`; there is nothing else to ignore.
+**Unset** a key you (or someone) set, in the layer it is set in (a key the layer does not set is an error naming the layer, so a rollback aimed at the wrong file says so):
+
+```
+quecto config unset agents.defaults.model            # ./.quecto/config.json
+quecto config unset --global agents.defaults.effort  # <base_dir>/config.json
+```
+
+Setting a key to `null` is not the same: in the overlay it *overrides* the global value with null. Emptied parent objects are kept.
+
+**Rollback**: `quecto config unset` the key, set it back, or remove the overlay file (`rm ./.quecto/config.json`) to return to the global file alone. Only the addressed key's value changes in a patched file: the writer keeps every other key and their order, validates the result before writing — the file on its own *and* the configuration this directory would then load (global merged with the trusted overlay), so an overlay change that would leave, say, no default container config is refused before it can break every later run — and replaces the file atomically (tmp + fsync + rename). It normalises layout: pretty-printed JSON in the file's own indentation (two spaces for a new or compact file), LF line endings, one trailing newline; a file already in that layout changes only on the touched line. A refused value (for example an unknown effort level) leaves the file byte-identical and exits 1 with the reason. Concurrent `config set`s of one file serialise on a lock under `<base_dir>/locks/` (never beside the file: a refused `config set --local` in a clean checkout creates nothing there, not even `.quecto/`), so none loses another's key. `.quecto/` holds only `config.json`; there is nothing else to ignore.
+
+## Runbook: pin a default model (and effort) for this repository
+
+Preconditions: you are in the repository's root (the overlay is discovered in the working directory only), the model is a qualified `provider/model` id the catalogue can run (`list_models` over UDS lists it as `configured`), and any existing `./.quecto/config.json` is trusted (`quecto status` shows `Overlay: … (trusted)`; if `(untrusted)`, review it, then `quecto config trust`).
+
+```
+quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'
+quecto config set agents.defaults.effort '"high"'     # optional; must be a level the model accepts
+```
+
+Verify:
+
+```
+quecto config get --effective agents.defaults.model   # "openai-api/gpt-5.6-luna"
+quecto status                                         # Overlay: … (trusted)  Model: openai-api/gpt-5.6-luna  Effort: high
+```
+
+Every agent started in this directory from now on — `quecto agent`, a `quecto-tui` tab, a spawned local child — starts on that model (its `get_state` reports it); other repositories keep the global default. The global file is untouched (`quecto config get --global agents.defaults.model` still prints the old value). Your own running session is not switched: send `set_model` / `set_effort` for it, or leave it. From a running session the same record can be made with `set_model … "persist":"local"` (`"global"` for the global file) — it goes through this writer and is refused with the same reasons; the TUI's `/model` selector offers it as *use and pin as this repo's default* (Tab). To pin the same model for every repository use `--global` instead.
+
+Rollback:
+
+```
+quecto config unset agents.defaults.model             # the global default applies again
+quecto config unset agents.defaults.effort
+```
+
+`quecto config get --effective agents.defaults.model` then prints the global value. `rm ./.quecto/config.json` removes every repository setting at once.
 
 ## Runbook: bind this repository to a container config
 

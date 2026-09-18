@@ -15,6 +15,10 @@
 //! touch an overlay whose current content is not trusted, and records
 //! trust for exactly the bytes the writer laid down.
 //!
+//! `unset` (#2024 S2) is the rollback of `execute`: the same cycle with
+//! the key removed instead of set; a key the layer does not set is an
+//! error, so a rollback aimed at the wrong layer says so.
+//!
 //! The merge check is [`ResolveEffectiveConfig`]'s: a use case of the same
 //! capability invoked directly — an intra-capability call, not a
 //! cross-capability one (those go through ports).
@@ -68,7 +72,7 @@ impl PatchConfiguration {
             key_path,
             value,
         } = patch;
-        self.apply(&selection, layer, &key_path, |document, path| {
+        self.cycle(&selection, layer, &key_path, |document, path| {
             set_path(document, &key_path, value).map_err(|at| ConfigPatchError::NotAnObject {
                 path: path.to_path_buf(),
                 at,
@@ -76,22 +80,20 @@ impl PatchConfiguration {
         })
     }
 
-    /// Remove one key: the rollback of [`Self::execute`], under the same
-    /// rules. A key the layer does not carry is refused, so nothing is
-    /// rewritten (and no trust re-recorded) for a no-op.
+    /// Remove one key of one layer; the rollback of [`Self::execute`].
     pub fn unset(&self, unset: ConfigUnset) -> Result<ConfigPatchReceipt, ConfigPatchError> {
         let ConfigUnset {
             selection,
             layer,
             key_path,
         } = unset;
-        self.apply(
+        self.cycle(
             &selection,
             layer,
             &key_path,
             |document, path| match remove_path(document, &key_path) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(ConfigPatchError::MissingKey {
+                Ok(Some(_)) => Ok(()),
+                Ok(None) => Err(ConfigPatchError::NotSet {
                     path: path.to_path_buf(),
                     key_path: key_path.clone(),
                 }),
@@ -103,13 +105,13 @@ impl PatchConfiguration {
         )
     }
 
-    /// The one read → edit → validate → write cycle both operations share.
-    fn apply(
+    /// The read → mutate → validate → write cycle under the writer's hold.
+    fn cycle(
         &self,
         selection: &ConfigSelection,
         layer: ConfigLayer,
         key_path: &str,
-        edit: impl FnOnce(&mut Value, &Path) -> Result<(), ConfigPatchError>,
+        mutate: impl FnOnce(&mut Value, &Path) -> Result<(), ConfigPatchError>,
     ) -> Result<ConfigPatchReceipt, ConfigPatchError> {
         let path = self.target_path(selection, layer)?;
         let path = path.as_path();
@@ -148,7 +150,7 @@ impl PatchConfiguration {
             }
             None => Value::Object(Map::new()),
         };
-        edit(&mut document, path)?;
+        mutate(&mut document, path)?;
         self.check(selection, layer, path, &document)?;
         let written =
             self.writer

@@ -8,22 +8,35 @@
 //! the catalogue's per-model capability, read through a port. A level the
 //! model does not accept is refused here, so nothing outside the model's
 //! vocabulary ever reaches a provider adapter.
+//!
+//! A change may also record the level as a configured default (#2024 S2)
+//! through the [`EffortDefaultPersistence`] port this use case owns; the
+//! record comes before the apply, so a refused record changes nothing.
 
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
     EffortChangeError, EffortChangeOutcome, EffortChangeRequest,
 };
-use crate::application::catalogue::ports::{EffortRuntime, EffortVocabularySource};
+use crate::application::catalogue::ports::{
+    EffortDefaultPersistence, EffortRuntime, EffortVocabularySource,
+};
 use crate::domain::provider::EffortLevel;
 
 pub struct ChangeReasoningEffort {
     vocabulary: Arc<dyn EffortVocabularySource>,
+    persistence: Arc<dyn EffortDefaultPersistence>,
 }
 
 impl ChangeReasoningEffort {
-    pub fn new(vocabulary: Arc<dyn EffortVocabularySource>) -> Self {
-        Self { vocabulary }
+    pub fn new(
+        vocabulary: Arc<dyn EffortVocabularySource>,
+        persistence: Arc<dyn EffortDefaultPersistence>,
+    ) -> Self {
+        Self {
+            vocabulary,
+            persistence,
+        }
     }
 
     /// The levels `model` accepts, in ascending order; empty when the model
@@ -87,20 +100,32 @@ impl ChangeReasoningEffort {
         true
     }
 
-    /// Apply a requested level to the session. Refused levels leave the
-    /// runtime untouched.
+    /// Apply a requested level to the session, recording it as a default
+    /// first when the request asks. Refused levels — and refused records —
+    /// leave the runtime untouched.
     pub fn execute(
         &self,
         runtime: &mut dyn EffortRuntime,
         request: &EffortChangeRequest,
     ) -> Result<EffortChangeOutcome, EffortChangeError> {
         let effective = self.validate(&request.model, &request.level)?;
+        let persisted = match request.persist {
+            None => None,
+            Some(scope) => Some(self.persistence.persist_effort(scope, effective).map_err(
+                |reason| EffortChangeError::Persist {
+                    level: effective,
+                    scope,
+                    reason,
+                },
+            )?),
+        };
         if runtime.effort() != Some(effective) {
             runtime.apply_effort(Some(effective));
         }
         Ok(EffortChangeOutcome {
             effective,
             vocabulary: self.choices(&request.model),
+            persisted,
         })
     }
 }

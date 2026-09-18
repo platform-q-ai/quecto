@@ -482,7 +482,17 @@ impl App {
             }
         }
         if self.ac().roster.active_agent_id.is_none() {
-            self.notify("Model switched", NotifyLevel::Success);
+            let pinned = data
+                .as_ref()
+                .and_then(|d| {
+                    crate::protocol::model_payloads::parse_persisted_default(
+                        d,
+                        &crate::components::ansi::sanitize_control,
+                    )
+                })
+                .map(|persisted| persisted.describe())
+                .unwrap_or_default();
+            self.notify(&format!("Model switched{pinned}"), NotifyLevel::Success);
             // A model switch can change the provider's effort vocabulary
             // and context window — re-sync from the agent (#1067).
             self.send_state_resync();

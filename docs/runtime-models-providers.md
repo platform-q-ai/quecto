@@ -11,7 +11,7 @@ One authority owns each concern; nothing outside its layer re-derives it. Contri
 | `domain` (`domain/catalogue.rs`) | Stable provider/model identities, capability metadata (limits, cost, the per-model reasoning-effort vocabulary rule `EffortVocabulary`), availability semantics, immutable snapshot generations | I/O, parsing external formats |
 | `application` (`application/catalogue/` — `use_cases/`, `ports/`, `dto/` and the resolve/snapshot store in `mod.rs`; `provider_runtime.rs`) | Source-layer precedence and the resolve/merge; the list-models, change-reasoning-effort, change-active-model and refresh-catalogue-sources use cases; selection; publishing catalogue + routing as one generation | Reading files or the network directly |
 | `infrastructure` (`infrastructure/catalogue_registry.rs`, `catalogue_inputs.rs`, `catalogue_refresh_inputs.rs`, `catalogue_discovery.rs`, `providers/`) | Parsing `models.json` and discovery caches into domain descriptors, credential resolution, the refreshable (HTTP) discovery sources and their caches, concrete transport adapters | Deciding precedence, defining canonical types, inferring capabilities |
-| `composition` (`composition/catalogue.rs`, `composition/runtime.rs`, `composition/tool_policy.rs`) | Building the catalogue use cases — including the reload of a run's configuration files (`ReloadRuntimeConfiguration` over the file-backed `RuntimeConfigurationSource`, rebuilding through the injected `ProviderRuntimeBuilder`) — over the file-backed inputs ports and the per-directory snapshot store; composing and publishing the provider runtime (`build_agent_provider`, the one builder startup and reload share) over the concrete factories, refresh wiring and stores; the tool-policy persistence hook over the run's config file; `main` hands all three builders to the CLI | Policy of any kind |
+| `composition` (`composition/catalogue.rs`, `composition/catalogue_defaults.rs`, `composition/runtime.rs`, `composition/tool_policy.rs`) | Building the catalogue use cases — including the reload of a run's configuration files (`ReloadRuntimeConfiguration` over the file-backed `RuntimeConfigurationSource`, rebuilding through the injected `ProviderRuntimeBuilder`) — over the file-backed inputs ports and the per-directory snapshot store; composing and publishing the provider runtime (`build_agent_provider`, the one builder startup and reload share) over the concrete factories, refresh wiring and stores; the tool-policy persistence hook over the run's config file; the catalogue's default-persistence ports mapped onto the configuration capability's patch use case (`catalogue_defaults.rs`, #2024 S2); `main` hands all three builders to the CLI | Policy of any kind |
 | `interface` (`interface/uds/catalogue/`, `interface/cli/models.rs`, CLI/UDS/REPL, TUI) | Parsing commands, invoking the injected use-case handles and the injected provider-runtime builder, and rendering their DTOs on the wire | Parsing catalogue data, merging sources, constructing use cases or providers, caching its own model metadata |
 
 ## Source precedence
@@ -33,6 +33,18 @@ Set the global model default in `~/.quecto/config.json` at `agents.defaults.mode
 ```
 
 This setting selects the default for agents; `~/.quecto/models.json` remains the extension surface for provider and model catalogue entries.
+
+## Default model and effort per repository (#2024)
+
+A repository pins its own default in its overlay `<repo>/.quecto/config.json`, merged over the global file (`agents.defaults` is merged field-wise, so a repository may pin only the model, only the effort, or both, and inherit the rest). Every agent started in that directory — `quecto agent`, a `quecto-tui` tab, a spawned child — starts on it; a sibling repository without an overlay starts on the global default. Three ways to pin one, all through the same safe writer (only the addressed key changes, the result is validated before a byte is written, trust is recorded for the overlay):
+
+| From | Repository default | Global default |
+|---|---|---|
+| CLI | `quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'` (and `agents.defaults.effort '"high"'`) | add `--global` |
+| UDS | `{"type":"set_model","model":"openai-api/gpt-5.6-luna","persist":"local"}` / `{"type":"set_effort","effort":"high","persist":"local"}` | `"persist":"global"` |
+| quecto-tui | `/model`, Tab until the footer reads *use and pin as this repo's default*, Enter | Tab once more: *use and pin as the global default* |
+
+Verify with `quecto config get --effective agents.defaults.model` and `quecto status` (`Overlay:` must read `(trusted)`); a new agent's `get_state` reports the pinned `model` and `effort`. Roll back with `quecto config unset agents.defaults.model` (add `--global` for the global file); setting the key to `null` would *override* the global value with null, which is why removal is its own command. A pin over UDS or from the TUI is refused — with the session left unchanged — when the overlay is not trusted (`quecto config trust` first), when the overlay location is a symbolic link, when the run was started with an explicit `--config` (no overlay applies), or for a bare model id (only `provider/model` is recorded). `quecto-tui --model <m> --effort <e>` and `quecto agent --model <m> --effort <e>` choose for one run without writing anything.
 
 ## User extension surface (`models.json`)
 

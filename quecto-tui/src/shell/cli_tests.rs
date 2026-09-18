@@ -263,3 +263,40 @@ fn unique_test_suffix() -> u128 {
         .expect("system time after epoch")
         .as_nanos()
 }
+
+// ── --model / --effort pass-through (#2024 S2) ─────────────────────────
+
+#[test]
+fn model_and_effort_flags_are_forwarded_to_the_owned_agent_in_memory() {
+    let flags = parse_flags(&args("--model openai-api/gpt-5.6-luna --effort high"));
+    assert_eq!(flags.model.as_deref(), Some("openai-api/gpt-5.6-luna"));
+    assert_eq!(flags.effort.as_deref(), Some("high"));
+    let agent_args = build_agent_args(&flags);
+    let value_after = |flag: &str| {
+        agent_args
+            .iter()
+            .position(|a| a == flag)
+            .map(|i| agent_args[i + 1].as_str())
+    };
+    assert_eq!(value_after("--model"), Some("openai-api/gpt-5.6-luna"));
+    assert_eq!(value_after("--effort"), Some("high"));
+    // No config flag rides along: the choice is for this run only.
+    assert!(!agent_args.iter().any(|a| a.contains("config")));
+}
+
+#[test]
+fn model_and_effort_flags_are_omitted_when_not_given_and_need_a_value() {
+    let flags = parse_flags(&args(""));
+    let agent_args = build_agent_args(&flags);
+    assert!(!agent_args.contains(&"--model".to_string()));
+    assert!(!agent_args.contains(&"--effort".to_string()));
+    let trailing = parse_flags(&args("--effort"));
+    assert_eq!(trailing.effort, None);
+    let trailing = parse_flags(&args("--model"));
+    assert_eq!(trailing.model, None);
+    // A following flag is not a value: the flag is dropped and the next
+    // one still parses.
+    let clashing = parse_flags(&args("--model --no-persist"));
+    assert_eq!(clashing.model, None);
+    assert!(!clashing.persist);
+}

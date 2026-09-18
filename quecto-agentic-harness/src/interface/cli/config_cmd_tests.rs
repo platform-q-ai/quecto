@@ -1,4 +1,4 @@
-//! `quecto config get|set|unset|trust` over a hermetic base directory and
+//! `quecto config get|set|trust` over a hermetic base directory and
 //! working directory: argument parsing, target selection, presentation.
 
 use crate::interface::cli::{CliContext, run_with_output};
@@ -18,9 +18,6 @@ impl Rig {
             base_dir: Some(base.path().to_path_buf()),
             cwd: Some(cwd.path().to_path_buf()),
             configuration: Some(crate::composition::configuration::build_configuration_handles),
-            container_config_selection: Some(
-                crate::composition::container_configs::build_agent_container_config_selection,
-            ),
             ..Default::default()
         };
         Self {
@@ -194,13 +191,9 @@ fn usage_errors_name_the_problem() {
         (vec!["config", "get", "--nope"], "unknown option --nope"),
         (vec!["config", "set", "only-path"], "a path and a value"),
         (vec!["config", "set", "", "1"], "invalid config path"),
-        (vec!["config", "trust", "extra"], "no positional"),
         (vec!["config", "unset"], "unset takes a path"),
         (vec!["config", "unset", "a", "b"], "unset takes a path"),
-        (
-            vec!["config", "unset", "--global", "--local", "a"],
-            "only one of",
-        ),
+        (vec!["config", "trust", "extra"], "no positional"),
     ] {
         let (code, _, stderr) = rig.run(&args);
         assert_eq!(code, 1, "{args:?}");
@@ -298,74 +291,48 @@ fn get_redacts_secrets_unless_shown_and_says_so_on_stderr() {
 }
 
 #[test]
-fn unset_removes_a_key_from_the_overlay_by_default_or_the_global_file() {
+fn unset_removes_a_key_from_the_addressed_layer_and_refuses_one_it_does_not_set() {
     let rig = Rig::new();
     std::fs::write(
         rig.global(),
-        r#"{"container_configs":{"g":{"default":true,"create":["/c"],"cleanup":["/k"]}},"agents":{"defaults":{"effort":"high"}}}"#,
+        r#"{"agents":{"defaults":{"model":"global","effort":"high"}}}"#,
     )
     .unwrap();
-    let (code, _, stderr) = rig.run(&[
-        "config",
-        "set",
-        "--local",
-        "container_configs.app",
-        r#"{"default":true,"create":["/c","--repo","r"],"cleanup":["/k"]}"#,
-    ]);
+    let (code, _, stderr) = rig.run(&["config", "set", "agents.defaults.model", "\"local\""]);
     assert_eq!(code, 0, "{stderr}");
-    let (_, stdout, _) = rig.run(&["config", "get", "--effective", "container_configs"]);
-    let effective: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(effective["app"]["default"], serde_json::json!(true));
-    assert_eq!(effective["g"]["default"], serde_json::json!(false));
-
-    // Rollback: the overlay entry goes, the global default applies again,
-    // and the rewritten overlay is trusted.
-    let (code, stdout, stderr) = rig.run(&["config", "unset", "--local", "container_configs.app"]);
+    let (code, stdout, stderr) = rig.run(&["config", "unset", "agents.defaults.model"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.contains(&format!(
-            "unset container_configs.app in {} (trusted)",
+            "unset agents.defaults.model in {} (trusted)",
             rig.overlay().display()
         )),
         "{stdout}"
     );
-    let (_, stdout, stderr) = rig.run(&["config", "get", "--effective", "container_configs"]);
-    assert!(!stderr.contains("not trusted"), "{stderr}");
-    let effective: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(effective["g"]["default"], serde_json::json!(true));
-    assert!(effective.get("app").is_none());
+    let (_, stdout, _) = rig.run(&["config", "get", "--effective", "agents.defaults.model"]);
+    assert_eq!(stdout.trim(), "\"global\"");
     let (_, stdout, _) = rig.run(&["config", "get", "--local"]);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
-        serde_json::json!({"container_configs":{}})
-    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value, serde_json::json!({"agents":{"defaults":{}}}));
 
-    // A second unset of the same key is refused: nothing to roll back.
-    let (code, _, stderr) = rig.run(&["config", "unset", "container_configs.app"]);
+    let (code, _, stderr) = rig.run(&["config", "unset", "agents.defaults.model"]);
     assert_eq!(code, 1);
-    assert!(stderr.contains("is not set there"), "{stderr}");
-
+    assert!(
+        stderr.contains("`agents.defaults.model` is not set in"),
+        "{stderr}"
+    );
     let (code, stdout, stderr) =
         rig.run(&["config", "unset", "--global", "agents.defaults.effort"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
-        stdout.contains(&format!(
-            "unset agents.defaults.effort in {}\n",
-            rig.global().display()
-        )),
+        stdout.starts_with("unset agents.defaults.effort in"),
         "{stdout}"
     );
-    let (_, stdout, _) = rig.run(&["config", "get", "--global"]);
+    assert!(!stdout.contains("(trusted)"));
+    let global: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.global()).unwrap()).unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
-        serde_json::json!({"container_configs":{"g":{"default":true,"create":["/c"],"cleanup":["/k"]}},"agents":{"defaults":{}}})
-    );
-    // An unset that would brick the merge is refused like a set.
-    let (code, _, stderr) =
-        rig.run(&["config", "unset", "--global", "container_configs.g.default"]);
-    assert_eq!(code, 1);
-    assert!(
-        stderr.contains("no container config is labeled"),
-        "{stderr}"
+        global,
+        serde_json::json!({"agents":{"defaults":{"model":"global"}}})
     );
 }

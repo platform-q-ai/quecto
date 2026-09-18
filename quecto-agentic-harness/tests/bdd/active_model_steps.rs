@@ -256,14 +256,17 @@ fn when_active_model_changed(world: &mut QuectoWorld, model: String) {
         world.active_model.entries.clone(),
         world.active_model.denied.clone(),
     )))));
-    let effort = Arc::new(ChangeReasoningEffort::new(Arc::new(AmStoreVocabulary(
-        store.clone(),
-    ))));
+    let defaults = Arc::new(quecto::application::catalogue::ports::RecordedDefaults::default());
+    let effort = Arc::new(ChangeReasoningEffort::new(
+        Arc::new(AmStoreVocabulary(store.clone())),
+        defaults.clone(),
+    ));
     let use_case = ChangeActiveModel::new(
         inputs,
         store,
         Arc::new(AmRuntime(world.active_model.runtime.clone())),
         effort,
+        defaults,
     );
     let switched = use_case.execute(&mut AmLoop(&mut world.active_model), &model);
     world.active_model.switched = Some(switched);

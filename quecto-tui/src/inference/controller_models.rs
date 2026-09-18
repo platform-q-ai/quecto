@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::model_selector::{ModelEntry, ModelSelector};
+use crate::components::model_selector::{ModelDefaultAction, ModelEntry, ModelSelector};
 
 pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
     // Protocol boundary (#1220): raw payload interpretation lives in the
@@ -26,11 +26,32 @@ impl App {
     /// post-success `get_state` resync, so a rejected switch keeps the
     /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
+        self.send_set_model_with(model, ModelDefaultAction::Session);
+    }
+
+    /// `set_model` with the selector's action (#2024 S2): the persist scope
+    /// rides on the command; the harness decides whether it can record it.
+    /// A pinned default is a decision about the master session and the
+    /// files it runs from, so it is never sent while a sub-agent is
+    /// focused: routing it to the child would record a default from the
+    /// wrong session, and sending it to the master would switch a session
+    /// the user is not looking at (#1085's guards then hide the reply).
+    /// Nothing is sent; the user is told to pin from the master session.
+    pub(super) fn send_set_model_with(&mut self, model: &str, action: ModelDefaultAction) {
+        if self.ac().roster.active_agent_id.is_some() && action != ModelDefaultAction::Session {
+            self.notify(
+                "Pin a default from the master session: select it (Esc from the sub-agent), then \
+                 /model again — the focused sub-agent's model was not changed",
+                NotifyLevel::Error,
+            );
+            return;
+        }
         let cmd = Command::SetModel {
             id: Some(self.ac().namespaced_id("sm")),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
+            persist: action.persist_scope().map(str::to_string),
         };
         if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
@@ -81,10 +102,11 @@ impl App {
         if let Some(selector) = &mut self.inference.model_selector {
             selector.handle_input(key);
 
+            let action = selector.action();
             match selector.take_result() {
                 ModelSelectorResult::Selected(model) => {
                     self.inference.model_selector = None;
-                    self.send_set_model(&model);
+                    self.send_set_model_with(&model, action);
                 }
                 ModelSelectorResult::Dismissed => {
                     self.inference.model_selector = None;
@@ -115,6 +137,9 @@ impl App {
 #[cfg(test)]
 #[path = "app_model_focus_1085_tests.rs"]
 mod app_model_focus_1085_tests;
+#[cfg(test)]
+#[path = "app_model_pin_tests.rs"]
+mod app_model_pin_tests;
 #[cfg(test)]
 #[path = "app_models_protocol_characterization_tests.rs"]
 mod app_models_protocol_characterization_tests;

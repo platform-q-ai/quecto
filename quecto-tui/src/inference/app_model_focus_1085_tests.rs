@@ -457,3 +457,54 @@ async fn select_agent_restores_current_model_from_session_footer() {
         "select_agent(None) must restore master current_model from footer"
     );
 }
+
+// ── Pinning a default while a sub-agent is focused (#2024 S2) ────────────
+
+#[tokio::test]
+async fn a_pin_with_a_focused_child_sends_nothing_and_says_where_to_pin_from() {
+    use crate::shell::keys::Key;
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(super::tui_harness::spawn_start("child"));
+    let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent_with_socket("child", "idle", None, Some(socket)),
+    ]));
+    h.select(Some("child"));
+    h.try_drain_commands();
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), child_rx.recv()).await;
+
+    let a = h.app_mut();
+    a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({
+        "models": [{ "id": "openai-api/gpt-5.6-luna", "provider": "OpenAI API" }]
+    })));
+    a.handle_model_selector_key(&Key::Tab);
+    a.handle_model_selector_key(&Key::Enter);
+    assert!(a.inference.model_selector.is_none());
+    // Neither the master nor the child received a set_model.
+    let master = h.try_drain_commands();
+    assert!(
+        !master.iter().any(|c| c.contains("\"set_model\"")),
+        "master must not switch behind a focused child: {master:?}"
+    );
+    let child = tokio::time::timeout(std::time::Duration::from_millis(50), child_rx.recv()).await;
+    assert!(
+        !matches!(&child, Ok(Some(line)) if line.contains("\"set_model\"")),
+        "child must not receive a pin: {child:?}"
+    );
+    let text = h.notification_messages().join("\n");
+    assert!(
+        text.contains("Pin a default from the master session"),
+        "{text}"
+    );
+    assert_ne!(
+        h.app_mut().ac().inference.current_model.as_deref(),
+        Some("openai-api/gpt-5.6-luna"),
+        "no optimistic model change"
+    );
+    assert!(
+        !h.full_frame().contains("gpt-5.6-luna"),
+        "nothing on screen claims the switch"
+    );
+}

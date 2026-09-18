@@ -161,6 +161,10 @@ pub enum AgentCommand {
     /// Accepts either:
     /// - legacy `{ "model": "provider/modelId" }`, or
     /// - compatible `{ "provider": "...", "modelId": "..." }`.
+    ///
+    /// With `persist` (`"local"` | `"global"`, #2024 S2) the resolved
+    /// qualified id is also recorded as `agents.defaults.model` of that
+    /// configuration layer; absent, the switch is in-memory only.
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -170,14 +174,20 @@ pub enum AgentCommand {
         provider: Option<String>,
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        persist: Option<String>,
     },
     /// Switch the active reasoning-effort level at runtime (#1067).
     /// Session-scoped: validated against the active model's provider
-    /// vocabulary and applied to every subsequent turn.
+    /// vocabulary and applied to every subsequent turn. With `persist`
+    /// (`"local"` | `"global"`, #2024 S2) the level is also recorded as
+    /// `agents.defaults.effort` of that configuration layer.
     SetEffort {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         effort: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        persist: Option<String>,
     },
     /// Return the complete rich tool catalogue for control/query clients.
     #[serde(alias = "list_tools")]

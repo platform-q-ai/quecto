@@ -67,27 +67,26 @@ fn parse_model_list_entry(
 ) -> Option<ModelListEntry> {
     // Legacy parity: older harness payloads carried the identifier as `id`,
     // current ones as `model`. `model` wins when both are present.
-    let raw_model = model
-        .get("model")
-        .or_else(|| model.get("id"))
-        .and_then(|v| v.as_str())?;
+    let raw_model = string_field(model, "model").or_else(|| string_field(model, "id"))?;
     let id = sanitize(raw_model);
     if id.is_empty() {
         return None;
     }
     let provider = sanitize(
-        model
-            .get("provider")
-            .and_then(|v| v.as_str())
+        string_field(model, "provider")
             .or_else(|| id.split_once('/').map(|(provider, _)| provider))
             .unwrap_or("Model"),
     );
-    let auth = model
-        .get("auth")
-        .and_then(|v| v.as_str())
+    let auth = string_field(model, "auth")
         .map(sanitize)
         .filter(|s| !s.is_empty());
     Some(ModelListEntry { id, provider, auth })
+}
+
+/// One string field of a JSON object: absent when the key is missing or
+/// the value is not a string. The one place this module reads a field.
+fn string_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(serde_json::Value::as_str)
 }
 
 /// The rendered view of a `refresh_models` response: one human-readable
@@ -161,6 +160,49 @@ pub fn parse_refresh_outcomes(
         lines.summaries.push(summary);
     }
     lines
+}
+/// Where a `set_model` / `set_effort` recorded a default (#2024 S2): the
+/// reply's `persisted: {scope, path}`. Absent when the switch was in-memory
+/// only; a malformed object maps to `None` (the switch still happened).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedDefault {
+    pub scope: String,
+    pub path: String,
+}
+
+impl PersistedDefault {
+    /// The toast suffix: ` and pinned as this repo's default (<path>)` /
+    /// ` and pinned as the global default (<path>)`, closing with the one
+    /// consequence the user cannot see: a pin is a config edit, so the
+    /// harness re-applies the persisted tool policy on the next turn and
+    /// any live `set_tool_policy` overlay is re-baselined.
+    pub fn describe(&self) -> String {
+        let scope = match &*self.scope {
+            "local" => "this repo's default",
+            "global" => "the global default",
+            other => other,
+        };
+        format!(
+            " and pinned as {scope} ({}); live tool-policy overlays re-baseline next turn",
+            self.path
+        )
+    }
+}
+
+pub fn parse_persisted_default(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Option<PersistedDefault> {
+    let persisted = data.get("persisted")?;
+    let field = |key: &str| {
+        string_field(persisted, key)
+            .map(sanitize)
+            .filter(|value| !value.is_empty())
+    };
+    Some(PersistedDefault {
+        scope: field("scope")?,
+        path: field("path")?,
+    })
 }
 
 #[cfg(test)]

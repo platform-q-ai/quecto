@@ -164,27 +164,30 @@ pub fn set_path(document: &mut Value, key_path: &str, value: Value) -> Result<()
     Ok(())
 }
 
-/// Remove the key at `key_path`; `Ok(false)` when nothing is there (an
-/// absent key on the way, or an absent leaf). Fails naming the segment at
-/// which a non-object stands in the way. Emptied parents are left in
-/// place: only the addressed key changes.
-pub fn remove_path(document: &mut Value, key_path: &str) -> Result<bool, String> {
+/// Remove `key_path` from the document, returning the value that stood
+/// there. `Ok(None)` when nothing is set at the path (a missing
+/// intermediate object counts as not set); `Err` names the segment at
+/// which a non-object stands in the way. Emptied parents are kept.
+pub fn remove_path(document: &mut Value, key_path: &str) -> Result<Option<Value>, String> {
     let segments = key_segments(key_path).ok_or_else(|| key_path.to_string())?;
     let (last, parents) = segments.split_last().expect("at least one segment");
     let mut current = document;
     let mut walked = Vec::new();
     for segment in parents {
+        let map = match current.as_object_mut() {
+            Some(map) => map,
+            None => return Err(walked.join(".")),
+        };
         walked.push(*segment);
-        let map = current
-            .as_object_mut()
-            .ok_or_else(|| walked[..walked.len() - 1].join("."))?;
         match map.get_mut(*segment) {
             Some(next) => current = next,
-            None => return Ok(false),
+            None => return Ok(None),
         }
     }
-    let map = current.as_object_mut().ok_or_else(|| walked.join("."))?;
-    Ok(map.remove(*last).is_some())
+    match current.as_object_mut() {
+        Some(map) => Ok(map.remove(*last)),
+        None => Err(walked.join(".")),
+    }
 }
 
 #[cfg(test)]

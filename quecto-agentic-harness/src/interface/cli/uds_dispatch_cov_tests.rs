@@ -549,6 +549,7 @@ async fn dispatch_routes_set_model_invalid() {
         model: None,
         provider: None,
         model_id: None,
+        persist: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -562,6 +563,7 @@ async fn dispatch_routes_set_model_valid() {
         model: Some("openai/gpt-5.2".into()),
         provider: None,
         model_id: None,
+        persist: None,
     };
     {
         let mut ctx = fx.ctx();

@@ -1,6 +1,7 @@
-//! `quecto config get|set|unset|trust` (#2024): parse the arguments, map them to
-//! the configuration use cases the context was composed with, present the
-//! outcome. The interface never reads or writes a config file itself.
+//! `quecto config get|set|unset|trust` (#2024): parse the arguments, map
+//! them to the configuration use cases the context was composed with,
+//! present the outcome. The interface never reads or writes a config file
+//! itself.
 
 use std::path::PathBuf;
 
@@ -155,6 +156,22 @@ fn cmd_get(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
     Ok(diagnostics)
 }
 
+/// The layer a `set`/`unset` addresses: the overlay unless `--global`.
+fn write_layer(
+    scope_flag: Option<&'static str>,
+    selection: &ConfigSelection,
+) -> Result<ConfigLayer, String> {
+    match scope_flag {
+        Some("--global") => Ok(ConfigLayer::Global),
+        _ => {
+            // The use case refuses a selection without an overlay too; the
+            // check here is for the message that names the flag to use.
+            overlay_target(selection)?;
+            Ok(ConfigLayer::Overlay)
+        }
+    }
+}
+
 fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec<String>, String> {
     let parsed = parse(args, &["--global", "--local"], Extra::None)?;
     let [key_path, raw_value] = parsed.positionals.as_slice() else {
@@ -165,7 +182,7 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
     let value = serde_json::from_str(raw_value)
         .unwrap_or_else(|_| serde_json::Value::String(raw_value.clone()));
     let selection = ctx.config_selection()?;
-    let layer = write_layer(&selection, parsed.scope_flag)?;
+    let layer = write_layer(parsed.scope_flag, &selection)?;
     let receipt = ctx
         .configuration_handles(false)?
         .patch
@@ -189,23 +206,6 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
     Ok(Vec::new())
 }
 
-/// The layer a write addresses: `--global` the base file, otherwise the
-/// overlay (with the message that names the flag when none applies).
-fn write_layer(
-    selection: &ConfigSelection,
-    scope_flag: Option<&str>,
-) -> Result<ConfigLayer, String> {
-    match scope_flag {
-        Some("--global") => Ok(ConfigLayer::Global),
-        _ => {
-            // The use case refuses a selection without an overlay too; the
-            // check here is for the message that names the flag to use.
-            overlay_target(selection)?;
-            Ok(ConfigLayer::Overlay)
-        }
-    }
-}
-
 fn cmd_unset(
     ctx: &CliContext,
     args: &[String],
@@ -216,7 +216,7 @@ fn cmd_unset(
         return Err(format!("unset takes a path\n{USAGE}"));
     };
     let selection = ctx.config_selection()?;
-    let layer = write_layer(&selection, parsed.scope_flag)?;
+    let layer = write_layer(parsed.scope_flag, &selection)?;
     let receipt = ctx
         .configuration_handles(false)?
         .patch

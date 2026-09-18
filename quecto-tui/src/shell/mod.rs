@@ -4,6 +4,7 @@
 //! buffering, and the concrete runtime adapters (terminal, render, signals,
 //! process, child watch) that touch the OS.
 
+pub(crate) mod agent_args;
 pub mod app;
 mod app_session_stats_text;
 pub(crate) mod atomic_file;

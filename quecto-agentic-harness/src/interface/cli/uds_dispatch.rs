@@ -85,6 +85,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             model,
             provider,
             model_id,
+            persist,
             ..
         } => {
             handle_set_model(
@@ -94,14 +95,15 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
                     model,
                     provider,
                     model_id,
+                    persist,
                 },
                 ctx,
             )
             .await
         }
-        AgentCommand::SetEffort { effort, .. } => {
-            handle_set_effort(ctx, id.as_deref(), &type_name, &effort).await
-        }
+        AgentCommand::SetEffort {
+            effort, persist, ..
+        } => handle_set_effort(ctx, id.as_deref(), &type_name, &effort, persist.as_deref()).await,
         AgentCommand::SetToolPolicy {
             mutations,
             mode,

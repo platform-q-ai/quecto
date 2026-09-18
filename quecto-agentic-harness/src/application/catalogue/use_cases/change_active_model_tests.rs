@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::application::catalogue::dto::EffortChangeRequest;
 use crate::application::catalogue::ports::{
-    EffortRuntime, EffortVocabularySource, LoadedCatalogueInputs, RuntimeSnapshotSource,
+    DefaultScope, EffortRuntime, EffortVocabularySource, LoadedCatalogueInputs, RecordedDefaults,
+    RuntimeSnapshotSource,
 };
 use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
 use crate::domain::catalogue::{
@@ -203,16 +204,26 @@ struct Rig {
 }
 
 fn rig(entries: Vec<CatalogueEntry>, runtime: Arc<FakeRuntime>) -> Rig {
+    rig_persisting(entries, runtime, Arc::new(RecordedDefaults::default()))
+}
+
+fn rig_persisting(
+    entries: Vec<CatalogueEntry>,
+    runtime: Arc<FakeRuntime>,
+    persistence: Arc<RecordedDefaults>,
+) -> Rig {
     let source = Arc::new(FakeSource(Mutex::new(entries)));
     let loader = Arc::new(Loader {
         source: source.clone(),
         loads: Mutex::new(0),
     });
     let store = CatalogueSnapshotStore::empty();
-    let effort = Arc::new(ChangeReasoningEffort::new(Arc::new(FromStore(
-        store.clone(),
-    ))));
-    let use_case = ChangeActiveModel::new(loader.clone(), store.clone(), runtime, effort);
+    let effort = Arc::new(ChangeReasoningEffort::new(
+        Arc::new(FromStore(store.clone())),
+        persistence.clone(),
+    ));
+    let use_case =
+        ChangeActiveModel::new(loader.clone(), store.clone(), runtime, effort, persistence);
     Rig {
         source,
         loader,
@@ -343,6 +354,7 @@ fn execute_applies_model_and_limits_and_resets_effort_for_the_new_model() {
             &EffortChangeRequest {
                 model: "acme/limited".into(),
                 level: "xhigh".into(),
+                persist: None,
             },
         )
         .unwrap_err();
@@ -379,4 +391,162 @@ fn a_not_runnable_verdict_is_carried_and_the_switch_still_proceeds() {
 fn debug_does_not_expose_the_ports() {
     let rig = rig(vec![], FakeRuntime::none());
     assert_eq!(format!("{:?}", rig.use_case), "ChangeActiveModel { .. }");
+}
+
+// ── Persisting a default (#2024 S2) ─────────────────────────────────────────
+
+#[test]
+fn execute_with_default_records_the_qualified_id_before_applying() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::default());
+    let rig = rig_persisting(
+        entries.clone(),
+        FakeRuntime::over(entries, 1),
+        persistence.clone(),
+    );
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        ..Default::default()
+    };
+    let switched = rig
+        .use_case
+        .execute_with_default(&mut lp, "acme/m", Some(DefaultScope::Local))
+        .unwrap();
+    assert_eq!(
+        persistence.records.lock().unwrap().as_slice(),
+        &[(
+            DefaultScope::Local,
+            "agents.defaults.model".to_string(),
+            "acme/m".to_string()
+        )]
+    );
+    assert_eq!(switched.persisted.unwrap().scope, DefaultScope::Local);
+    assert_eq!(lp.model, "acme/m");
+}
+
+#[test]
+fn a_bare_id_no_provider_resolves_is_not_recorded_and_not_applied() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::default());
+    let rig = rig_persisting(
+        entries.clone(),
+        FakeRuntime::over(entries, 1),
+        persistence.clone(),
+    );
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        ..Default::default()
+    };
+    let error = rig
+        .use_case
+        .execute_with_default(&mut lp, "nobody", Some(DefaultScope::Local))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ModelSwitchError::Unqualified {
+            model: "nobody".into()
+        }
+    );
+    assert!(error.to_string().contains("provider/model"));
+    assert!(persistence.records.lock().unwrap().is_empty());
+    assert_eq!(lp.model, "old/model", "nothing applied");
+}
+
+#[test]
+fn a_refused_record_leaves_the_session_untouched() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::refusing("overlay is not trusted"));
+    let rig = rig_persisting(entries.clone(), FakeRuntime::over(entries, 1), persistence);
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        effort: Some(EffortLevel::High),
+        ..Default::default()
+    };
+    let error = rig
+        .use_case
+        .execute_with_default(&mut lp, "acme/m", Some(DefaultScope::Local))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ModelSwitchError::Persist {
+            model: "acme/m".into(),
+            scope: DefaultScope::Local,
+            reason: "overlay is not trusted".into(),
+        }
+    );
+    assert!(error.to_string().contains("local default"));
+    assert_eq!(lp.model, "old/model");
+    assert_eq!(lp.effort, Some(EffortLevel::High), "no effort reset either");
+}
+
+#[test]
+fn without_a_scope_nothing_is_recorded_and_execute_is_unchanged() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::refusing("must not be called"));
+    let rig = rig_persisting(entries.clone(), FakeRuntime::over(entries, 1), persistence);
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        ..Default::default()
+    };
+    let switched = rig
+        .use_case
+        .execute_with_default(&mut lp, "acme/m", None)
+        .unwrap();
+    assert_eq!(switched.persisted, None);
+    assert_eq!(rig.use_case.execute(&mut lp, "acme/m").persisted, None);
+}
+
+#[test]
+fn a_provider_the_published_catalogue_does_not_know_is_not_recorded_and_not_applied() {
+    let entries = vec![entry("acme", "m", None)];
+    let persistence = Arc::new(RecordedDefaults::default());
+    let rig = rig_persisting(
+        entries.clone(),
+        FakeRuntime::over(entries, 1),
+        persistence.clone(),
+    );
+    let mut lp = FakeLoop {
+        model: "old/model".into(),
+        ..Default::default()
+    };
+    let error = rig
+        .use_case
+        .execute_with_default(&mut lp, "nobody/x", Some(DefaultScope::Local))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ModelSwitchError::UnknownProvider {
+            model: "nobody/x".into(),
+            provider: "nobody".into(),
+        }
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("the published catalogue lists no models for `nobody`"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("no configured provider"),
+        "known-ness is decided from catalogue entries, so the message must not claim the provider is unconfigured: {message}"
+    );
+    assert!(persistence.records.lock().unwrap().is_empty());
+    assert_eq!(lp.model, "old/model", "nothing applied");
+    // A known provider with an id the catalogue does not enumerate is
+    // recorded: open-router prefixes accept ids the catalogue cannot list.
+    let switched = rig
+        .use_case
+        .execute_with_default(&mut lp, "acme/unlisted", Some(DefaultScope::Local))
+        .unwrap();
+    assert!(matches!(
+        switched.plan.verdict,
+        ModelSelectionVerdict::Unknown { .. }
+    ));
+    assert_eq!(persistence.records.lock().unwrap()[0].2, "acme/unlisted");
+    assert_eq!(lp.model, "acme/unlisted");
+    // The router matches prefixes case-insensitively; the record carries
+    // the catalogue's spelling.
+    rig.use_case
+        .execute_with_default(&mut lp, "ACME/m", Some(DefaultScope::Global))
+        .unwrap();
+    assert_eq!(persistence.records.lock().unwrap()[1].2, "acme/m");
 }

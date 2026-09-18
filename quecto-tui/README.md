@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.9` (pre-1.0).** The TUI is a UDS bus client of the harness: the* The TUI is a UDS bus client of the harness: the
+**Version `0.77.18` (pre-1.0).** The TUI is a UDS bus client of the harness: the* The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -86,6 +86,8 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
+| `--model <provider/model>` | Start the spawned agent (and every tab of this run) on this model, in memory only — nothing is written |
+| `--effort <level>` | Start the spawned agent on this reasoning-effort level, in memory only |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
 you can talk normally, then ask the model to select a workflow template when you
@@ -155,7 +157,7 @@ opens links natively, that help line is the single place to update first.
 
 | Command | Action |
 |---|---|
-| `/model` | Open the model selector |
+| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`, or the `--config` file the agent was started with) — the harness records it, the toast names the file and reminds you that live tool-policy overlays re-baseline on the next turn |
 | `/model <name>` | Switch to a model directly |
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |
