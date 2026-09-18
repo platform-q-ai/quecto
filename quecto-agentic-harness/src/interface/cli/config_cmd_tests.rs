@@ -18,6 +18,7 @@ impl Rig {
             base_dir: Some(base.path().to_path_buf()),
             cwd: Some(cwd.path().to_path_buf()),
             configuration: Some(crate::composition::configuration::build_configuration_handles),
+            admission: Some(crate::composition::admission::build_admission_handles),
             ..Default::default()
         };
         Self {

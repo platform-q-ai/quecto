@@ -13,7 +13,13 @@ use crate::application::providers::ports::LlmProvider;
 use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;
 
-#[derive(Debug, Clone)]
+/// Binding key that catches every provider slot with no explicit binding
+/// (#2024 S3). Its alias must still exist, like any other binding.
+pub const DEFAULT_BINDING_KEY: &str = "*";
+/// Spelled-out synonym of [`DEFAULT_BINDING_KEY`].
+pub const DEFAULT_BINDING_ALT: &str = "default";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionRuntimeProposal {
     pub policy: AdmissionConfig,
     /// Router provider slot -> explicit endpoint/account alias.
@@ -59,9 +65,18 @@ impl AdmissionRuntimeContext {
     }
 
     pub(crate) fn binding(&self, slot: &str) -> Result<AttemptTransportBinding, String> {
-        let alias = self.effective.bindings.get(slot).ok_or_else(|| {
-            format!("admission provider '{slot}' requires an explicit alias binding")
-        })?;
+        // An explicit slot binding wins; otherwise a default alias (`*` or
+        // `default`, #2024 S3) catches every unlisted slot so adding a
+        // provider no longer fails composition for want of a new binding.
+        let alias = self
+            .effective
+            .bindings
+            .get(slot)
+            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_KEY))
+            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_ALT))
+            .ok_or_else(|| {
+                format!("admission provider '{slot}' requires an explicit alias binding")
+            })?;
         self.gates_by_alias
             .get(alias)
             .cloned()
@@ -143,6 +158,13 @@ fn equal_policy(a: &AdmissionConfig, b: &AdmissionConfig) -> bool {
 pub struct AdmissionRuntimeCandidate<'a> {
     pub providers: &'a Config,
     pub admission: Option<&'a AdmissionRuntimeProposal>,
+    /// A child inherits its parent's authority unconditionally (#2024 S3,
+    /// #2023): its own config's `admission` section (which may differ, be
+    /// `null`, or be absent since S1 made `admission` global-only) never has
+    /// to match the authority's published policy. The byte-equal candidate
+    /// check applies only to a root's own reload, where a changed section is
+    /// still "restart required".
+    pub inherit: bool,
 }
 
 pub struct AdmissionProviderRuntimeFactory {
@@ -166,6 +188,7 @@ impl ProviderRuntimeFactory<AdmissionRuntimeCandidate<'_>, AgentRuntimeInputs>
             inputs,
             &self.context,
             candidate.admission,
+            candidate.inherit,
         )
     }
 }
@@ -179,8 +202,15 @@ pub fn compose_agent_provider_with_admission(
     inputs: &AgentRuntimeInputs,
     context: &AdmissionRuntimeContext,
     proposal: Option<&AdmissionRuntimeProposal>,
+    inherit: bool,
 ) -> Result<Arc<dyn LlmProvider>, String> {
-    context.validate_candidate(proposal)?;
+    // A child inherits the parent's authority: it binds the capability the
+    // parent registered and composes against the authority's published policy,
+    // never its own config's section. Only a root validates its reload
+    // candidate, so a root whose section changed still gets "restart required".
+    if !inherit {
+        context.validate_candidate(proposal)?;
+    }
     compose_agent_provider_inner(config, inputs, Some(context))
 }
 

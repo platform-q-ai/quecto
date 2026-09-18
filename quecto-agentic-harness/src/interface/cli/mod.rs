@@ -1,4 +1,5 @@
 mod admission_broker;
+pub mod admission_handles;
 mod agent;
 mod auth;
 pub mod catalogue_handles;
@@ -28,156 +29,13 @@ pub mod uds_execution_state;
 mod uds_progress_forward;
 
 #[cfg(any(test, feature = "test-support"))]
-pub fn live_execution_state_for_events(
-    events: &[crate::domain::agent::AgentProgressEvent],
-) -> serde_json::Value {
-    let mut state = uds_execution_state::ExecutionState::default();
-    state.start_run();
-    for event in events {
-        state.observe(event);
-    }
-    serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
-}
-
-/// Test-support (#1679 P4): the `get_state` projection of a process whose
-/// admission activity comes from `source`, polled the way a supervisor does.
+mod uds_test_support;
 #[cfg(any(test, feature = "test-support"))]
-pub struct AdmissionStateProbe {
-    execution: uds_execution_state::ExecutionState,
-    session: protocol::SessionState,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl AdmissionStateProbe {
-    pub fn new(
-        source: std::sync::Arc<dyn crate::application::ports::AdmissionObservation>,
-    ) -> Self {
-        let mut execution = uds_execution_state::ExecutionState::default();
-        execution.set_admission_source(source);
-        Self {
-            execution,
-            session: protocol::SessionState {
-                model: "probe".into(),
-                generation: 0,
-                is_streaming: false,
-                session_key: "probe".into(),
-                message_count: 0,
-                pending_message_count: 0,
-                max_context_tokens: 0,
-                effort: None,
-                effort_levels: vec![],
-                workflow: None,
-                execution: None,
-                sync: 0,
-                control_receipts: vec![],
-                automatic_turns_suspended: false,
-                repeated_failure_notifications: Default::default(),
-            },
-        }
-    }
-    pub fn start_run(&mut self) {
-        self.execution.start_run();
-    }
-    pub fn finish_run(&mut self) {
-        self.execution.finish_run();
-    }
-    /// The slim `get_state` response data for an optional `since` cursor.
-    pub fn poll(&mut self, since: Option<u64>) -> serde_json::Value {
-        self.session.generation = self.execution.observe_visible_revisions(0, 0);
-        self.session.execution = Some(self.execution.snapshot());
-        uds_state_projection::slim_state_response_data(&self.session, since)
-    }
-}
-
-/// Test-support (#1679 P4): the production `admission_state_changed` hook.
-#[cfg(any(test, feature = "test-support"))]
-pub fn admission_broadcast_hook(
-    broadcast_tx: tokio::sync::broadcast::Sender<String>,
-) -> crate::infrastructure::admission::ActivityHook {
-    uds_admission_projection::admission_event_hook(broadcast_tx)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn completed_live_execution_state(
-    events: &[crate::domain::agent::AgentProgressEvent],
-) -> serde_json::Value {
-    let mut state = uds_execution_state::ExecutionState::default();
-    state.start_run();
-    for event in events {
-        state.observe(event);
-    }
-    state.finish_run();
-    serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
-}
-/// Test-support: run a sequence of progress events through the mid-turn
-/// publish path (`publish_turn_progress`) against a fresh conversation
-/// snapshot, returning every event line emitted to the sink. BDD scenarios use
-/// this to pin that mid-turn `TurnCompleted` events emit `ledger_advanced`
-/// hints (the child-progress-freeze fix, 2026-07-29).
-#[cfg(any(test, feature = "test-support"))]
-pub async fn ledger_hint_lines_for_turn_events(
-    events: &[crate::domain::agent::AgentProgressEvent],
-    session: &crate::application::sessions::active_session::ActiveSessionHandle,
-) -> Vec<serde_json::Value> {
-    let mut buf: Vec<u8> = Vec::new();
-    let mut sink = uds_cancel::EventSink::writer(&mut buf);
-    for event in events {
-        uds_cancel::publish_turn_progress(event, Some(session), &mut sink).await;
-    }
-    String::from_utf8_lossy(&buf)
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect()
-}
-
-/// Test-support: run one raw command line through the FULL per-connection
-/// reader dispatch (`uds_reader_dispatch::dispatch`) against a snapshot with
-/// one committed message. Returns `(served_inline, response)`: `served_inline`
-/// is true when the command was answered on the reader task and never queued
-/// behind the dispatch loop. Covers the TUI's DIRECT child-feed path — a
-/// plain `sync` with no `agent_id` on the child's own socket — which is
-/// served by the child-local `uds_sync` fast path even while the child's
-/// dispatch loop is occupied (PR #1307 review).
-#[cfg(any(test, feature = "test-support"))]
-pub async fn busy_reader_dispatch(
-    line: &str,
-    session: &uds_session_handles::SessionReadHandles,
-) -> (bool, Option<serde_json::Value>) {
-    let _ = session
-        .active_session
-        .write()
-        .await
-        .publish(&[crate::domain::message::Message::user("committed")]);
-    let clients = uds_ext_protocol::new_client_tool_registry();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
-    uds_ext_protocol::register_client_writer(&clients, 1, tx);
-    // The dispatch-loop channel: anything landing here would have queued
-    // behind an in-flight parent/child turn.
-    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
-    uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
-        line: line.to_string(),
-        session,
-        registry: &clients,
-        subagent_registry: &None,
-        fleet: None,
-        client_id: 1,
-        cmd_tx: &cmd_tx,
-        cancel_handle: &std::sync::Arc::new(std::sync::Mutex::new(uds_cancel::CancelSlot::Idle)),
-        turn_control: &uds_cancel::TurnControl::default(),
-    })
-    .await;
-    let served_inline = cmd_rx.try_recv().is_err();
-    if !served_inline {
-        return (false, None);
-    }
-    let response = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .ok()
-        .flatten()
-        .and_then(|l| serde_json::from_str(&l).ok());
-    (true, response)
-}
-
+pub use uds_test_support::{
+    AdmissionStateProbe, admission_broadcast_hook, busy_reader_dispatch,
+    completed_live_execution_state, ledger_hint_lines_for_turn_events,
+    live_execution_state_for_events,
+};
 #[cfg(any(test, feature = "test-support"))]
 mod uds_busy_test_support;
 #[cfg(any(test, feature = "test-support"))]
@@ -368,6 +226,12 @@ pub type ConfigurationHandlesBuilder = fn(
     &configuration_handles::ConfigurationEnvironment,
 ) -> configuration_handles::ConfigurationHandles;
 
+/// Composition's builder of the admission-operation handles (#2024 S3):
+/// inspect/reset the authority, install/uninstall its service, and the
+/// startup negotiation decision. Injected through the CLI context; the
+/// interface never opens the admin socket or runs `systemctl` itself.
+pub type AdmissionHandlesBuilder = fn() -> admission_handles::AdmissionHandles;
+
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
@@ -414,6 +278,11 @@ pub struct CliContext {
     /// [`CliComposition`]; any command that loads or writes configuration
     /// refuses to run without it.
     pub configuration: Option<ConfigurationHandlesBuilder>,
+    /// Composition's admission-operation handles builder (#2024 S3).
+    /// Supplied by the binary's `main`; the `admission-broker` command
+    /// refuses to run without it, since the interface never opens the admin
+    /// socket or runs `systemctl` itself.
+    pub admission: Option<AdmissionHandlesBuilder>,
     /// Composition's catalogue handles builder (#1845). Supplied by the
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
@@ -436,6 +305,14 @@ impl CliContext {
     /// The composed configuration handles (#2024). `prompt_for_trust`
     /// lets an unrecorded overlay be offered to an interactive user; only
     /// an agent run started from a terminal asks for it.
+    /// The composed admission-operation handles (#2024 S3).
+    pub(crate) fn admission_handles(&self) -> Result<admission_handles::AdmissionHandles, String> {
+        let Some(build) = self.admission else {
+            return Err("admission capability not composed".to_string());
+        };
+        Ok(build())
+    }
+
     pub(crate) fn configuration_handles(
         &self,
         prompt_for_trust: bool,
@@ -492,6 +369,7 @@ pub struct CliComposition {
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
+    pub admission: AdmissionHandlesBuilder,
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
@@ -520,6 +398,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),
+        admission: Some(composition.admission),
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),

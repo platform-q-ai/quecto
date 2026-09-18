@@ -33,6 +33,10 @@ mod attempt_admission;
 mod attempt_permit;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
+#[path = "contracts/authority_admin.rs"]
+mod authority_admin;
+#[path = "contracts/authority_service_manager.rs"]
+mod authority_service_manager;
 #[path = "common/catalogue_conformance.rs"]
 mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]

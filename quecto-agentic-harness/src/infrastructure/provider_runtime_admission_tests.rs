@@ -100,11 +100,54 @@ fn configured_provider_without_binding_cannot_compose() {
     };
     let mut config = Config::default();
     config.providers.openai.api_key = "configured".into();
-    let result = compose_agent_provider_with_admission(&config, &inputs, &context, Some(&proposal));
+    let result =
+        compose_agent_provider_with_admission(&config, &inputs, &context, Some(&proposal), false);
     assert!(
         result
             .unwrap_err()
             .contains("requires an explicit alias binding")
+    );
+}
+
+#[test]
+fn a_child_inherits_the_authority_without_matching_its_own_config() {
+    // #2024 S3 / #2023: a child composes against the published policy and
+    // never validates its own config's admission section. A candidate that a
+    // root would reject as "restart required" (a cleared binding set, or none
+    // at all) composes cleanly when `inherit` is set.
+    let mut initial = proposal();
+    initial.bindings = BTreeMap::from([("openai-api".into(), "account".into())]);
+    let context = AdmissionRuntimeContext::new(
+        initial.clone(),
+        gates(),
+        SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+    )
+    .unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let inputs = AgentRuntimeInputs {
+        base_dir: tmp.path().into(),
+        http_client: reqwest::Client::new(),
+        refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no refresh") })),
+        openai_oauth_factory: Arc::new(|_| panic!("no oauth")),
+        model_registry: Ok(
+            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+        ),
+    };
+    let mut config = Config::default();
+    config.providers.openai.api_key = "child-key".into();
+    // A root would reject `None` as an enabled-state change; a child does not.
+    assert!(compose_agent_provider_with_admission(&config, &inputs, &context, None, true).is_ok());
+    let mut diverged = initial.clone();
+    diverged.bindings.clear();
+    assert!(
+        compose_agent_provider_with_admission(&config, &inputs, &context, Some(&diverged), true)
+            .is_ok()
+    );
+    // The same divergence is still "restart required" for a root.
+    assert!(
+        compose_agent_provider_with_admission(&config, &inputs, &context, Some(&diverged), false)
+            .unwrap_err()
+            .contains("restart required")
     );
 }
 
@@ -154,6 +197,7 @@ fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes(
                 &AdmissionRuntimeCandidate {
                     providers: &config,
                     admission: Some(&initial),
+                    inherit: false,
                 },
                 &inputs
             )
@@ -175,6 +219,7 @@ fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes(
             &AdmissionRuntimeCandidate {
                 providers: &config,
                 admission: candidate,
+                inherit: false,
             },
             &inputs,
         );
@@ -187,6 +232,7 @@ fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes(
                 &AdmissionRuntimeCandidate {
                     providers: &config,
                     admission: Some(&initial),
+                    inherit: false,
                 },
                 &inputs
             )
@@ -196,4 +242,58 @@ fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes(
         &original_gate,
         &authority.binding("openai-api").unwrap().gate
     ));
+}
+
+#[test]
+fn a_default_binding_catches_unlisted_slots() {
+    // #2024 S3: a `*` (or `default`) binding resolves any slot that has no
+    // explicit binding, so an added provider does not fail composition.
+    let mut proposal = proposal();
+    proposal.bindings = BTreeMap::from([("*".into(), "account".into())]);
+    let context = AdmissionRuntimeContext::new(
+        proposal,
+        gates(),
+        SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+    )
+    .unwrap();
+    // An unlisted slot binds to the default alias.
+    assert!(context.binding("openai-api").is_ok());
+    assert!(context.binding("anything-else").is_ok());
+}
+
+#[test]
+fn an_explicit_binding_still_wins_over_the_default() {
+    let mut proposal = proposal();
+    // A second alias/group so the explicit and default bindings differ.
+    let other = crate::domain::inference_admission::GroupId::new("other").unwrap();
+    proposal.policy.groups.insert(
+        other.clone(),
+        proposal.policy.groups.values().next().unwrap().clone(),
+    );
+    proposal.policy.aliases.insert("second".into(), other);
+    proposal.bindings = BTreeMap::from([
+        ("openai-api".into(), "account".into()),
+        ("*".into(), "second".into()),
+    ]);
+    let mut gates = gates();
+    let account_gate = gates["account"].clone();
+    let second_gate: Arc<dyn AttemptAdmission> = Arc::new(NeverSend);
+    gates.insert("second".into(), second_gate.clone());
+    let context = AdmissionRuntimeContext::new(
+        proposal,
+        gates,
+        SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+    )
+    .unwrap();
+    // The bound gate identity tells explicit from default (M5d): the explicit
+    // slot lands on its own alias's gate, an unlisted slot on the default's.
+    assert!(Arc::ptr_eq(
+        &context.binding("openai-api").unwrap().gate,
+        &account_gate
+    ));
+    assert!(Arc::ptr_eq(
+        &context.binding("unlisted").unwrap().gate,
+        &second_gate
+    ));
+    assert!(!Arc::ptr_eq(&account_gate, &second_gate));
 }

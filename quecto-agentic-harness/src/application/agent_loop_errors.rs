@@ -124,8 +124,10 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Billing => Some(
             "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying.",
         ),
+        // An admission refusal already says what to do (respawn, restart).
         ProviderErrorClass::Client
         | ProviderErrorClass::Cancelled
+        | ProviderErrorClass::Admission
         | ProviderErrorClass::Unknown => None,
     }
 }

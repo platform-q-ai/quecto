@@ -529,6 +529,7 @@ fn cli(o: &OperationsState, args: &[&str]) -> (i32, String, String) {
         base_dir: Some(config.parent().unwrap().to_path_buf()),
         config_path: Some(config.clone()),
         configuration: Some(quecto::composition::configuration::build_configuration_handles),
+        admission: Some(quecto::composition::admission::build_admission_handles),
         ..CliContext::default()
     };
     let output = run_with_output(argv, &ctx);

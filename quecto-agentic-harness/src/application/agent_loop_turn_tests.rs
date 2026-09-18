@@ -77,6 +77,23 @@ fn provider_failure_transitions_to_terminal_when_not_addressable() {
 }
 
 #[test]
+fn admission_refusal_is_terminal_not_repaired_as_malformed() {
+    // A refused admission is not a malformed request: the loop must not
+    // spend its malformed-recovery budget re-sending it (#2024 S3).
+    let err = DomainError::Provider(
+        "admission: admission refused: capability revoked by an authority reset; a child cannot re-register on its own — its parent must respawn it".to_string(),
+    );
+    assert_eq!(
+        classify_provider_failure(&err, 0, 3),
+        ProviderFailureTransition::Terminal(ProviderErrorClass::Admission)
+    );
+    assert_eq!(
+        next_state_after_provider_failure(&err, 0, 3),
+        TurnState::FailProviderRequest
+    );
+}
+
+#[test]
 fn cancelled_provider_failure_is_terminal_not_recovered() {
     let err = DomainError::Provider("request cancelled by caller".to_string());
     assert_eq!(

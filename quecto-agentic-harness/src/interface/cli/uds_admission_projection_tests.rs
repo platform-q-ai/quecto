@@ -263,7 +263,17 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
 #[test]
 fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
-    let hook = admission_event_hook(tx.clone());
+    let hook = admission_event_hook(
+        tx.clone(),
+        Some(Arc::new(|| {
+            super::uds_admission_projection::AuthorityView {
+                directory: "/home/me/.quecto/admission".into(),
+                epoch: 4,
+                connected: true,
+                status: "connected",
+            }
+        })),
+    );
     hook(&waiting_activity(3, 1_500));
     let line = rx.try_recv().unwrap();
     let event: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -271,6 +281,9 @@ fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     assert_eq!(event["admission"]["waiting"], 1);
     assert_eq!(event["admission"]["revision"], 3);
     assert_eq!(event["admission"]["longestWaitSeconds"], 1);
+    // The live authority view rides on the pushed event (M8).
+    assert_eq!(event["admission"]["authorityStatus"], "connected");
+    assert_eq!(event["admission"]["epoch"], 4);
     assert!(rx.try_recv().is_err(), "exactly one event");
     // No connected client: the transition is dropped, never an error.
     drop(rx);
@@ -373,7 +386,7 @@ fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
             proposal,
         ))
         .unwrap();
-    let process = negotiate(Negotiation::Root { directory }).unwrap();
+    let process = Arc::new(negotiate(Negotiation::Root { directory }).unwrap());
     let execution_state: super::uds_execution_state::ExecutionStateHandle =
         Arc::new(Mutex::new(ExecutionState::default()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
@@ -407,4 +420,165 @@ fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
     let (drained, retired) = process.shutdown(std::time::Duration::from_secs(3));
     assert!(drained && retired.is_ok());
     rt.block_on(server.shutdown());
+}
+
+/// H2/M8 (#2024 S3): `get_state.admission` probes the *live* link — health
+/// and epoch move with a broker restart, a `reset` and an exhausted
+/// reconnection — and every health change is pushed with `authorityStatus`.
+#[test]
+fn the_snapshot_and_pushed_events_follow_the_live_authority_link() {
+    use crate::domain::inference_admission::{AdmissionConfig, Feedback, GroupPolicy};
+    use crate::infrastructure::admission::{
+        AdminConnection, AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
+    };
+    use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let proposal = AdmissionRuntimeProposal {
+        policy: AdmissionConfig {
+            groups: std::collections::BTreeMap::from([(
+                g("g"),
+                GroupPolicy {
+                    capacity: 1,
+                    reserve: 0,
+                    min_interval_ms: 1,
+                    queue_capacity: 4,
+                    queue_timeout_ms: 5_000,
+                    attempt_timeout_ms: 60_000,
+                    fallback_base_ms: 100,
+                    max_cooldown_ms: 10_000,
+                },
+            )]),
+            aliases: std::collections::BTreeMap::from([("acct".into(), g("g"))]),
+            max_scopes: 8,
+            terminal_capacity: 8,
+        },
+        bindings: std::collections::BTreeMap::from([("openai".into(), "acct".into())]),
+    };
+    let start = |rt: &tokio::runtime::Runtime| {
+        rt.block_on(AuthorityServer::start(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal.clone(),
+        ))
+        .unwrap()
+    };
+    let server = start(&rt);
+    let process = Arc::new(
+        negotiate(Negotiation::Root {
+            directory: directory.clone(),
+        })
+        .unwrap(),
+    );
+    process.set_reconnect_backoff_for_test(
+        2,
+        std::time::Duration::from_millis(20),
+        std::time::Duration::from_millis(40),
+    );
+    let execution_state: super::uds_execution_state::ExecutionStateHandle =
+        Arc::new(Mutex::new(ExecutionState::default()));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(64);
+    attach_process_admission(&execution_state, &process, &tx);
+    let authority = |state: &super::uds_execution_state::ExecutionStateHandle| {
+        let admission = state.lock().unwrap().snapshot().admission.unwrap();
+        (
+            admission.epoch.unwrap(),
+            admission.connected.unwrap(),
+            admission.authority_status.unwrap(),
+        )
+    };
+    let wait_for = |state: &super::uds_execution_state::ExecutionStateHandle,
+                    expected: (u64, bool, &str)| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let (epoch, connected, status) = authority(state);
+            if (epoch, connected, status.as_str()) == expected {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "expected {expected:?}, last {:?}",
+                (epoch, connected, status)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    let pushed_statuses = |rx: &mut tokio::sync::broadcast::Receiver<String>| {
+        let mut statuses = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(event["type"], "admission_state_changed");
+            statuses.push(
+                event["admission"]["authorityStatus"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        statuses
+    };
+    // The push comes from the link's I/O runtime, a moment after the probe.
+    let wait_pushed = |rx: &mut tokio::sync::broadcast::Receiver<String>, status: &str| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut seen = Vec::new();
+        loop {
+            seen.extend(pushed_statuses(rx));
+            if seen.iter().any(|s| s == status) {
+                return seen;
+            }
+            assert!(std::time::Instant::now() < deadline, "pushed: {seen:?}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    assert_eq!(authority(&execution_state), (1, true, "connected".into()));
+
+    // Broker restart: the loss is reported (and pushed) before any attempt.
+    rt.block_on(server.shutdown());
+    wait_for(&execution_state, (1, false, "reconnecting"));
+    wait_pushed(&mut rx, "reconnecting");
+    let server = start(&rt);
+    let gate = process.runtime_context().binding("openai").unwrap().gate;
+    let permit = rt
+        .block_on(gate.acquire())
+        .expect("reconnected and admitted");
+    let _guard = rt.enter();
+    permit.finish(Feedback::Success);
+    // Not frozen at attach time: the fresh connection is what is probed.
+    wait_for(&execution_state, (1, true, "connected"));
+    wait_pushed(&mut rx, "connected");
+
+    // Reset: the revoked root reads as reconnecting, then re-registers in
+    // the new epoch on its next attempt.
+    let dir = AuthorityDirectory::existing(&directory).unwrap();
+    let admin = rt
+        .block_on(AdminConnection::connect(&dir.admin_socket()))
+        .unwrap();
+    assert_eq!(rt.block_on(admin.reset()).unwrap(), 2);
+    wait_for(&execution_state, (1, false, "reconnecting"));
+    let permit = rt
+        .block_on(gate.acquire())
+        .expect("re-registered in epoch 2");
+    permit.finish(Feedback::Success);
+    wait_for(&execution_state, (2, true, "connected"));
+    // Every transition of that attempt carried the live status too.
+    let statuses = wait_pushed(&mut rx, "connected");
+    assert!(
+        statuses
+            .iter()
+            .all(|s| s == "connected" || s == "reconnecting"),
+        "{statuses:?}"
+    );
+
+    // Exhausted reconnection: `unavailable` is reachable for a root.
+    drop(admin);
+    rt.block_on(server.shutdown());
+    wait_for(&execution_state, (2, false, "reconnecting"));
+    let error = rt.block_on(gate.acquire()).expect_err("fails closed");
+    assert!(error.to_string().contains("admission"), "{error}");
+    wait_for(&execution_state, (2, false, "unavailable"));
+    wait_pushed(&mut rx, "unavailable");
 }

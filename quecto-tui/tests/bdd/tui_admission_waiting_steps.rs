@@ -79,6 +79,40 @@ fn when_child_clear(world: &mut TuiWorld, id: String) {
     harness(world).event_line(&line);
 }
 
+#[when(expr = "a get_state response arrives reporting the authority as {string}")]
+fn when_get_state_authority(world: &mut TuiWorld, status: String) {
+    harness(world).event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "state": "thinking", "model": "m", "sessionKey": "cli:default",
+            "progress": {"state": "active", "reason": "working"}, "generation": 2,
+            "admission": {
+                "waiting": 0, "groups": [], "revision": 1,
+                "directory": "/home/me/.quecto/admission", "epoch": 1,
+                "connected": status == "connected", "authorityStatus": status,
+            }
+        })),
+        error: None,
+    });
+}
+
+#[when(expr = "a pushed admission event reports the authority as {string}")]
+fn when_event_authority(world: &mut TuiWorld, status: String) {
+    let line = format!(
+        r#"{{"type":"admission_state_changed","admission":{{"waiting":0,"admitted":0,"groups":[],"hidden":0,"revision":9,"directory":"/home/me/.quecto/admission","epoch":1,"connected":{connected},"authorityStatus":"{status}"}}}}"#,
+        connected = status == "connected"
+    );
+    harness(world).event_line(&line);
+}
+
+#[then(expr = "the master footer badge shows {string}")]
+fn then_footer_badge(world: &mut TuiWorld, text: String) {
+    let footer = harness(world).master_footer_text();
+    assert!(footer.contains(&text), "footer: {footer}");
+}
+
 #[when(expr = "a get_state response arrives with a waiting admission view of {int} seconds")]
 fn when_get_state(world: &mut TuiWorld, seconds: u64) {
     harness(world).event(Event::Response {
@@ -104,8 +138,14 @@ fn then_footer_shows(world: &mut TuiWorld, text: String) {
 #[then("the master footer shows no admission label")]
 fn then_footer_clear(world: &mut TuiWorld) {
     let footer = harness(world).master_footer_text();
+    // Match the admission label/badge precisely, not the bare word "admission"
+    // (which also appears in an unrelated place such as a git branch name in
+    // the pwd line): the waiting indicator and the #2024 S3 health badges.
     assert!(
-        !footer.contains("admission") && !footer.contains("⏳"),
+        !footer.contains("⏳")
+            && !footer.contains("admission ✓")
+            && !footer.contains("admission ⟳")
+            && !footer.contains("admission ✗"),
         "footer: {footer}"
     );
 }

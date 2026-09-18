@@ -34,6 +34,7 @@ fn is_retryable_only_for_transient_classes() {
     assert!(!Auth.is_retryable());
     assert!(!Client.is_retryable());
     assert!(!Cancelled.is_retryable());
+    assert!(!Admission.is_retryable());
     assert!(!Unknown.is_retryable());
 }
 
@@ -48,6 +49,7 @@ fn as_str_and_display_match() {
         (Client, "client"),
         (Network, "network"),
         (Cancelled, "cancelled"),
+        (Admission, "admission"),
         (Unknown, "unknown"),
     ];
     for (class, text) in cases {
@@ -370,5 +372,89 @@ fn synthetic_empty_stream_retains_retryability_without_http_attribution() {
             classify_provider_error(&wire_error),
             ProviderErrorClass::from_status(status)
         );
+    }
+}
+
+#[test]
+fn admission_refusals_and_rejected_capabilities_are_terminal_admission_errors() {
+    for msg in [
+        "admission: admission refused: capability revoked by an authority reset; a child cannot re-register on its own — its parent must respawn it",
+        "admission: admission refused: admission policy at the broker differs from the one this session composed against; restart required",
+        "admission: admission capability rejected",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        // Terminal in its own class: not `Auth` (no key-check hint or OAuth
+        // refresh; the "authority" wording used to trip the `auth` keyword)
+        // and not `Client` (no malformed-request repair and re-send).
+        assert_eq!(class, ProviderErrorClass::Admission, "{msg}");
+        assert!(!class.is_retryable(), "{msg}");
+    }
+}
+
+#[test]
+fn admission_transport_failures_are_retryable_network() {
+    for msg in [
+        "admission: admission transport failure: reconnect to /run/q/client.sock (No such file or directory)",
+        // No transport keyword in the detail: the class comes from the
+        // admission prefix, not from incidental words.
+        "admission: admission transport failure: task cancelled",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        assert_eq!(class, ProviderErrorClass::Network, "{msg}");
+        assert!(class.is_retryable(), "{msg}");
+    }
+}
+
+#[test]
+fn admission_rules_apply_only_to_admission_prefixed_errors() {
+    // A provider body that merely echoes the phrase is not an admission error.
+    let class = classify_provider_error(&provider(
+        "HTTP 503 Service Unavailable: admission transport failure mentioned in body",
+    ));
+    assert_eq!(class, ProviderErrorClass::Server);
+    // The catch-all is anchored on the `admission: ` prefix, not on the word.
+    let class = classify_provider_error(&provider("admission denied by upstream (HTTP 401)"));
+    assert_eq!(class, ProviderErrorClass::Auth);
+}
+
+/// Every rendering the admission client can produce (`ClientError`'s
+/// `Display`) has a deliberate class; none reaches the keyword paths, where
+/// "authority" would match `auth` and trigger an OAuth refresh + resend.
+#[test]
+fn every_admission_client_error_rendering_is_classified_by_rule() {
+    use ProviderErrorClass::*;
+    let renderings = [
+        ("admission capability rejected", Admission),
+        ("unsupported admission protocol: v9", Admission),
+        ("admission refused: scope not registered", Admission),
+        ("admission ledger not durable", Admission),
+        ("admission request cancelled", Cancelled),
+        ("admission queue wait deadline elapsed", Admission),
+        // EpochReset: terminal for this attempt; the next one re-registers.
+        ("admission authority was reset", Admission),
+        // Closed: the broker died mid-wait; the link reconnects and the
+        // retry re-enters the gate.
+        ("admission authority connection closed", Network),
+        ("admission protocol violation: reply without id", Admission),
+        ("admission transport failure: broken pipe", Network),
+    ];
+    for (rendering, expected) in renderings {
+        let msg = format!("admission: {rendering}");
+        let class = classify_provider_error(&provider(&msg));
+        assert_eq!(class, expected, "{msg}");
+        assert_ne!(class, Auth, "{msg}");
+    }
+}
+
+#[test]
+fn unknown_admission_messages_never_reach_the_keyword_paths() {
+    for msg in [
+        "admission: unexpected reply Ready",
+        "admission: authority unreachable, connection refused",
+        "admission: unauthorized",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        assert_eq!(class, ProviderErrorClass::Admission, "{msg}");
+        assert!(!class.is_retryable(), "{msg}");
     }
 }
