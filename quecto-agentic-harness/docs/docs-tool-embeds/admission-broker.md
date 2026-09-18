@@ -122,10 +122,10 @@ Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy"
 ```
 quecto config unset --global admission           # → unset admission in /home/me/.quecto/config.json
 # restart the agents that should stop being bounded (they composed against the policy)
-quecto admission-broker uninstall-service        # → applied … "disabled and stopped …", "removed unit …" (second run: "no unit to remove at …")
+quecto admission-broker uninstall-service --directory <base_dir>/admission   # → applied … "disabled and stopped …", "removed unit …" (second run: "no unit to remove at …")
 ```
 
-This order keeps sessions admitted until they are restarted; the uninstall stops the broker, so do it last. Removing selected bindings is not a bypass. `quecto config set --global admission null` also disables (the key stays, as null).
+This order keeps sessions admitted until they are restarted; the uninstall stops the broker, so do it last — and once the section is gone the command needs `--directory` (the directory is in every earlier output; the default is `<base_dir>/admission`), otherwise it refuses with ``no `admission` section is configured; nothing to address (or pass --directory)``. Removing selected bindings is not a bypass. `quecto config set --global admission null` also disables (the key stays, as null).
 
 ## If it fails
 

@@ -377,7 +377,7 @@ quecto admission-broker install-service --dry-run   # the plan: unit path, daemo
 quecto admission-broker install-service             # systemd user unit quecto-admission-broker.service
 quecto admission-broker status                      # {"directory":…,"epoch":1,"journal_healthy":true,…}
 quecto admission-broker reset                       # new epoch: roots re-register, children are respawned
-quecto admission-broker uninstall-service           # last, after `quecto config unset --global admission` and restarting agents
+quecto admission-broker uninstall-service --directory ~/.quecto/admission   # last, after `config unset --global admission` + restarting agents (needs --directory once the section is gone)
 ```
 
 `status`, `reset`, `run`, `install-service` and `uninstall-service` address

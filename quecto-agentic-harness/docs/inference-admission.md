@@ -303,9 +303,10 @@ Rollback:
    composition to fail.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.
-3. Stop the authority last: `quecto admission-broker uninstall-service`
-   (idempotent; `no unit to remove at …` on a second run), or SIGTERM a
-   foreground `run`. Outstanding remote work is no longer bounded from that
+3. Stop the authority last: `quecto admission-broker uninstall-service
+   --directory <base_dir>/admission` (once the section is gone the command
+   needs `--directory`; idempotent, `no unit to remove at …` on a second
+   run), or SIGTERM a foreground `run`. Outstanding remote work is no longer bounded from that
    moment; rollback does not pretend otherwise.
 
 If it fails:
