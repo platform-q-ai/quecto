@@ -725,6 +725,86 @@ fn given_spawn_through_fake_podman(world: &mut QuectoWorld) {
     world.delegated_subtree.override_env("PATH", &path);
 }
 
+/// The launcher over the fake podman, keeping the S4a global set (a
+/// labelled `default` plus `alternate`): the rig for #2035, where the
+/// repo's `standard` entry must win over that global default.
+#[given(
+    expr = "script-managed subagent spawning through the fake podman is available from the checkout with global default script {string}"
+)]
+fn given_spawn_through_fake_podman_with_global(world: &mut QuectoWorld, script: String) {
+    crate::container_mapping_steps::given_script_spawn_from_checkout(world, script);
+    crate::spawn_env_steps::wire_environment_control(world, None);
+    let mut path = vec![Toolbox::existing(world).dir];
+    path.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    ));
+    let path = std::env::join_paths(path).unwrap();
+    world.delegated_subtree.override_env("PATH", &path);
+}
+
+/// The global file rewritten by hand: a new entry carries the one
+/// `"default": true` label, every other global entry loses it (a valid
+/// global file labels exactly one). The overlay is untouched.
+#[when(
+    expr = "the global configuration is hand-edited to label container config {string} as its default"
+)]
+fn when_global_default_moved(world: &mut QuectoWorld, name: String) {
+    let config_path = world.config_path.clone().expect("config path");
+    let mut global: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let configs = global["container_configs"]
+        .as_object_mut()
+        .expect("global container_configs");
+    let template = configs
+        .values()
+        .next()
+        .cloned()
+        .expect("a global entry to copy the scripts from");
+    for entry in configs.values_mut() {
+        entry.as_object_mut().unwrap().remove("default");
+    }
+    let mut entry = template;
+    entry["default"] = serde_json::json!(true);
+    configs.insert(name, entry);
+    std::fs::write(&config_path, serde_json::to_string_pretty(&global).unwrap()).unwrap();
+}
+
+/// `quecto config unset --local container_configs.<name>.default`: the
+/// label removed through the trusted write path, the way an agent or an
+/// operator would remove it, so the overlay stays trusted.
+#[when(expr = "the overlay entry {string} is un-defaulted through quecto config unset --local")]
+fn when_overlay_entry_undefaulted(world: &mut QuectoWorld, name: String) {
+    let output = cli::run_with_output(
+        vec![
+            "quecto".into(),
+            "config".into(),
+            "unset".into(),
+            "--local".into(),
+            format!("container_configs.{name}.default"),
+        ],
+        &world.cli_context,
+    );
+    assert_eq!(
+        output.exit_code, 0,
+        "quecto config unset --local failed:\nstdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
+}
+
+#[then(expr = "the overlay entry {string} should be the default")]
+fn then_entry_is_default(world: &mut QuectoWorld, name: String) {
+    let entry = overlay_entry(world, &name);
+    assert!(entry.is_object(), "no entry {name}");
+    assert_eq!(entry["default"], serde_json::json!(true), "{entry}");
+}
+
+#[then(expr = "the fake podman should have been asked to run the child {int} times")]
+fn then_fake_podman_ran_times(world: &mut QuectoWorld, expected: usize) {
+    let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
+    let runs = log.lines().filter(|line| line.starts_with("run ")).count();
+    assert_eq!(runs, expected, "podman log: {log}");
+}
+
 #[then("the fake podman should have been asked to run the child once")]
 fn then_fake_podman_ran_once(world: &mut QuectoWorld) {
     let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();

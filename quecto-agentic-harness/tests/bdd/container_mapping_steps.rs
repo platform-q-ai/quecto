@@ -192,6 +192,23 @@ fn given_checkout_adds_named(world: &mut QuectoWorld, name: String, repo: String
     config_set_local(world, &name, &entry);
 }
 
+/// A global entry of the given name beside the global default: the
+/// global file is rewritten by hand (no overlay, no trust involved) so
+/// the rule "a repo-bound `standard` is the repo's default" (#2035) can
+/// be shown not to reach an entry the global file declares.
+#[given(expr = "the global configuration also declares non-default container config {string}")]
+fn given_global_adds_named(world: &mut QuectoWorld, name: String) {
+    let config_path = world.config_path.clone().expect("config path");
+    let mut global: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let (create, cleanup) = fake_scripts(world);
+    global["container_configs"][name] = serde_json::json!({
+        "create": [create, "--repo", "https://example.test/global-standard"],
+        "cleanup": [cleanup],
+    });
+    std::fs::write(&config_path, serde_json::to_string_pretty(&global).unwrap()).unwrap();
+}
+
 #[given(
     expr = "the checkout carries an untrusted overlay binding container config {string} with repository {string}"
 )]
