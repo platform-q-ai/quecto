@@ -202,12 +202,29 @@ pub struct ContainerAssetCatalogue {
 }
 
 impl ContainerAssetCatalogue {
-    /// The build command for `image` from the bundle at `dir`.
+    /// The build command for `image` from the bundle at `dir`, each
+    /// substituted value quoted for a POSIX shell when it needs it (a
+    /// space, a quote, a `$`): the line is printed to be pasted.
     pub fn build_command_for(&self, image: &str, dir: &std::path::Path) -> String {
         self.build_command
             .trim()
-            .replace("{image}", image)
-            .replace("{dir}", &dir.to_string_lossy())
+            .replace("{image}", &shell_word(image))
+            .replace("{dir}", &shell_word(&dir.to_string_lossy()))
+    }
+}
+
+/// `value` as one word of a POSIX shell command line: bare when it is
+/// made only of characters no shell splits or expands, single-quoted
+/// (with `'` spelled `'\''`) otherwise.
+pub fn shell_word(value: &str) -> String {
+    let bare = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-:=@%+,".contains(c));
+    if bare {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 

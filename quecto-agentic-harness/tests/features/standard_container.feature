@@ -175,6 +175,15 @@ Feature: The standard container is landed on master
     And the output should contain "is a symbolic link"
 
   @done @issue-2024
+  Scenario: the printed build command quotes a project path with a space
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the checkout has a subdirectory "my projects/repo one"
+    And "my projects/repo one" below the checkout is its own git checkout without an origin remote
+    When I run quecto with arguments "container init --project '<checkout>/my projects/repo one'" where <checkout> is the checkout
+    Then the exit code should be 0
+    And the output should contain the build command with the bundle directory single-quoted
+
+  @done @issue-2024
   Scenario: init from a subdirectory of the checkout is refused naming the root
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     And the checkout has a subdirectory "crates/inner"

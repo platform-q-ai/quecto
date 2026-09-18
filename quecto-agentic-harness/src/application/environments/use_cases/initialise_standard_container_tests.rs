@@ -480,6 +480,34 @@ fn a_project_below_the_checkouts_toplevel_is_refused_naming_the_toplevel() {
 }
 
 #[test]
+fn the_build_command_quotes_a_bundle_directory_the_shell_would_split_or_expand() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    *rig.origin.toplevel.lock().unwrap() = None;
+    let report = rig
+        .use_case
+        .execute(&request("/my projects/it's here"))
+        .unwrap();
+    assert_eq!(
+        report.build_command,
+        "build -t quecto-box:local '/my projects/it'\\''s here/.quecto/containers/standard'"
+    );
+    let mut request = request("/plain/dir");
+    request.image = Some("mine:1".into());
+    let report = rig.use_case.execute(&request).unwrap();
+    assert_eq!(
+        report.build_command, "build -t mine:1 /plain/dir/.quecto/containers/standard",
+        "a plain path is left bare"
+    );
+    let mut request = request;
+    request.image = Some("my image".into());
+    let report = rig.use_case.execute(&request).unwrap();
+    assert_eq!(
+        report.build_command, "build -t 'my image' /plain/dir/.quecto/containers/standard",
+        "the image is quoted the same way"
+    );
+}
+
+#[test]
 fn an_edited_asset_is_kept_and_reported_as_differing() {
     let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     rig.assets.disk.lock().unwrap().insert(

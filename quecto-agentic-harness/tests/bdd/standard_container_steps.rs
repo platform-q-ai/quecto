@@ -518,6 +518,32 @@ fn given_subdirectory(world: &mut QuectoWorld, relative: String) {
     std::fs::create_dir_all(checkout(world).join(relative)).unwrap();
 }
 
+#[given(expr = "{string} below the checkout is its own git checkout without an origin remote")]
+fn given_nested_checkout(world: &mut QuectoWorld, relative: String) {
+    git(&checkout(world).join(relative), &["init", "-q"]);
+}
+
+#[then("the output should contain the build command with the bundle directory single-quoted")]
+fn then_build_command_quoted(world: &mut QuectoWorld) {
+    let dir = checkout(world)
+        .canonicalize()
+        .unwrap()
+        .join("my projects/repo one/.quecto/containers/standard");
+    // The bundle's template is `-f {dir}/Containerfile {dir}`: each
+    // `{dir}` is one quoted word, so the shell reads
+    // `'…/standard'/Containerfile` as one path.
+    let expected = format!(
+        "podman build -t quecto-box:local -f '{}'/Containerfile '{}'",
+        dir.display(),
+        dir.display()
+    );
+    assert!(
+        world.stdout.contains(&expected),
+        "expected {expected:?} in: {}",
+        world.stdout
+    );
+}
+
 /// `<checkout>` in the arguments is the hermetic checkout's absolute path.
 #[when(expr = "I run quecto with arguments {string} where <checkout> is the checkout")]
 fn when_run_with_checkout(world: &mut QuectoWorld, args_str: String) {
