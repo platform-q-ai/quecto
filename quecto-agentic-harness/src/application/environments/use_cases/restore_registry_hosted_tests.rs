@@ -290,3 +290,36 @@ fn the_older_build_relabel_is_undone_in_memory_only_by_an_observing_restore() {
         report.diagnostics
     );
 }
+
+/// Round 5 (#2033): a retained environment whose *kill failed* also goes
+/// gone → stopped, but it keeps its own kill error behind the restore note,
+/// so it never wears the "relabelled by an older build" signature and the
+/// operator's diagnosis survives.
+#[test]
+fn a_failed_retained_kill_that_went_gone_keeps_its_error_and_is_not_resurrected() {
+    let mut failed = record("C1", EnvironmentStatus::CleanupFailed);
+    failed.metadata = serde_json::json!({"retained": "run ended: blocked; environment retained for inspection, kill_container to remove"});
+    failed.last_error = Some("retained kill refused: scripts/kill.sh differs".into());
+    let store = store_with(vec![failed]);
+    let process = process(|_| EnvironmentLiveness::Gone);
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, hosted(vec![])).execute("s");
+    assert_eq!(report.stopped, ["C1"]);
+    let c1 = registry.get("C1").unwrap();
+    assert_eq!(c1.status, EnvironmentStatus::Stopped);
+    let error = c1.last_error.clone().unwrap();
+    assert!(error.starts_with(GONE_AT_RESTORE), "{error}");
+    assert!(error.contains("earlier: retained kill refused"), "{error}");
+    // A second restore sees no older-build signature: it stays stopped.
+    let (registry, report) = RestoreRegistry::new(
+        store.clone(),
+        self::process(|_| panic!("a stopped record is not inspected")),
+        hosted(vec![]),
+    )
+    .execute("s");
+    assert_eq!(
+        registry.get("C1").unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+    assert!(report.retained.is_empty(), "{report:?}");
+}

@@ -359,7 +359,16 @@ impl RestoreRegistry {
                     }
                     (EnvironmentLiveness::Gone, _) => {
                         record.status = EnvironmentStatus::Stopped;
-                        record.last_error = Some(GONE_AT_RESTORE.to_string());
+                        // A failed kill's own error is kept behind the restore
+                        // note: it is the operator's diagnosis, and its
+                        // presence keeps the "relabelled by an older build"
+                        // signature (`GONE_AT_RESTORE` alone) exclusive.
+                        record.last_error = Some(match record.last_error.take() {
+                            Some(earlier) if !earlier.is_empty() => {
+                                format!("{GONE_AT_RESTORE}; earlier: {earlier}")
+                            }
+                            _ => GONE_AT_RESTORE.to_string(),
+                        });
                         report.stopped.push(environment_ref);
                         true
                     }
