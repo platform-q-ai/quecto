@@ -92,7 +92,7 @@ each situation to one runbook page; these are the same commands:
 | Default model for this repo | `quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'` | `quecto config get --effective agents.defaults.model` → the id; `quecto agent --no-session -m "Reply with exactly OK"` → `OK` | `quecto config unset agents.defaults.model` |
 | Default model everywhere | `quecto config set --global agents.defaults.model '"…"'` | `quecto status` → `Model: …` | `quecto config unset --global agents.defaults.model` |
 | Admission broker (one per host) | `quecto config set --global admission '{…}'`, `quecto admission-broker install-service` | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto admission-broker uninstall-service`, `quecto config unset --global admission` |
-| Container for this repo | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → `ready: …`; `quecto container doctor` → every line `✓` | `quecto config unset --local container_configs.standard`, `rm -r .quecto/containers/standard` |
+| Container for this repo | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → `ready: …`; `quecto container doctor` → no `✗` line, exit 0 | `quecto config unset --local container_configs.standard`, `rm -r .quecto/containers/standard` |
 
 Order on a fresh machine: credential → (global model) → repo overlay →
 admission → container, then `quecto status` once more. Details, expected

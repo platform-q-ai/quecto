@@ -295,7 +295,7 @@ async fn setup_index_is_first_and_routes_every_area() {
         "docs {\"name\": \"admission-broker\"}",
         "docs {\"name\": \"container-runtime\"}",
         "docs {\"name\": \"swarm\"}",
-        "--show-secrets",
+        "never pass `--show-secrets`",
         "QUECTO_BASE_DIR",
     ] {
         assert!(doc.contains(needle), "setup index misses {needle}");
@@ -327,6 +327,7 @@ fn area_pages_share_the_runbook_shape() {
     for needle in [
         "quecto auth login --provider openai --token",
         "quecto auth login --provider anthropic --token",
+        "always pass `--token`",
         "--oauth",
         "--device-code",
         "quecto auth status",

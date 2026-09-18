@@ -601,7 +601,7 @@ step is a command with its expected output):
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
 | 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
 | 2. build | the printed `podman build -t quecto-box:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-box:local` |
-| 3. verify | `quecto container status` | five lines ending `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while any file differs — a digest-pinned Containerfile included; then rely on the doctor) |
+| 3. verify | `quecto container status` | a header, four `assets/config/trust/image` lines, then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while any file differs — a digest-pinned Containerfile included; then rely on the doctor) |
 | 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
 | 5. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
 | 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |

@@ -297,16 +297,16 @@ Activation (per host, per user):
 
 Rollback:
 
-1. `quecto admission-broker uninstall-service` (idempotent; `no unit to
-   remove at …` on a second run), then `quecto config unset --global
-   admission` (or `config set --global admission null`). Removing bindings
-   while keeping admission enabled is not a selective bypass: missing
-   bindings for constructed providers cause composition to fail.
+1. `quecto config unset --global admission` (or `config set --global
+   admission null`). Removing bindings while keeping admission enabled is
+   not a selective bypass: missing bindings for constructed providers cause
+   composition to fail.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.
-3. Stop the authority (the uninstall did, or SIGTERM a foreground `run`).
-   Outstanding remote work is no longer bounded from that moment; rollback
-   does not pretend otherwise.
+3. Stop the authority last: `quecto admission-broker uninstall-service`
+   (idempotent; `no unit to remove at …` on a second run), or SIGTERM a
+   foreground `run`. Outstanding remote work is no longer bounded from that
+   moment; rollback does not pretend otherwise.
 
 If it fails:
 
@@ -315,7 +315,7 @@ If it fails:
 | ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
 | ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
 | `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
-| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than expected | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line (`config get --global admission.directory` answers only when set explicitly) |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory (os error 2))`, exit 1 | broker not started, or a different directory than expected | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line (`config get --global admission.directory` answers only when set explicitly) |
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path (not the base dir or an ancestor), reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |

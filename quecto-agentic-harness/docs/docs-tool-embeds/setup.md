@@ -6,7 +6,8 @@ report what you changed. Every command is a `bash` call from the
 **repository root** (the process working directory); `quecto` is on PATH
 (`quecto version` prints `quecto <x.y.z>`). Nothing here needs a hand-edited
 JSON file: every write goes through a `quecto` command that validates the
-result and prints the file it touched.
+result and prints the file it touched (`auth login` prints `Credential stored
+for <provider>` instead of a path).
 
 ## Decision tree
 
@@ -16,11 +17,12 @@ result and prints the file it touched.
 | New repo: a setting for this repo only, global untouched | `docs {"name": "config"}` | `quecto config set <dotted.key> <json>` | `quecto config get --effective <dotted.key>` prints the value; `quecto status` → `Overlay: <repo>/.quecto/config.json (trusted)` | `quecto config unset <dotted.key>`; `rm .quecto/config.json` drops the whole overlay |
 | Pin the default model (and effort) for this repo | `docs {"name": "models"}` | `quecto config set agents.defaults.model '"<provider/model>"'` | `quecto config get --effective agents.defaults.model` → `"<provider/model>"`; optionally one model call: `quecto agent --no-session -m "Reply with exactly OK"` prints `OK` | `quecto config unset agents.defaults.model` |
 | Enable the admission broker (one per host) | `docs {"name": "admission-broker"}` | `quecto config set --global admission '{"groups":…,"aliases":…,"bindings":…}'` (the exact JSON is on that page; `{}` is refused) then `quecto admission-broker install-service` (`--dry-run` first) | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto admission-broker uninstall-service` then `quecto config unset --global admission` |
-| A podman/docker container for this app | `docs {"name": "container-runtime"}` | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → last line `ready: spawn {"container":true} …`; `quecto container doctor` → every line `✓`, exit 0 | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard` |
+| A podman/docker container for this app | `docs {"name": "container-runtime"}` | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → last line `ready: spawn {"container":true} …`; `quecto container doctor` → no `✗` line, exit 0 (`! gh` is a warning) | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard` |
 | A swarm (many agents, one container) | `docs {"name": "swarm"}` | the container row first, then `spawn … "container":{"mode":"new","container_config":"standard"}` | the spawn result names `container_config=standard`; `agent_cmd get_containers` lists it `running` | `agent_cmd kill_container` |
 
 A `quecto` command that changes a file prints the path it wrote and exits 0;
-a refusal prints the reason and exits 1 with the file byte-identical. Treat
+a refusal prints the reason and exits 1 with the file byte-identical (`auth
+logout` of a missing credential is the exception: `no credential found`, exit 0). Treat
 exit 1 from a *write* as "not done", never retry the same command unchanged
 (a `config get` of an unset key also exits 1, with `is not set` — that is an answer).
 

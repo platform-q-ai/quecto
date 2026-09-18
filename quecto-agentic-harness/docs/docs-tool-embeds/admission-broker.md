@@ -82,7 +82,7 @@ broker you address. Every output names the directory it addressed.
 
 - Linux with a systemd *user* session (`systemctl --user status` answers) for `install-service`; without one, run the broker under your own supervisor with `quecto admission-broker run --config <abs global config>`.
 - `quecto status` exits 0; its `Config:` line is the global file the section goes into (`QUECTO_BASE_DIR` moves it and the default `<base_dir>/admission` directory). The directory path must be short enough for a Unix socket (under ~100 characters).
-- No other broker holds `<base_dir>/admission` (a foreground `quecto admission-broker run` in a terminal, say): `quecto admission-broker status --directory <base_dir>/admission` → `not running for directory …`, exit 1, before you start. (Without `--directory` and before step 1, `status` says `config … not found; no `+'`admission`'+` section to address` or `no `+'`admission`'+` section is configured …` — also "no broker addressed".)
+- No other broker holds `<base_dir>/admission` (a foreground `quecto admission-broker run` in a terminal, say): `quecto admission-broker status --directory <base_dir>/admission` → `not running for directory …`, exit 1, before you start. (Without `--directory` and before step 1, `status` says ``config … not found; no `admission` section to address`` or ``no `admission` section is configured …`` — also "no broker addressed".)
 - You know which provider slots the runtime constructs; with a default binding (`"*"`) you need not list them.
 
 ## Do
@@ -120,11 +120,12 @@ Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy"
 ## Rollback
 
 ```
-quecto admission-broker uninstall-service        # → applied … "disabled and stopped …", "removed unit …" (second run: "no unit to remove at …")
 quecto config unset --global admission           # → unset admission in /home/me/.quecto/config.json
+# restart the agents that should stop being bounded (they composed against the policy)
+quecto admission-broker uninstall-service        # → applied … "disabled and stopped …", "removed unit …" (second run: "no unit to remove at …")
 ```
 
-Then restart agents (they composed against the policy). Order matters: remove the section and restart agents *before* stopping the broker if sessions must stay admitted until the end; removing selected bindings is not a bypass. `quecto config set --global admission null` also disables (the key stays, as null).
+This order keeps sessions admitted until they are restarted; the uninstall stops the broker, so do it last. Removing selected bindings is not a bypass. `quecto config set --global admission null` also disables (the key stays, as null).
 
 ## If it fails
 
@@ -133,7 +134,7 @@ Then restart agents (they composed against the policy). Order matters: remove th
 | ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
 | ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
 | `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
-| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line itself (`quecto config get --global admission.directory` answers only when you set it explicitly; unset = `<base_dir>/admission`) |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory (os error 2))`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line itself (`quecto config get --global admission.directory` answers only when you set it explicitly; unset = `<base_dir>/admission`) |
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path outside the base dir's ancestors, reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |

@@ -313,7 +313,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 # Pass token directly
 quecto auth login --provider openai --token sk-proj-your-key
 
-# Interactive: prompts you to paste the token
+# No --token: the browser OAuth flow starts (same as --oauth) and blocks until the callback
 quecto auth login --provider anthropic
 
 # OAuth browser flow
@@ -329,13 +329,13 @@ quecto auth logout --provider openai
 | Subcommand | Flags | Description |
 |---|---|---|
 | `auth login` | `--provider <name>` (required) | Authenticate with a provider |
-| | `--token <key>` | Pass token directly (skips interactive prompt) |
+| | `--token <key>` | Pass token directly (otherwise the OAuth browser flow starts; always `--token` from an agent) |
 | | `--oauth` | Initiate OAuth browser-based login flow |
 | | `--device-code` | Initiate device code flow for headless environments |
 | `auth logout` | `--provider <name>` | Remove a stored credential |
 | `auth status` | | List all stored credentials with status |
 
-Credentials are stored in `~/.quecto/credentials.json`. The credential store takes priority over keys in `config.json`.
+Credentials are stored in `<base_dir>/credentials.json` (`~/.quecto/credentials.json` unless `QUECTO_BASE_DIR` is set). The credential store takes priority over keys in `config.json`.
 
 ### `quecto status` — Check configuration
 
@@ -360,7 +360,7 @@ quecto config trust                                # approve ./.quecto/config.js
 ```
 
 Values are JSON; a bare word that is not valid JSON is taken as a string, so
-`quecto config set agents.defaults.model gpt-5.5` reads naturally. `set` and
+`quecto config set agents.defaults.model openai-api/gpt-5.5` reads naturally (store the qualified `provider/model` id). `set` and
 `unset` default to the repo-local overlay and refuse the global-only sections
 (`providers`, `admission`) there; they also refuse to patch an overlay whose
 current content is not trusted. `unset` of a key the layer does not set is an
@@ -377,7 +377,7 @@ quecto admission-broker install-service --dry-run   # the plan: unit path, daemo
 quecto admission-broker install-service             # systemd user unit quecto-admission-broker.service
 quecto admission-broker status                      # {"directory":…,"epoch":1,"journal_healthy":true,…}
 quecto admission-broker reset                       # new epoch: roots re-register, children are respawned
-quecto admission-broker uninstall-service           # then: quecto config unset --global admission
+quecto admission-broker uninstall-service           # last, after `quecto config unset --global admission` and restarting agents
 ```
 
 `status`, `reset`, `run`, `install-service` and `uninstall-service` address
@@ -1040,7 +1040,7 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ## Documentation
 
-Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (concise deep dives) — not these full files. Its first page, `setup`, is a decision tree that routes "set up X in this repo" to one runbook page (`config`, `models`, `admission-broker`, `container-runtime`, `swarm`), each of the shape *Preconditions · Do · Verify · Rollback · If it fails*; the human guides below carry the same commands and expected outputs, so an agent given only the `docs` tool and a prompt like "pin the default model for this repo" can do it without a human editing files (#2024 S5).
+Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (concise deep dives) — not these full files. Its first page, `setup`, is a decision tree that routes "set up X in this repo" to one runbook page (`config`, `models`, `admission-broker`, `container-runtime` — each of the shape *Preconditions · Do · Verify · Rollback · If it fails*; the swarm row routes to the `swarm` workbench page); the human guides below carry the same commands and expected outputs, so an agent given only the `docs` tool and a prompt like "pin the default model for this repo" can do it without a human editing files (#2024 S5).
 
 | Guide | Description |
 |---|---|

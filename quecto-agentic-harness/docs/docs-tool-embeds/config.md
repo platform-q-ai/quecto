@@ -37,7 +37,7 @@ quecto config set --global agents.defaults.model '"openai-api/gpt-5.6-luna"'
 quecto config set --global providers.openai.api_base '"https://api.example"'
 ```
 
-Expected: `set agents.defaults.model in /home/me/.quecto/config.json`, exit 0.
+Expected: `set agents.defaults.model in /home/me/.quecto/config.json` (`(created)` when the global file did not exist), exit 0.
 
 Approve an overlay someone else wrote (review it first):
 
