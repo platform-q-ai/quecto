@@ -158,7 +158,7 @@ fn kept_and_removable(world: &QuectoWorld, id: &str, run_id: &str) -> (bool, boo
         .any(|line| {
             line.starts_with(&format!("  {id}  "))
                 && line.contains(&format!("hosts swarm run {run_id} (running)"))
-                && line.contains("kill explicitly to collect")
+                && line.contains("before it can be collected")
         });
     let removable = world
         .stdout

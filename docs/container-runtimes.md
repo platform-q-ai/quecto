@@ -363,7 +363,7 @@ What a new session can do with a restored environment:
   for the coordination store its checkout may host (`workspace/repo`,
   then `workspace`): one hosting a **swarm run that has not ended**, or a
   store that cannot be read, is **kept** whatever the registry says —
-  `… hosts swarm run <id> (<status>); kill explicitly to collect …` — the
+  `… hosts swarm run <id> (<status>); end the run … before it can be collected` — the
   board and checkout are the run's; an ended run, the placeholder or no
   store is collected as before. A record an older build relabelled
   `stopped` while retained is kept likewise (`was retained; relabelled

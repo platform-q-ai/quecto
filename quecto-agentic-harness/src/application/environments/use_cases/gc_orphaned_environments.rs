@@ -549,10 +549,10 @@ impl GcOrphanedEnvironments {
         if let Some(hosting) = self.hosted_run_keeps(record, state_dir) {
             let how = match record {
                 Some(_) => {
-                    "kill explicitly to collect (a stopped record cannot be killed: end the run, or remove the directory by hand)"
+                    "end the run (or remove the directory by hand if its board is unreadable) before it can be collected"
                 }
                 None => {
-                    "kill explicitly to collect (nothing records it: end the run, or remove the directory by hand)"
+                    "nothing records it: end the run, or remove the directory by hand, before it can be collected"
                 }
             };
             keep(

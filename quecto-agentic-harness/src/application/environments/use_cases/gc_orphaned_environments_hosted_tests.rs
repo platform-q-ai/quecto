@@ -144,11 +144,11 @@ fn a_directory_hosting_an_unfinished_run_is_kept_and_one_whose_run_ended_is_coll
     let report = rig.use_case().execute(&GcRequest::default()).unwrap();
     assert_eq!(
         kept_reason(&report, "env-stopped-live"),
-        "container quecto-env-stopped-live gone or exited; recorded C2 as stopped, but its checkout hosts swarm run run-s (running); kill explicitly to collect (a stopped record cannot be killed: end the run, or remove the directory by hand)"
+        "container quecto-env-stopped-live gone or exited; recorded C2 as stopped, but its checkout hosts swarm run run-s (running); end the run (or remove the directory by hand if its board is unreadable) before it can be collected"
     );
     assert_eq!(
         kept_reason(&report, "env-orphan-live"),
-        "container quecto-env-orphan-live gone or exited; no registry record, but its checkout hosts swarm run run-o (running); kill explicitly to collect (nothing records it: end the run, or remove the directory by hand)"
+        "container quecto-env-orphan-live gone or exited; no registry record, but its checkout hosts swarm run run-o (running); nothing records it: end the run, or remove the directory by hand, before it can be collected"
     );
     assert!(
         kept_reason(&report, "env-orphan-paused").contains("hosts swarm run run-p (paused)"),
@@ -156,7 +156,7 @@ fn a_directory_hosting_an_unfinished_run_is_kept_and_one_whose_run_ended_is_coll
     );
     assert!(
         kept_reason(&report, "env-orphan-unreadable")
-            .contains("hosts a coordination store that could not be read (database is locked); kill explicitly"),
+            .contains("hosts a coordination store that could not be read (database is locked); nothing records it"),
         "{report:?}"
     );
     assert_eq!(
