@@ -14,6 +14,8 @@ Feature: A repository binds itself to a container config through its overlay
     When I spawn script-managed subagent "container-repo-r" with default selection and no config argument and task "CONTAINER_REPO_R_MARKER"
     Then the spawn result should not be an error
     And the spawn result should include an environment reference
+    And the spawn result should name container config "r"
+    And the spawn result should carry no configuration diagnostics
     And the script-managed runtime should have used container script "r"
     And the script-managed runtime should have received repository "https://example.test/repo-r"
     And child "container-repo-r" should receive "CONTAINER_REPO_R_MARKER"
@@ -26,12 +28,31 @@ Feature: A repository binds itself to a container config through its overlay
     And the script-managed runtime should have received no repository
 
   @done @issue-2024 @container-spawn
-  Scenario: An untrusted overlay is ignored with the configuration diagnostic and the global default applies
+  Scenario: An untrusted overlay refuses container true with the configuration diagnostic in the tool result
     Given the checkout carries an untrusted overlay binding container config "r" with repository "https://example.test/repo-r"
     When I spawn script-managed subagent "container-untrusted" with default selection and no config argument and task "CONTAINER_UNTRUSTED_MARKER"
+    Then the spawn result should fail with "container: true refused: the checkout's repo-local config overlay was not applied"
+    And the spawn result should carry the configuration diagnostic naming the checkout's overlay
+    And the script-managed runtime should not have been invoked
+
+  @done @issue-2024 @container-spawn
+  Scenario: A named global config launches over an untrusted overlay with the configuration diagnostic in the tool result
+    Given the checkout carries an untrusted overlay binding container config "r" with repository "https://example.test/repo-r"
+    When I spawn script-managed subagent "container-untrusted-named" with script "alternate" and no config argument and task "CONTAINER_UNTRUSTED_NAMED_MARKER"
     Then the spawn result should not be an error
-    And the script-managed runtime should have used container script "default"
+    And the spawn result should name container config "alternate"
+    And the spawn result should carry the configuration diagnostic naming the checkout's overlay
+    And the script-managed runtime should have used container script "alternate"
     And the script-managed runtime should have received no repository
+
+  @done @issue-2024 @container-spawn
+  Scenario: A trusted overlay whose merge is invalid fails the spawn naming the overlay before any script runs
+    Given the checkout carries a trusted overlay labelling both "r1" and "r2" as default container configs
+    When I spawn script-managed subagent "container-invalid-merge" with default selection and no config argument and task "CONTAINER_INVALID_MERGE_MARKER"
+    Then the spawn result should fail naming the checkout's overlay merged over the global file
+    And the spawn result should fail with "multiple container configs are labeled"
+    And the spawn result should fail with "(r1, r2); exactly one is allowed"
+    And the script-managed runtime should not have been invoked
 
   @done @issue-2024 @container-spawn
   Scenario: A non-default overlay entry is selectable by name and the global default stays

@@ -148,6 +148,105 @@ fn when_spawn_named_no_config(
     );
 }
 
+/// The overlay the checkout carries, as the diagnostics name it.
+fn overlay_path(world: &QuectoWorld) -> String {
+    checkout(world)
+        .join(".quecto")
+        .join("config.json")
+        .display()
+        .to_string()
+}
+
+#[given(
+    expr = "the checkout carries a trusted overlay labelling both {string} and {string} as default container configs"
+)]
+fn given_checkout_trusted_invalid_merge(world: &mut QuectoWorld, first: String, second: String) {
+    // `config set --local` refuses a merge that is not valid, so the file is
+    // written by hand and approved with `quecto config trust`: the trust
+    // record is honest, the merge is not.
+    let overlay = checkout(world).join(".quecto").join("config.json");
+    std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
+    let entries = serde_json::json!({
+        first: overlay_entry(world, "https://example.test/repo-1", true),
+        second: overlay_entry(world, "https://example.test/repo-2", true),
+    });
+    std::fs::write(
+        &overlay,
+        serde_json::to_string_pretty(&serde_json::json!({"container_configs": entries})).unwrap(),
+    )
+    .unwrap();
+    let output = cli::run_with_output(
+        vec!["quecto".into(), "config".into(), "trust".into()],
+        &world.cli_context,
+    );
+    assert_eq!(
+        output.exit_code, 0,
+        "quecto config trust failed:\nstdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
+}
+
+#[then(expr = "the spawn result should name container config {string}")]
+fn then_spawn_names_container_config(world: &mut QuectoWorld, name: String) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    let expected = format!(" container_config={name} ");
+    assert!(
+        !result.is_error && result.content.contains(&expected),
+        "expected {expected:?} in: {}",
+        result.content
+    );
+}
+
+#[then("the spawn result should carry no configuration diagnostics")]
+fn then_spawn_carries_no_diagnostics(world: &mut QuectoWorld) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    assert!(
+        !result.content.contains("Configuration diagnostics")
+            && !result.content.contains("was not applied"),
+        "{}",
+        result.content
+    );
+}
+
+#[then("the spawn result should carry the configuration diagnostic naming the checkout's overlay")]
+fn then_spawn_carries_overlay_diagnostic(world: &mut QuectoWorld) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    let overlay = overlay_path(world);
+    let diagnostic = format!("repo-local config overlay {overlay} is not trusted (sha256 ");
+    assert!(
+        result.content.contains(&diagnostic)
+            && result.content.contains(
+                "and was not applied; review it, then run `quecto config trust` from this directory"
+            ),
+        "expected the diagnostic {diagnostic:?}… in the tool result: {}",
+        result.content
+    );
+    if !result.is_error {
+        assert!(
+            result
+                .content
+                .contains("\nConfiguration diagnostics:\nrepo-local config overlay"),
+            "a successful spawn lists the diagnostics after the launch line: {}",
+            result.content
+        );
+    }
+}
+
+#[then("the spawn result should fail naming the checkout's overlay merged over the global file")]
+fn then_spawn_fails_naming_merge(world: &mut QuectoWorld) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    let expected = format!(
+        "failed to load config {} merged over {}: invalid container_configs: ",
+        overlay_path(world),
+        world.config_path.clone().expect("config path")
+    );
+    assert!(
+        result.is_error && result.content.contains(&expected),
+        "expected {expected:?} in: {}",
+        result.content
+    );
+}
+
 #[then(expr = "the spawn result should fail with {string}")]
 fn then_spawn_fails_with(world: &mut QuectoWorld, expected: String) {
     let result = world.spawn_result.as_ref().expect("no spawn result");

@@ -30,6 +30,10 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// mirrored once into a private sidecar the child consumes at startup.
     parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
     parent_control_path: Option<PathBuf>,
+    /// What the container-config selection reported about the layers the
+    /// prepared child was selected from (#2024 S4a); relayed verbatim in
+    /// the spawn result so the model, not only stderr, sees it.
+    container_diagnostics: Vec<String>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -42,6 +46,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             initial_prompt_retry_deadline: None,
             parent_control: None,
             parent_control_path: None,
+            container_diagnostics: Vec::new(),
         }
     }
 
@@ -406,6 +411,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         config: &'b SubagentConfig,
     ) -> LaunchFuture<'b, Result<RegisteredLaunch, DomainError>> {
         Box::pin(async move {
+            // The selection diagnostics the prepared child carried belong
+            // to the spawn result (#2024 S4a): taken here, where the
+            // registered launch is assembled from what was prepared.
+            self.container_diagnostics = std::mem::take(&mut prepared.container_diagnostics);
             let agent_uuid = self
                 .agent_uuid
                 .as_ref()
@@ -580,8 +589,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         let env_ref = environment_ref
             .map(|r| {
                 // Members of one environment share its reported workspace, so
-                // the spawn result names it alongside the ref (#1369 slice 2).
-                let workspace = self
+                // the spawn result names it alongside the ref (#1369 slice
+                // 2) and the config it was created with (#2024 S4a): the
+                // model learns which container it landed in.
+                let details = self
                     .tool
                     .environment_registry
                     .get(r)
@@ -596,15 +607,29 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         } else {
                             ""
                         };
-                        format!(" workspace={}{sandbox}", record.workspace_path.display())
+                        format!(
+                            " container_config={} workspace={}{sandbox}",
+                            record.script_name,
+                            record.workspace_path.display()
+                        )
                     })
                     .unwrap_or_default();
-                format!(" environment_ref={r}{workspace}")
+                format!(" environment_ref={r}{details}")
             })
             .unwrap_or_default();
+        // The selection diagnostics, verbatim: an untrusted or refused
+        // overlay the launch did not apply is the model's to act on.
+        let diagnostics = if self.container_diagnostics.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\nConfiguration diagnostics:\n{}",
+                self.container_diagnostics.join("\n")
+            )
+        };
         ToolResult {
             content: format!(
-                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
+                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.{diagnostics}",
                 identity.session_name, identity.registry_key, env_ref
             ),
             is_error: false,

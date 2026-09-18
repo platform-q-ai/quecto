@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 use crate::application::subagents::dto::{
-    ContainerConfigSource, ContainerLaunchConfig, SelectContainerConfigRequest,
+    ContainerConfigSource, SelectContainerConfigRequest, SelectedContainerConfig,
 };
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
@@ -87,12 +87,13 @@ pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =
 /// otherwise the launching agent's own effective configuration — its base
 /// file with its checkout's trusted overlay — supplies the entries. The
 /// layer diagnostics (an untrusted or refused overlay that was not
-/// applied) reach the operator's stderr, as every other load reports them.
+/// applied) reach the operator's stderr, as every other load reports
+/// them, and travel with the selection into the spawn result.
 fn select_container_config(
     selection: Option<&SelectContainerConfig>,
     config: &SubagentConfig,
     name: &Option<String>,
-) -> Result<ContainerLaunchConfig, DomainError> {
+) -> Result<SelectedContainerConfig, DomainError> {
     let selection = selection
         .ok_or_else(|| DomainError::Tool(NO_CONTAINER_CONFIG_SELECTION_COMPOSED.into()))?;
     let source = match &config.config_path {
@@ -108,7 +109,7 @@ fn select_container_config(
     if !selected.diagnostics.is_empty() {
         eprintln!("{}", selected.diagnostics.join("\n"));
     }
-    Ok(selected.config)
+    Ok(selected)
 }
 
 /// Join an existing committed environment (#1369 slice 2): resolve the target
@@ -160,6 +161,7 @@ async fn join_script_managed_child(
         // uncommit or stop it.
         environments: None,
         stderr_tail: None,
+        container_diagnostics: Vec::new(),
     })
 }
 
@@ -352,15 +354,17 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         cleanup_argv: Vec::new(),
         environments: None,
         stderr_tail,
+        container_diagnostics: Vec::new(),
     })
 }
 
 async fn spawn_script_managed_child(
     config: &SubagentConfig,
     child: &ChildCommand<'_>,
-    container: &ContainerLaunchConfig,
+    selected: &SelectedContainerConfig,
     environments: &EnvironmentRegistry,
 ) -> Result<PreparedChild, DomainError> {
+    let container = &selected.config;
     let config_name = container.name.as_str();
     let environment_ref = environments.mint_ref();
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
@@ -437,6 +441,7 @@ async fn spawn_script_managed_child(
         cleanup_argv: container.cleanup.clone(),
         environments: Some(environments.clone()),
         stderr_tail: None,
+        container_diagnostics: selected.diagnostics.clone(),
     })
 }
 

@@ -140,7 +140,17 @@ fn an_untrusted_overlay_is_not_applied_and_travels_as_the_configuration_diagnost
         "{:?}",
         configs.diagnostics
     );
-    assert_eq!(rig.select(None).unwrap(), "global");
+    assert!(configs.overlay_withheld);
+    // The implicit default is refused while the overlay is withheld; a
+    // name launches from the global set.
+    let refused = rig.select(None).unwrap_err();
+    assert!(
+        refused.starts_with("container: true refused")
+            && refused.contains(&rig.overlay().display().to_string())
+            && refused.contains("quecto config trust"),
+        "{refused}"
+    );
+    assert_eq!(rig.select(Some("global")).unwrap(), "global");
 }
 
 #[test]
@@ -171,7 +181,49 @@ fn an_explicit_file_replaces_the_layers_and_ignores_the_overlay() {
         })
         .unwrap_err()
         .to_string();
-    assert!(missing.contains("config not found"), "{missing}");
+    // Load errors keep the section prefix a spawn caller has always seen
+    // (parity with the retired loader): the failure is about the
+    // container configuration this launch needed.
+    assert!(
+        missing.starts_with("invalid container_configs configuration: config not found: "),
+        "{missing}"
+    );
+    let broken = rig.base_dir.join("broken.json");
+    std::fs::write(&broken, "{not json").unwrap();
+    let parse = select
+        .execute(&SelectContainerConfigRequest {
+            source: ContainerConfigSource::Explicit(broken.clone()),
+            name: None,
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(
+        parse.starts_with("invalid container_configs configuration: failed to load config ")
+            && parse.contains(&broken.display().to_string()),
+        "{parse}"
+    );
+}
+
+#[test]
+fn a_trusted_overlay_whose_merge_is_invalid_fails_naming_both_files_without_a_prefix_stutter() {
+    let rig = Rig::new();
+    rig.write_overlay(serde_json::json!({
+        "r": entry(true, "https://repo.test/r"),
+        "s": entry(true, "https://repo.test/s"),
+    }));
+    rig.trust_overlay();
+    let err = rig.select(None).unwrap_err();
+    assert!(
+        err.starts_with("failed to load config ")
+            && err.contains(&rig.overlay().display().to_string())
+            && err.contains("merged over")
+            && err.contains("invalid container_configs: multiple container configs are labeled"),
+        "{err}"
+    );
+    assert!(!err.contains("configuration: failed"), "no stutter: {err}");
+    // A name does not rescue an invalid merge: nothing is selected from it.
+    let named = rig.select(Some("global")).unwrap_err();
+    assert_eq!(named, err);
 }
 
 #[test]

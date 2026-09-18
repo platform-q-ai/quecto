@@ -50,6 +50,11 @@ pub(in crate::infrastructure::tools) struct PreparedChild {
     /// Bounded tail of a locally spawned child's stderr, for the launch
     /// failure report (#1937 review). `None` for script-managed launches.
     pub stderr_tail: Option<StderrTail>,
+    /// What the container-config selection reported about the layers it
+    /// read (#2024 S4a): an overlay that was not applied, a retired local
+    /// file. Empty for local children and joins; the launch adapter puts
+    /// the lines in the spawn result so the model sees them.
+    pub(in crate::infrastructure::tools) container_diagnostics: Vec<String>,
 }
 
 /// How long a launch failure report waits for the child's stderr to reach
@@ -92,6 +97,7 @@ impl PreparedChild {
             cleanup_argv: vec![],
             environments: None,
             stderr_tail,
+            container_diagnostics: Vec::new(),
         }
     }
 

@@ -20,12 +20,14 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 use crate::infrastructure::config::Config;
 
-/// A configuration resolved for a container launch: the realized `Config`
-/// and the layer diagnostics the configuration capability reported.
+/// A configuration resolved for a container launch: the realized `Config`,
+/// the layer diagnostics the configuration capability reported, and
+/// whether an overlay that exists was withheld (untrusted or refused).
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub config: Config,
     pub diagnostics: Vec<String>,
+    pub overlay_withheld: bool,
 }
 
 /// The launching agent's effective configuration, bound by composition to
@@ -72,6 +74,7 @@ impl EffectiveContainerConfigs for ContainerConfigsFromEffectiveConfig {
         Ok(EffectiveContainerConfigSet {
             configs: launch_configs(&resolved.config),
             diagnostics: resolved.diagnostics,
+            overlay_withheld: resolved.overlay_withheld,
         })
     }
 }

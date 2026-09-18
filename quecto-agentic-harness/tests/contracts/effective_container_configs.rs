@@ -126,6 +126,10 @@ fn the_launching_agent_reads_its_layers_with_a_trusted_overlay_merged_entry_wise
     );
     assert_eq!(repo.cleanup, vec!["/bin/cleanup"]);
     assert!(set.diagnostics.is_empty());
+    assert!(
+        !set.overlay_withheld,
+        "a trusted overlay is applied, not withheld"
+    );
 }
 
 #[test]
@@ -151,6 +155,10 @@ fn an_untrusted_overlay_is_not_applied_and_is_reported_without_a_prompt() {
         "{:?}",
         set.diagnostics
     );
+    assert!(
+        set.overlay_withheld,
+        "an overlay that exists but was not applied is reported as withheld"
+    );
     // Reading never records trust: the overlay stays untrusted.
     let again = rig
         .under_test(true)
@@ -175,6 +183,47 @@ fn an_explicit_file_replaces_the_layers() {
         .effective_container_configs(&ContainerConfigSource::Explicit(explicit))
         .unwrap();
     assert_eq!(set.names(), vec!["only".to_string()]);
+    assert!(set.diagnostics.is_empty());
+    assert!(
+        !set.overlay_withheld,
+        "an explicit file has no overlay to withhold"
+    );
+}
+
+#[test]
+fn a_refused_overlay_is_withheld_too() {
+    // A symbolic link at the overlay location is refused whatever it
+    // points at, and withheld like an untrusted one.
+    let rig = Rig::new();
+    let target = rig.base_dir.join("elsewhere.json");
+    std::fs::write(
+        &target,
+        serde_json::json!({"container_configs": {"repo": entry(true, "x")}}).to_string(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&target, rig.overlay()).unwrap();
+    let set = rig
+        .under_test(true)
+        .effective_container_configs(&ContainerConfigSource::LaunchingAgent)
+        .unwrap();
+    assert_eq!(set.names(), vec!["global".to_string(), "zeta".to_string()]);
+    assert!(set.overlay_withheld, "{:?}", set.diagnostics);
+    assert_eq!(set.diagnostics.len(), 1, "{:?}", set.diagnostics);
+    assert!(
+        set.diagnostics[0].contains("was not applied"),
+        "{:?}",
+        set.diagnostics
+    );
+}
+
+#[test]
+fn an_absent_overlay_is_not_withheld() {
+    let rig = Rig::new();
+    let set = rig
+        .under_test(true)
+        .effective_container_configs(&ContainerConfigSource::LaunchingAgent)
+        .unwrap();
+    assert!(!set.overlay_withheld);
     assert!(set.diagnostics.is_empty());
 }
 

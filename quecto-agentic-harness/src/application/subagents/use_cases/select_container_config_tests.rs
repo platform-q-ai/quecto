@@ -49,6 +49,16 @@ fn set(configs: Vec<ContainerLaunchConfig>, diagnostics: Vec<&str>) -> Effective
     EffectiveContainerConfigSet {
         configs,
         diagnostics: diagnostics.into_iter().map(String::from).collect(),
+        overlay_withheld: false,
+    }
+}
+
+/// The set a checkout with an untrusted (or refused) overlay resolves to:
+/// the global entries alone, the overlay's diagnostic, and the flag.
+fn withheld(configs: Vec<ContainerLaunchConfig>, diagnostic: &str) -> EffectiveContainerConfigSet {
+    EffectiveContainerConfigSet {
+        overlay_withheld: true,
+        ..set(configs, vec![diagnostic])
     }
 }
 
@@ -238,4 +248,73 @@ fn a_selected_entry_must_carry_runnable_argv() {
             .execute(&request(ContainerConfigSource::LaunchingAgent, None))
             .is_ok()
     );
+}
+
+const UNTRUSTED: &str = "repo-local config overlay /repo/.quecto/config.json is not trusted (sha256 abc) and was not applied; review it, then run `quecto config trust` from this directory";
+
+#[test]
+fn container_true_is_refused_while_the_checkouts_overlay_is_withheld() {
+    // An overlay that was not applied may label another default: an
+    // implicit `container: true` must not quietly land in the global one.
+    let (select, _) = use_case(Ok(withheld(
+        vec![entry("global", true), entry("other", false)],
+        UNTRUSTED,
+    )));
+    let err = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        SelectContainerConfigError::OverlayWithheld {
+            diagnostics: vec![UNTRUSTED.to_string()],
+        }
+    );
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "container: true refused: the checkout's repo-local config overlay was not applied, so the container config it labels default is unknown ({UNTRUSTED}); trust it, or name a container_config explicitly to launch from the global configuration"
+        )
+    );
+}
+
+#[test]
+fn an_explicit_name_launches_from_the_global_set_with_the_withheld_overlay_reported() {
+    let (select, _) = use_case(Ok(withheld(
+        vec![entry("global", true), entry("other", false)],
+        UNTRUSTED,
+    )));
+    let selected = select
+        .execute(&request(
+            ContainerConfigSource::LaunchingAgent,
+            Some("other"),
+        ))
+        .unwrap();
+    assert_eq!(selected.config.name, "other");
+    assert_eq!(selected.diagnostics, vec![UNTRUSTED.to_string()]);
+    // A name the global set lacks still enumerates the global menu.
+    let err = select
+        .execute(&request(
+            ContainerConfigSource::LaunchingAgent,
+            Some("repo-only"),
+        ))
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "unknown container config 'repo-only' (available container configs: global, other)"
+    );
+}
+
+#[test]
+fn a_legacy_warning_alone_never_refuses_container_true() {
+    // Diagnostics without a withheld overlay (the retired-local-file
+    // warning) travel with the selection and refuse nothing.
+    let (select, _) = use_case(Ok(set(
+        vec![entry("global", true)],
+        vec!["warning: /repo/config.json is no longer loaded"],
+    )));
+    let selected = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap();
+    assert_eq!(selected.config.name, "global");
+    assert_eq!(selected.diagnostics.len(), 1);
 }

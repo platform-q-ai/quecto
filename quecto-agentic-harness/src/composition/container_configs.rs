@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::configuration::dto::ConfigSelection;
+use crate::application::configuration::dto::{ConfigSelection, EffectiveConfigError, OverlayState};
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::infrastructure::config::container_configs::{
@@ -72,7 +72,10 @@ pub fn build_effective_container_configs(
 
 /// The selection resolved and realized without environment overrides:
 /// `container_configs` has none, and a spawn must not depend on this
-/// process's `QUECTO_*` environment for the argv it executes.
+/// process's `QUECTO_*` environment for the argv it executes. A file that
+/// cannot be read or parsed keeps the `invalid container_configs
+/// configuration:` prefix a spawn caller has always seen; a validation
+/// failure already names the file and the section, so it travels bare.
 fn resolve(
     handles: &ConfigurationHandles,
     selection: &ConfigSelection,
@@ -80,12 +83,29 @@ fn resolve(
     let effective = handles
         .resolve
         .execute(selection)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| match error {
+            EffectiveConfigError::Missing(_)
+            | EffectiveConfigError::Read { .. }
+            | EffectiveConfigError::Parse { .. }
+            | EffectiveConfigError::NotAnObject(_) => {
+                format!("invalid container_configs configuration: {error}")
+            }
+            EffectiveConfigError::GlobalOnlyKey { .. }
+            | EffectiveConfigError::Invalid { .. }
+            | EffectiveConfigError::InvalidMerge { .. } => error.to_string(),
+        })?;
     let diagnostics = effective.sources.diagnostics();
+    let overlay_withheld = effective.sources.overlay.as_ref().is_some_and(|report| {
+        matches!(
+            report.state,
+            OverlayState::Untrusted { .. } | OverlayState::Refused { .. }
+        )
+    });
     let config = (handles.realize)(effective.document, &HashMap::new())?;
     Ok(ResolvedConfig {
         config,
         diagnostics,
+        overlay_withheld,
     })
 }
 

@@ -227,6 +227,7 @@ async fn cleanup_plan_clones_environment_and_argv() {
         cleanup_argv: vec!["echo".into(), "ok".into()],
         environments: None,
         stderr_tail: None,
+        container_diagnostics: Vec::new(),
     };
     let (env_ref, argv) = prepared.cleanup_plan();
     assert_eq!(env_ref.as_deref(), Some("env-test"));
@@ -454,4 +455,97 @@ async fn cleanup_runner_consumes_argv_only_when_command_exists() {
     let mut cmd = vec!["true".into()];
     run_cleanup_once(Some("C-test".into()), &mut cmd).await;
     assert!(cmd.is_empty());
+}
+
+/// A named launch from a checkout whose overlay is untrusted carries the
+/// overlay's diagnostic on the prepared child (#2024 S4a review M): the
+/// launch adapter puts it in the tool result, so the model sees it.
+#[tokio::test]
+async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
+    let dir = TempDir::new().unwrap();
+    let base = dir.path().join("base");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    let create = r#"printf '{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{}}'"#;
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::json!({"container_configs": {
+            "global": {"default": true, "create": ["/bin/sh", "-c", create], "cleanup": ["true"]},
+            "alt": {"create": ["/bin/sh", "-c", create], "cleanup": ["true"]}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let overlay = checkout.join(".quecto").join("config.json");
+    std::fs::write(
+        &overlay,
+        serde_json::json!({"container_configs": {"repo": {"default": true, "create": ["/bin/true"], "cleanup": ["true"]}}})
+            .to_string(),
+    )
+    .unwrap();
+    let selection = crate::composition::container_configs::build_container_config_selection(
+        &base,
+        Some(
+            crate::application::configuration::dto::ConfigSelection::Layered(
+                crate::application::configuration::dto::ConfigLayers {
+                    global: base.join("config.json"),
+                    overlay: Some(overlay.clone()),
+                    legacy_local: None,
+                },
+            ),
+        ),
+    );
+    let child = ChildCommand {
+        swarm_context: None,
+        supervisor: &test_supervisor(),
+        binary: Path::new("true"),
+        cli_args: &[],
+        base_dir: &base,
+        admission_dir: None,
+    };
+    let registry = EnvironmentRegistry::new();
+    // The implicit default is refused: the overlay's default is unknown.
+    let err = spawn_prepared_child(
+        &base_config(ContainerSelection::New {
+            container_config: None,
+            name: None,
+        }),
+        &child,
+        &registry,
+        Some(&selection),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("container: true refused")
+            && err.to_string().contains(&overlay.display().to_string()),
+        "{err}"
+    );
+    assert!(registry.get("C1").is_none(), "no create ran");
+    // A name launches from the global set, the diagnostic travelling along.
+    let prepared = spawn_prepared_child(
+        &base_config(ContainerSelection::New {
+            container_config: Some("alt".into()),
+            name: None,
+        }),
+        &child,
+        &registry,
+        Some(&selection),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        prepared.container_diagnostics.len(),
+        1,
+        "{:?}",
+        prepared.container_diagnostics
+    );
+    assert!(
+        prepared.container_diagnostics[0].contains(&overlay.display().to_string())
+            && prepared.container_diagnostics[0].contains("quecto config trust"),
+        "{:?}",
+        prepared.container_diagnostics
+    );
+    assert_eq!(registry.get("C1").unwrap().script_name, "alt");
 }

@@ -466,11 +466,16 @@ pub struct ContainerLaunchConfig {
 
 /// The container configs in effect for a source, sorted by name, and the
 /// layer diagnostics the configuration capability reported while
-/// resolving them (an untrusted or refused overlay that was not applied).
+/// resolving them (an untrusted or refused overlay that was not applied,
+/// a retired local file that is no longer loaded).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EffectiveContainerConfigSet {
     pub configs: Vec<ContainerLaunchConfig>,
     pub diagnostics: Vec<String>,
+    /// The checkout has an overlay that was NOT applied (untrusted or
+    /// refused): `configs` is the global set alone, and whatever default
+    /// the overlay labels is unknown to launch policy.
+    pub overlay_withheld: bool,
 }
 
 impl EffectiveContainerConfigSet {
@@ -527,6 +532,13 @@ pub enum SelectContainerConfigError {
     /// path may supply argv that this process will execute.
     RelativeConfigPath(std::path::PathBuf),
     Unavailable(ContainerConfigsError),
+    /// `container: true` from a checkout whose overlay exists but was not
+    /// applied (#2024 S4a): the default it labels is unknown, so an
+    /// implicit selection must not quietly land in the global one. The
+    /// layer diagnostics say why the overlay was withheld.
+    OverlayWithheld {
+        diagnostics: Vec<String>,
+    },
     /// `container: true` with no entry labelled `"default": true`.
     NoDefault {
         available: Vec<String>,
@@ -557,6 +569,11 @@ impl fmt::Display for SelectContainerConfigError {
                 f.write_str("container spawn requires an absolute trusted config path")
             }
             Self::Unavailable(error) => write!(f, "{error}"),
+            Self::OverlayWithheld { diagnostics } => write!(
+                f,
+                "container: true refused: the checkout's repo-local config overlay was not applied, so the container config it labels default is unknown ({}); trust it, or name a container_config explicitly to launch from the global configuration",
+                diagnostics.join("; ")
+            ),
             Self::NoDefault { available: names } => write!(
                 f,
                 "no container config is labeled \"default\": true (available container configs: {})",

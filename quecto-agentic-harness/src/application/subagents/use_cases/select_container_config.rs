@@ -5,9 +5,12 @@
 //! (or an explicit file the spawn call named) through the
 //! [`EffectiveContainerConfigs`] port; this use case owns the rules —
 //! an explicit name wins, otherwise the one entry labelled `"default":
-//! true`; every refusal enumerates the live names so an agent can offer
-//! the menu; a selected entry must carry runnable `create` and `cleanup`
-//! argv with no empty or NUL-bearing argument.
+//! true`; an implicit default is refused while the checkout's overlay is
+//! withheld (untrusted or refused), because the default it labels is
+//! unknown — an explicit name launches from the global set and carries
+//! the overlay's diagnostic; every refusal enumerates the live names so
+//! an agent can offer the menu; a selected entry must carry runnable
+//! `create` and `cleanup` argv with no empty or NUL-bearing argument.
 
 use std::sync::Arc;
 
@@ -40,6 +43,11 @@ impl SelectContainerConfig {
             .effective_container_configs(&request.source)
             .map_err(SelectContainerConfigError::Unavailable)?;
         let available = set.names();
+        if request.name.is_none() && set.overlay_withheld {
+            return Err(SelectContainerConfigError::OverlayWithheld {
+                diagnostics: set.diagnostics,
+            });
+        }
         let config = match request.name.as_deref() {
             Some(name) => set
                 .configs
