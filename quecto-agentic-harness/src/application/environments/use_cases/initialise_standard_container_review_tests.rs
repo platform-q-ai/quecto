@@ -5,7 +5,7 @@
 //! shell-quoted.
 use std::path::PathBuf;
 
-use super::tests_rig::*;
+use super::rig_tests::*;
 use crate::application::environments::dto::{
     ContainerConfigDocument, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
 };

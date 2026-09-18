@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::InitialiseStandardContainer;
-use super::tests_rig::*;
+use super::rig_tests::*;
 use crate::application::environments::dto::{InitialiseStandardContainerError, RepositoryOrigin};
 use crate::application::environments::ports::ContainerConfigRosterReport;
 
