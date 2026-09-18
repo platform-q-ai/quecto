@@ -880,7 +880,7 @@ own image `FROM` this one and passes `--image <tag>` to `init`. The host
 carry a glibc the binary runs on (Debian trixie does for current builds).
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 1)`, or which differ or
+is missing: the assets (`present (5 of 5, version 2)`, or which differ or
 are missing), the `standard` entry of the effective set (default or not,
 declared by the overlay or globally, its `--repo`), the trust of the overlay
 (`trusted`, or `withheld` with the remedy; a destination init would refuse,

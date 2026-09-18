@@ -75,14 +75,17 @@ case "$resolved" in
 esac
 
 container="$(cat "$env_dir/container" 2>/dev/null || true)"
-if [ -n "$container" ]; then
-  # Docker's `rm -f` kills immediately; Podman's sends SIGTERM and waits the
-  # container's stop timeout (10s) before SIGKILL. The parent runs this from
-  # its own SIGTERM handling inside the TUI's two-second exit budget, so
-  # bound the grace: one second for the child to cascade, then SIGKILL.
-  grace=()
-  [ "$cli" = podman ] && grace=(--time 1)
-  "$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
-fi
+# A directory without a recorded container (a create interrupted between
+# the directory and the `container` file, #2033 round 2) still names the
+# container the create would have called: remove it with the directory
+# rather than leave an exited container behind for the collector.
+[ -n "$container" ] || container="quecto-$id"
+# Docker's `rm -f` kills immediately; Podman's sends SIGTERM and waits the
+# container's stop timeout (10s) before SIGKILL. The parent runs this from
+# its own SIGTERM handling inside the TUI's two-second exit budget, so
+# bound the grace: one second for the child to cascade, then SIGKILL.
+grace=()
+[ "$cli" = podman ] && grace=(--time 1)
+"$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
 rm -rf "$env_dir"
 printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log"
