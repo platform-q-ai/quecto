@@ -15,7 +15,9 @@
 //! Reconnect is serialized and bounded: concurrent attempts share one
 //! reconnection, and it gives up after a bounded number of jittered tries
 //! rather than blocking a turn forever (health then reads `unavailable` until
-//! a later attempt finds the broker again). A broker that came back with a
+//! a later attempt finds the broker again). Attempts that queued behind a
+//! reconnection which then gave up fail fast with its outcome instead of each
+//! repeating the backoff in turn; only a fresh attempt retries. A broker that came back with a
 //! *different* policy is never rebound: the session composed against the
 //! original proposal, so the link fails closed permanently with "restart
 //! required" (the P2 restart-only contract), exactly as a root's own reload
@@ -23,7 +25,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -109,6 +111,12 @@ pub struct AuthorityLink {
     backoff: Mutex<Backoff>,
     /// The last bounded reconnection gave up; cleared by a later success.
     exhausted: AtomicBool,
+    /// Bumped each time a reconnection exhausts its backoff, so an attempt
+    /// that queued on `gate` before that outcome fails fast with it instead
+    /// of re-running the whole backoff.
+    exhaustions: AtomicU64,
+    /// Why the last exhausted reconnection failed (its final attempt).
+    last_failure: Mutex<Option<String>>,
     /// Set once a reconnection met a changed policy: permanent for the process.
     restart_required: Mutex<Option<String>>,
     on_change: Arc<Mutex<Option<LinkChangeHook>>>,
@@ -140,6 +148,8 @@ impl AuthorityLink {
                 max: RECONNECT_MAX_DELAY,
             }),
             exhausted: AtomicBool::new(false),
+            exhaustions: AtomicU64::new(0),
+            last_failure: Mutex::new(None),
             restart_required: Mutex::new(None),
             on_change,
         })
@@ -260,9 +270,22 @@ impl AuthorityLink {
             });
         };
         // Serialize: another attempt may have reconnected while we waited.
+        let exhaustions_before = self.exhaustions.load(Ordering::Acquire);
         let _guard = self.gate.lock().await;
         if let Ok(inner) = self.usable() {
             return Ok(inner);
+        }
+        if self.exhaustions.load(Ordering::Acquire) != exhaustions_before {
+            // The reconnection this attempt queued behind ran its whole
+            // backoff and gave up: report that outcome rather than making
+            // every queued waiter repeat it in turn.
+            let reason = self
+                .last_failure
+                .lock()
+                .expect("link")
+                .clone()
+                .unwrap_or_else(|| "reconnection exhausted".into());
+            return Err(ClientError::Io(reason));
         }
         let backoff = *self.backoff.lock().expect("backoff");
         let mut last = lost;
@@ -287,12 +310,16 @@ impl AuthorityLink {
                     return Ok(inner);
                 }
                 Err(reason) => {
+                    *self.last_failure.lock().expect("link") = Some(reason.clone());
                     last = ClientError::Io(reason);
-                    tokio::time::sleep(backoff.delay(attempt)).await;
+                    if attempt + 1 < backoff.attempts {
+                        tokio::time::sleep(backoff.delay(attempt)).await;
+                    }
                 }
             }
         }
         self.exhausted.store(true, Ordering::Release);
+        self.exhaustions.fetch_add(1, Ordering::AcqRel);
         self.announce();
         Err(last)
     }

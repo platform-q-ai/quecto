@@ -258,6 +258,61 @@ fn a_root_link_becomes_unavailable_when_reconnection_is_exhausted() {
 }
 
 #[test]
+fn attempts_queued_behind_an_exhausted_reconnection_fail_fast() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir_path = temp.path().join("authority");
+    let rt = runtime();
+    let handle = rt.handle().clone();
+    rt.block_on(async move {
+        let server =
+            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+                .await
+                .unwrap();
+        let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
+        // Two tries with a fixed 200 ms (+ up to 50% jitter) between them:
+        // one full backoff is a single sleep of 200-300 ms, since the last
+        // failed try is not followed by one.
+        link.set_backoff_for_test(2, Duration::from_millis(200), Duration::from_millis(200));
+        server.shutdown().await;
+        wait_until(|| !link.connected()).await;
+
+        // Several attempts arrive while the broker is down: one runs the
+        // backoff, the others queue behind it on the reconnect gate.
+        let started = tokio::time::Instant::now();
+        let attempts: Vec<_> = (0..4)
+            .map(|_| {
+                let link = link.clone();
+                tokio::spawn(async move { gate(&link).acquire().await.map(|_| ()) })
+            })
+            .collect();
+        let mut elapsed = Vec::new();
+        for attempt in attempts {
+            let error = attempt.await.unwrap().expect_err("fails closed");
+            assert!(error.to_string().contains("admission"), "{error}");
+            elapsed.push(started.elapsed());
+        }
+        let longest = elapsed.iter().max().unwrap();
+        // One backoff (a single sleep of at most 300 ms, none after the final
+        // try) for all four: not four backoffs in sequence, no trailing sleep
+        // (which alone would take the first past 400 ms).
+        assert!(
+            *longest < Duration::from_millis(400),
+            "waiters re-ran the backoff or slept after the last try: {elapsed:?}"
+        );
+        assert_eq!(link.health(), LinkHealth::Unavailable);
+
+        // A fresh attempt after the exhaustion still retries the broker.
+        let server =
+            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+                .await
+                .unwrap();
+        assert!(gate(&link).acquire().await.is_ok());
+        assert_eq!(link.health(), LinkHealth::Connected);
+        server.shutdown().await;
+    });
+}
+
+#[test]
 fn a_reconnection_against_a_changed_policy_fails_closed_with_restart_required() {
     let temp = tempfile::tempdir().unwrap();
     let dir_path = temp.path().join("authority");
