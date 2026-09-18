@@ -2804,13 +2804,26 @@ fn teardown_interface_dependency_allowed(path: &str) -> bool {
 }
 
 fn assert_dependencies(dir: &str, allowed: fn(&str) -> bool) {
+    assert_dependencies_by_file(dir, |_, dep| allowed(dep));
+}
+
+/// As `assert_dependencies`, with the file's basename given to the guard so
+/// an allowance can be scoped to the one adapter that needs it.
+fn assert_dependencies_by_file(dir: &str, allowed: impl Fn(&str, &str) -> bool) {
     let mut files = Vec::new();
     collect_rs_files(Path::new(dir), &mut files);
     assert!(!files.is_empty(), "{dir} must contain production sources");
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path);
         let paths = dependency_paths(source).unwrap_or_else(|| panic!("parse {path}"));
-        let violations: Vec<_> = paths.iter().filter(|dep| !allowed(dep)).collect();
+        let violations: Vec<_> = paths
+            .iter()
+            .filter(|dep| !allowed(file_name, dep))
+            .collect();
         assert!(
             violations.is_empty(),
             "{path} depends outward or on forbidden vocabulary: {violations:?}"
@@ -3397,20 +3410,22 @@ fn local_launch_records_the_owned_handle_and_generation() {
 
 /// Dependencies point inward: the process adapters name only domain types,
 /// the subagent ports, their own module tree and the registry/transport
-/// they adapt; never the interface or composition.
-fn processes_dependency_allowed(path: &str) -> bool {
+/// they adapt; never the interface or composition. Only the local service
+/// manager (#2024 S3) may additionally name the admission capability's own
+/// service-manager port, the atomic unit-file write and the shared home-dir
+/// helper it is built over.
+fn processes_dependency_allowed(file: &str, path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", "ports", ..]
-        // The local service manager (#2024 S3) implements the admission
-        // capability's own service-manager port over an atomic unit-file
-        // write and the shared home-dir helper.
-        | ["crate", "application", "admission", "ports", ..]
-        | ["crate", "infrastructure", "atomic_write", ..]
-        | ["crate", "infrastructure", "tools", "path_utils", ..]
         | ["crate", "infrastructure", "processes", ..]
         | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
+        ["crate", "application", "admission", "ports", ..]
+        | ["crate", "infrastructure", "atomic_write", ..]
+        | ["crate", "infrastructure", "tools", "path_utils", ..] => {
+            file == "systemd_service_manager.rs"
+        }
         ["crate", ..] => false,
         _ => true,
     }
@@ -3418,7 +3433,7 @@ fn processes_dependency_allowed(path: &str) -> bool {
 
 #[test]
 fn process_adapters_depend_only_inward() {
-    assert_dependencies("src/infrastructure/processes", processes_dependency_allowed);
+    assert_dependencies_by_file("src/infrastructure/processes", processes_dependency_allowed);
     for dep in [
         "crate::interface::cli::uds_multi::BusyFlag",
         "crate::composition::processes::owned_child_supervisor",
@@ -3426,7 +3441,7 @@ fn process_adapters_depend_only_inward() {
         "crate::infrastructure::tools::spawn::SpawnTool",
     ] {
         assert!(
-            !processes_dependency_allowed(dep),
+            !processes_dependency_allowed("systemd_service_manager.rs", dep),
             "process adapter guard must reject {dep}"
         );
     }
@@ -3437,8 +3452,23 @@ fn process_adapters_depend_only_inward() {
         "tokio::sync::watch",
     ] {
         assert!(
-            processes_dependency_allowed(dep),
+            processes_dependency_allowed("owned_child_supervisor.rs", dep),
             "process adapter guard must allow {dep}"
+        );
+    }
+    // The service manager's extra allowances are scoped to it alone.
+    for dep in [
+        "crate::application::admission::ports::ServiceManager",
+        "crate::infrastructure::atomic_write::write_atomic",
+        "crate::infrastructure::tools::path_utils::home_dir",
+    ] {
+        assert!(
+            processes_dependency_allowed("systemd_service_manager.rs", dep),
+            "service manager may name {dep}"
+        );
+        assert!(
+            !processes_dependency_allowed("owned_child_supervisor.rs", dep),
+            "no other process adapter may name {dep}"
         );
     }
 }
