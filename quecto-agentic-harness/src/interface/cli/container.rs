@@ -6,9 +6,18 @@
 //! script itself.
 
 use super::CliContext;
+use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeDiagnosis, ContainerRuntimeTarget,
 };
+use crate::application::environments::use_cases::DiagnoseContainerRuntime;
+
+/// Composition's builder of the container-runtime doctor: the create
+/// preflight of the effective container config, over the run's own
+/// configuration selection. Injected through the CLI context; the
+/// interface never resolves a container config or runs a script itself.
+pub type ContainerDoctorBuilder =
+    fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<DiagnoseContainerRuntime>;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 

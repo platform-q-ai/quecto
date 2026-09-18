@@ -8,6 +8,7 @@ mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
 mod container;
+pub use container::ContainerDoctorBuilder;
 mod help;
 mod models;
 pub mod protocol;
@@ -361,17 +362,6 @@ pub type ContainerConfigSelectionBuilder =
         &ConfigSelection,
     ) -> std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>;
 
-/// Composition's builder of the container-runtime doctor (#2024 S4b): the
-/// create preflight of the effective container config, over the run's
-/// own configuration selection. Injected through the CLI context; the
-/// interface never resolves a container config or runs a script itself.
-pub type ContainerDoctorBuilder = fn(
-    &std::path::Path,
-    &ConfigSelection,
-) -> std::sync::Arc<
-    crate::application::environments::use_cases::DiagnoseContainerRuntime,
->;
-
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write
 /// path. Injected through the CLI context; the interface never probes or
@@ -442,8 +432,7 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run's spawn tool selects container configs through it.
     pub container_config_selection: Option<ContainerConfigSelectionBuilder>,
-    /// Composition's container-doctor builder (#2024 S4b), from the
-    /// binary's `main` through [`run`]'s [`CliComposition`]; `quecto
+    /// Composition's container-doctor builder (#2024 S4b); `quecto
     /// container doctor` refuses to run without it.
     pub container_doctor: Option<ContainerDoctorBuilder>,
 }
