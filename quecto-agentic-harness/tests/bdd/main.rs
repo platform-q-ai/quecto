@@ -303,6 +303,8 @@ pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
     /// #2024 S3 one host-wide broker, agent-operable.
     pub one_broker: admission_one_broker_steps::OneBrokerState,
+    /// #2024 S3 real-process reset / restart recovery (root vs child).
+    pub admission_recovery: admission_recovery_steps::AdmissionRecoveryState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
     /// #1935 launch-bound parent control and owned-child supervisor state.
@@ -1804,6 +1806,7 @@ impl Drop for QuectoWorld {
 }
 
 mod admission_one_broker_steps;
+mod admission_recovery_steps;
 mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
 mod inference_admission_matrix_steps;

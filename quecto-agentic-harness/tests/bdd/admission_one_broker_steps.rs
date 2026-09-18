@@ -1,18 +1,15 @@
-//! #2024 S3: the one host-wide admission broker, agent-operable. Real broker
-//! and child processes prove that a child with an admission-null config still
-//! inherits the parent's authority (#2023); the systemd user service installs
-//! and uninstalls idempotently behind a fake `systemctl`; status addresses the
-//! global broker whatever the working directory; and an unlisted slot binds to
-//! the default alias.
+//! #2024 S3: the one host-wide admission broker, agent-operable. The systemd
+//! user service installs and uninstalls idempotently behind a fake
+//! `systemctl`; status addresses the global broker whatever the working
+//! directory; and an unlisted slot binds to the default alias. The
+//! real-process child-inherits and reset/restart recovery scenarios live in
+//! `admission_recovery_steps`.
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::infrastructure::admission::{
-    Negotiation, ProcessAdmission, process, write_admission_context,
-};
 
 use crate::QuectoWorld;
 
@@ -22,13 +19,7 @@ const LIMIT: Duration = Duration::from_secs(30);
 pub struct OneBrokerState {
     temp: Option<tempfile::TempDir>,
     broker: Option<Child>,
-    mock_uri: Option<String>,
-    root: Option<ProcessAdmission>,
     runtime: Option<tokio::runtime::Runtime>,
-    sidecar: Option<PathBuf>,
-    child_config: Option<PathBuf>,
-    child_ok: Option<bool>,
-    child_output: String,
     systemctl_log: PathBuf,
     cli_out: String,
     cli_err: String,
@@ -161,91 +152,11 @@ fn given_broker(world: &mut QuectoWorld) {
     std::fs::create_dir_all(base_path.join("workspace")).unwrap();
     state(world).temp = Some(temp);
     let (uri, rt) = start_mock();
-    state(world).mock_uri = Some(uri.clone());
     state(world).runtime = Some(rt);
     let config_path = base_path.join("config.json");
     std::fs::write(&config_path, admission_config(&base_path, &uri)).unwrap();
     let broker = start_broker(&base_path, &config_path);
     state(world).broker = Some(broker);
-}
-
-#[given("a parent-registered admission context for a child")]
-fn given_context(world: &mut QuectoWorld) {
-    let base_path = base(world);
-    let directory = authority_dir(&base_path);
-    // A real root binding to the running broker, standing in for the parent.
-    let root = process::negotiate(Negotiation::Root {
-        directory: directory.clone(),
-    })
-    .expect("root negotiates with the broker");
-    let rt = state(world).runtime.as_ref().unwrap().handle().clone();
-    let credential = rt
-        .block_on(async { root.connection().register_child().await })
-        .expect("parent registers the child");
-    let sidecar = base_path.join("child-admission.ctx");
-    write_admission_context(&sidecar, &root.endpoint(), &credential).expect("write sidecar");
-    state(world).root = Some(root);
-    state(world).sidecar = Some(sidecar);
-    // The child's own config disables admission and still points at the mock.
-    let mock = state(world).mock_uri.clone().unwrap();
-    let child_config = base_path.join("child-config.json");
-    std::fs::write(
-        &child_config,
-        format!(
-            r#"{{"providers":{{"openai":{{"api_key":"sk-test","api_base":"{mock}"}}}},
-"agents":{{"defaults":{{"model":"openai-api/gpt-4o-mini","workspace":{workspace:?}}}}},
-"admission":null}}"#,
-            workspace = base_path.join("workspace").to_string_lossy(),
-        ),
-    )
-    .unwrap();
-    state(world).child_config = Some(child_config);
-}
-
-#[when("a real child process runs its first prompt with an admission-null config")]
-fn when_child_runs(world: &mut QuectoWorld) {
-    let base_path = base(world);
-    let sidecar = state(world).sidecar.clone().unwrap();
-    let child_config = state(world).child_config.clone().unwrap();
-    let output = qcmd(
-        &base_path,
-        &[
-            "--config",
-            child_config.to_str().unwrap(),
-            "agent",
-            "--admission-context",
-            sidecar.to_str().unwrap(),
-            "-m",
-            "hi",
-            "--no-session",
-        ],
-    )
-    .output()
-    .expect("run child");
-    state(world).child_ok = Some(output.status.success());
-    state(world).child_output = format!(
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[then("the child completes its first prompt through the inherited authority")]
-fn then_child_ok(world: &mut QuectoWorld) {
-    let output = state(world).child_output.clone();
-    assert_eq!(
-        state(world).child_ok,
-        Some(true),
-        "child must inherit the authority and run its first prompt, not fail with 'restart required': {output}"
-    );
-    assert!(
-        !output.contains("restart required"),
-        "the retired byte-equal check must not fire for a child: {output}"
-    );
-    assert!(
-        output.contains("DONE"),
-        "the child ran the mock inference: {output}"
-    );
 }
 
 // ── systemd user service via a fake systemctl ─────────────────────────────
@@ -410,6 +321,30 @@ fn when_status_from_subdir(world: &mut QuectoWorld) {
     let subdir = base_path.join("workspace");
     let mut command = qcmd(&base_path, &["admission-broker", "status"]);
     command.current_dir(&subdir);
+    let output = command.output().expect("status");
+    state(world).cli_code = output.status.code().unwrap_or(-1);
+    state(world).cli_out = String::from_utf8_lossy(&output.stdout).to_string();
+    state(world).cli_err = String::from_utf8_lossy(&output.stderr).to_string();
+}
+
+#[when("the operator runs status with an explicit --config from an unrelated working directory")]
+fn when_status_explicit_config(world: &mut QuectoWorld) {
+    let base_path = base(world);
+    // The explicit file lives outside the base directory, so only `--config`
+    // (extracted globally, before the subcommand) can be what addressed it.
+    let explicit = base_path.join("elsewhere").join("explicit.json");
+    std::fs::create_dir_all(explicit.parent().unwrap()).unwrap();
+    std::fs::copy(base_path.join("config.json"), &explicit).unwrap();
+    let mut command = qcmd(
+        &base_path,
+        &[
+            "--config",
+            explicit.to_str().unwrap(),
+            "admission-broker",
+            "status",
+        ],
+    );
+    command.current_dir(base_path.join("workspace"));
     let output = command.output().expect("status");
     state(world).cli_code = output.status.code().unwrap_or(-1);
     state(world).cli_out = String::from_utf8_lossy(&output.stdout).to_string();
