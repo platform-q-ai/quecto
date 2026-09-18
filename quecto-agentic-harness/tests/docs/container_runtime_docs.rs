@@ -322,6 +322,23 @@ fn canonical_scripts_keep_runtime_knowledge_out_of_rust_core() {
     );
 }
 
+/// The one exempt production file: `quecto-tui/src/setup/mod.rs` (#2024 S6)
+/// holds the `/setup` parser, whose `podman` alias and usage line mirror the
+/// runbook the user reads; the prompt prose itself stays runtime-neutral and
+/// no other file under `setup/` is exempt.
+fn is_tui_setup_prompts(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n == "mod.rs")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "setup")
+        && path
+            .ancestors()
+            .nth(3)
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "quecto-tui")
+}
+
 fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir").flatten() {
         let path = entry.path();
@@ -334,6 +351,7 @@ fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
             && !path
                 .file_name()
                 .is_some_and(|n| n.to_string_lossy().ends_with("_tests.rs"))
+            && !is_tui_setup_prompts(&path)
         {
             let content = fs::read_to_string(&path).unwrap_or_default();
             for needle in ["docker", "podman", "devcontainer"] {

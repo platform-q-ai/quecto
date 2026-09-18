@@ -95,6 +95,34 @@ impl App {
                     }
                     return;
                 }
+                _ if trimmed.strip_prefix("/setup").is_some_and(|rest| {
+                    rest.is_empty() || rest.starts_with(char::is_whitespace)
+                }) =>
+                {
+                    // #2024 S6: the TUI only composes the walkthrough text; the
+                    // agent reads the docs pages and asks before writing.
+                    match crate::setup::SetupCommand::parse(&trimmed["/setup".len()..]) {
+                        // Setup targets the master session and its files —
+                        // never a focused child (possibly in a container).
+                        crate::setup::SetupCommand::Walkthrough(_)
+                            if self.ac().roster.active_agent_id.is_some() =>
+                        {
+                            self.notify(
+                                crate::setup::SETUP_FROM_MASTER,
+                                crate::components::notification::NotifyLevel::Error,
+                            )
+                        }
+                        crate::setup::SetupCommand::Walkthrough(area) => {
+                            let prompt = crate::setup::setup_walkthrough_prompt(&area);
+                            self.handle_submit(&prompt);
+                        }
+                        crate::setup::SetupCommand::Usage => self.notify(
+                            crate::setup::SETUP_USAGE,
+                            crate::components::notification::NotifyLevel::Warning,
+                        ),
+                    }
+                    return;
+                }
                 "/workflow-auto" => {
                     self.toggle_workflow_auto_continue();
                     return;
@@ -303,3 +331,7 @@ impl App {
             });
     }
 }
+
+#[cfg(test)]
+#[path = "app_submit_setup_tests.rs"]
+mod app_submit_setup_tests;

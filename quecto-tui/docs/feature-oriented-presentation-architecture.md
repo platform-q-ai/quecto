@@ -15,6 +15,7 @@ Production ownership should converge toward these feature-oriented modules:
 - `agents`: subagent roster, lifecycle, feeds, ledger sync, focus, retention, and view projection.
 - `workflow`: workflow projection and controls.
 - `inference`: model and effort presentation.
+- `setup`: `/setup` walkthrough prompt templates and their argument parser (#2024 S6) — pure text; the agent does the setup work and asks before writing.
 - `workspace`: files, Git context, and autocomplete coordination.
 - `components`: reusable widgets and rendering primitives.
 
@@ -359,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, eligible-key allowlist (#2009) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
