@@ -46,3 +46,11 @@ fn url_userinfo_is_redacted_wherever_a_url_appears() {
         assert_eq!(redact_url_userinfo(untouched), untouched);
     }
 }
+
+#[test]
+fn an_unencoded_at_in_the_password_is_redacted_to_the_path() {
+    assert_eq!(
+        redact_url_userinfo("https://u:p@ss@host/x/y"),
+        "https://***@host/x/y"
+    );
+}

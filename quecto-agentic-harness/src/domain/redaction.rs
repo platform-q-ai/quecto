@@ -85,7 +85,7 @@ pub(crate) fn redact_secrets(input: &str) -> String {
 /// The userinfo of a URL (`scheme://user:token@host/…`), in whatever text
 /// it appears.
 static URL_USERINFO: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"(://)[^/@\s]+@").expect("static URL userinfo regex is valid")
+    regex::Regex::new(r"(://)[^/\s]+@").expect("static URL userinfo regex is valid")
 });
 
 /// Replace the userinfo of every URL in `input` with `***`, keeping the

@@ -32,7 +32,7 @@ log() { printf 'container-runtime create: %s\n' "$*" >&2; }
 # message that names it shows the URL with its userinfo replaced by ***.
 # The token stays in the config file and the clone; never in a preflight
 # line, a log line, or the create result.
-redact_url() { printf '%s' "$1" | sed -E 's#(://)[^/@]+@#\1***@#g'; }
+redact_url() { printf '%s' "$1" | sed -E 's#(://)[^/]+@#\1***@#g'; }
 EXIT_USAGE=2
 EXIT_NO_JQ=4
 EXIT_NO_GIT=5

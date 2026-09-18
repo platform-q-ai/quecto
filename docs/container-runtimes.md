@@ -445,7 +445,9 @@ status word is unknown or that has fewer than three fields (`fail<TAB>image`
 cut short) refuses the whole report naming the line; and a report the
 script exited 0 with must contain the checks every shipped script makes on
 every run — `jq`, `git`, `repo`, `state-dir` (the last check of both
-scripts) — or it was cut short. Lines without a tab are log noise and
+scripts) — or it was cut short. A report that already carries a `fail`
+line and exits non-zero may be partial (the script stops at the first
+failure); the failure shown is real. Lines without a tab are log noise and
 ignored.
 
 Never embed credentials in a `--repo` URL (`https://user:token@host/…`):
