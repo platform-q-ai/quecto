@@ -1540,6 +1540,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             env_overrides,
             http_client,
             provider_runtime: build_agent_provider,
+            configuration: quecto::composition::configuration::build_configuration_handles,
         };
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();

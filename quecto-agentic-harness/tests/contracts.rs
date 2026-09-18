@@ -61,6 +61,8 @@ mod delegated_children_roster;
 mod document_lock;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
+#[path = "contracts/effort_default_persistence.rs"]
+mod effort_default_persistence;
 #[path = "contracts/effort_runtime.rs"]
 mod effort_runtime;
 #[path = "contracts/effort_vocabulary_source.rs"]
@@ -174,6 +176,8 @@ mod delegated_agent_registry;
 mod direct_child_routing;
 #[path = "contracts/fetch_web_content.rs"]
 mod fetch_web_content;
+#[path = "contracts/model_default_persistence.rs"]
+mod model_default_persistence;
 #[path = "contracts/model_runtime.rs"]
 mod model_runtime;
 #[path = "contracts/owned_child_termination.rs"]

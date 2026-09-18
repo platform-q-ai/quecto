@@ -41,3 +41,19 @@ fn tab_spawn_flags_default_persist_without_parent() {
     let flags = tab_spawn_flags(None);
     assert!(flags.persist);
 }
+
+#[test]
+fn tab_spawn_flags_inherit_the_parent_model_and_effort() {
+    let parent = parse_flags(&[
+        "quecto-tui".into(),
+        "--model".into(),
+        "openai-api/gpt-5.6-luna".into(),
+        "--effort".into(),
+        "low".into(),
+    ]);
+    let policy = TabSpawnPolicy::from_flags(&parent);
+    let flags = tab_spawn_flags_from_policy(&policy, None);
+    assert_eq!(flags.model.as_deref(), Some("openai-api/gpt-5.6-luna"));
+    assert_eq!(flags.effort.as_deref(), Some("low"));
+    assert_eq!(tab_spawn_flags(None).model, None);
+}

@@ -8,10 +8,11 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 
 ## Where config lives
 
-- Global default model: the selected `config.json` (`./config.json` in the working directory if present, else `~/.quecto/config.json` — `quecto status` names it; see `docs {"name": "config"}`) at `agents.defaults.model`, using a qualified `provider/model` id, for example:
+- Default model: `agents.defaults.model` of the global `~/.quecto/config.json`, or of the repository overlay `./.quecto/config.json` merged over it (`quecto status` names both; see `docs {"name": "config"}`), using a qualified `provider/model` id, for example:
   ```json
   {"agents": {"defaults": {"model": "openai-oauth/gpt-5.6-sol"}}}
   ```
+  Never hand-edit: `quecto config set agents.defaults.model '"provider/model"'` (this repository) or `--global`; see "Pin a default model for this repository" below.
 - User registry: `~/.quecto/models.json` (do **not** edit harness source to add a model).
 - API keys / OAuth tokens: credential store via `quecto auth` or env (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Catalogue files carry credential *references* like `"apiKey": "$MY_KEY"` — never literal secrets (a literal in `overrides` is rejected).
 - Valid edits hot-reload into a new catalogue generation — no restart of Quecto or the TUI needed.
@@ -28,6 +29,19 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
    ```
 5. Ensure auth exists for that provider, then `set_model` to `provider/modelId` and verify with a tiny prompt. A model that cannot run is reported with the structured reason (missing credential, unsupported transport, unknown model) instead of a refused switch.
 6. To pull a provider's remote model list into the discovered layer: `quecto models discover <provider-key>` (OpenAI-compatible `/models` endpoints only; never rewrites `models.json`).
+
+## Pin a default model for this repository
+
+Run from the repository root (the overlay is discovered in the working directory only). The model must be a qualified `provider/model` id that lists as `configured`.
+
+```
+quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'
+quecto config set agents.defaults.effort '"high"'                 # optional
+quecto config get --effective agents.defaults.model               # verify: "openai-api/gpt-5.6-luna"
+quecto status                                                     # verify: Overlay: … (trusted)  Model: …
+```
+
+New agents started in this directory start on it (their `get_state` reports the `model`); other repositories keep the global default; the global file is untouched. Your running session is not switched — `set_model` for that, or `set_model` with `"persist":"local"` to switch and pin in one step (`"global"` pins for every repository; a refused pin — untrusted overlay, symbolic link, explicit `--config`, bare id — changes nothing). Rollback: `quecto config unset agents.defaults.model` (and `agents.defaults.effort`); `--global` for the global file. Full runbook with preconditions and refusals: `docs {"name": "config"}`.
 
 ## See also
 

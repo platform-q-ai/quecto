@@ -1,6 +1,7 @@
 pub mod active_session;
 pub mod admission;
 pub mod catalogue;
+pub mod catalogue_defaults;
 pub mod configuration;
 pub mod environments;
 pub mod find;

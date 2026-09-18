@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::*;
+use crate::application::catalogue::ports::{DefaultScope, RecordedDefaults};
 use crate::domain::provider::EffortLevel::{High, Low, Max, Medium, None as NoneLevel, XHigh};
 
 struct FakeVocabulary(HashMap<&'static str, Vec<EffortLevel>>);
@@ -15,16 +16,23 @@ impl EffortVocabularySource for FakeVocabulary {
 }
 
 fn use_case() -> ChangeReasoningEffort {
-    ChangeReasoningEffort::new(Arc::new(FakeVocabulary(HashMap::from([
-        ("xai/grok-4.5", vec![Low, Medium, High]),
-        ("xai/grok-4.6", vec![Low, Medium, High, XHigh]),
-        (
-            "openai-api/gpt-5.6",
-            vec![NoneLevel, Low, Medium, High, XHigh],
-        ),
-        ("anthropic-api/opus", vec![Low, Medium, High, Max]),
-        ("spark-local/qwen", vec![]),
-    ]))))
+    use_case_persisting(Arc::new(RecordedDefaults::default()))
+}
+
+fn use_case_persisting(persistence: Arc<RecordedDefaults>) -> ChangeReasoningEffort {
+    ChangeReasoningEffort::new(
+        Arc::new(FakeVocabulary(HashMap::from([
+            ("xai/grok-4.5", vec![Low, Medium, High]),
+            ("xai/grok-4.6", vec![Low, Medium, High, XHigh]),
+            (
+                "openai-api/gpt-5.6",
+                vec![NoneLevel, Low, Medium, High, XHigh],
+            ),
+            ("anthropic-api/opus", vec![Low, Medium, High, Max]),
+            ("spark-local/qwen", vec![]),
+        ]))),
+        persistence,
+    )
 }
 
 #[derive(Default)]
@@ -160,6 +168,7 @@ fn execute_applies_an_accepted_level_and_reports_the_vocabulary() {
             &EffortChangeRequest {
                 model: "xai/grok-4.5".into(),
                 level: "high".into(),
+                persist: None,
             },
         )
         .unwrap();
@@ -168,6 +177,7 @@ fn execute_applies_an_accepted_level_and_reports_the_vocabulary() {
         EffortChangeOutcome {
             effective: High,
             vocabulary: vec![Low, Medium, High],
+            persisted: None,
         }
     );
     assert_eq!(runtime.effort, Some(High));
@@ -187,6 +197,7 @@ fn execute_is_a_no_op_write_when_the_level_is_already_in_effect() {
             &EffortChangeRequest {
                 model: "xai/grok-4.5".into(),
                 level: "high".into(),
+                persist: None,
             },
         )
         .unwrap();
@@ -206,6 +217,7 @@ fn execute_leaves_the_runtime_untouched_on_refusal() {
             &EffortChangeRequest {
                 model: "xai/grok-4.5".into(),
                 level: "xhigh".into(),
+                persist: None,
             },
         )
         .unwrap_err();
@@ -217,4 +229,85 @@ fn execute_leaves_the_runtime_untouched_on_refusal() {
 #[test]
 fn debug_does_not_expose_the_port() {
     assert_eq!(format!("{:?}", use_case()), "ChangeReasoningEffort { .. }");
+}
+
+// ── Persisting a default (#2024 S2) ─────────────────────────────────────────
+
+#[test]
+fn execute_with_persist_records_the_validated_level_then_applies_it() {
+    let persistence = Arc::new(RecordedDefaults::default());
+    let use_case = use_case_persisting(persistence.clone());
+    let mut runtime = FakeRuntime::default();
+    let outcome = use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "high".into(),
+                persist: Some(DefaultScope::Local),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        persistence.records.lock().unwrap().as_slice(),
+        &[(
+            DefaultScope::Local,
+            "agents.defaults.effort".to_string(),
+            "high".to_string()
+        )]
+    );
+    let persisted = outcome.persisted.expect("recorded");
+    assert_eq!(persisted.scope, DefaultScope::Local);
+    assert_eq!(runtime.effort, Some(High));
+}
+
+#[test]
+fn a_refused_record_leaves_the_session_untouched_and_names_the_reason() {
+    let persistence = Arc::new(RecordedDefaults::refusing("overlay is not trusted"));
+    let use_case = use_case_persisting(persistence);
+    let mut runtime = FakeRuntime {
+        effort: Some(Low),
+        ..Default::default()
+    };
+    let error = use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "high".into(),
+                persist: Some(DefaultScope::Global),
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        EffortChangeError::Persist {
+            level: High,
+            scope: DefaultScope::Global,
+            reason: "overlay is not trusted".into(),
+        }
+    );
+    assert!(error.to_string().contains("overlay is not trusted"));
+    assert!(error.to_string().contains("global default"));
+    assert_eq!(runtime.effort, Some(Low), "nothing applied");
+    assert_eq!(*runtime.writes.lock().unwrap(), 0);
+}
+
+#[test]
+fn an_invalid_level_is_refused_before_anything_is_recorded() {
+    let persistence = Arc::new(RecordedDefaults::default());
+    let use_case = use_case_persisting(persistence.clone());
+    let mut runtime = FakeRuntime::default();
+    let error = use_case
+        .execute(
+            &mut runtime,
+            &EffortChangeRequest {
+                model: "xai/grok-4.5".into(),
+                level: "xhigh".into(),
+                persist: Some(DefaultScope::Local),
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(error, EffortChangeError::Unsupported { .. }));
+    assert!(persistence.records.lock().unwrap().is_empty());
 }

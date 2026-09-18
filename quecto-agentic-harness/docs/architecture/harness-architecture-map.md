@@ -197,7 +197,13 @@ case into `CatalogueHandles.reload` and the presenter in
 durable tool-policy persistence hook is its own composition seam
 (`src/composition/tool_policy.rs`, `CliComposition.tool_policy_persistence`),
 installed on the loop by the agent build; it is a caller of the configuration
-writer below, patching `tools.policy.entries` only. The
+writer below, patching `tools.policy.entries` only. The catalogue's
+default-persistence ports (`ModelDefaultPersistence`,
+`EffortDefaultPersistence`, #2024 S2 — `set_model`/`set_effort … persist`)
+are served by a mapping in `src/composition/catalogue_defaults.rs` onto the
+configuration capability's `PatchConfiguration` use case, in the manner of
+`fleet_settlement.rs`: it touches no file or lock itself, so it is
+composition, not infrastructure, and the infrastructure ratchet stays exact. The
 composition publishes the routing provider and the catalogue as one
 generation into the per-directory stores; a failed composition retains the
 previously published generation.

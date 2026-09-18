@@ -16,6 +16,10 @@ pub(crate) struct TabSpawnPolicy {
     /// Secondary tabs persist by default (ADR-0023); parent `--no-persist`
     /// still applies when the operator opted out.
     pub(crate) persist: bool,
+    /// Parent `--model` / `--effort` (#2024 S2): a run-scoped choice, so
+    /// every tab of the run starts on it.
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 impl Default for TabSpawnPolicy {
@@ -28,6 +32,8 @@ impl Default for TabSpawnPolicy {
             system_prompt: None,
             disable_tools: Vec::new(),
             persist: true,
+            model: None,
+            effort: None,
         }
     }
 }
@@ -42,6 +48,8 @@ impl TabSpawnPolicy {
             system_prompt: flags.system_prompt.clone(),
             disable_tools: flags.disable_tools.clone(),
             persist: flags.persist,
+            model: flags.model.clone(),
+            effort: flags.effort.clone(),
         }
     }
 }
@@ -63,6 +71,8 @@ pub(crate) fn tab_spawn_flags_from_policy(
         disable_tools: policy.disable_tools.clone(),
         persist: policy.persist,
         kill_on_exit: true,
+        model: policy.model.clone(),
+        effort: policy.effort.clone(),
     }
 }
 

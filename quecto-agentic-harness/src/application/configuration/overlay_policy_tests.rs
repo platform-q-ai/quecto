@@ -150,3 +150,34 @@ fn a_document_looks_like_a_config_only_with_a_known_section_shaped_as_one() {
     assert!(!looks_like_config(&json!({"agents":null})));
     assert!(!looks_like_config(&json!({"providers":true})));
 }
+
+#[test]
+fn remove_path_takes_the_value_out_and_reports_what_is_not_there() {
+    let mut doc = json!({"agents":{"defaults":{"model":"m","effort":"high"}},"zeta":1});
+    assert_eq!(
+        remove_path(&mut doc, "agents.defaults.model"),
+        Ok(Some(json!("m")))
+    );
+    assert_eq!(
+        doc,
+        json!({"agents":{"defaults":{"effort":"high"}},"zeta":1})
+    );
+    // Not set: a missing leaf, a missing intermediate object.
+    assert_eq!(remove_path(&mut doc, "agents.defaults.model"), Ok(None));
+    assert_eq!(remove_path(&mut doc, "tools.policy.entries"), Ok(None));
+    assert_eq!(
+        doc,
+        json!({"agents":{"defaults":{"effort":"high"}},"zeta":1})
+    );
+    // Emptied parents are kept.
+    assert_eq!(
+        remove_path(&mut doc, "agents.defaults.effort"),
+        Ok(Some(json!("high")))
+    );
+    assert_eq!(doc["agents"]["defaults"], json!({}));
+    // A non-object on the way names the segment it stands at.
+    assert_eq!(remove_path(&mut doc, "zeta.inner"), Err("zeta".to_string()));
+    assert_eq!(remove_path(&mut doc, "",), Err(String::new()));
+    let mut scalar = json!("nope");
+    assert_eq!(remove_path(&mut scalar, "a"), Err(String::new()));
+}

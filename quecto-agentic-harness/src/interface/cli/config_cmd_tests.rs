@@ -192,6 +192,8 @@ fn usage_errors_name_the_problem() {
         (vec!["config", "get", "--nope"], "unknown option --nope"),
         (vec!["config", "set", "only-path"], "a path and a value"),
         (vec!["config", "set", "", "1"], "invalid config path"),
+        (vec!["config", "unset"], "unset takes a path"),
+        (vec!["config", "unset", "a", "b"], "unset takes a path"),
         (vec!["config", "trust", "extra"], "no positional"),
     ] {
         let (code, _, stderr) = rig.run(&args);
@@ -287,4 +289,51 @@ fn get_redacts_secrets_unless_shown_and_says_so_on_stderr() {
     let (code, _, stderr) = rig.run(&["config", "trust", "--show-secrets"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("unknown option --show-secrets"), "{stderr}");
+}
+
+#[test]
+fn unset_removes_a_key_from_the_addressed_layer_and_refuses_one_it_does_not_set() {
+    let rig = Rig::new();
+    std::fs::write(
+        rig.global(),
+        r#"{"agents":{"defaults":{"model":"global","effort":"high"}}}"#,
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.run(&["config", "set", "agents.defaults.model", "\"local\""]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, stdout, stderr) = rig.run(&["config", "unset", "agents.defaults.model"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "unset agents.defaults.model in {} (trusted)",
+            rig.overlay().display()
+        )),
+        "{stdout}"
+    );
+    let (_, stdout, _) = rig.run(&["config", "get", "--effective", "agents.defaults.model"]);
+    assert_eq!(stdout.trim(), "\"global\"");
+    let (_, stdout, _) = rig.run(&["config", "get", "--local"]);
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value, serde_json::json!({"agents":{"defaults":{}}}));
+
+    let (code, _, stderr) = rig.run(&["config", "unset", "agents.defaults.model"]);
+    assert_eq!(code, 1);
+    assert!(
+        stderr.contains("`agents.defaults.model` is not set in"),
+        "{stderr}"
+    );
+    let (code, stdout, stderr) =
+        rig.run(&["config", "unset", "--global", "agents.defaults.effort"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.starts_with("unset agents.defaults.effort in"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("(trusted)"));
+    let global: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.global()).unwrap()).unwrap();
+    assert_eq!(
+        global,
+        serde_json::json!({"agents":{"defaults":{"model":"global"}}})
+    );
 }

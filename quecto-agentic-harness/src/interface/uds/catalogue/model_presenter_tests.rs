@@ -10,6 +10,7 @@ fn switched(verdict: ModelSelectionVerdict) -> ModelSwitched {
             verdict,
         },
         effort_changed: false,
+        persisted: None,
     }
 }
 
@@ -62,5 +63,34 @@ fn no_runtime_keeps_the_legacy_payload_free_reply() {
     assert_eq!(
         render_switch(&switched(ModelSelectionVerdict::NoRuntime)),
         None
+    );
+}
+
+#[test]
+fn a_recorded_default_is_rendered_beside_the_selection_and_alone_without_a_runtime() {
+    use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
+    let persisted = PersistedDefault {
+        scope: DefaultScope::Global,
+        path: "/home/u/.quecto/config.json".into(),
+    };
+    let mut with_runtime = switched(ModelSelectionVerdict::Runnable {
+        provider: "acme".into(),
+        generation: 3,
+    });
+    with_runtime.persisted = Some(persisted.clone());
+    assert_eq!(
+        render_switch(&with_runtime),
+        Some(serde_json::json!({
+            "selection": { "status": "ok", "provider": "acme", "generation": 3 },
+            "persisted": { "scope": "global", "path": "/home/u/.quecto/config.json" }
+        }))
+    );
+    let mut without_runtime = switched(ModelSelectionVerdict::NoRuntime);
+    without_runtime.persisted = Some(persisted);
+    assert_eq!(
+        render_switch(&without_runtime),
+        Some(serde_json::json!({
+            "persisted": { "scope": "global", "path": "/home/u/.quecto/config.json" }
+        }))
     );
 }
