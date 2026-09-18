@@ -6,8 +6,11 @@
 //! the environments capability's listing query; the query owns the rules
 //! (default visibility while an overlay is withheld, ordering).
 
+use std::sync::Arc;
+
 use crate::application::environments::dto::{ContainerConfigInventory, ContainerConfigLayer};
 use crate::application::environments::use_cases::ListContainerConfigs;
+use crate::infrastructure::tools::spawn::SpawnTool;
 
 pub const ROSTER_PREFIX: &str = "Available container configs: ";
 pub const ROSTER_LINE_MAX_CHARS: usize = 120;
@@ -98,6 +101,41 @@ fn fit(body: String, note: &str) -> String {
         body
     };
     format!("{body}{note}.")
+}
+
+impl SpawnTool {
+    /// Install composition's container-config listing (#2024 S4c): the
+    /// description's roster line reads it.
+    pub fn with_container_config_roster(
+        mut self,
+        roster: Option<Arc<ListContainerConfigs>>,
+    ) -> Self {
+        self.container_config_roster = roster;
+        self
+    }
+
+    /// The roster line for the listing's current revision: re-rendered
+    /// (one configuration read) only when the revision changed since the
+    /// last render.
+    pub(super) fn cached_roster_line(&self) -> Option<String> {
+        let roster = self.container_config_roster.as_deref()?;
+        let revision = roster.revision();
+        let mut cache = self.roster_line.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_revision, line)) = cache.as_ref()
+            && *cached_revision == revision
+        {
+            return Some(line.clone());
+        }
+        let line = roster_line(Some(roster))?;
+        *cache = Some((revision, line.clone()));
+        Some(line)
+    }
+
+    /// The composed listing, for whoever builds `agent_cmd` beside this
+    /// tool over the same layers.
+    pub fn container_config_roster(&self) -> Option<Arc<ListContainerConfigs>> {
+        self.container_config_roster.clone()
+    }
 }
 
 #[cfg(test)]

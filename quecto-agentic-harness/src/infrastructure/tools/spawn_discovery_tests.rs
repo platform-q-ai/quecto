@@ -227,3 +227,52 @@ fn the_spawn_definition_reads_the_configuration_only_when_the_revision_changes()
     assert!(!description.contains("rev-1"), "{description}");
     assert_eq!(counting.reads.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+#[test]
+fn the_definition_carries_one_compact_roster_line_only_when_composed() {
+    // #1525 kept the model-facing definition compact; #2024 S4c restores the
+    // roster as ONE bounded line, rendered from the composed listing query
+    // — a tool composed without one still has no roster.
+    let dir = tempfile::TempDir::new().unwrap();
+    let cfg = dir.path().join("config.json");
+    std::fs::write(
+        &cfg,
+        r#"{"container_configs":{
+            "quecto":{"default":true,"create":["/bin/true"],"cleanup":["/bin/true"]},
+            "alpha":{"create":["/bin/true"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    use crate::application::tools::ports::Tool;
+    let bare = crate::infrastructure::tools::spawn::SpawnTool::new(vec![])
+        .with_parent_config_path(Some(cfg.clone()));
+    let description = bare.definition().description;
+    assert!(description.contains("true starts a new container with the default config"));
+    assert!(!description.contains("Available container configs"));
+
+    let composed = crate::composition::subagent_lifecycle::compose_launcher(
+        crate::infrastructure::tools::spawn::SpawnTool::new(vec![])
+            .with_parent_config_path(Some(cfg)),
+    );
+    let description = composed.definition().description;
+    let roster: Vec<&str> = description
+        .lines()
+        .filter(|line| line.starts_with("Available container configs: "))
+        .collect();
+    assert_eq!(
+        roster,
+        ["Available container configs: quecto (default, global), alpha (global)."],
+        "{description}"
+    );
+    assert!(roster[0].chars().count() <= 120);
+    // The truth about a new container, where the model reads it.
+    for needle in [
+        "fresh clone of the config's --repo at its default branch",
+        "parent's working tree, branch and uncommitted changes are NOT inside",
+        "push it and tell the child to fetch/checkout",
+        "existing refs come from agent_cmd get_containers",
+        "agent_cmd get_container_configs",
+        "quecto container doctor",
+    ] {
+        assert!(description.contains(needle), "missing {needle:?}");
+    }
+}
