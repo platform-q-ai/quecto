@@ -35,7 +35,7 @@ fn write_script(path: &Path, body: &str) -> Vec<String> {
 }
 
 /// A fixture program that must be found on PATH (the fake `podman`).
-fn write_executable(path: &Path, body: &str) {
+pub(crate) fn write_executable(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
     #[cfg(unix)]
     {
@@ -122,8 +122,8 @@ fn then_spawn_result_shorter_than(world: &mut QuectoWorld, bound: usize) {
 /// A directory holding only what the official create script needs besides
 /// the container runtime, so the runtime's presence is the scenario's
 /// decision and never the host's.
-struct Toolbox {
-    dir: PathBuf,
+pub(crate) struct Toolbox {
+    pub(crate) dir: PathBuf,
 }
 
 const TOOLBOX_PROGRAMS: &[&str] = &[
@@ -134,7 +134,7 @@ const TOOLBOX_PROGRAMS: &[&str] = &[
 
 impl Toolbox {
     /// The world's toolbox, built earlier in the scenario.
-    fn existing(world: &QuectoWorld) -> Self {
+    pub(crate) fn existing(world: &QuectoWorld) -> Self {
         let dir = base_path(world).join("toolbox");
         assert!(
             dir.is_dir(),
@@ -143,7 +143,7 @@ impl Toolbox {
         Self { dir }
     }
 
-    fn build(world: &QuectoWorld) -> Self {
+    pub(crate) fn build(world: &QuectoWorld) -> Self {
         let dir = base_path(world).join("toolbox");
         std::fs::create_dir_all(&dir).unwrap();
         let host_path = std::env::var_os("PATH").expect("PATH");
@@ -167,14 +167,14 @@ impl Toolbox {
         self.dir.join("image-present")
     }
 
-    fn podman_log(&self) -> PathBuf {
+    pub(crate) fn podman_log(&self) -> PathBuf {
         self.dir.join("podman.log")
     }
 
     /// A fake `podman` that records every invocation and answers `image
     /// exists` from the marker file; anything else (a pull, a run) is
     /// recorded and refused so a test can prove it never happened.
-    fn install_fake_podman(&self, image_present: bool) {
+    pub(crate) fn install_fake_podman(&self, image_present: bool) {
         let body = format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then [ -e '{}' ] && exit 0 || exit 1; fi\nexit 125\n",
             self.podman_log().display(),
@@ -184,7 +184,7 @@ impl Toolbox {
         self.set_image_present(image_present);
     }
 
-    fn set_image_present(&self, present: bool) {
+    pub(crate) fn set_image_present(&self, present: bool) {
         if present {
             std::fs::write(self.marker(), "").unwrap();
         } else {
@@ -194,7 +194,7 @@ impl Toolbox {
 }
 
 /// A local repository with one commit, reachable through `git ls-remote`.
-fn reachable_repository(world: &QuectoWorld) -> PathBuf {
+pub(crate) fn reachable_repository(world: &QuectoWorld) -> PathBuf {
     let repo = base_path(world).join("origin-repo");
     if repo.join(".git").exists() {
         return repo;
@@ -314,7 +314,7 @@ fn when_preflight_repository(world: &mut QuectoWorld, image: String, repo: Strin
 }
 
 /// A state dir the preflight is asked about but must never create.
-fn preflight_state_dir(world: &QuectoWorld) -> PathBuf {
+pub(crate) fn preflight_state_dir(world: &QuectoWorld) -> PathBuf {
     base_path(world).join("doctor-state")
 }
 

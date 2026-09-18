@@ -1471,6 +1471,7 @@ mod spawn_liveness_steps;
 mod spawn_runtime_slice5_steps;
 mod spawn_runtime_slice5_tui_steps;
 mod spawn_tool_steps;
+mod standard_container_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;
 mod subagent_notify_steps;
@@ -1752,6 +1753,10 @@ impl QuectoWorld {
             Some(quecto::composition::container_configs::build_agent_container_config_handles);
         world.cli_context.container_doctor =
             Some(quecto::composition::environments::build_container_doctor);
+        world.cli_context.container_init =
+            Some(quecto::composition::standard_container::build_standard_container_init);
+        world.cli_context.container_status =
+            Some(quecto::composition::standard_container::build_container_status);
         world
     }
 }
