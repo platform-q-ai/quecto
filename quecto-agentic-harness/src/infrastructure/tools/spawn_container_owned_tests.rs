@@ -189,6 +189,54 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     assert!(err.to_string().contains("retained exec"), "{err}");
 }
 
+/// Review round 2 (#2024 S4e): a join runs the environment's retained exec
+/// argv, so its program is judged like the create's before the host runs
+/// it; an altered standard `exec.sh` refuses the join naming the file.
+#[tokio::test]
+async fn join_refuses_an_altered_standard_exec_script_before_running_it() {
+    use crate::infrastructure::processes::containers::standard::integrity::test_support::{
+        alter_script, materialise_bundle,
+    };
+    let project = TempDir::new().unwrap();
+    let bundle = materialise_bundle(project.path());
+    let exec = bundle.join("scripts/exec.sh");
+    let marker = project.path().join("ran");
+    alter_script(&exec, &marker);
+    let registry = EnvironmentRegistry::new();
+    let mut record = test_record("C1", "env-altered");
+    record.retained_exec_argv = vec![
+        exec.to_string_lossy().into_owned(),
+        "--state-dir".into(),
+        project.path().join("state").to_string_lossy().into_owned(),
+    ];
+    registry.commit(record);
+    let child = ChildCommand {
+        swarm_context: None,
+        supervisor: &test_supervisor(),
+        binary: Path::new("true"),
+        cli_args: &[],
+        base_dir: Path::new("/tmp"),
+        admission_dir: None,
+    };
+    let err = join_script_managed_child(
+        &child,
+        &registry,
+        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains(&format!(
+            "join of environment C1 refused: {} differs from the standard bundle this quecto embeds",
+            exec.display()
+        )),
+        "{err}"
+    );
+    assert!(err.contains("quecto container init --refresh"), "{err}");
+    assert!(!marker.exists(), "the altered exec.sh ran on the host");
+}
+
 #[tokio::test]
 async fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
     // #1410 accepted trade-off: exactly-one-default is a LOAD invariant, so a

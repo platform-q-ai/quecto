@@ -46,6 +46,22 @@ impl ContainerScriptIntegrity for EmbeddedScriptIntegrity {
     }
 }
 
+/// A retained argv's program judged before the host runs it (review
+/// round 2 of #2024 S4e): the environment's `exec`, `inspect`, `kill` and
+/// `cleanup` argv were retained at create time, so a standard-bundle
+/// script altered since then would otherwise run unjudged. The error is
+/// the same text the create prints, naming the file and the refresh.
+pub fn refuse_altered_script(argv: &[String]) -> Result<(), String> {
+    let Some(program) = argv.first() else {
+        return Ok(());
+    };
+    let script = Path::new(program);
+    match EmbeddedScriptIntegrity.verify(script).refusal(script) {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
+}
+
 /// `<root>/.quecto/containers/standard/<relative>` split at the bundle
 /// directory: the project root and the asset's path within the bundle.
 /// Only an absolute path with the bundle components exactly qualifies;
@@ -84,6 +100,42 @@ fn split_at_bundle(script: &Path) -> Result<(&Path, &Path), StandardScriptVerdic
         ancestor = dir.parent();
     }
     Err(StandardScriptVerdict::NotStandard)
+}
+
+/// A materialised standard bundle and a way to alter one of its scripts,
+/// for the tests of every path that must refuse an altered script.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::{Path, PathBuf};
+
+    use crate::application::environments::dto::STANDARD_CONTAINER_DIR;
+    use crate::application::environments::ports::ContainerAssetStore;
+    use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;
+
+    /// Every asset written under `<project>/.quecto/containers/standard`;
+    /// the bundle directory.
+    pub(crate) fn materialise_bundle(project: &Path) -> PathBuf {
+        let dir = project.join(STANDARD_CONTAINER_DIR);
+        for asset in EmbeddedStandardAssets.catalogue().assets {
+            EmbeddedStandardAssets
+                .materialise(project, &dir, &asset)
+                .unwrap();
+        }
+        dir
+    }
+
+    /// The edit a pull or a hand could make: the script touches `marker`
+    /// and stops before any runtime call, so "never ran" is a fact about
+    /// the host.
+    pub(crate) fn alter_script(script: &Path, marker: &Path) {
+        let original = std::fs::read_to_string(script).unwrap();
+        let (shebang, rest) = original.split_once('\n').unwrap();
+        std::fs::write(
+            script,
+            format!("{shebang}\ntouch '{}'\nexit 99\n{rest}", marker.display()),
+        )
+        .unwrap();
+    }
 }
 
 #[cfg(test)]
