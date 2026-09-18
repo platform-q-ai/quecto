@@ -63,7 +63,7 @@ fn slash_dropdown_windowed(world: &mut TuiWorld, indicator: String) {
         "all built-in commands should be suggested"
     );
     assert_eq!(
-        count, 17,
+        count, 18,
         "the built-in command set excludes removed tab commands"
     );
     // Positive windowing lock: a drawn row is `/{name}` followed by the fixed
