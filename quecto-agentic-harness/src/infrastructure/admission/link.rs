@@ -117,6 +117,10 @@ pub struct AuthorityLink {
     exhaustions: AtomicU64,
     /// Why the last exhausted reconnection failed (its final attempt).
     last_failure: Mutex<Option<String>>,
+    /// How many times the reconnect binding was invoked (tests observe the
+    /// shape of a backoff — one run shared by every queued waiter).
+    #[cfg(test)]
+    reconnect_invocations: AtomicU64,
     /// Set once a reconnection met a changed policy: permanent for the process.
     restart_required: Mutex<Option<String>>,
     on_change: Arc<Mutex<Option<LinkChangeHook>>>,
@@ -150,6 +154,8 @@ impl AuthorityLink {
             exhausted: AtomicBool::new(false),
             exhaustions: AtomicU64::new(0),
             last_failure: Mutex::new(None),
+            #[cfg(test)]
+            reconnect_invocations: AtomicU64::new(0),
             restart_required: Mutex::new(None),
             on_change,
         })
@@ -228,6 +234,11 @@ impl AuthorityLink {
     }
 
     #[cfg(test)]
+    pub(super) fn reconnect_invocations_for_test(&self) -> u64 {
+        self.reconnect_invocations.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
     pub(super) fn set_backoff_for_test(&self, attempts: u32, base: Duration, max: Duration) {
         *self.backoff.lock().expect("backoff") = Backoff {
             attempts,
@@ -290,6 +301,8 @@ impl AuthorityLink {
         let backoff = *self.backoff.lock().expect("backoff");
         let mut last = lost;
         for attempt in 0..backoff.attempts {
+            #[cfg(test)]
+            self.reconnect_invocations.fetch_add(1, Ordering::AcqRel);
             match reconnect().await {
                 Ok(connection) => {
                     if connection.hello().proposal != self.expected {

@@ -291,13 +291,20 @@ fn attempts_queued_behind_an_exhausted_reconnection_fail_fast() {
             assert!(error.to_string().contains("admission"), "{error}");
             elapsed.push(started.elapsed());
         }
+        // One backoff for all four: exactly the two configured tries, not
+        // two per waiter. The invocation count is the gate, so a loaded
+        // runner cannot turn it into a timing flake.
+        assert_eq!(
+            link.reconnect_invocations_for_test(),
+            2,
+            "waiters re-ran the backoff: {elapsed:?}"
+        );
         let longest = elapsed.iter().max().unwrap();
-        // One backoff (a single sleep of at most 300 ms, none after the final
-        // try) for all four: not four backoffs in sequence, no trailing sleep
-        // (which alone would take the first past 400 ms).
+        // Loose sanity bound (well over 2x the single 200-300 ms sleep): four
+        // backoffs in sequence would take at least 800 ms.
         assert!(
-            *longest < Duration::from_millis(400),
-            "waiters re-ran the backoff or slept after the last try: {elapsed:?}"
+            *longest < Duration::from_millis(800),
+            "waiters slept in sequence: {elapsed:?}"
         );
         assert_eq!(link.health(), LinkHealth::Unavailable);
 
