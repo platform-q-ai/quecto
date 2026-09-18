@@ -418,7 +418,8 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "ContainerConfigsError"
                     | "ContainerLaunchConfig"
                     | "EffectiveContainerConfigSet"
-                    | "SelectContainerConfigRequest",
+                    | "SelectContainerConfigRequest"
+                    | "SelectedContainerConfig",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
