@@ -205,6 +205,11 @@ pub struct AgentControlToolDeps {
     /// containers.
     pub container_config_selection:
         Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
+    /// Composition's container-config listing (#2024 S4c) over the same
+    /// layers: the spawn description's roster line and `agent_cmd
+    /// get_container_configs` read it; `None` lists nothing.
+    pub container_config_roster:
+        Option<Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
 }
 
 pub struct AgentControlToolBuild {
@@ -242,6 +247,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_parent_config_path(deps.parent_config_path)
             .with_effort_control(deps.effort_control)
             .with_container_config_selection(deps.container_config_selection)
+            .with_container_config_roster(deps.container_config_roster.clone())
             .with_owned_child_supervisor(deps.owned_child_supervisor)
             .with_harness_lifecycle(harness_lifecycle.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
@@ -264,7 +270,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let spawn = spawn.with_lifecycle_slot(termination_slots.lifecycle.clone());
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
         .with_kill_slot(termination_slots.kill.clone())
-        .with_environment_control_slot(termination_slots.environments.clone());
+        .with_environment_control_slot(termination_slots.environments.clone())
+        .with_container_config_roster(deps.container_config_roster);
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(

@@ -463,6 +463,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/ports.rs",
     "src/application/environments/dto.rs",
     "src/application/environments/use_cases/diagnose_container_runtime.rs",
+    "src/application/environments/use_cases/list_container_configs.rs",
     "src/application/environments/use_cases/kill_environment.rs",
     "src/application/environments/use_cases/finalize_environment_member.rs",
     "src/application/swarm/mod.rs",

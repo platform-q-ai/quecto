@@ -67,10 +67,10 @@ pub(crate) struct AgentFlags {
     /// Composition's admission-operation builder (#2024 S3), from CliContext;
     /// startup negotiation (root/child/disabled) runs through its use case.
     pub(crate) admission: Option<crate::interface::cli::AdmissionHandlesBuilder>,
-    /// Composition's container-config selection builder (#2024 S4a), from
-    /// CliContext; the spawn tool selects container configs through it.
-    pub(crate) container_config_selection:
-        Option<crate::interface::cli::ContainerConfigSelectionBuilder>,
+    /// Composition's container-config handles builder (#2024 S4a, S4c),
+    /// from CliContext; the spawn tool selects container configs through
+    /// its selection and, with agent_cmd, lists them through its roster.
+    pub(crate) container_configs: Option<crate::interface::cli::ContainerConfigHandlesBuilder>,
     /// Whether stdin is a terminal (from CliContext): the only case in which
     /// an unrecorded overlay may be offered for trust at startup.
     pub(crate) stdin_is_tty: bool,
@@ -97,7 +97,7 @@ impl AgentFlags {
         self.tool_policy_persistence = ctx.tool_policy_persistence;
         self.configuration = ctx.configuration;
         self.admission = ctx.admission;
-        self.container_config_selection = ctx.container_config_selection;
+        self.container_configs = ctx.container_configs;
         self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }
 }

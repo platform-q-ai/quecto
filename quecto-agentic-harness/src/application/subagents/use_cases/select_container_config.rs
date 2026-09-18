@@ -89,29 +89,13 @@ impl SelectContainerConfig {
 }
 
 fn validate_argv(config: &ContainerLaunchConfig) -> Result<(), SelectContainerConfigError> {
-    let invalid = |what| SelectContainerConfigError::InvalidArgv {
-        name: config.name.clone(),
-        what,
-    };
-    if config.create.is_empty() {
-        return Err(invalid("missing create argv"));
+    match config.argv_problem() {
+        Some(what) => Err(SelectContainerConfigError::InvalidArgv {
+            name: config.name.clone(),
+            what,
+        }),
+        None => Ok(()),
     }
-    if config.cleanup.is_empty() {
-        return Err(invalid("missing cleanup argv"));
-    }
-    let unsafe_arg = |arg: &String| arg.is_empty() || arg.contains('\0');
-    if config
-        .create
-        .iter()
-        .chain(&config.cleanup)
-        .chain(&config.exec)
-        .chain(&config.kill)
-        .chain(&config.inspect)
-        .any(unsafe_arg)
-    {
-        return Err(invalid("unsafe argv"));
-    }
-    Ok(())
 }
 
 impl std::fmt::Debug for SelectContainerConfig {

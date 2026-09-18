@@ -1,13 +1,15 @@
 //! Thin tool adapter for the environment control use case (#1369 slice 2).
 //!
-//! Decode `get_containers` / `kill_container` arguments, delegate to
-//! [`ListEnvironmentsQuery`] / [`KillEnvironment`], and encode the result.
-//! No environment transaction logic lives here.
+//! Decode `get_containers` / `kill_container` / `get_container_configs`
+//! arguments, delegate to [`ListEnvironmentsQuery`] / [`KillEnvironment`] /
+//! [`ListContainerConfigs`], and encode the result. No environment
+//! transaction logic lives here.
 
 use std::sync::Arc;
 
+use crate::application::environments::dto::ContainerConfigInventory;
 use crate::application::environments::use_cases::{
-    KillEnvironment, KilledEnvironment, ListEnvironmentsQuery,
+    KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery,
 };
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
 use crate::domain::tool::ToolResult;
@@ -43,13 +45,14 @@ impl EnvironmentControlSlot {
 pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
     matches!(
         args.get("command").and_then(|v| v.as_str()),
-        Some("get_containers") | Some("kill_container")
+        Some("get_containers") | Some("kill_container") | Some("get_container_configs")
     )
 }
 
 pub(super) async fn execute_container_command(
     list_environments: Option<&Arc<ListEnvironmentsQuery>>,
     kill_environment: Option<&Arc<KillEnvironment>>,
+    list_container_configs: Option<&Arc<ListContainerConfigs>>,
     args: &serde_json::Value,
 ) -> ToolResult {
     match args.get("agent_id").and_then(|v| v.as_str()) {
@@ -60,6 +63,13 @@ pub(super) async fn execute_container_command(
         Some("get_containers") => match list_environments {
             Some(query) => encode_listing(query.execute()),
             None => error("environment listing is not available in this session".to_string()),
+        },
+        Some("get_container_configs") => match list_container_configs {
+            Some(query) => match query.execute() {
+                Ok(inventory) => encode_config_inventory(&inventory),
+                Err(reason) => error(reason),
+            },
+            None => error("container config listing is not available in this session".to_string()),
         },
         Some("kill_container") => match kill_environment {
             None => error("environment control is not available in this session".to_string()),
@@ -148,6 +158,40 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
         .collect();
     ToolResult {
         content: serde_json::json!({"containers": containers}).to_string(),
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    }
+}
+
+/// `{"container_configs":[{name, default, source, repository, problem,
+/// joinable}], "overlay_withheld": bool, "diagnostics": [..]}` — the
+/// default first, `source` is `overlay` (repo-bound) or `global`,
+/// `repository` null for a sandbox config, `problem` null unless a launch
+/// would refuse the entry, `joinable` when the config supports
+/// `{"mode":"existing"}` joins (an `exec` argv).
+fn encode_config_inventory(inventory: &ContainerConfigInventory) -> ToolResult {
+    let configs: Vec<serde_json::Value> = inventory
+        .configs
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.name,
+                "default": entry.default,
+                "source": entry.layer.as_str(),
+                "repository": entry.repository,
+                "problem": entry.problem,
+                "joinable": entry.joinable,
+            })
+        })
+        .collect();
+    ToolResult {
+        content: serde_json::json!({
+            "container_configs": configs,
+            "overlay_withheld": inventory.overlay_withheld,
+            "diagnostics": inventory.diagnostics,
+        })
+        .to_string(),
         is_error: false,
         image_blocks: vec![],
         delivery_metadata: None,

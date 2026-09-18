@@ -51,8 +51,12 @@ mod config_document_store;
 mod config_document_writer;
 #[path = "contracts/config_validator.rs"]
 mod config_validator;
+#[path = "contracts/container_config_default_equivalence.rs"]
+mod container_config_default_equivalence;
 #[path = "contracts/container_config_lookup.rs"]
 mod container_config_lookup;
+#[path = "contracts/container_config_roster.rs"]
+mod container_config_roster;
 #[path = "contracts/container_runtime_preflight.rs"]
 mod container_runtime_preflight;
 #[path = "contracts/context_spill_store.rs"]

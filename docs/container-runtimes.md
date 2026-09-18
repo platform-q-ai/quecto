@@ -255,9 +255,26 @@ optional but needed for `mode: existing`, `kill_container`, and death
 diagnostics respectively. Missing, unknown, empty required, or unsafe
 (empty/NUL argument) configuration fails before any script runs, and
 selection errors enumerate the available config names so an agent can
-offer the menu. To see the names before spawning run
-`quecto config get --effective container_configs` (the spawn tool's
-description does not carry a roster; #2024 S4c restores one).
+offer the menu. Agents see the names before spawning in two places (#2024
+S4c): the `spawn` tool description carries one bounded roster line
+(`Available container configs: <name> (default, repo-bound|global), …`,
+at most 120 characters, the tail folded into `+N more`; a withheld overlay
+adds `(repo overlay untrusted — run quecto config trust)`; one entry alone
+over the budget is cut with an ellipsis), re-rendered whenever a
+configuration layer or the trust record changes (the tool definitions are
+rendered for every model call, so the line is cached against the files'
+metadata); and
+`agent_cmd {"agent_id":"*","command":"get_container_configs"}` returns the
+same effective set with detail, live at each call:
+`{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}`
+— the `container: true` default first; `default` is what a launch would
+honour (none while the overlay is withheld, none when more than one entry
+is labelled, never an entry with a `problem` — a missing or unsafe argv,
+diagnosed in `diagnostics`); `source` says which layer declared the entry,
+`repository` is the create argv's `--repo` (`null` for a sandbox),
+`joinable` whether the config carries an `exec` argv for
+`{"mode":"existing"}` joins. Operators
+see the same set with `quecto config get --effective container_configs`.
 
 The container config in effect when an environment is **created** is
 retained with the environment: later joins, kills, and inspects use the

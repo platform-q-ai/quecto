@@ -34,6 +34,12 @@ pub struct AgentCmdTool {
     /// installed by composition after this tool is built. Empty, the
     /// container commands are refused: this tool composes no use case.
     environments: super::agent_cmd_containers::EnvironmentControlSlot,
+    /// The container-config listing `get_container_configs` serves (#2024
+    /// S4c), composed over the launching agent's checkout beside the spawn
+    /// tool's selection. Empty, the command reports the capability
+    /// unavailable: this tool composes no use case.
+    container_config_roster:
+        Option<std::sync::Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
 }
 
 /// Where the composed `agent_cmd kill` owner lives (#1936): filled once by
@@ -68,7 +74,19 @@ impl AgentCmdTool {
             registry,
             kill: KillToolSlot::default(),
             environments: super::agent_cmd_containers::EnvironmentControlSlot::default(),
+            container_config_roster: None,
         }
+    }
+
+    /// Attach composition's container-config listing (#2024 S4c).
+    pub fn with_container_config_roster(
+        mut self,
+        roster: Option<
+            std::sync::Arc<crate::application::environments::use_cases::ListContainerConfigs>,
+        >,
+    ) -> Self {
+        self.container_config_roster = roster;
+        self
     }
 
     /// Attach the composed environment control (inventory query and kill
@@ -407,9 +425,9 @@ impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "agent_cmd".into(),
-            description: "Send commands to a spawned subagent, or manage spawned containers.\n\nAfter a spawned child completes, do not treat the passive note as the answer. Call get_messages with the spawn-returned UUID as agent_id and no count/before to read the default unread report. Do not poll or wait-loop; use get_state only for occasional live supervision.\n\nUse prompt/steer/follow_up with message; abort interrupts; kill terminates. get_subagents_all, get_containers, and kill_container use agent_id \"*\"."
+            description: "Send commands to a spawned subagent, or manage spawned containers.\n\nAfter a spawned child completes, do not treat the passive note as the answer. Call get_messages with the spawn-returned UUID as agent_id and no count/before to read the default unread report. Do not poll or wait-loop; use get_state only for occasional live supervision.\n\nUse prompt/steer/follow_up with message; abort interrupts; kill terminates. get_subagents_all, get_containers, get_container_configs, and kill_container use agent_id \"*\". get_container_configs lists the container configs spawn can select for this checkout (name, default, source overlay|global, repository); get_containers lists running environments and their refs for {\"mode\":\"existing\"}."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"Spawn-returned subagent UUID; use \"*\" for inventory/container commands."},"command":{"type":"string","enum":["swarm_control","prompt","steer","follow_up","abort","kill","get_state","get_report","get_messages","get_message","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","set_model","set_effort","clear_history"],"description":"Command. For completed spawned work, use get_messages without count/before."},"export_raw":{"type":"boolean","description":"With get_report, write retained raw history and spills to artifacts."},"action":{"type":"string","enum":["pause","resume","close","extend","status","usage_budget"]},"reason":{"type":"string"},"deadline_seconds":{"type":"integer","minimum":1,"description":"swarm_control extend: seconds added to the run deadline before resuming a budget-exhausted run."},"token_limit":{"type":["integer","null"],"minimum":1},"strict_unknown":{"type":"boolean"},"message":{"type":"string","description":"Text for prompt, steer, follow_up."},"count":{"type":"integer","description":"Explicit get_messages history page size; cursor-neutral. Omit/null count and before for the unread report."},"before":{"type":"string","description":"Explicit get_messages older page cursor from a prior before field; cursor-neutral."},"messageId":{"type":"string","description":"Stable message ID returned by history or truncation recovery metadata."},"toolCallId":{"type":"string","description":"Optional tool call ID for recovering a tool result."},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":0},"since":{"type":"integer","description":"Generation cursor for get_state/get_subagents; unchanged returns only metadata."},"model":{"type":"string","description":"set_model as provider/model; alternative to provider+model_id."},"provider":{"type":"string","description":"set_model provider; use with model_id."},"model_id":{"type":"string","description":"set_model id; use with provider."},"effort":{"type":"string","enum":["none","low","medium","high","xhigh","max"],"description":"set_effort value."},"ref":{"type":"string","description":"Container ref for kill_container, e.g. C1."},"name":{"type":"string","description":"Container name for kill_container; alternative to ref."}},"required":["agent_id","command"]}"#
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"Spawn-returned subagent UUID; use \"*\" for inventory/container commands."},"command":{"type":"string","enum":["swarm_control","prompt","steer","follow_up","abort","kill","get_state","get_report","get_messages","get_message","get_session_stats","get_subagents","get_subagents_all","get_containers","get_container_configs","kill_container","set_model","set_effort","clear_history"],"description":"Command. For completed spawned work, use get_messages without count/before."},"export_raw":{"type":"boolean","description":"With get_report, write retained raw history and spills to artifacts."},"action":{"type":"string","enum":["pause","resume","close","extend","status","usage_budget"]},"reason":{"type":"string"},"deadline_seconds":{"type":"integer","minimum":1,"description":"swarm_control extend: seconds added to the run deadline before resuming a budget-exhausted run."},"token_limit":{"type":["integer","null"],"minimum":1},"strict_unknown":{"type":"boolean"},"message":{"type":"string","description":"Text for prompt, steer, follow_up."},"count":{"type":"integer","description":"Explicit get_messages history page size; cursor-neutral. Omit/null count and before for the unread report."},"before":{"type":"string","description":"Explicit get_messages older page cursor from a prior before field; cursor-neutral."},"messageId":{"type":"string","description":"Stable message ID returned by history or truncation recovery metadata."},"toolCallId":{"type":"string","description":"Optional tool call ID for recovering a tool result."},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":0},"since":{"type":"integer","description":"Generation cursor for get_state/get_subagents; unchanged returns only metadata."},"model":{"type":"string","description":"set_model as provider/model; alternative to provider+model_id."},"provider":{"type":"string","description":"set_model provider; use with model_id."},"model_id":{"type":"string","description":"set_model id; use with provider."},"effort":{"type":"string","enum":["none","low","medium","high","xhigh","max"],"description":"set_effort value."},"ref":{"type":"string","description":"Container ref for kill_container, e.g. C1."},"name":{"type":"string","description":"Container name for kill_container; alternative to ref."}},"required":["agent_id","command"]}"#
                 .into(),
         }
     }
@@ -432,6 +450,7 @@ impl Tool for AgentCmdTool {
                     return Ok(super::agent_cmd_containers::execute_container_command(
                         control.as_ref().map(|control| &control.list),
                         control.as_ref().map(|control| &control.kill),
+                        self.container_config_roster.as_ref(),
                         value,
                     )
                     .await);

@@ -14,8 +14,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::{ConfigSelection, EffectiveConfigError, OverlayState};
+use crate::application::environments::use_cases::ListContainerConfigs;
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 use crate::application::subagents::use_cases::SelectContainerConfig;
+use crate::infrastructure::config::container_config_roster::EffectiveConfigRoster;
 use crate::infrastructure::config::container_configs::{
     ContainerConfigsFromEffectiveConfig, ExplicitConfigLoader, LaunchingAgentConfigLoader,
     ResolvedConfig,
@@ -23,6 +25,7 @@ use crate::infrastructure::config::container_configs::{
 use crate::interface::cli::configuration_handles::{
     ConfigurationEnvironment, ConfigurationHandles,
 };
+use crate::interface::cli::container_config_handles::ContainerConfigHandles;
 
 /// The selection use case a launcher holds, over `launching_agent` (the
 /// launching agent's own configuration selection; `None` for a launcher
@@ -31,21 +34,67 @@ pub fn build_container_config_selection(
     base_dir: &Path,
     launching_agent: Option<ConfigSelection>,
 ) -> Arc<SelectContainerConfig> {
-    Arc::new(SelectContainerConfig::new(
-        build_effective_container_configs(base_dir, launching_agent),
-    ))
+    build_container_config_handles(base_dir, launching_agent).selection
 }
 
-/// The selection an agent run's spawn tool holds (#2024 S4a), over the
-/// run's own configuration selection — the layers the agent build
-/// resolved for its working directory — with trust under `base_dir`.
-/// `main` hands this builder to the CLI entry point; the agent build
-/// invokes it once beside the other capability builders.
-pub fn build_agent_container_config_selection(
+/// The selection AND the discovery query (#2024 S4c) over one effective
+/// container-config adapter, so `container: true`, `get_container_configs`
+/// and the spawn description's roster line read the same layers.
+pub fn build_container_config_handles(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> ContainerConfigHandles {
+    let configs = build_effective_container_configs(base_dir, launching_agent.clone());
+    ContainerConfigHandles {
+        selection: Arc::new(SelectContainerConfig::new(configs.clone())),
+        roster: Arc::new(ListContainerConfigs::new(Arc::new(
+            EffectiveConfigRoster::new(configs, roster_revision_probe(base_dir, launching_agent)),
+        ))),
+    }
+}
+
+/// The files whose change could change the roster: the launching agent's
+/// configuration layers (base, overlay, retired local file) and the trust
+/// record under `base_dir`. Probed by metadata only, on every render.
+fn roster_revision_probe(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> crate::infrastructure::config::container_config_roster::RosterRevisionProbe {
+    let mut paths =
+        vec![base_dir.join(crate::infrastructure::config::persistence::TRUST_RECORD_FILE_NAME)];
+    match launching_agent {
+        Some(ConfigSelection::Explicit(path)) => paths.push(path),
+        Some(ConfigSelection::Layered(layers)) => {
+            paths.push(layers.global);
+            paths.extend(layers.overlay);
+            paths.extend(layers.legacy_local);
+        }
+        None => {}
+    }
+    Arc::new(move || crate::infrastructure::config::container_config_roster::file_revision(&paths))
+}
+
+/// The handles an agent run's spawn and agent_cmd tools hold (#2024 S4a,
+/// S4c), over the run's own configuration selection — the layers the
+/// agent build resolved for its working directory — with trust under
+/// `base_dir`. `main` hands this builder to the CLI entry point; the agent
+/// build invokes it once beside the other capability builders.
+pub fn build_agent_container_config_handles(
     base_dir: &Path,
     selection: &ConfigSelection,
-) -> Arc<SelectContainerConfig> {
-    build_container_config_selection(base_dir, Some(selection.clone()))
+) -> ContainerConfigHandles {
+    build_container_config_handles(base_dir, Some(selection.clone()))
+}
+
+/// The discovery port adapter alone, for the contract suite.
+pub fn build_container_config_roster(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> Arc<dyn crate::application::environments::ports::ContainerConfigRoster> {
+    Arc::new(EffectiveConfigRoster::new(
+        build_effective_container_configs(base_dir, launching_agent.clone()),
+        roster_revision_probe(base_dir, launching_agent),
+    ))
 }
 
 /// The port adapter alone, for the contract suite.
@@ -100,11 +149,19 @@ fn resolve(
         .overlay
         .as_ref()
         .is_some_and(|report| withholds_container_configs(&report.state));
+    let overlay_entries = effective
+        .overlay_document
+        .as_ref()
+        .and_then(|overlay| overlay.get("container_configs"))
+        .and_then(|section| section.as_object())
+        .map(|entries| entries.keys().cloned().collect())
+        .unwrap_or_default();
     let config = (handles.realize)(effective.document, &HashMap::new())?;
     Ok(ResolvedConfig {
         config,
         diagnostics,
         overlay_withheld,
+        overlay_entries,
     })
 }
 

@@ -92,7 +92,8 @@ fn compose_launcher_with_selection(
         tool.notify_tx().cloned(),
     );
     let container_configs =
-        super::container_configs::build_container_config_selection(tool.base_dir(), selection);
+        super::container_configs::build_container_config_handles(tool.base_dir(), selection);
     tool.with_lifecycle_use_cases(use_cases)
-        .with_container_config_selection(Some(container_configs))
+        .with_container_config_selection(Some(container_configs.selection))
+        .with_container_config_roster(Some(container_configs.roster))
 }

@@ -205,7 +205,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         tool_policy_persistence: None,
         configuration: None,
         admission: None,
-        container_config_selection: None,
+        container_configs: None,
         stdin_is_tty: false,
         admission_context,
         parent_control,
@@ -370,8 +370,8 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: tool-policy persistence capability not composed\n");
         return None;
     };
-    let Some(build_container_config_selection) = flags.container_config_selection else {
-        stderr.push_str("agent: container-config selection capability not composed\n");
+    let Some(build_container_config_handles) = flags.container_configs else {
+        stderr.push_str("agent: container-config handles capability not composed\n");
         return None;
     };
     if !admission_startup::negotiate_from_flags(&config, flags, stderr) {
@@ -408,10 +408,11 @@ pub(crate) fn build_agent_from_config(
         configuration: build_configuration,
     };
     let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
-    // The spawn tool's container-config selection (#2024 S4a) is composed
-    // over this run's own selection: the working directory's trusted
-    // overlay, never the base directory, decides `container: true`.
-    let container_config_selection = build_container_config_selection(base_dir, selection);
+    // The container-config handles (#2024 S4a, S4c) are composed over this
+    // run's own selection: the working directory's trusted overlay, never
+    // the base directory, decides `container: true`, and the same layers
+    // are what `get_container_configs` and the spawn description list.
+    let container_configs = build_container_config_handles(base_dir, selection);
     let ToolRegistryBuild {
         registry,
         retention,
@@ -431,7 +432,7 @@ pub(crate) fn build_agent_from_config(
         http_client: &http_client,
         web_fetch_tool,
         effort_control: catalogue.effort.clone(),
-        container_config_selection,
+        container_configs,
         flags,
         stderr,
         broadcast_tx,

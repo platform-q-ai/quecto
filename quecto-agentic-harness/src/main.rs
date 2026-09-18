@@ -17,8 +17,8 @@ fn main() {
             provider_runtime: quecto::composition::runtime::build_agent_provider,
             tool_policy_persistence:
                 quecto::composition::tool_policy::build_tool_policy_persistence,
-            container_config_selection:
-                quecto::composition::container_configs::build_agent_container_config_selection,
+            container_configs:
+                quecto::composition::container_configs::build_agent_container_config_handles,
             container_doctor: quecto::composition::environments::build_container_doctor,
         },
     ));

@@ -16,6 +16,7 @@ pub(super) const SUPPORTED_COMMANDS: &[&str] = &[
     "get_subagents",
     "get_subagents_all",
     "get_containers",
+    "get_container_configs",
     "kill_container",
     "set_model",
     "set_effort",
@@ -259,6 +260,11 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         }
         "get_subagents_all" => {
             return Err("get_subagents_all is handled locally, not via UDS".to_string());
+        }
+        // Intercepted by `is_container_command` before this point; the arm
+        // keeps the list and the match honest should a caller bypass it.
+        "get_containers" | "get_container_configs" | "kill_container" => {
+            return Err(format!("{command} is handled locally, not via UDS"));
         }
         "get_tool_catalogue" | "list_tools" => {
             return Err(

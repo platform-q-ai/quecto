@@ -137,7 +137,13 @@ fn subagents_embed_teaches_container_environments() {
         "Container spawning",
         "container: true",
         "container_config",
-        "config get --effective container_configs",
+        // #2024 S4c: the agent-facing menu is the roster line and the
+        // get_container_configs command; the operator command stays in
+        // the container-runtime embed.
+        "Available container configs:",
+        "get_container_configs",
+        "fresh clone of the config's `--repo`",
+        "quecto container doctor",
         "config set --local container_configs",
         "sandbox",
         "\"mode\":\"existing\"",
@@ -152,6 +158,30 @@ fn subagents_embed_teaches_container_environments() {
         "`quecto config trust`",
     ] {
         assert!(doc.contains(needle), "subagents embed misses {needle}");
+    }
+    let runtime = lookup_doc("container-runtime").expect("container-runtime embed");
+    for needle in [
+        "## How to find configs and refs",
+        "get_container_configs",
+        "config get --effective container_configs",
+        "\"source\":\"overlay\"|\"global\"",
+        "get_containers",
+        "fresh clone",
+    ] {
+        assert!(
+            runtime.contains(needle),
+            "container-runtime embed misses {needle}"
+        );
+    }
+    let swarm = lookup_doc("swarm").expect("swarm embed");
+    for needle in [
+        "## Which container",
+        "the container the coordinator was spawned into",
+        "get_container_configs",
+        "Workers are spawned with `container` omitted",
+        "cannot host a swarm",
+    ] {
+        assert!(swarm.contains(needle), "swarm embed misses {needle}");
     }
 }
 

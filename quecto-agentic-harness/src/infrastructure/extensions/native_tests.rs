@@ -324,6 +324,7 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         parent_config_path: None,
         effort_control: None,
         container_config_selection: None,
+        container_config_roster: None,
         owned_child_supervisor: std::sync::Arc::new(
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(),
         ),
@@ -355,6 +356,7 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
         parent_config_path: None,
         effort_control: None,
         container_config_selection: None,
+        container_config_roster: None,
         owned_child_supervisor: std::sync::Arc::new(
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(),
         ),

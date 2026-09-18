@@ -452,7 +452,10 @@ pub enum ContainerConfigSource {
 }
 
 /// One named container config as launch policy sees it: the argv sets a
-/// script-managed runtime runs, and whether `container: true` selects it.
+/// script-managed runtime runs, whether `container: true` selects it, and
+/// what an agent choosing between entries needs to know (#2024 S4c):
+/// whether the checkout's applied overlay declared it, and the repository
+/// its create argv bakes in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerLaunchConfig {
     pub name: String,
@@ -462,6 +465,36 @@ pub struct ContainerLaunchConfig {
     pub exec: Vec<String>,
     pub kill: Vec<String>,
     pub inspect: Vec<String>,
+    /// Declared by the launching agent's checkout through its applied
+    /// `.quecto/config.json` overlay (repo-bound), not by the global file.
+    pub repo_bound: bool,
+    /// The repository the create argv bakes in (`--repo <url>` for the
+    /// shipped scripts); `None` for a sandbox config or an adapter whose
+    /// argv names none in that form.
+    pub repository: Option<String>,
+}
+
+impl ContainerLaunchConfig {
+    /// Why launch policy would refuse this entry's argv, if it would:
+    /// `create` and `cleanup` are required, and no argument of any set may
+    /// be empty or carry a NUL. One rule for the selection and the roster.
+    pub fn argv_problem(&self) -> Option<&'static str> {
+        if self.create.is_empty() {
+            return Some("missing create argv");
+        }
+        if self.cleanup.is_empty() {
+            return Some("missing cleanup argv");
+        }
+        let unsafe_arg = |arg: &String| arg.is_empty() || arg.contains('\0');
+        self.create
+            .iter()
+            .chain(&self.cleanup)
+            .chain(&self.exec)
+            .chain(&self.kill)
+            .chain(&self.inspect)
+            .any(unsafe_arg)
+            .then_some("unsafe argv")
+    }
 }
 
 /// The container configs in effect for a source, sorted by name, and the

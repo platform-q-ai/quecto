@@ -32,6 +32,8 @@ fn entry(name: &str, default: bool) -> ContainerLaunchConfig {
         exec: vec![],
         kill: vec![],
         inspect: vec![],
+        repo_bound: false,
+        repository: None,
     }
 }
 

@@ -38,7 +38,7 @@ fn ensure_workspace(world: &mut QuectoWorld) -> PathBuf {
 
 /// One tool instance per scenario, so the background job registry it owns is
 /// shared between the run/status/output/cancel steps.
-fn tool(world: &mut QuectoWorld) -> Arc<SwarmTool> {
+pub(crate) fn tool(world: &mut QuectoWorld) -> Arc<SwarmTool> {
     let ws = ensure_workspace(world);
     if world.swarm_tool.is_none() {
         let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));

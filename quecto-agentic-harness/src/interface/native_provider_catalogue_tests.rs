@@ -23,6 +23,7 @@ fn bundled_native_registration_preserves_provider_ids() {
             parent_config_path: None,
             effort_control: None,
             container_config_selection: None,
+            container_config_roster: None,
             owned_child_supervisor: std::sync::Arc::new(
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::new(
                 ),
