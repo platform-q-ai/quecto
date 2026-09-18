@@ -321,3 +321,33 @@ Feature: The standard container is landed on master
     When I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 0
     And the output should contain "assets:  present (5 of 5, version 1)"
+
+  # Review round 2: the retained argv (exec, inspect, kill, cleanup) is
+  # judged like the create's before the host runs it. A kill.sh edited after
+  # the create never runs; the environment stays retryable until the bundle
+  # is restored.
+  @done @issue-2024 @container-spawn @serial
+  Scenario: an edited retained kill script refuses kill_container before the host runs it, and init --refresh restores it
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And a controlled PATH whose fake podman reports every image as present and runs each container's command on the host
+    And script-managed subagent spawning through the fake podman is available from the checkout with no global container config
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    When I spawn script-managed subagent "standard-live" with default selection and no config argument and task "STANDARD_LIVE_MARKER"
+    Then the spawn result should not be an error
+    And the fake podman should have been asked to run the child once
+    When the materialised standard kill script is edited to record every invocation
+    And I kill container "C1"
+    Then the container command result should be an error mentioning "cleanup failed: retained kill refused: "
+    And the container command result should name the materialised "scripts/kill.sh" as differing from the standard bundle
+    And the container command result should be an error mentioning "quecto container init --refresh"
+    And the container listing should include "C1" with status "cleanup-failed" and a last error
+    And the materialised standard kill script should never have been invoked
+    When I run quecto with arguments "container init --refresh"
+    Then the exit code should be 0
+    And the output should contain "refreshed"
+    When I kill container "C1"
+    Then the container command result should not be an error
+    And the container listing should include "C1" with status "stopped" and 0 members
+    And the fake podman should have been asked to remove the container
+    And scenario teardown should leave no fixture processes running

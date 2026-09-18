@@ -635,3 +635,158 @@ fn then_create_never_invoked(world: &mut QuectoWorld) {
         marker.display()
     );
 }
+
+// ─── The retained argv is judged too (#2024 S4e, review round 2) ─────────────
+
+/// Where the fake podman keeps the pid of each "container" it ran.
+fn fake_containers_dir(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("toolbox").join("containers")
+}
+
+/// A fake `podman` whose `run` starts the command after the image on the
+/// host (tracked like every fixture child, so teardown can end it),
+/// whose `inspect` answers from that process and whose `rm -f` ends it —
+/// enough runtime for a create to commit an environment and a kill to
+/// tear it down, with every invocation recorded.
+#[given(
+    "a controlled PATH whose fake podman reports every image as present and runs each container's command on the host"
+)]
+fn given_fake_podman_running_on_host(world: &mut QuectoWorld) {
+    let toolbox = Toolbox::build(world);
+    let containers = fake_containers_dir(world);
+    std::fs::create_dir_all(&containers).unwrap();
+    let cfg_dir = PathBuf::from(world.config_path.clone().expect("config path"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::write(
+        cfg_dir.join("fixture-processes.py"),
+        include_str!("fixture_processes.py"),
+    )
+    .unwrap();
+    let pid_dir = cfg_dir.join("env-pids");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let body = format!(
+        r#"#!/usr/bin/env bash
+printf '%s\n' "$*" >> '{log}'
+case "$1" in
+  image) [ "$2" = exists ] && exit 0; exit 1 ;;
+  run)
+    shift
+    name=""
+    while [ "$#" -gt 0 ] && [ "$1" != quecto-box:local ]; do
+      [ "$1" = --name ] && name="$2"
+      shift
+    done
+    [ "$1" = quecto-box:local ] || exit 125
+    shift
+    setsid "$@" >/dev/null 2>&1 </dev/null &
+    pid=$!
+    printf '%s\n' "$pid" > '{containers}'/"$name"
+    python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$name" "$pid"
+    echo "$name"
+    exit 0 ;;
+  inspect)
+    name="${{@: -1}}"
+    pid="$(cat '{containers}'/"$name" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "true 0 false"; else echo "false 0 false"; fi
+    exit 0 ;;
+  rm)
+    name="${{@: -1}}"
+    pid="$(cat '{containers}'/"$name" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true
+    exit 0 ;;
+esac
+exit 125
+"#,
+        log = toolbox.podman_log().display(),
+        containers = containers.display(),
+        pid_dir = pid_dir.display(),
+    );
+    write_executable(&toolbox.dir.join("podman"), &body);
+}
+
+/// The launcher composed in the checkout, with `kill_container` wired to
+/// the same environment registry. The standard scripts run with this
+/// process's environment, so the controlled PATH is put in front of it
+/// for the scenario (restored at teardown) and `podman` resolves to the
+/// fake.
+#[given(
+    "script-managed subagent spawning through the fake podman is available from the checkout with no global container config"
+)]
+fn given_spawn_through_fake_podman(world: &mut QuectoWorld) {
+    given_spawn_from_checkout_no_global_configs(world);
+    crate::spawn_env_steps::wire_environment_control(world, None);
+    let mut path = vec![Toolbox::existing(world).dir];
+    path.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    ));
+    let path = std::env::join_paths(path).unwrap();
+    world.delegated_subtree.override_env("PATH", &path);
+}
+
+#[then("the fake podman should have been asked to run the child once")]
+fn then_fake_podman_ran_once(world: &mut QuectoWorld) {
+    let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
+    let runs = log.lines().filter(|line| line.starts_with("run ")).count();
+    assert_eq!(runs, 1, "podman log: {log}");
+}
+
+#[then("the fake podman should have been asked to remove the container")]
+fn then_fake_podman_removed(world: &mut QuectoWorld) {
+    let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
+    assert!(
+        log.lines().any(|line| line.starts_with("rm -f ")),
+        "podman log: {log}"
+    );
+}
+
+fn kill_invocation_marker(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("kill-invoked")
+}
+
+/// The same edit as the create script's: a marker, then `exit 99` before
+/// any runtime call.
+#[when("the materialised standard kill script is edited to record every invocation")]
+fn when_kill_script_edited(world: &mut QuectoWorld) {
+    let kill = assets_dir(world).join("scripts/kill.sh");
+    let original = std::fs::read_to_string(&kill).unwrap();
+    let (shebang, rest) = original.split_once('\n').unwrap();
+    std::fs::write(
+        &kill,
+        format!(
+            "{shebang}\ntouch '{}'\nexit 99\n{rest}",
+            kill_invocation_marker(world).display()
+        ),
+    )
+    .unwrap();
+}
+
+#[then(
+    expr = "the container command result should name the materialised {string} as differing from the standard bundle"
+)]
+fn then_container_cmd_names_differing_script(world: &mut QuectoWorld, relative: String) {
+    let result = world
+        .container_cmd_result
+        .as_ref()
+        .expect("no container command result");
+    let expected = format!(
+        "{} differs from the standard bundle this quecto embeds",
+        assets_dir(world).join(&relative).display()
+    );
+    assert!(
+        result.is_error && result.content.contains(&expected),
+        "expected {expected:?} in: {}",
+        result.content
+    );
+}
+
+#[then("the materialised standard kill script should never have been invoked")]
+fn then_kill_never_invoked(world: &mut QuectoWorld) {
+    let marker = kill_invocation_marker(world);
+    assert!(
+        !marker.exists(),
+        "the edited kill script ran on the host ({} exists)",
+        marker.display()
+    );
+}
