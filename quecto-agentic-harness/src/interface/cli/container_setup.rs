@@ -69,11 +69,18 @@ fn parse_status(args: &[String]) -> Result<Option<PathBuf>, String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--project" => {
-                project = Some(PathBuf::from(
+                let path = PathBuf::from(
                     rest.next()
                         .filter(|v| !v.is_empty())
                         .ok_or_else(|| format!("--project requires a value\n{STATUS_USAGE}"))?,
-                ));
+                );
+                if !path.is_absolute() {
+                    return Err(format!(
+                        "--project must be an absolute path: {}\n{STATUS_USAGE}",
+                        path.display()
+                    ));
+                }
+                project = Some(path);
             }
             other => return Err(format!("unknown argument {other}\n{STATUS_USAGE}")),
         }
