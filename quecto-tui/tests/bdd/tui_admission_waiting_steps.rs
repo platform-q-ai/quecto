@@ -98,6 +98,15 @@ fn when_get_state_authority(world: &mut TuiWorld, status: String) {
     });
 }
 
+#[when(expr = "a pushed admission event reports the authority as {string}")]
+fn when_event_authority(world: &mut TuiWorld, status: String) {
+    let line = format!(
+        r#"{{"type":"admission_state_changed","admission":{{"waiting":0,"admitted":0,"groups":[],"hidden":0,"revision":9,"directory":"/home/me/.quecto/admission","epoch":1,"connected":{connected},"authorityStatus":"{status}"}}}}"#,
+        connected = status == "connected"
+    );
+    harness(world).event_line(&line);
+}
+
 #[then(expr = "the master footer badge shows {string}")]
 fn then_footer_badge(world: &mut TuiWorld, text: String) {
     let footer = harness(world).master_footer_text();

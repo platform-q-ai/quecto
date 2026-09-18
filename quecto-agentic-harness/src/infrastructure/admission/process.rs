@@ -145,6 +145,15 @@ impl ProcessAdmission {
     pub fn on_authority_change(&self, hook: super::link::LinkChangeHook) {
         self.link.on_change(hook);
     }
+    #[cfg(test)]
+    pub fn set_reconnect_backoff_for_test(
+        &self,
+        attempts: u32,
+        base: std::time::Duration,
+        max: std::time::Duration,
+    ) {
+        self.link.set_backoff_for_test(attempts, base, max);
+    }
     /// Directory containing the client socket; the only path a container
     /// child needs mounted.
     pub fn client_dir(&self) -> &Path {

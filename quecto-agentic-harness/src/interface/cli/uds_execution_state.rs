@@ -83,48 +83,27 @@ pub struct ExecutionState {
     hidden_message_count: usize,
 }
 
-/// A live handle on the process's authority binding (#2024 S3): the fixed
-/// directory and epoch, plus a probe of the connection so the snapshot reports
-/// current health rather than a stale flag.
+/// A live probe of the process's authority binding (#2024 S3): every
+/// snapshot reads the current directory, epoch and health, so a reconnection
+/// or reset behind the binding is reported, never a view captured at attach.
 #[derive(Clone)]
 pub(crate) struct AuthorityProbe {
-    directory: String,
-    epoch: u64,
-    can_reconnect: bool,
-    connected: Arc<dyn Fn() -> bool + Send + Sync>,
+    view: Arc<dyn Fn() -> AuthorityView + Send + Sync>,
 }
 
 impl std::fmt::Debug for AuthorityProbe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthorityProbe")
-            .field("directory", &self.directory)
-            .field("epoch", &self.epoch)
-            .finish_non_exhaustive()
+        f.debug_struct("AuthorityProbe").finish_non_exhaustive()
     }
 }
 
 impl AuthorityProbe {
-    pub(crate) fn new(
-        directory: String,
-        epoch: u64,
-        can_reconnect: bool,
-        connected: Arc<dyn Fn() -> bool + Send + Sync>,
-    ) -> Self {
-        Self {
-            directory,
-            epoch,
-            can_reconnect,
-            connected,
-        }
+    pub(crate) fn new(view: Arc<dyn Fn() -> AuthorityView + Send + Sync>) -> Self {
+        Self { view }
     }
 
     fn view(&self) -> AuthorityView {
-        AuthorityView {
-            directory: self.directory.clone(),
-            epoch: self.epoch,
-            connected: (self.connected)(),
-            can_reconnect: self.can_reconnect,
-        }
+        (self.view)()
     }
 }
 

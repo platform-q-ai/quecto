@@ -404,3 +404,45 @@ async fn expiry_guard_keeps_final_projection_armed_after_select_reentry() {
         "serviced expiry returns to idle"
     );
 }
+
+/// M8 (#2024 S3): the harness pushes `authorityStatus` on every
+/// `admission_state_changed`, so the badge follows a broker that dies, is
+/// reset or comes back — without a `get_state` round trip. An event without a
+/// status (an older harness) leaves the last badge alone.
+#[tokio::test]
+async fn a_pushed_event_with_an_authority_status_moves_the_health_badge() {
+    let mut app = test_app().await;
+    let with_status = |status: &str, revision: u64| {
+        serde_json::json!({
+            "waiting": 0, "admitted": 0, "revision": revision, "groups": [],
+            "directory": "/home/me/.quecto/admission", "epoch": 1,
+            "connected": status == "connected", "authorityStatus": status,
+        })
+    };
+    app.handle_event(event(None, with_status("connected", 1)));
+    assert_eq!(
+        app.ac().master_session.footer.admission_health(),
+        Some("admission ✓")
+    );
+    app.handle_event(event(None, with_status("reconnecting", 2)));
+    assert_eq!(
+        app.ac().master_session.footer.admission_health(),
+        Some("admission ⟳")
+    );
+    app.handle_event(event(None, with_status("unavailable", 3)));
+    assert_eq!(
+        app.ac().master_session.footer.admission_health(),
+        Some("admission ✗")
+    );
+    // Activity-only event: the badge is not cleared by silence.
+    app.handle_event(event(None, waiting(2)));
+    assert_eq!(
+        app.ac().master_session.footer.admission_health(),
+        Some("admission ✗")
+    );
+    app.handle_event(event(None, with_status("connected", 5)));
+    assert_eq!(
+        app.ac().master_session.footer.admission_health(),
+        Some("admission ✓")
+    );
+}

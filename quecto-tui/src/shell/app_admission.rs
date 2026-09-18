@@ -83,10 +83,10 @@ impl App {
             .footer
             .set_admission(label.clone(), view.compact_label());
         // Broker health (#2024 S3): update only when the agent reported an
-        // authority status. The pushed `admission_state_changed` event carries
-        // activity without an authorityStatus, so it must not clear the badge
-        // that the last `get_state` established; only a fresh status or a
-        // cleared master view changes it.
+        // authority status. A bound harness pushes it on every
+        // `admission_state_changed` (including link-health changes), so the
+        // badge is live; an older harness's activity-only event must not
+        // clear the badge the last `get_state` established.
         if let Some(health) = view.authority_badge() {
             self.ac_mut()
                 .master_session

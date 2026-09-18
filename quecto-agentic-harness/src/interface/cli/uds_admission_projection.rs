@@ -58,9 +58,8 @@ pub(crate) fn project(activity: &AdmissionActivity) -> AdmissionSnapshot {
         },
         hidden: activity.hidden,
         revision: activity.revision,
-        // Authority-level facts are folded in by the execution-state snapshot
-        // (which holds the process binding); the pushed event carries only the
-        // bounded activity.
+        // Authority-level facts are folded in by whoever holds the process
+        // binding (the execution-state snapshot and the bound event hook).
         directory: None,
         epoch: None,
         connected: None,
@@ -68,30 +67,27 @@ pub(crate) fn project(activity: &AdmissionActivity) -> AdmissionSnapshot {
     }
 }
 
-/// The authority-level view a `get_state` projection carries beside the
-/// bounded activity (#2024 S3): where the authority is, which epoch this
-/// process's capability came from, and whether it is reachable.
+/// The authority-level view a `get_state` projection (and every pushed
+/// `admission_state_changed` event) carries beside the bounded activity
+/// (#2024 S3): where the authority is, which epoch this process's current
+/// capability came from, and the link's live health.
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorityView {
     pub directory: String,
     pub epoch: u64,
     pub connected: bool,
-    /// Whether this process can re-register on its own after a loss (a root
-    /// can; a child depends on its parent).
-    pub can_reconnect: bool,
+    /// `connected` | `reconnecting` | `unavailable`, as the link reports it.
+    pub status: &'static str,
 }
 
 impl AuthorityView {
-    /// `connected` when the link is open, `reconnecting` when a root can
-    /// re-register on its own, `unavailable` otherwise (a child whose parent
-    /// authority is gone).
-    pub(crate) fn status(&self) -> &'static str {
-        if self.connected {
-            "connected"
-        } else if self.can_reconnect {
-            "reconnecting"
-        } else {
-            "unavailable"
+    /// Read the live link of a process binding.
+    pub(crate) fn of(process: &crate::infrastructure::admission::ProcessAdmission) -> Self {
+        Self {
+            directory: process.directory().display().to_string(),
+            epoch: process.epoch(),
+            connected: process.connected(),
+            status: process.health().as_str(),
         }
     }
 
@@ -100,7 +96,7 @@ impl AuthorityView {
         snapshot.directory = Some(self.directory.clone());
         snapshot.epoch = Some(self.epoch);
         snapshot.connected = Some(self.connected);
-        snapshot.authority_status = Some(self.status().to_string());
+        snapshot.authority_status = Some(self.status.to_string());
     }
 }
 
@@ -141,11 +137,13 @@ pub(crate) fn waiting_progress(activity: &AdmissionActivity) -> Option<(&'static
 }
 
 /// Wire a process admission binding into the socket loop: its view rides on
-/// `get_state` and every transition is pushed. The hook keeps a sender alive
-/// for the life of the process-wide binding; a later loop replaces it.
+/// `get_state`, every transition is pushed, and so is every change of the
+/// link's health (loss, revocation, reconnection, exhaustion) so a client's
+/// badge is live without polling. The hooks keep a sender alive for the life
+/// of the process-wide binding; a later loop replaces them.
 pub(crate) fn attach_process_admission(
     execution_state: &super::uds_execution_state::ExecutionStateHandle,
-    process: &crate::infrastructure::admission::ProcessAdmission,
+    process: &std::sync::Arc<crate::infrastructure::admission::ProcessAdmission>,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
 ) {
     {
@@ -153,32 +151,52 @@ pub(crate) fn attach_process_admission(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.set_admission_source(process.observation());
-        // Directory/epoch are fixed for the binding; the connection is probed
-        // live so health reflects a broker that has since gone away. A root can
-        // re-register on its own; a child depends on its parent (#2024 S3).
-        let connection = process.connection().clone();
-        let can_reconnect = process.kind() == crate::infrastructure::admission::BindingKind::Root;
+        // Probed live on every snapshot: a reconnection installs a fresh
+        // connection (and a reset a fresh epoch) behind the same binding.
+        let probed = process.clone();
         state.set_admission_authority(super::uds_execution_state::AuthorityProbe::new(
-            process.directory().display().to_string(),
-            process.epoch(),
-            can_reconnect,
-            std::sync::Arc::new(move || connection.is_open()),
+            std::sync::Arc::new(move || AuthorityView::of(&probed)),
         ));
     }
-    process.on_transition(admission_event_hook(broadcast_tx.clone()));
+    let view_of = process.clone();
+    let hook = admission_event_hook_with_authority(
+        broadcast_tx.clone(),
+        std::sync::Arc::new(move || AuthorityView::of(&view_of)),
+    );
+    process.on_transition(hook.clone());
+    let observation = process.observation();
+    process.on_authority_change(std::sync::Arc::new(move || {
+        hook(&observation.snapshot());
+    }));
 }
 
-/// Hook that broadcasts one `admission_state_changed` event per transition.
+/// Hook that broadcasts one `admission_state_changed` event per transition
+/// (activity only; the authority-less form used where no binding exists).
 pub(crate) fn admission_event_hook(
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
 ) -> crate::infrastructure::admission::ActivityHook {
     std::sync::Arc::new(move |activity: &AdmissionActivity| {
-        let event = super::protocol::AgentEvent::AdmissionStateChanged {
-            admission: project(activity),
-        };
-        if let Ok(line) = serde_json::to_string(&event) {
-            // No receiver means no connected client; nothing to deliver.
-            let _ = broadcast_tx.send(line);
-        }
+        broadcast(&broadcast_tx, project(activity));
     })
+}
+
+/// Hook that broadcasts one `admission_state_changed` event per transition,
+/// each carrying the live authority view (`authorityStatus` and friends).
+pub(crate) fn admission_event_hook_with_authority(
+    broadcast_tx: tokio::sync::broadcast::Sender<String>,
+    authority: std::sync::Arc<dyn Fn() -> AuthorityView + Send + Sync>,
+) -> crate::infrastructure::admission::ActivityHook {
+    std::sync::Arc::new(move |activity: &AdmissionActivity| {
+        let mut snapshot = project(activity);
+        authority().apply(&mut snapshot);
+        broadcast(&broadcast_tx, snapshot);
+    })
+}
+
+fn broadcast(broadcast_tx: &tokio::sync::broadcast::Sender<String>, admission: AdmissionSnapshot) {
+    let event = super::protocol::AgentEvent::AdmissionStateChanged { admission };
+    if let Ok(line) = serde_json::to_string(&event) {
+        // No receiver means no connected client; nothing to deliver.
+        let _ = broadcast_tx.send(line);
+    }
 }
