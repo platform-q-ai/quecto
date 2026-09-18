@@ -46,7 +46,7 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`). Members share the workspace with their own identities.
 - `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`/`retained`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the config's kill runs exactly once; the result carries the ref and up to 20 terminated member ids/names (`omitted_agents` on overflow); a failed kill is retryable.
 - When the last member of an ordinary environment exits, it tears itself down (no kill needed). A swarm container is `retained` after the run ends (`metadata.retained` says whether it ended or lost its coordinator) for inspection; it needs `kill_container`.
-- A failed spawn quotes the script's stderr (`script-managed create failed with status …: <reason>`). Run `quecto container doctor` in the same directory: one line per check (runtime, jq, git, gh, image, `--repo`, state dir) with a remedy; runbook `docs {"name": "container-runtime"}`.
+- A failed spawn quotes the script's stderr (`script-managed create failed with status …: <reason>`). Run `quecto container doctor` in the same directory: one line per check with a remedy; runbook `docs {"name": "container-runtime"}`.
 
 ## Running a bounded swarm
 

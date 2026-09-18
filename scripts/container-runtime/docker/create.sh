@@ -94,7 +94,9 @@ preflight_failed=0
 report() {
   # $1=ok|warn|fail  $2=check  $3=detail  $4=remedy  $5=exit code on fail
   if [ "$preflight_only" = 1 ]; then
-    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
+    # One line per check: a tab or newline inside a detail (a URL, a path)
+    # would split the fields the doctor parses.
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "${3//[$'\t\n\r']/ }" "${4//[$'\t\n\r']/ }"
     [ "$1" = fail ] && preflight_failed=1
     return 0
   fi
@@ -169,20 +171,43 @@ else
     "install gh and run 'gh auth login' so members can push and use the GitHub API"
 fi
 
+# A bound for the runtime and repository probes: an unreachable daemon or
+# host must not stall a create for the tool's own connect timeout.
+probe_timeout="${QUECTO_REPO_CHECK_TIMEOUT:-15}"
+case "$probe_timeout" in
+''|*[!0-9]*) usage "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)" ;;
+esac
+bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$probe_timeout" "$@"
+  else
+    "$@"
+  fi
+}
+last_line() { printf '%s' "$1" | tr -d '\r' | tail -n 1; }
+
 # The image is looked up in the local store only: a create never pulls
 # implicitly (an unattended pull of an unexpected image is not this
-# script's decision to make).
+# script's decision to make). A runtime that cannot answer (daemon down,
+# socket permission, timeout) is reported as its own failure, not as a
+# missing image.
 if [ -n "$cli" ]; then
-  image_present=0
+  image_rc=0
   case "$cli" in
-  podman) "$cli" image exists "$image" >/dev/null 2>&1 && image_present=1 ;;
-  *) "$cli" image inspect "$image" >/dev/null 2>&1 && image_present=1 ;;
+  podman) image_error="$(bounded "$cli" image exists "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
+  *) image_error="$(bounded "$cli" image inspect "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
   esac
-  if [ "$image_present" = 1 ]; then
+  if [ "$image_rc" = 0 ]; then
     report ok image "image $image is present" ""
-  else
+  elif [ "$image_rc" = 124 ]; then
+    report fail image "$cli did not answer within ${probe_timeout}s while looking up image $image" \
+      "check that the $cli daemon/service is running and reachable (${cli} info)" "$EXIT_NO_RUNTIME"
+  elif [ "$image_rc" = 1 ] && { [ -z "$image_error" ] || printf '%s' "$image_error" | grep -qi 'no such image\|image not known'; }; then
     report fail image "image $image is not present in the local $cli store" \
       "build it ($cli build -t $image <dir with its Containerfile>) or pull it ($cli pull $image); create never pulls implicitly" "$EXIT_NO_IMAGE"
+  else
+    report fail image "$cli could not look up image $image (exit $image_rc): $(last_line "$image_error")" \
+      "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
   fi
 else
   report warn image "image $image was not checked: no container runtime" \
@@ -192,15 +217,21 @@ fi
 if [ -n "$repo" ]; then
   if [ -n "$git_path" ]; then
     # Same transport whitelist as the clone below (PR #1401 review), no
-    # credential prompt, and a short bound so an unreachable host cannot
+    # credential prompt, and the bound above so an unreachable host cannot
     # stall the create for git's own connect timeout.
-    ls_remote=(git ls-remote --exit-code -- "$repo" HEAD)
-    if command -v timeout >/dev/null 2>&1; then
-      ls_remote=(timeout "${QUECTO_REPO_CHECK_TIMEOUT:-15}" "${ls_remote[@]}")
-    fi
-    if repo_error="$(GIT_ALLOW_PROTOCOL="file:https:ssh:git" GIT_TERMINAL_PROMPT=0 \
-      "${ls_remote[@]}" 2>&1 >/dev/null)"; then
+    repo_rc=0
+    repo_error="$(GIT_ALLOW_PROTOCOL="file:https:ssh:git" GIT_TERMINAL_PROMPT=0 \
+      bounded git ls-remote --exit-code -- "$repo" HEAD 2>&1 >/dev/null)" || repo_rc=$?
+    if [ "$repo_rc" = 0 ]; then
       report ok repo "--repo $repo is reachable" ""
+    elif [ "$repo_rc" = 2 ] && [ -z "$repo_error" ]; then
+      # `--exit-code` 2: reachable, no HEAD — a freshly initialised
+      # repository, which the clone below accepts.
+      report warn repo "--repo $repo is reachable but empty (no HEAD)" \
+        "push an initial commit if members are expected to find one"
+    elif [ "$repo_rc" = 124 ]; then
+      report fail repo "--repo $repo did not answer within ${probe_timeout}s" \
+        "check the host, your network and credentials (ssh key or 'gh auth login'); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_REPO_UNREACHABLE"
     else
       # git's first `fatal:` line names the cause; the trailing advice
       # ("and the repository exists.") does not.
@@ -208,9 +239,8 @@ if [ -n "$repo" ]; then
       while IFS= read -r line; do
         case "$line" in fatal:*) repo_cause="$line"; break ;; esac
       done <<<"$repo_error"
-      repo_error="${repo_cause:-${repo_error##*$'\n'}}"
-      repo_error="${repo_error//$'\r'/}"
-      report fail repo "--repo $repo is unreachable: ${repo_error:-no default branch}" \
+      repo_error="${repo_cause:-$(last_line "$repo_error")}"
+      report fail repo "--repo $repo is unreachable: ${repo_error:-git ls-remote exited $repo_rc}" \
         "check the URL, your network and credentials (ssh key or 'gh auth login'), or fix --repo in the container config" "$EXIT_REPO_UNREACHABLE"
     fi
   else
@@ -220,14 +250,33 @@ else
   report ok repo "not needed: sandbox config (no --repo)" ""
 fi
 
-if mkdir -p -m 700 "$state_dir" 2>/dev/null && [ -O "$state_dir" ] && [ -w "$state_dir" ]; then
-  report ok state-dir "state dir $state_dir is writable and owned by the current user" ""
-elif [ -d "$state_dir" ] && [ ! -O "$state_dir" ]; then
-  report fail state-dir "state dir $state_dir is not owned by the current user" \
-    "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+# The state root is created owner-only by a real create; the preflight
+# only judges it (an existing root must be ours and writable, a missing
+# one needs a writable parent) so `--preflight-only` leaves no trace.
+if [ "$preflight_only" = 0 ]; then
+  mkdir -p -m 700 "$state_dir" 2>/dev/null || true
+fi
+if [ -d "$state_dir" ]; then
+  if [ -O "$state_dir" ] && [ -w "$state_dir" ]; then
+    report ok state-dir "state dir $state_dir is writable and owned by the current user" ""
+  elif [ ! -O "$state_dir" ]; then
+    report fail state-dir "state dir $state_dir is not owned by the current user" \
+      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+  else
+    report fail state-dir "state dir $state_dir is not writable" \
+      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+  fi
 else
-  report fail state-dir "state dir $state_dir cannot be created or written" \
-    "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+  state_parent="$state_dir"
+  while [ ! -d "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
+    state_parent="$(dirname "$state_parent")"
+  done
+  if [ -d "$state_parent" ] && [ -w "$state_parent" ]; then
+    report ok state-dir "state dir $state_dir will be created under writable $state_parent" ""
+  else
+    report fail state-dir "state dir $state_dir cannot be created: $state_parent is not writable" \
+      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+  fi
 fi
 
 if [ "$preflight_only" = 1 ]; then

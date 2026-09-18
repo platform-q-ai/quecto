@@ -163,7 +163,7 @@ fn doctor_reports_a_script_that_cannot_answer() {
     assert!(
         output
             .stderr
-            .starts_with("container config 'box': create script "),
+            .starts_with("container config 'box': create script `bash "),
         "{}",
         output.stderr
     );

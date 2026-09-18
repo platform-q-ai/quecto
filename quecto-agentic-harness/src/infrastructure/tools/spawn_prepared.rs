@@ -8,7 +8,9 @@ use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusio
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
-use crate::infrastructure::processes::containers::script_stderr::run_capturing_stderr_tail;
+use crate::infrastructure::processes::containers::script_stderr::{
+    ScriptStdout, run_capturing_stderr_tail,
+};
 #[cfg(test)]
 use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
 use crate::infrastructure::processes::owned_child_supervisor::{
@@ -210,7 +212,7 @@ pub(in crate::infrastructure::tools) async fn run_cleanup_once(
         // Best effort by contract, but never silent (#2024 S4b): a cleanup
         // that fails leaves an environment behind, and its own account is
         // the only lead.
-        match run_capturing_stderr_tail(cmd).await {
+        match run_capturing_stderr_tail(cmd, ScriptStdout::Discard).await {
             Ok(output) if !output.status.success() => {
                 tracing::warn!(
                     environment_id = env_ref.as_deref().unwrap_or_default(),

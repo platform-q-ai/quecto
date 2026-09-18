@@ -35,7 +35,9 @@ Feature: Container failures are diagnosable
     And the preflight should report a remedy for check "image" mentioning "podman build"
     And the preflight should report check "runtime-cli" as passed
     And the preflight should report check "repo" as passed
+    And the preflight should report check "state-dir" as passed
     And the fake podman should never have been asked to pull
+    And the preflight should have created no state directory
 
   @done @issue-2024 @container-spawn
   Scenario: The official create script's preflight names an unreachable repository
@@ -44,6 +46,14 @@ Feature: Container failures are diagnosable
     Then the preflight should exit with a non-zero status
     And the preflight should report check "repo" as failed naming the unreachable repository
     And the preflight should report check "image" as passed
+
+  @done @issue-2024 @container-spawn
+  Scenario: The host-local reference create script's preflight names an unreachable repository
+    Given a controlled PATH whose fake podman reports every image as present
+    When I run the host-local reference create script with --preflight-only and an unreachable repository
+    Then the preflight should exit with a non-zero status
+    And the preflight should report check "repo" as failed naming the unreachable repository
+    And the preflight should report check "jq" as passed
 
   @done @issue-2024 @container-spawn
   Scenario: quecto container doctor in a bound checkout reports a missing runtime and exits non-zero

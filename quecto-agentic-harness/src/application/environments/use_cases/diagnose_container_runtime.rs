@@ -51,8 +51,8 @@ impl DiagnoseContainerRuntime {
             return Err(DiagnoseContainerRuntimeError::PreflightUnavailable {
                 config: config.name,
                 detail: format!(
-                    "create script {} reported no preflight checks",
-                    config.create[0]
+                    "create script `{}` reported no preflight checks",
+                    config.create.join(" ")
                 ),
             });
         }

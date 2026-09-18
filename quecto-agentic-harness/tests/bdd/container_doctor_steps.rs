@@ -11,12 +11,30 @@ use crate::container_mapping_steps::{REAL_AGENT_RUN, config_set_local};
 
 /// The official adapter under test, resolved from the workspace root.
 fn official_create_script() -> PathBuf {
+    workspace_script("scripts/container-runtime/docker/create.sh")
+}
+
+/// The host-local reference create script (the CI-exercised default).
+fn host_local_create_script() -> PathBuf {
+    workspace_script("scripts/container-runtime/create.sh")
+}
+
+fn workspace_script(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-        .join("scripts/container-runtime/docker/create.sh")
+        .join(relative)
 }
 
+/// A fixture script, run through `bash` (a freshly written file executed
+/// directly by a multi-threaded test process can race a concurrent fork
+/// holding it open, ETXTBSY): the argv to configure.
+fn write_script(path: &Path, body: &str) -> Vec<String> {
+    std::fs::write(path, body).unwrap();
+    vec!["bash".to_string(), path.to_string_lossy().into_owned()]
+}
+
+/// A fixture program that must be found on PATH (the fake `podman`).
 fn write_executable(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
     #[cfg(unix)]
@@ -34,9 +52,8 @@ fn replace_default_create_script(world: &QuectoWorld, body: &str) {
     let mut config: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     let script = config_path.parent().unwrap().join("failing-create.sh");
-    write_executable(&script, body);
     config["container_configs"]["default"]["create"] =
-        serde_json::json!([script.to_string_lossy()]);
+        serde_json::json!(write_script(&script, body));
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 }
 
@@ -222,18 +239,24 @@ fn image_state(word: &str) -> bool {
 }
 
 /// The preflight's exit code and streams land in the world's CLI slots.
-fn run_preflight(world: &mut QuectoWorld, image: &str, repo: &Path) {
+fn run_preflight(world: &mut QuectoWorld, script: &Path, image: Option<&str>, repo: &Path) {
     let toolbox = Toolbox::existing(world).dir;
-    let state_dir = base_path(world).join("doctor-state");
-    let output = std::process::Command::new(official_create_script())
-        .args(["--state-dir"])
+    let state_dir = preflight_state_dir(world);
+    let mut cmd = std::process::Command::new(script);
+    cmd.arg("--state-dir")
         .arg(&state_dir)
         .arg("--repo")
-        .arg(repo)
-        .args(["--image", image, "--preflight-only"])
+        .arg(repo);
+    if let Some(image) = image {
+        cmd.args(["--image", image]);
+    }
+    let output = cmd
+        .arg("--preflight-only")
         .env_clear()
         .env("PATH", &toolbox)
         .env("HOME", base_path(world))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .output()
         .expect("run create.sh --preflight-only");
     world.exit_code = output.status.code().unwrap_or(-1);
@@ -246,14 +269,46 @@ fn run_preflight(world: &mut QuectoWorld, image: &str, repo: &Path) {
 )]
 fn when_preflight_reachable(world: &mut QuectoWorld, image: String) {
     let repo = reachable_repository(world);
-    run_preflight(world, &image, &repo);
+    run_preflight(world, &official_create_script(), Some(&image), &repo);
+}
+
+/// A state dir the preflight is asked about but must never create.
+fn preflight_state_dir(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("doctor-state")
+}
+
+#[then("the preflight should have created no state directory")]
+fn then_preflight_created_nothing(world: &mut QuectoWorld) {
+    let state_dir = preflight_state_dir(world);
+    assert!(
+        !state_dir.exists(),
+        "--preflight-only created {}",
+        state_dir.display()
+    );
+}
+
+#[when(
+    "I run the host-local reference create script with --preflight-only and an unreachable repository"
+)]
+fn when_host_local_preflight_unreachable(world: &mut QuectoWorld) {
+    run_preflight(
+        world,
+        &host_local_create_script(),
+        None,
+        Path::new(UNREACHABLE_REPOSITORY),
+    );
 }
 
 #[when(
     expr = "I run the official docker create script with --preflight-only for image {string} and an unreachable repository"
 )]
 fn when_preflight_unreachable(world: &mut QuectoWorld, image: String) {
-    run_preflight(world, &image, Path::new(UNREACHABLE_REPOSITORY));
+    run_preflight(
+        world,
+        &official_create_script(),
+        Some(&image),
+        Path::new(UNREACHABLE_REPOSITORY),
+    );
 }
 
 /// One `status<TAB>check<TAB>detail<TAB>remedy` line of the preflight
@@ -341,29 +396,34 @@ fn then_podman_never_pulled(world: &mut QuectoWorld) {
 /// reachable repository and the image under test.
 fn bind_official_config(world: &mut QuectoWorld, toolbox: &Toolbox) {
     let repo = reachable_repository(world);
+    // The wrapper pins PATH and clears every knob the host's environment
+    // could leak into an in-process doctor run, so the scenario alone
+    // decides what the preflight finds.
     let wrapper = base_path(world).join("official-create.sh");
-    write_executable(
+    let mut create = write_script(
         &wrapper,
         &format!(
-            "#!/usr/bin/env bash\nexport PATH='{}'\nexec '{}' \"$@\"\n",
+            "export PATH='{}'\nunset QUECTO_CONTAINER_CLI QUECTO_DOCKER_IMAGE QUECTO_REPO_CHECK_TIMEOUT\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null\nexec '{}' \"$@\"\n",
             toolbox.dir.display(),
             official_create_script().display()
         ),
     );
-    let cleanup = base_path(world).join("official-cleanup.sh");
-    write_executable(&cleanup, "#!/usr/bin/env bash\nexit 0\n");
+    create.extend([
+        "--state-dir".to_string(),
+        base_path(world)
+            .join("doctor-state")
+            .to_string_lossy()
+            .into_owned(),
+        "--repo".to_string(),
+        repo.to_string_lossy().into_owned(),
+        "--image".to_string(),
+        "quecto-box:local".to_string(),
+    ]);
+    let cleanup = write_script(&base_path(world).join("official-cleanup.sh"), "exit 0\n");
     let entry = serde_json::json!({
         "default": true,
-        "create": [
-            wrapper.to_string_lossy(),
-            "--state-dir",
-            base_path(world).join("doctor-state").to_string_lossy(),
-            "--repo",
-            repo.to_string_lossy(),
-            "--image",
-            "quecto-box:local"
-        ],
-        "cleanup": [cleanup.to_string_lossy()],
+        "create": create,
+        "cleanup": cleanup,
     });
     config_set_local(world, "official", &entry);
 }
@@ -391,17 +451,15 @@ fn when_fake_podman_fixed(world: &mut QuectoWorld, state: String) {
 
 #[given("the checkout binds itself to a create script that rejects --preflight-only")]
 fn given_bound_without_preflight_support(world: &mut QuectoWorld) {
-    let create = base_path(world).join("legacy-create.sh");
-    write_executable(
-        &create,
-        "#!/usr/bin/env bash\necho 'legacy create: unknown argument --preflight-only' >&2\nexit 1\n",
+    let create = write_script(
+        &base_path(world).join("legacy-create.sh"),
+        "echo 'legacy create: unknown argument --preflight-only' >&2\nexit 1\n",
     );
-    let cleanup = base_path(world).join("legacy-cleanup.sh");
-    write_executable(&cleanup, "#!/usr/bin/env bash\nexit 0\n");
+    let cleanup = write_script(&base_path(world).join("legacy-cleanup.sh"), "exit 0\n");
     let entry = serde_json::json!({
         "default": true,
-        "create": [create.to_string_lossy()],
-        "cleanup": [cleanup.to_string_lossy()],
+        "create": create,
+        "cleanup": cleanup,
     });
     config_set_local(world, "legacy", &entry);
 }

@@ -10,7 +10,7 @@ use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::processes::containers::script_stderr::{
-    ScriptOutput, run_capturing_stderr_tail,
+    ScriptOutput, ScriptStdout, run_capturing_stderr_tail,
 };
 use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
@@ -551,9 +551,11 @@ async fn run_script(
     cmd: tokio::process::Command,
     operation: &str,
 ) -> Result<ScriptOutput, DomainError> {
-    let output = run_capturing_stderr_tail(cmd).await.map_err(|e| {
-        DomainError::Tool(format!("failed to invoke script-managed {operation}: {e}"))
-    })?;
+    let output = run_capturing_stderr_tail(cmd, ScriptStdout::Result)
+        .await
+        .map_err(|e| {
+            DomainError::Tool(format!("failed to invoke script-managed {operation}: {e}"))
+        })?;
     if !output.status.success() {
         let message = output.failure_message(operation);
         eprintln!("{message}");

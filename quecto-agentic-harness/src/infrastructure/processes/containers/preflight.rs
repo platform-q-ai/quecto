@@ -12,7 +12,7 @@ use crate::application::environments::dto::{
 };
 use crate::application::environments::ports::ContainerRuntimePreflight;
 
-use super::script_stderr::run_sync_capturing_stderr_tail;
+use super::script_stderr::{ScriptStdout, run_sync_capturing_stderr_tail};
 
 /// The flag a conforming create script answers with its check lines.
 pub const PREFLIGHT_ONLY_FLAG: &str = "--preflight-only";
@@ -40,12 +40,13 @@ impl ContainerRuntimePreflight for ScriptPreflight {
         // flag has nothing to create with.
         cmd.env_remove("QUECTO_CONTAINER_ENVIRONMENT_REF");
         cmd.stdin(std::process::Stdio::null());
-        let output = run_sync_capturing_stderr_tail(cmd, PREFLIGHT_TIMEOUT)
-            .map_err(|error| format!("create script {program}: {error}"))?;
+        let script = config.create.join(" ");
+        let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, PREFLIGHT_TIMEOUT)
+            .map_err(|error| format!("create script `{script}`: {error}"))?;
         let checks = parse_checks(&output.stdout);
         if checks.is_empty() {
             let mut detail = format!(
-                "create script {program} does not support {PREFLIGHT_ONLY_FLAG} or reported no checks (exit {})",
+                "create script `{script}` does not support {PREFLIGHT_ONLY_FLAG} or reported no checks (exit {})",
                 output.status
             );
             if !output.stderr_tail.is_empty() {

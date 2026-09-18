@@ -83,10 +83,15 @@ fn a_script_that_refuses_the_flag_reports_its_own_words() {
         "legacy.sh",
         "echo 'legacy: unknown argument --preflight-only' >&2\nexit 1",
     );
-    let error = ScriptPreflight.preflight(&config(create)).unwrap_err();
+    let error = ScriptPreflight
+        .preflight(&config(create.clone()))
+        .unwrap_err();
     assert_eq!(
         error,
-        "create script bash does not support --preflight-only or reported no checks (exit exit status: 1): legacy: unknown argument --preflight-only"
+        format!(
+            "create script `{}` does not support --preflight-only or reported no checks (exit exit status: 1): legacy: unknown argument --preflight-only",
+            create.join(" ")
+        )
     );
 }
 

@@ -12,6 +12,7 @@
 use std::collections::VecDeque;
 use std::io::Read;
 use std::process::ExitStatus;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::infrastructure::processes::child_stderr_tail::{STDERR_TAIL_CAPACITY, StderrTail};
@@ -46,12 +47,27 @@ pub fn failure_message(operation: &str, status: &ExitStatus, stderr_tail: &str) 
     message
 }
 
-/// Run `cmd` to completion on the async runtime, keeping stdout whole and
-/// only the bounded tail of stderr.
+/// Whether a script's stdout is a result to read (the create/exec/inspect
+/// JSON contract) or nothing (kill, cleanup): reading it to EOF waits for
+/// every holder of the pipe, which only a contract-bearing stdout earns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptStdout {
+    Result,
+    Discard,
+}
+
+/// Run `cmd` to completion on the async runtime, keeping stdout whole
+/// (when it is a result) and only the bounded tail of stderr. The report
+/// waits at most [`STDERR_REPORT_GRACE`] after the exit for the stderr
+/// pipe's EOF, so a grandchild holding it cannot stall the caller.
 pub async fn run_capturing_stderr_tail(
     mut cmd: tokio::process::Command,
+    stdout: ScriptStdout,
 ) -> std::io::Result<ScriptOutput> {
-    cmd.stdout(std::process::Stdio::piped());
+    cmd.stdout(match stdout {
+        ScriptStdout::Result => std::process::Stdio::piped(),
+        ScriptStdout::Discard => std::process::Stdio::null(),
+    });
     cmd.stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn()?;
     let tail = child
@@ -74,31 +90,52 @@ pub async fn run_capturing_stderr_tail(
 }
 
 /// Run `cmd` to completion on the calling (blocking) thread with a hard
-/// wall-clock bound (`Duration::MAX` for none), keeping stdout whole and
-/// only the bounded tail of stderr; on timeout the script is killed and
-/// the error names the bound.
+/// wall-clock bound (`Duration::MAX` for none), keeping stdout whole
+/// (when it is a result) and only the bounded tail of stderr. On timeout
+/// the script is killed and the error names the bound and carries the
+/// tail. After the exit the report waits at most [`STDERR_REPORT_GRACE`]
+/// for each pipe's EOF: a grandchild holding a pipe open costs the grace,
+/// never the caller's liveness (its pump thread ends when the pipe does).
 pub fn run_sync_capturing_stderr_tail(
     mut cmd: std::process::Command,
+    stdout: ScriptStdout,
     timeout: Duration,
 ) -> Result<ScriptOutput, String> {
-    cmd.stdout(std::process::Stdio::piped());
+    cmd.stdout(match stdout {
+        ScriptStdout::Result => std::process::Stdio::piped(),
+        ScriptStdout::Discard => std::process::Stdio::null(),
+    });
     cmd.stderr(std::process::Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to invoke script: {e}"))?;
     // Both pipes are drained on their own threads so a script that fills
-    // one while the poll loop waits on the other can never deadlock.
+    // one while the poll loop waits on the other can never deadlock; each
+    // reports through a channel so the wait after exit is bounded.
     let stdout_pump = child.stdout.take().map(|mut pipe| {
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut stdout = Vec::new();
             let _ = pipe.read_to_end(&mut stdout);
-            stdout
-        })
+            let _ = tx.send(stdout);
+        });
+        rx
     });
-    let stderr_pump = child
-        .stderr
-        .take()
-        .map(|pipe| std::thread::spawn(move || drain_tail(pipe)));
+    let ring: Arc<Mutex<VecDeque<u8>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_CAPACITY)));
+    let stderr_pump = child.stderr.take().map(|pipe| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sink = Arc::clone(&ring);
+        std::thread::spawn(move || {
+            drain_tail(pipe, &sink);
+            let _ = tx.send(());
+        });
+        rx
+    });
+    let snapshot = |ring: &Mutex<VecDeque<u8>>| {
+        let ring = ring.lock().unwrap_or_else(|e| e.into_inner());
+        sanitise(&String::from_utf8_lossy(&Vec::from(ring.clone())))
+    };
     let deadline = std::time::Instant::now().checked_add(timeout);
     let status = loop {
         match child.try_wait() {
@@ -106,22 +143,31 @@ pub fn run_sync_capturing_stderr_tail(
             Ok(None) if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
+                if let Some(eof) = &stderr_pump {
+                    let _ = eof.recv_timeout(STDERR_REPORT_GRACE);
+                }
+                let tail = snapshot(&ring);
+                let mut message = format!(
                     "script timed out after {}s and was killed",
                     timeout.as_secs()
-                ));
+                );
+                if !tail.is_empty() {
+                    message.push_str(": ");
+                    message.push_str(&tail);
+                }
+                return Err(message);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(e) => return Err(format!("failed to reap script: {e}")),
         }
     };
     let stdout = stdout_pump
-        .and_then(|pump| pump.join().ok())
+        .and_then(|rx| rx.recv_timeout(STDERR_REPORT_GRACE).ok())
         .unwrap_or_default();
-    let stderr_tail = stderr_pump
-        .and_then(|pump| pump.join().ok())
-        .map(|tail| sanitise(&tail))
-        .unwrap_or_default();
+    if let Some(eof) = &stderr_pump {
+        let _ = eof.recv_timeout(STDERR_REPORT_GRACE);
+    }
+    let stderr_tail = snapshot(&ring);
     Ok(ScriptOutput {
         status,
         stdout,
@@ -129,25 +175,25 @@ pub fn run_sync_capturing_stderr_tail(
     })
 }
 
-/// Read `pipe` to EOF keeping only the last [`STDERR_TAIL_CAPACITY`] bytes.
-fn drain_tail(mut pipe: impl Read) -> String {
-    let mut ring: VecDeque<u8> = VecDeque::with_capacity(STDERR_TAIL_CAPACITY);
+/// Read `pipe` to EOF into `sink`, keeping only the last
+/// [`STDERR_TAIL_CAPACITY`] bytes.
+fn drain_tail(mut pipe: impl Read, sink: &Mutex<VecDeque<u8>>) {
     let mut buf = [0u8; 1024];
     loop {
         match pipe.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
+                let mut ring = sink.lock().unwrap_or_else(|e| e.into_inner());
                 for &byte in &buf[..n] {
                     if ring.len() == STDERR_TAIL_CAPACITY {
                         ring.pop_front();
                     }
                     ring.push_back(byte);
                 }
+                debug_assert!(ring.len() <= STDERR_TAIL_CAPACITY);
             }
         }
     }
-    debug_assert!(ring.len() <= STDERR_TAIL_CAPACITY);
-    String::from_utf8_lossy(&Vec::from(ring)).into_owned()
 }
 
 /// The tail as a report may carry it: ANSI escape sequences removed,
@@ -169,9 +215,11 @@ pub fn sanitise(tail: &str) -> String {
     out.trim().to_string()
 }
 
-/// Skip the body of an escape sequence: a CSI (`ESC [ … final`) or an OSC
-/// (`ESC ] … BEL|ST`) whole, any other two-character sequence's second
-/// byte.
+/// Skip the body of an escape sequence: a CSI (`ESC [ … final`) whole, an
+/// OSC (`ESC ] … BEL|ST`) up to its terminator or the end of the line (an
+/// unterminated title must not swallow the rest of the report), and any
+/// other sequence's intermediates (`0x20..=0x2f`) plus one final byte
+/// (`ESC ( B`, `ESC = `).
 fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
     match chars.next() {
         Some('[') => {
@@ -182,7 +230,11 @@ fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
             }
         }
         Some(']') => {
-            while let Some(c) = chars.next() {
+            while let Some(&c) = chars.peek() {
+                if c == '\n' {
+                    break;
+                }
+                chars.next();
                 if c == '\u{7}' {
                     break;
                 }
@@ -191,6 +243,13 @@ fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
                     break;
                 }
             }
+        }
+        Some(c) if ('\u{20}'..='\u{2f}').contains(&c) => {
+            while chars
+                .next_if(|c| ('\u{20}'..='\u{2f}').contains(c))
+                .is_some()
+            {}
+            chars.next();
         }
         _ => {}
     }

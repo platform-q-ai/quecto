@@ -140,7 +140,7 @@ fn no_checks_is_an_error_not_a_healthy_report() {
         error,
         DiagnoseContainerRuntimeError::PreflightUnavailable {
             config: "official".into(),
-            detail: "create script /bin/create reported no preflight checks".into(),
+            detail: "create script `/bin/create` reported no preflight checks".into(),
         }
     );
 }

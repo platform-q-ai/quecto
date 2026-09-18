@@ -9,7 +9,9 @@ use crate::application::environments::ports::{
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
-use crate::infrastructure::processes::containers::script_stderr::run_sync_capturing_stderr_tail;
+use crate::infrastructure::processes::containers::script_stderr::{
+    ScriptStdout, run_sync_capturing_stderr_tail,
+};
 
 /// The retained script argv run against the environment's runtime id.
 /// By default every invocation is offloaded to a blocking worker when a
@@ -131,7 +133,7 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    let output = run_sync_capturing_stderr_tail(cmd, INSPECT_TIMEOUT)
+    let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, INSPECT_TIMEOUT)
         .map_err(|error| format!("retained inspect: {error}; retained argv kept for retry"))?;
     if !output.status.success() {
         return Err(format!(
@@ -161,7 +163,7 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    match run_sync_capturing_stderr_tail(cmd, std::time::Duration::MAX) {
+    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
         Ok(output) if !output.status.success() => {
             tracing::warn!(environment_id, "{}", output.failure_message("cleanup"));
         }
@@ -182,7 +184,7 @@ pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(),
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    match run_sync_capturing_stderr_tail(cmd, std::time::Duration::MAX) {
+    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(format!(
             "retained kill exited with {}: {}",

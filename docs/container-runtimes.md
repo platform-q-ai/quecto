@@ -678,12 +678,19 @@ Design properties:
   (`podman image exists` / `docker image inspect`; **never an implicit
   pull**), `--repo` reachable (`git ls-remote`, bounded by
   `QUECTO_REPO_CHECK_TIMEOUT`, default 15 s, no credential prompt), and the
-  state dir writable and owned by the current user — before the
-  environment directory is created. A normal create dies at the first
+  state dir writable and owned by the current user (or, when it does not
+  exist yet, creatable under a writable parent) — before the environment
+  directory is created. A normal create dies at the first
   failure with a message that names the remedy and a distinct exit code
   (2 usage, 3 no runtime, 4 no jq, 5 no git, 6 image missing, 7 `--repo`
   unreachable, 8 state dir); `--preflight-only` evaluates every check and
-  prints the tab-separated report `quecto container doctor` presents.
+  prints the tab-separated report `quecto container doctor` presents,
+  leaving no trace (not even the state dir). A runtime that cannot answer
+  the image lookup (daemon down, socket permission, `QUECTO_REPO_CHECK_TIMEOUT`
+  exceeded) is its own failure with exit 3, never "image missing"; an
+  empty repository (no `HEAD`) is a warning, since the clone accepts it.
+  The host-local reference `create.sh` implements the same mode with its
+  own subset (jq, git, `--repo`, state dir).
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes
   partial state and `docker rm -f`s any container it managed to start; every
   destructive operation proves the environment id contains no path
@@ -814,7 +821,8 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |
 | `container: true refused: the checkout's repo-local config overlay was not applied` | (doctor refuses too) | Review `.quecto/config.json`, then `quecto config trust` in that directory. |
-| `container config '<name>': create script … does not support --preflight-only` | — | The config's create script predates the preflight contract; use the official adapter or add the mode to your script (see "Script contract"). |
+| `… status exit status: 3: … podman could not look up image …` / `did not answer within 15s` | `✗ image` (runtime cause quoted) | The runtime is installed but cannot answer: start the daemon/service (`podman info`, `systemctl --user start podman.socket`, docker group membership). |
+| `container config '<name>': create script … does not support --preflight-only` | — | The config's create script predates the preflight contract (both shipped script sets implement it); add the mode to a custom script (see "Script contract"). |
 | `… status exit status: 1: …` after the preflight (clone, `podman run`) | all `✓` | Read the quoted stderr: the clone or the runtime refused. The create rolled its environment back; `kill.log` in the state dir lists every kill/cleanup. |
 | `script-managed exec failed with status …: …` | — | The join's own stderr is quoted; the environment may have exited — `agent_cmd get_containers` shows its status. |
 
