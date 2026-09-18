@@ -175,7 +175,7 @@ fi
 # host must not stall a create for the tool's own connect timeout.
 probe_timeout="${QUECTO_REPO_CHECK_TIMEOUT:-15}"
 case "$probe_timeout" in
-''|*[!0-9]*) usage "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)" ;;
+''|*[!0-9]*|0*) usage "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)" ;;
 esac
 bounded() {
   if command -v timeout >/dev/null 2>&1; then
@@ -201,7 +201,7 @@ if [ -n "$cli" ]; then
     report ok image "image $image is present" ""
   elif [ "$image_rc" = 124 ]; then
     report fail image "$cli did not answer within ${probe_timeout}s while looking up image $image" \
-      "check that the $cli daemon/service is running and reachable (${cli} info)" "$EXIT_NO_RUNTIME"
+      "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
   elif [ "$image_rc" = 1 ] && { [ -z "$image_error" ] || printf '%s' "$image_error" | grep -qi 'no such image\|image not known'; }; then
     report fail image "image $image is not present in the local $cli store" \
       "build it ($cli build -t $image <dir with its Containerfile>) or pull it ($cli pull $image); create never pulls implicitly" "$EXIT_NO_IMAGE"
@@ -267,12 +267,17 @@ if [ -d "$state_dir" ]; then
       "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
   fi
 else
+  # Walk up to the first existing component: it must be a writable
+  # directory (a file in the way is as fatal as an unwritable parent).
   state_parent="$state_dir"
-  while [ ! -d "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
+  while [ ! -e "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
     state_parent="$(dirname "$state_parent")"
   done
   if [ -d "$state_parent" ] && [ -w "$state_parent" ]; then
     report ok state-dir "state dir $state_dir will be created under writable $state_parent" ""
+  elif [ -e "$state_parent" ] && [ ! -d "$state_parent" ]; then
+    report fail state-dir "state dir $state_dir cannot be created: $state_parent is not a directory" \
+      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
   else
     report fail state-dir "state dir $state_dir cannot be created: $state_parent is not writable" \
       "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"

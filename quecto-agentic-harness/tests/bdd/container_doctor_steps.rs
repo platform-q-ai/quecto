@@ -118,8 +118,8 @@ struct Toolbox {
 
 const TOOLBOX_PROGRAMS: &[&str] = &[
     "bash", "sh", "env", "jq", "git", "dirname", "basename", "mktemp", "realpath", "readlink",
-    "id", "mkdir", "rm", "cat", "head", "tr", "timeout", "stat", "touch", "printf", "sleep",
-    "true", "false",
+    "id", "mkdir", "rm", "cat", "head", "tail", "tr", "grep", "timeout", "stat", "touch", "printf",
+    "sleep", "true", "false",
 ];
 
 impl Toolbox {
@@ -228,6 +228,25 @@ fn toolbox_with_fake_podman(world: &QuectoWorld, image_present: bool) -> Toolbox
 #[given(expr = "a controlled PATH whose fake podman reports every image as {word}")]
 fn given_controlled_path_fake_podman(world: &mut QuectoWorld, state: String) {
     toolbox_with_fake_podman(world, image_state(&state));
+}
+
+/// A fake runtime whose every invocation fails the way a daemon that is
+/// down (or a socket this user may not open) fails: exit 1 with the
+/// error on stderr. `docker`'s missing-image answer is the same exit code
+/// with `Error: No such image` on stderr, so the two must be told apart.
+#[given(
+    expr = "a controlled PATH whose fake {word} answers every command with {string} and exit 1"
+)]
+fn given_controlled_path_failing_runtime(
+    world: &mut QuectoWorld,
+    runtime: String,
+    message: String,
+) {
+    let toolbox = Toolbox::build(world);
+    write_executable(
+        &toolbox.dir.join(&runtime),
+        &format!("#!/usr/bin/env bash\nprintf '%s\\n' '{message}' >&2\nexit 1\n"),
+    );
 }
 
 fn image_state(word: &str) -> bool {
@@ -347,13 +366,6 @@ fn then_preflight_failed(world: &mut QuectoWorld) {
     );
 }
 
-#[then(expr = "the preflight should report check {string} as failed naming {string}")]
-fn then_preflight_check_failed_naming(world: &mut QuectoWorld, check: String, needle: String) {
-    let (status, detail, _) = preflight_line(world, &check);
-    assert_eq!(status, "fail", "{check}: {detail}");
-    assert!(detail.contains(&needle), "{check}: {detail}");
-}
-
 #[then(
     expr = "the preflight should report check {string} as failed naming the unreachable repository"
 )]
@@ -361,6 +373,24 @@ fn then_preflight_repo_failed(world: &mut QuectoWorld, check: String) {
     let (status, detail, _) = preflight_line(world, &check);
     assert_eq!(status, "fail", "{check}: {detail}");
     assert!(detail.contains(UNREACHABLE_REPOSITORY), "{check}: {detail}");
+}
+
+#[then(expr = "the preflight should report check {string} as {word} naming {string}")]
+fn then_preflight_check_status_naming(
+    world: &mut QuectoWorld,
+    check: String,
+    expected: String,
+    needle: String,
+) {
+    let (status, detail, _) = preflight_line(world, &check);
+    let expected = match expected.as_str() {
+        "failed" => "fail",
+        "warned" => "warn",
+        "passed" => "ok",
+        other => panic!("{other:?} is not failed|warned|passed"),
+    };
+    assert_eq!(status, expected, "{check}: {detail}");
+    assert!(detail.contains(&needle), "{check}: {detail}");
 }
 
 #[then(expr = "the preflight should report a remedy for check {string} mentioning {string}")]

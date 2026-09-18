@@ -16,15 +16,13 @@ fn port() -> Arc<dyn ContainerRuntimePreflight> {
     build_container_runtime_preflight()
 }
 
-fn script(dir: &Path, name: &str, body: &str) -> String {
+/// A fixture script's argv, run through `bash` (a freshly written file
+/// executed directly by a multi-threaded test binary can race a
+/// concurrent fork holding it open, ETXTBSY).
+fn script(dir: &Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/usr/bin/env bash\nset -u\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    path.to_string_lossy().into_owned()
+    std::fs::write(&path, format!("set -u\n{body}\n")).unwrap();
+    vec!["bash".to_string(), path.to_string_lossy().into_owned()]
 }
 
 fn config(create: Vec<String>) -> DiagnosableContainerConfig {
@@ -52,9 +50,9 @@ exit 1"#,
             marker.display()
         ),
     );
-    let checks = port()
-        .preflight(&config(vec![create, "--state-dir".into(), "/s".into()]))
-        .unwrap();
+    let mut argv = create;
+    argv.extend(["--state-dir".to_string(), "/s".to_string()]);
+    let checks = port().preflight(&config(argv)).unwrap();
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["runtime-cli", "gh", "image"]);
     assert_eq!(checks[0].status, CheckStatus::Passed);
@@ -73,8 +71,8 @@ fn a_script_that_refuses_the_flag_is_an_error_carrying_its_own_words() {
         "legacy.sh",
         "echo 'legacy create: unknown argument --preflight-only' >&2; exit 2",
     );
-    let error = port().preflight(&config(vec![create.clone()])).unwrap_err();
-    assert!(error.contains(&create), "{error}");
+    let error = port().preflight(&config(create.clone())).unwrap_err();
+    assert!(error.contains(&create.join(" ")), "{error}");
     assert!(
         error.contains("does not support --preflight-only"),
         "{error}"
@@ -89,7 +87,7 @@ fn a_script_that_refuses_the_flag_is_an_error_carrying_its_own_words() {
 fn a_silent_script_and_a_missing_one_are_errors_not_healthy_reports() {
     let dir = tempfile::TempDir::new().unwrap();
     let silent = script(dir.path(), "silent.sh", "exit 0");
-    let error = port().preflight(&config(vec![silent])).unwrap_err();
+    let error = port().preflight(&config(silent)).unwrap_err();
     assert!(error.contains("reported no checks"), "{error}");
     let error = port()
         .preflight(&config(vec!["/definitely/not/create".into()]))

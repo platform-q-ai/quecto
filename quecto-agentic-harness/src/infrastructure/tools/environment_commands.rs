@@ -120,6 +120,14 @@ pub(super) const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// subprocess is bounded by [`INSPECT_TIMEOUT`]; on timeout it is killed and
 /// an inspect failure is persisted with the retained argv kept for retry.
 fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
+    run_inspect_sync_bounded(environment_id, argv, INSPECT_TIMEOUT)
+}
+
+pub(super) fn run_inspect_sync_bounded(
+    environment_id: &str,
+    argv: &[String],
+    timeout: std::time::Duration,
+) -> Result<serde_json::Value, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct InspectResultWire {
@@ -133,7 +141,7 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, INSPECT_TIMEOUT)
+    let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, timeout)
         .map_err(|error| format!("retained inspect: {error}; retained argv kept for retry"))?;
     if !output.status.success() {
         return Err(format!(

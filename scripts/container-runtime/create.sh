@@ -104,7 +104,7 @@ else
 fi
 probe_timeout="${QUECTO_REPO_CHECK_TIMEOUT:-15}"
 case "$probe_timeout" in
-''|*[!0-9]*) usage "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)" ;;
+''|*[!0-9]*|0*) usage "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)" ;;
 esac
 if [ -n "$repo" ] && [ -n "$git_path" ]; then
   ls_remote=(git ls-remote --exit-code -- "$repo" HEAD)
@@ -153,12 +153,17 @@ if [ -d "$state_dir" ]; then
       "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
   fi
 else
+  # Walk up to the first existing component: it must be a writable
+  # directory (a file in the way is as fatal as an unwritable parent).
   state_parent="$state_dir"
-  while [ ! -d "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
+  while [ ! -e "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
     state_parent="$(dirname "$state_parent")"
   done
   if [ -d "$state_parent" ] && [ -w "$state_parent" ]; then
     report ok state-dir "state dir $state_dir will be created under writable $state_parent" ""
+  elif [ -e "$state_parent" ] && [ ! -d "$state_parent" ]; then
+    report fail state-dir "state dir $state_dir cannot be created: $state_parent is not a directory" \
+      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
   else
     report fail state-dir "state dir $state_dir cannot be created: $state_parent is not writable" \
       "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"

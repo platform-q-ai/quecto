@@ -467,7 +467,7 @@ fn docker_create_preflight_precedes_environment_state_and_never_pulls() {
         "the preflight runs before any environment state exists"
     );
     let preflight_only_exit = create
-        .find("if [ \"$preflight_only\" = 1 ]; then")
+        .find("if [ \"$preflight_failed\" = 0 ]; then exit 0; else exit 1; fi")
         .expect("create.sh exits after the checks in --preflight-only mode");
     assert!(preflight_only_exit < mktemp);
     assert!(

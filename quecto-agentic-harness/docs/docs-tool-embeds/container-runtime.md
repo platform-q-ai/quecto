@@ -49,8 +49,8 @@ container config "quecto" (create: /…/create.sh --state-dir /… --repo https:
 Exit code 0 when no check failed (warnings allowed), 1 otherwise. Apply the
 remedy, run it again, then retry the spawn. `unknown container config`
 lists the live names; a `does not support --preflight-only` error means the
-config's create script predates the preflight contract (only the official
-adapter implements it).
+config's create script predates the preflight contract (both shipped script
+sets implement it).
 
 ## When a spawn fails
 

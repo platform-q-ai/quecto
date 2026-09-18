@@ -28,11 +28,16 @@ fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
 #[test]
 fn inspect_kills_hung_scripts_and_names_the_retry() {
     let started = std::time::Instant::now();
-    let err =
-        super::run_inspect_sync("env-x", &["sleep".to_string(), "30".to_string()]).unwrap_err();
+    let err = super::run_inspect_sync_bounded(
+        "env-x",
+        &["sleep".to_string(), "30".to_string()],
+        std::time::Duration::from_millis(200),
+    )
+    .unwrap_err();
     assert!(err.contains("timed out"), "{err}");
     assert!(err.contains("retained argv kept for retry"), "{err}");
-    assert!(started.elapsed() < super::INSPECT_TIMEOUT + std::time::Duration::from_secs(5));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(super::INSPECT_TIMEOUT >= std::time::Duration::from_secs(1));
 }
 
 /// The kill adapter answers the port truthfully whether or not a runtime

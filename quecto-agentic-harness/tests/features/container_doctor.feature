@@ -48,6 +48,24 @@ Feature: Container failures are diagnosable
     And the preflight should report check "image" as passed
 
   @done @issue-2024 @container-spawn
+  Scenario: A runtime that cannot answer is reported as such, never as a missing image
+    Given a controlled PATH whose fake podman answers every command with "Error: cannot connect to Podman socket: permission denied" and exit 1
+    When I run the official docker create script with --preflight-only for image "quecto-box:local" and a reachable local repository
+    Then the preflight should exit with a non-zero status
+    And the preflight should report check "image" as failed naming "could not look up image quecto-box:local"
+    And the preflight should report check "image" as failed naming "permission denied"
+    And the preflight should report a remedy for check "image" mentioning "podman info"
+
+  @done @issue-2024 @container-spawn
+  Scenario: Docker's own missing-image answer is a missing image
+    Given a controlled PATH whose fake docker answers every command with "Error: No such image: quecto-box:local" and exit 1
+    When I run the official docker create script with --preflight-only for image "quecto-box:local" and a reachable local repository
+    Then the preflight should exit with a non-zero status
+    And the preflight should report check "runtime-cli" as passed
+    And the preflight should report check "image" as failed naming "not present in the local docker store"
+    And the preflight should report a remedy for check "image" mentioning "docker build"
+
+  @done @issue-2024 @container-spawn
   Scenario: The host-local reference create script's preflight names an unreachable repository
     Given a controlled PATH whose fake podman reports every image as present
     When I run the host-local reference create script with --preflight-only and an unreachable repository

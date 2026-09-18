@@ -111,7 +111,11 @@ pub fn run_sync_capturing_stderr_tail(
         .map_err(|e| format!("failed to invoke script: {e}"))?;
     // Both pipes are drained on their own threads so a script that fills
     // one while the poll loop waits on the other can never deadlock; each
-    // reports through a channel so the wait after exit is bounded.
+    // reports through a channel so the wait after exit is bounded. A pump
+    // whose pipe a grandchild keeps open outlives this call (blocked in
+    // `read` until that holder exits): one thread per such script, never
+    // the caller's liveness — a signal to the holder is not this runner's
+    // to send (#1940).
     let stdout_pump = child.stdout.take().map(|mut pipe| {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -223,11 +227,13 @@ pub fn sanitise(tail: &str) -> String {
 fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
     match chars.next() {
         Some('[') => {
-            for c in chars.by_ref() {
-                if ('\u{40}'..='\u{7e}').contains(&c) {
-                    break;
-                }
-            }
+            // Parameter and intermediate bytes, then one final byte; a
+            // newline (a sequence cut short) ends it without being eaten.
+            while chars
+                .next_if(|c| ('\u{20}'..='\u{3f}').contains(c))
+                .is_some()
+            {}
+            chars.next_if(|c| ('\u{40}'..='\u{7e}').contains(c));
         }
         Some(']') => {
             while let Some(&c) = chars.peek() {

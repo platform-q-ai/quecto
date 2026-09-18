@@ -24,6 +24,8 @@ fn sanitise_strips_escapes_and_control_characters_but_keeps_newlines() {
     assert_eq!(sanitise("a\u{1b}]0;t\u{1b}\\b"), "ab");
     assert_eq!(sanitise("a\u{1b}]0;unterminated\nnext"), "a\nnext");
     assert_eq!(sanitise("a\u{1b}(Bb\u{1b}=c"), "abc");
+    assert_eq!(sanitise("\u{1b}[\nfatal: x"), "fatal: x");
+    assert_eq!(sanitise("\u{1b}[1;31mred"), "red");
     assert_eq!(sanitise("  plain  "), "plain");
     assert_eq!(sanitise("\u{1b}"), "");
     assert_eq!(sanitise("\u{1b}[1;3"), "");
