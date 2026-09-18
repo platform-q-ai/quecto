@@ -18,6 +18,7 @@ fn main() {
                 quecto::composition::tool_policy::build_tool_policy_persistence,
             container_config_selection:
                 quecto::composition::container_configs::build_agent_container_config_selection,
+            container_doctor: quecto::composition::environments::build_container_doctor,
         },
     ));
 }

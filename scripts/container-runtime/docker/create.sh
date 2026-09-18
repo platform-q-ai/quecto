@@ -5,11 +5,21 @@
 # local Docker daemon; the CI-exercised default remains the host-local set.
 #
 #   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
+#   create.sh --state-dir <dir> [--image <img>] [--repo <url>] --preflight-only
 # The repository is BAKED INTO the container config's own argv via --repo
 # (#1410): Quecto passes no source information. No --repo → sandbox config
 # (empty workspace, no clone).
 # Environment: QUECTO_CONTAINER_CONFIG,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF
+#
+# Preflight (#2024 S4b): one list of checks — container runtime, jq, git,
+# gh, image present (never pulled implicitly), --repo reachable, state dir
+# writable — runs before any environment state exists. A normal create dies
+# at the first failure with a distinct message and exit code (see the
+# EXIT_* table); `--preflight-only` evaluates every check, prints one
+# `status<TAB>check<TAB>detail<TAB>remedy` line per check on stdout
+# (status ok|warn|fail) and exits non-zero when any failed. `quecto
+# container doctor` runs this mode for the effective container config.
 #
 # Design: one container per environment; the child IS the container's main
 # process (docker's view of the container == the child's liveness). All
@@ -25,12 +35,78 @@
 set -euo pipefail
 
 log() { printf 'container-runtime-docker create: %s\n' "$*" >&2; }
+# Distinct exit codes so a failure is classifiable from its status alone.
+EXIT_USAGE=2
+EXIT_NO_RUNTIME=3
+EXIT_NO_JQ=4
+EXIT_NO_GIT=5
+EXIT_NO_IMAGE=6
+EXIT_REPO_UNREACHABLE=7
+EXIT_STATE_DIR=8
 die() {
   log "$@"
   exit 1
 }
+usage() {
+  log "$@"
+  exit "$EXIT_USAGE"
+}
 
-command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
+state_dir=""
+repo=""
+image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
+preflight_only=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --state-dir)
+    [ "$#" -ge 2 ] || usage "--state-dir needs a value"
+    state_dir="$2"
+    shift 2
+    ;;
+  --repo)
+    [ "$#" -ge 2 ] || usage "--repo needs a value"
+    repo="$2"
+    shift 2
+    ;;
+  --image)
+    [ "$#" -ge 2 ] || usage "--image needs a value"
+    image="$2"
+    shift 2
+    ;;
+  --preflight-only)
+    preflight_only=1
+    shift
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) usage "unknown argument: $1" ;;
+  esac
+done
+[ -n "$state_dir" ] || usage "--state-dir is required"
+
+# --- Preflight ------------------------------------------------------------
+# Every check reports through `report`; the mode decides what a failure
+# does. Nothing here creates environment state, so a failed create never
+# leaks an unreported environment directory.
+preflight_failed=0
+report() {
+  # $1=ok|warn|fail  $2=check  $3=detail  $4=remedy  $5=exit code on fail
+  if [ "$preflight_only" = 1 ]; then
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
+    [ "$1" = fail ] && preflight_failed=1
+    return 0
+  fi
+  case "$1" in
+  fail)
+    log "$3; $4"
+    exit "$5"
+    ;;
+  warn) log "$3; $4" ;;
+  esac
+}
+
 # Runtime CLI: rootless Podman by default. Membership of the `docker` group
 # is root-equivalent on the host (the daemon runs as root and has no policy
 # layer, so anything holding the socket can mount / and escalate), which is
@@ -39,44 +115,127 @@ command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result
 # an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
 # Docker stays a fallback for hosts without Podman.
 cli="${QUECTO_CONTAINER_CLI:-}"
-if [ -z "$cli" ]; then
-  if command -v podman >/dev/null 2>&1; then
-    cli=podman
-  elif command -v docker >/dev/null 2>&1; then
-    cli=docker
+cli_path=""
+if [ -n "$cli" ]; then
+  cli_path="$(command -v "$cli" 2>/dev/null || true)"
+  if [ -n "$cli_path" ]; then
+    report ok runtime-cli "QUECTO_CONTAINER_CLI=$cli at $cli_path" ""
+  else
+    report fail runtime-cli "QUECTO_CONTAINER_CLI=$cli is not on PATH" \
+      "install $cli or unset QUECTO_CONTAINER_CLI to use podman (preferred) or docker" "$EXIT_NO_RUNTIME"
+    cli=""
+  fi
+else
+  for candidate in podman docker; do
+    cli_path="$(command -v "$candidate" 2>/dev/null || true)"
+    if [ -n "$cli_path" ]; then
+      cli="$candidate"
+      break
+    fi
+  done
+  if [ -n "$cli" ]; then
+    report ok runtime-cli "$cli at $cli_path" ""
+  else
+    report fail runtime-cli "no container runtime on PATH: neither podman nor docker was found" \
+      "install podman (rootless, preferred) or docker and make sure it is on PATH, or set QUECTO_CONTAINER_CLI" "$EXIT_NO_RUNTIME"
   fi
 fi
-[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
-state_dir=""
-repo=""
-image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-  --state-dir)
-    [ "$#" -ge 2 ] || die "--state-dir needs a value"
-    state_dir="$2"
-    shift 2
-    ;;
-  --repo)
-    [ "$#" -ge 2 ] || die "--repo needs a value"
-    repo="$2"
-    shift 2
-    ;;
-  --image)
-    [ "$#" -ge 2 ] || die "--image needs a value"
-    image="$2"
-    shift 2
-    ;;
-  --)
-    shift
-    break
-    ;;
-  *) die "unknown argument: $1" ;;
+if jq_path="$(command -v jq 2>/dev/null)"; then
+  report ok jq "jq at $jq_path" ""
+else
+  report fail jq "jq is not on PATH (needed to encode the create result)" \
+    "install jq" "$EXIT_NO_JQ"
+fi
+
+git_path=""
+if [ -n "$repo" ]; then
+  if git_path="$(command -v git 2>/dev/null)"; then
+    report ok git "git at $git_path" ""
+  else
+    report fail git "git is not on PATH (needed to clone --repo $repo)" \
+      "install git" "$EXIT_NO_GIT"
+  fi
+else
+  report ok git "not needed: sandbox config (no --repo)" ""
+fi
+
+# gh is optional: without it members get no GitHub token (pushes and the
+# GitHub API fail inside the container), so it is a warning, never a die.
+if gh_path="$(command -v gh 2>/dev/null)"; then
+  report ok gh "gh at $gh_path" ""
+else
+  report warn gh "gh is not on PATH: members will have no GitHub token (GH_TOKEN)" \
+    "install gh and run 'gh auth login' so members can push and use the GitHub API"
+fi
+
+# The image is looked up in the local store only: a create never pulls
+# implicitly (an unattended pull of an unexpected image is not this
+# script's decision to make).
+if [ -n "$cli" ]; then
+  image_present=0
+  case "$cli" in
+  podman) "$cli" image exists "$image" >/dev/null 2>&1 && image_present=1 ;;
+  *) "$cli" image inspect "$image" >/dev/null 2>&1 && image_present=1 ;;
   esac
-done
-[ -n "$state_dir" ] || die "--state-dir is required"
-[ "$#" -gt 0 ] || die "missing child command after --"
+  if [ "$image_present" = 1 ]; then
+    report ok image "image $image is present" ""
+  else
+    report fail image "image $image is not present in the local $cli store" \
+      "build it ($cli build -t $image <dir with its Containerfile>) or pull it ($cli pull $image); create never pulls implicitly" "$EXIT_NO_IMAGE"
+  fi
+else
+  report warn image "image $image was not checked: no container runtime" \
+    "fix the runtime-cli check first"
+fi
+
+if [ -n "$repo" ]; then
+  if [ -n "$git_path" ]; then
+    # Same transport whitelist as the clone below (PR #1401 review), no
+    # credential prompt, and a short bound so an unreachable host cannot
+    # stall the create for git's own connect timeout.
+    ls_remote=(git ls-remote --exit-code -- "$repo" HEAD)
+    if command -v timeout >/dev/null 2>&1; then
+      ls_remote=(timeout "${QUECTO_REPO_CHECK_TIMEOUT:-15}" "${ls_remote[@]}")
+    fi
+    if repo_error="$(GIT_ALLOW_PROTOCOL="file:https:ssh:git" GIT_TERMINAL_PROMPT=0 \
+      "${ls_remote[@]}" 2>&1 >/dev/null)"; then
+      report ok repo "--repo $repo is reachable" ""
+    else
+      # git's first `fatal:` line names the cause; the trailing advice
+      # ("and the repository exists.") does not.
+      repo_cause=""
+      while IFS= read -r line; do
+        case "$line" in fatal:*) repo_cause="$line"; break ;; esac
+      done <<<"$repo_error"
+      repo_error="${repo_cause:-${repo_error##*$'\n'}}"
+      repo_error="${repo_error//$'\r'/}"
+      report fail repo "--repo $repo is unreachable: ${repo_error:-no default branch}" \
+        "check the URL, your network and credentials (ssh key or 'gh auth login'), or fix --repo in the container config" "$EXIT_REPO_UNREACHABLE"
+    fi
+  else
+    report warn repo "--repo $repo was not checked: git is missing" "fix the git check first"
+  fi
+else
+  report ok repo "not needed: sandbox config (no --repo)" ""
+fi
+
+if mkdir -p -m 700 "$state_dir" 2>/dev/null && [ -O "$state_dir" ] && [ -w "$state_dir" ]; then
+  report ok state-dir "state dir $state_dir is writable and owned by the current user" ""
+elif [ -d "$state_dir" ] && [ ! -O "$state_dir" ]; then
+  report fail state-dir "state dir $state_dir is not owned by the current user" \
+    "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+else
+  report fail state-dir "state dir $state_dir cannot be created or written" \
+    "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+fi
+
+if [ "$preflight_only" = 1 ]; then
+  if [ "$preflight_failed" = 0 ]; then exit 0; else exit 1; fi
+fi
+# --------------------------------------------------------------------------
+
+[ "$#" -gt 0 ] || usage "missing child command after --"
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_REF:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_REF must be set"
 
 child_binary="$1"
@@ -109,8 +268,6 @@ if [ -n "$admission_dir" ]; then
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
 fi
 
-mkdir -p -m 700 "$state_dir"
-[ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
 environment_id="$(basename "$env_dir")"
 container="quecto-$environment_id"

@@ -9,6 +9,7 @@ use crate::application::environments::ports::{
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
+use crate::infrastructure::processes::containers::script_stderr::run_sync_capturing_stderr_tail;
 
 /// The retained script argv run against the environment's runtime id.
 /// By default every invocation is offloaded to a blocking worker when a
@@ -130,14 +131,12 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    let output = output_with_timeout(cmd, INSPECT_TIMEOUT)?;
+    let output = run_sync_capturing_stderr_tail(cmd, INSPECT_TIMEOUT)
+        .map_err(|error| format!("retained inspect: {error}; retained argv kept for retry"))?;
     if !output.status.success() {
         return Err(format!(
             "retained inspect exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.status, output.stderr_tail
         ));
     }
     let wire: InspectResultWire =
@@ -152,51 +151,9 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
     Ok(metadata)
 }
 
-/// Run a command to completion with a hard wall-clock bound, killing it on
-/// timeout. Runs on a blocking worker, so the poll loop never occupies an
-/// async runtime thread. Output pipes are drained after exit; inspect
-/// payloads are one small JSON object, far below pipe capacity.
-pub(super) fn output_with_timeout(
-    mut cmd: std::process::Command,
-    timeout: std::time::Duration,
-) -> Result<std::process::Output, String> {
-    use std::io::Read;
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("failed to invoke retained inspect: {e}"))?;
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!(
-                        "retained inspect timed out after {}s and was killed; retained argv kept for retry",
-                        timeout.as_secs()
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            Err(e) => return Err(format!("failed to reap retained inspect: {e}")),
-        }
-    };
-    let mut stdout = Vec::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        let _ = pipe.read_to_end(&mut stdout);
-    }
-    let mut stderr = Vec::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_end(&mut stderr);
-    }
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
+/// The retained-cleanup invocation: best effort by contract, never silent
+/// (#2024 S4b) — a cleanup that fails leaves an environment behind and
+/// its stderr tail is the operator's only lead.
 fn run_script_sync(environment_id: &str, argv: &[String]) {
     let Some((program, args)) = argv.split_first() else {
         return;
@@ -204,16 +161,20 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-    if let Err(error) = cmd.status() {
+    match run_sync_capturing_stderr_tail(cmd, std::time::Duration::MAX) {
+        Ok(output) if !output.status.success() => {
+            tracing::warn!(environment_id, "{}", output.failure_message("cleanup"));
+        }
+        Ok(_) => {}
         // Typically a full pid cgroup: the environment may outlive us.
-        tracing::warn!(environment_id, %error, "retained container script could not be started");
+        Err(error) => {
+            tracing::warn!(environment_id, %error, "retained container script could not be started")
+        }
     }
 }
 
 /// The retained-kill invocation: argv exec, `QUECTO_CONTAINER_ENVIRONMENT_ID`,
-/// null stdout, piped stderr. The environment is stopped only on success.
+/// stderr kept as a bounded tail. The environment is stopped only on success.
 pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained kill argv".to_string());
@@ -221,16 +182,13 @@ pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(),
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::piped());
-    match cmd.output() {
+    match run_sync_capturing_stderr_tail(cmd, std::time::Duration::MAX) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(format!(
             "retained kill exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.status, output.stderr_tail
         )),
-        Err(e) => Err(format!("failed to invoke retained kill: {e}")),
+        Err(error) => Err(format!("failed to invoke retained kill: {error}")),
     }
 }
 

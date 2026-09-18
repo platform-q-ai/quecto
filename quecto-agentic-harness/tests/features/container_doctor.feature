@@ -62,7 +62,8 @@ Feature: Container failures are diagnosable
     When the fake podman is fixed to report every image as present
     And I run quecto with arguments "container doctor"
     Then the exit code should be 0
-    And the doctor output should show every check as passed
+    And the doctor output should show check "image" as passed
+    And the doctor output should show no failed check
 
   @done @issue-2024 @container-spawn
   Scenario: quecto container doctor names a config explicitly and refuses an unknown one

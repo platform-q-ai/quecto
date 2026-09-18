@@ -9,6 +9,9 @@ use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::subagent_launch::ParentEndpoint;
+use crate::infrastructure::processes::containers::script_stderr::{
+    ScriptOutput, run_capturing_stderr_tail,
+};
 use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
 };
@@ -142,17 +145,7 @@ async fn join_script_managed_child(
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
     apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
-    cmd.stdout(std::process::Stdio::piped());
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| DomainError::Tool(format!("failed to invoke script-managed exec: {e}")))?;
-    if !output.status.success() {
-        return Err(DomainError::Tool(format!(
-            "script-managed exec failed with status {}",
-            output.status
-        )));
-    }
+    let output = run_script(cmd, "exec").await?;
     let endpoint = parse_exec_result(&output.stdout, child.admission_dir)?;
     Ok(PreparedChild {
         swarm_reservation: None,
@@ -380,17 +373,7 @@ async fn spawn_script_managed_child(
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
-    cmd.stdout(std::process::Stdio::piped());
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| DomainError::Tool(format!("failed to invoke script-managed create: {e}")))?;
-    if !output.status.success() {
-        return Err(DomainError::Tool(format!(
-            "script-managed create failed with status {}",
-            output.status
-        )));
-    }
+    let output = run_script(cmd, "create").await?;
     let result = match parse_create_result(&output.stdout, child.admission_dir) {
         Ok(result) => result,
         Err(e) => {
@@ -559,6 +542,26 @@ fn unsafe_arg(s: &str) -> bool {
     s.is_empty() || s.contains('\0')
 }
 
+/// Run a create or exec script to completion (#2024 S4b): its stdout is
+/// the wire result, its stderr tail travels in the failure — after the
+/// `script-managed <op> failed with status <n>` prefix — and is echoed on
+/// the harness's stderr, so `die "image … is not present"` reaches both
+/// the model and the operator instead of `/dev/null`.
+async fn run_script(
+    cmd: tokio::process::Command,
+    operation: &str,
+) -> Result<ScriptOutput, DomainError> {
+    let output = run_capturing_stderr_tail(cmd).await.map_err(|e| {
+        DomainError::Tool(format!("failed to invoke script-managed {operation}: {e}"))
+    })?;
+    if !output.status.success() {
+        let message = output.failure_message(operation);
+        eprintln!("{message}");
+        return Err(DomainError::Tool(message));
+    }
+    Ok(output)
+}
+
 fn cleanup_command(env_ref: Option<&str>, argv: &[String]) -> Option<tokio::process::Command> {
     if env_ref.is_none() || argv.is_empty() {
         return None;
@@ -569,7 +572,6 @@ fn cleanup_command(env_ref: Option<&str>, argv: &[String]) -> Option<tokio::proc
         cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", env_id);
     }
     cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
     Some(cmd)
 }
 
@@ -579,12 +581,14 @@ fn apply_admission_env(cmd: &mut tokio::process::Command, admission_dir: Option<
     }
 }
 
+/// The environment every child and script gets. Streams are the caller's
+/// decision: a local child's stderr is drained for its whole life, a
+/// script's is kept as a bounded tail for the failure report.
 fn apply_common_child_env(cmd: &mut tokio::process::Command, base_dir: &Path) {
     if !base_dir.as_os_str().is_empty() {
         cmd.env("QUECTO_BASE_DIR", base_dir);
     }
     cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
 }
 
 #[cfg(test)]

@@ -454,8 +454,15 @@ fn then_doctor_names_config(world: &mut QuectoWorld, name: String) {
     );
 }
 
-#[then("the doctor output should show every check as passed")]
-fn then_doctor_all_passed(world: &mut QuectoWorld) {
+#[then(expr = "the doctor output should show check {string} as passed")]
+fn then_doctor_check_passed(world: &mut QuectoWorld, check: String) {
+    let line = doctor_line(world, &check);
+    assert!(line.starts_with("  ✓"), "{line}");
+}
+
+/// Warnings (no `gh` on the controlled PATH) are allowed; failures are not.
+#[then("the doctor output should show no failed check")]
+fn then_doctor_no_failure(world: &mut QuectoWorld) {
     let checks: Vec<&str> = world
         .stdout
         .lines()
@@ -466,8 +473,13 @@ fn then_doctor_all_passed(world: &mut QuectoWorld) {
         .collect();
     assert!(!checks.is_empty(), "no checks in stdout: {}", world.stdout);
     for line in checks {
-        assert!(line.starts_with("  ✓"), "{line}\nstdout: {}", world.stdout);
+        assert!(!line.starts_with("  ✗"), "{line}\nstdout: {}", world.stdout);
     }
+    assert!(
+        world.stdout.contains("0 checks failed"),
+        "stdout: {}",
+        world.stdout
+    );
 }
 
 #[then(expr = "the tool result the fake provider received should be a spawn error naming {string}")]

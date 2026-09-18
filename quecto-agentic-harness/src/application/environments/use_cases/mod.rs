@@ -1,9 +1,11 @@
 //! Session environment use cases.
 
+mod diagnose_container_runtime;
 mod finalize_environment_member;
 mod kill_environment;
 mod list_environments;
 
+pub use diagnose_container_runtime::DiagnoseContainerRuntime;
 pub use finalize_environment_member::FinalizeEnvironmentMember;
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_environments::ListEnvironmentsQuery;

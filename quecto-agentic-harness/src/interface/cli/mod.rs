@@ -7,6 +7,7 @@ mod config_cmd;
 mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
+mod container;
 mod help;
 mod models;
 pub mod protocol;
@@ -360,6 +361,17 @@ pub type ContainerConfigSelectionBuilder =
         &ConfigSelection,
     ) -> std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>;
 
+/// Composition's builder of the container-runtime doctor (#2024 S4b): the
+/// create preflight of the effective container config, over the run's
+/// own configuration selection. Injected through the CLI context; the
+/// interface never resolves a container config or runs a script itself.
+pub type ContainerDoctorBuilder = fn(
+    &std::path::Path,
+    &ConfigSelection,
+) -> std::sync::Arc<
+    crate::application::environments::use_cases::DiagnoseContainerRuntime,
+>;
+
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write
 /// path. Injected through the CLI context; the interface never probes or
@@ -430,6 +442,10 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run's spawn tool selects container configs through it.
     pub container_config_selection: Option<ContainerConfigSelectionBuilder>,
+    /// Composition's container-doctor builder (#2024 S4b), from the
+    /// binary's `main` through [`run`]'s [`CliComposition`]; `quecto
+    /// container doctor` refuses to run without it.
+    pub container_doctor: Option<ContainerDoctorBuilder>,
 }
 
 impl CliContext {
@@ -496,6 +512,7 @@ pub struct CliComposition {
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
     pub container_config_selection: ContainerConfigSelectionBuilder,
+    pub container_doctor: ContainerDoctorBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -524,6 +541,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),
         container_config_selection: Some(composition.container_config_selection),
+        container_doctor: Some(composition.container_doctor),
         ..Default::default()
     };
 
@@ -602,6 +620,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "admission-broker" => {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
+            "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help::help_text(&mut stdout);
                 0
