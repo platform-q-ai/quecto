@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
-use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RestoreRegistry};
+use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
@@ -138,7 +138,7 @@ fn process(
 fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept() {
     let store = store_with(vec![
         record("C1", EnvironmentStatus::Running),
-        record("C2", EnvironmentStatus::Retained),
+        record("C2", EnvironmentStatus::Running),
         record("C3", EnvironmentStatus::CleanupFailed),
         record("C4", EnvironmentStatus::Stopped),
     ]);
@@ -375,4 +375,72 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
             .any(|d| d.contains("C1 changed while it was being checked")),
         "{report:?}"
     );
+}
+
+/// Round 3 H1 (#2033): a `retained` environment (#1924) is ended by an
+/// explicit kill alone. Under the shipped adapter its container has
+/// exited (the coordinator was PID 1), so "gone" is its normal state —
+/// relabelling it `stopped` would hand its state dir (board, checkout,
+/// unpushed branches) to the collector. It is reported, never rewritten.
+#[test]
+fn a_retained_record_whose_container_exited_stays_retained_and_is_reported() {
+    let store = store_with(vec![record("C1", EnvironmentStatus::Retained)]);
+    let process = process(|_| EnvironmentLiveness::Gone);
+    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    assert!(report.stopped.is_empty(), "{report:?}");
+    assert!(report.restored.is_empty(), "{report:?}");
+    assert_eq!(
+        report.unverified,
+        [("C1".to_string(), RETAINED_EXITED.to_string())]
+    );
+    assert!(
+        store.corrections.lock().unwrap().is_empty(),
+        "nothing written"
+    );
+    let c1 = registry.get("C1").unwrap();
+    assert_eq!(c1.status, EnvironmentStatus::Retained);
+    assert_eq!(c1.last_error, None);
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Retained);
+    // A retained record whose container still runs is restored as live.
+    let store = store_with(vec![record("C2", EnvironmentStatus::Retained)]);
+    let live = self::process(|_| EnvironmentLiveness::Running);
+    let (_, report) = RestoreRegistry::new(store, live).execute("s");
+    assert_eq!(report.restored, ["C2"]);
+}
+
+/// Round 3 H1 (#2033): an observing restore (`gc --dry-run`) judges the
+/// records the same way but writes nothing — the correction is seeded in
+/// memory, so the dry run previews what a real run would do, and reported.
+#[test]
+fn an_observing_restore_seeds_its_corrections_in_memory_and_writes_none() {
+    let store = store_with(vec![
+        record("C1", EnvironmentStatus::Running),
+        record("C2", EnvironmentStatus::Retained),
+    ]);
+    let process = process(|_| EnvironmentLiveness::Gone);
+    let (registry, report) = RestoreRegistry::new(store.clone(), process).observe("cli");
+    assert_eq!(report.stopped, ["C1"]);
+    assert!(
+        report.diagnostics.iter().any(|d| d.starts_with("C1 ")
+            && d.contains("would be recorded stopped")
+            && d.contains("not written")),
+        "{report:?}"
+    );
+    assert_eq!(
+        registry.get("C1").unwrap().status,
+        EnvironmentStatus::Stopped,
+        "the preview judges as a real run would"
+    );
+    assert_eq!(
+        registry.get("C2").unwrap().status,
+        EnvironmentStatus::Retained
+    );
+    assert!(
+        store.corrections.lock().unwrap().is_empty(),
+        "nothing written"
+    );
+    let on_file = store.load().unwrap();
+    assert_eq!(on_file[0].status, EnvironmentStatus::Running);
+    assert_eq!(on_file[0].last_error, None);
+    assert_eq!(on_file[1].status, EnvironmentStatus::Retained);
 }

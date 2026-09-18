@@ -7,11 +7,15 @@
 //! (its liveness is the kill's to settle, never the collector's), a state
 //! dir whose container the config's own `inspect` reports running, a
 //! young directory without a container (a create may still be in flight).
-//! The collector never kills: a stopped record is removed through its own
-//! retained `cleanup` (the script set that created it) and then forgotten,
-//! an unrecorded orphan through the selected container config's `cleanup`
-//! — the harness knows no runtime; the scripts inspect, list and remove.
-//! A dry run reports the same judgement without an effect.
+//! A `retained` record (#1924) is kept whatever the runtime says of its
+//! container: only an explicit `container kill` / `kill_container` moves
+//! it to `stopped`, and only then does the collector see it (round 3 H1,
+//! #2033). The collector never kills: a stopped record is removed through
+//! its own retained `cleanup` (the script set that created it) and then
+//! forgotten, an unrecorded orphan through the selected container
+//! config's `cleanup` — the harness knows no runtime; the scripts
+//! inspect, list and remove. A dry run reports the same judgement
+//! without an effect — on the host or on the registry document.
 //!
 //! Scope is one container config: its own state root (`--state-dir` in
 //! its create argv) plus the roots implied by the records that config
@@ -318,8 +322,22 @@ impl GcOrphanedEnvironments {
                         }
                     }
                 }
+                // Retained (#1924): kept with its state dir — board,
+                // checkout, unpushed work — whatever the runtime says of
+                // its container (under the shipped adapter it has exited
+                // by design). Only an explicit kill moves it to `stopped`;
+                // the collector never does (round 3 H1, #2033).
+                EnvironmentStatus::Retained => {
+                    keep(
+                        report,
+                        format!(
+                            "recorded {} as retained ({container_state}); kept with its state dir until an explicit kill (`quecto container kill {}`)",
+                            record.environment_ref, record.environment_ref
+                        ),
+                    );
+                    return;
+                }
                 EnvironmentStatus::Running
-                | EnvironmentStatus::Retained
                 | EnvironmentStatus::Killing
                 | EnvironmentStatus::CleanupFailed => {
                     // The registry believes it live. Never remove a record

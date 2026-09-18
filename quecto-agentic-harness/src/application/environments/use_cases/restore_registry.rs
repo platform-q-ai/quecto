@@ -3,29 +3,38 @@
 //!
 //! The registry composition builds is seeded with every record the base
 //! directory's store holds, each checked against the runtime before it is
-//! believed: a record whose container is gone is marked `stopped` with the
-//! reason as its last error (never silently dropped — the ref stays listed
-//! and is never reused), a record the runtime cannot be asked about is kept
-//! as recorded and reported unverified, and a kill that was in flight when
-//! this session started is reported as such — never relabelled, since its
-//! session may still be live and settling it (review F6, #2033); an
-//! explicit kill from here retries it. The restored records
-//! arrive without members and are never torn down by a joiner's exit.
-//! A correction is written **conditionally** — only while the record on
-//! file still has the status that was loaded — so a restore (or a `quecto
-//! container ls`, which restores afresh) never reverts what a concurrent
-//! session did in the meantime; seeded records are never written back.
-//! Every transition the session makes afterwards is journalled through the
-//! same store, and refs are allocated through it.
+//! believed: a `running` or `cleanup-failed` record whose container is
+//! gone is marked `stopped` with the reason as its last error (never
+//! silently dropped — the ref stays listed and is never reused), a record
+//! the runtime cannot be asked about is kept as recorded and reported
+//! unverified, and a kill that was in flight when this session started is
+//! reported as such — never relabelled, since its session may still be
+//! live and settling it (review F6, #2033); an explicit kill from here
+//! retries it. A `retained` record (#1924) is never relabelled either
+//! (round 3 H1, #2033): under the shipped adapter its container has
+//! exited by design, only an explicit kill ends it, and calling it
+//! `stopped` would hand its state dir to the collector — it is reported.
+//! The restored records arrive without members and are never torn down
+//! by a joiner's exit. A correction is written **conditionally** — only
+//! while the record on file still has the status that was loaded — so a
+//! restore (or a `quecto container ls`, which restores afresh) never
+//! reverts what a concurrent session did in the meantime; seeded records
+//! are never written back. An *observing* restore (`gc --dry-run`) seeds
+//! the same corrections in memory and writes none. Every transition the
+//! session makes afterwards is journalled through the same store, and
+//! refs are allocated through it; a startup read that failed is retried
+//! on the session's next lookup (round 3 L2), so an in-place repair of
+//! the document is seen without a restart.
 use std::sync::Arc;
 
 use crate::domain::environment_registry::{
     EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
 };
 
-use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoredRegistry};
+use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
 
+#[derive(Clone)]
 pub struct RestoreRegistry {
     store: Arc<dyn EnvironmentRegistryStore>,
     process: Arc<dyn EnvironmentProcess>,
@@ -43,6 +52,10 @@ pub const GONE_AT_RESTORE: &str = "container not found at restore: the runtime r
 /// The reason a `killing` record is reported unverified at restore.
 pub const KILL_IN_FLIGHT: &str =
     "kill in flight (its session may be live and settling it); kill_container retries it";
+
+/// The reason a `retained` record whose container has exited is reported
+/// unverified at restore (round 3 H1, #2033): that is its normal state.
+pub const RETAINED_EXITED: &str = "retained: container exited; only container kill ends it";
 
 impl RestoreRegistry {
     pub fn new(
@@ -120,11 +133,28 @@ impl RestoreRegistry {
     /// nothing this session creates can collide with what it could not
     /// read — creates are refused instead (review F9, #2033).
     pub fn execute(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
+        self.execute_as(session, RestoreMode::Correct)
+    }
+
+    /// [`Self::execute`] without an effect on the store (round 3 H1,
+    /// #2033): every correction is seeded in memory and reported as what
+    /// a correcting restore would write. For a registry that only reads
+    /// — a `container gc --dry-run` — so the preview matches the real run
+    /// and the document is left byte for byte as it was.
+    pub fn observe(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
+        self.execute_as(session, RestoreMode::Observe)
+    }
+
+    fn execute_as(
+        &self,
+        session: &str,
+        mode: RestoreMode,
+    ) -> (EnvironmentRegistry, RestoredRegistry) {
         let mut report = RestoredRegistry::default();
         let records = match self.store.load() {
             Ok(records) => records,
             Err(error) => {
-                let read_error = format!("durable environment registry could not be read: {error}");
+                let read_error = format!("{READ_FAILED}: {error}");
                 // The registry carries the error itself (round 2 F-B,
                 // #2033): the model's listing shows it and a lookup of
                 // anything this session did not create answers with it.
@@ -135,12 +165,34 @@ impl RestoreRegistry {
             }
         };
         let registry = EnvironmentRegistry::with_journal(self.journal(), session);
+        registry.restore(self.seed(records, mode, &mut report));
+        (registry, report)
+    }
+
+    /// The store's records judged against the runtime, each correction
+    /// handled as `mode` says: the records to seed the registry with.
+    fn seed(
+        &self,
+        records: Vec<EnvironmentRecord>,
+        mode: RestoreMode,
+        report: &mut RestoredRegistry,
+    ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
         for record in records {
             let loaded_status = record.status.clone();
             let mut judged = record;
-            let corrected = self.judge(&mut judged, &mut report);
+            let corrected = self.judge(&mut judged, report);
             if !corrected {
+                restored.push(judged);
+                continue;
+            }
+            if mode == RestoreMode::Observe {
+                report.diagnostics.push(format!(
+                    "{} would be recorded {} ({}); not written: this restore only observes",
+                    judged.environment_ref,
+                    judged.status_label(),
+                    judged.last_error.as_deref().unwrap_or("corrected")
+                ));
                 restored.push(judged);
                 continue;
             }
@@ -167,8 +219,7 @@ impl RestoreRegistry {
                 }
             }
         }
-        registry.restore(restored);
-        (registry, report)
+        restored
     }
 
     /// Correct one record against the runtime. Terminal records need no
@@ -188,22 +239,37 @@ impl RestoreRegistry {
             }
             EnvironmentStatus::Running
             | EnvironmentStatus::Retained
-            | EnvironmentStatus::CleanupFailed => match self.process.observe(record) {
-                EnvironmentLiveness::Running => {
-                    report.restored.push(environment_ref);
-                    false
+            | EnvironmentStatus::CleanupFailed => {
+                match (self.process.observe(record), &record.status) {
+                    (EnvironmentLiveness::Running, _) => {
+                        report.restored.push(environment_ref);
+                        false
+                    }
+                    // Retained (#1924): an exited container is how it is kept
+                    // — the board and checkout live in its state dir, and only
+                    // an explicit kill ends it (round 3 H1, #2033). Said, not
+                    // relabelled, so no collector ever sees it as stopped.
+                    (EnvironmentLiveness::Gone, EnvironmentStatus::Retained) => {
+                        report
+                            .unverified
+                            .push((environment_ref, RETAINED_EXITED.to_string()));
+                        false
+                    }
+                    (EnvironmentLiveness::Gone, _) => {
+                        record.status = EnvironmentStatus::Stopped;
+                        record.last_error = Some(GONE_AT_RESTORE.to_string());
+                        report.stopped.push(environment_ref);
+                        true
+                    }
+                    (EnvironmentLiveness::Unknown(reason), _) => {
+                        report.unverified.push((environment_ref, reason));
+                        false
+                    }
                 }
-                EnvironmentLiveness::Gone => {
-                    record.status = EnvironmentStatus::Stopped;
-                    record.last_error = Some(GONE_AT_RESTORE.to_string());
-                    report.stopped.push(environment_ref);
-                    true
-                }
-                EnvironmentLiveness::Unknown(reason) => {
-                    report.unverified.push((environment_ref, reason));
-                    false
-                }
-            },
+            }
         }
     }
 }
+
+/// How a store that could not be read is reported.
+const READ_FAILED: &str = "durable environment registry could not be read";

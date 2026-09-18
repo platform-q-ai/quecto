@@ -34,8 +34,14 @@ pub type EnvironmentRegistryBuilder =
 
 /// Composition's builder of the `container ls|kill|gc` handles (#2024
 /// S4d) over a registry restored from the base directory.
-pub type ContainerInventoryBuilder =
-    fn(&std::path::Path, &ConfigSelection) -> super::container_handles::ContainerInventoryHandles;
+/// The inventory handles over a registry restored from the base directory
+/// in the given mode (round 3 H1, #2033): correcting for `ls|kill|gc`,
+/// observing for `gc --dry-run`, which must leave the document untouched.
+pub type ContainerInventoryBuilder = fn(
+    &std::path::Path,
+    &ConfigSelection,
+    crate::application::environments::dto::RestoreMode,
+) -> super::container_handles::ContainerInventoryHandles;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all]\nusage: quecto container kill <ref|name>\nusage: quecto container gc [--dry-run] [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";

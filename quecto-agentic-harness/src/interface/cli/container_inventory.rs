@@ -9,12 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::CliContext;
 use super::container::TOP_USAGE as USAGE;
 use super::container_handles::ContainerInventoryHandles;
-use crate::application::environments::dto::{GcCandidate, GcRemoval, GcReport, GcRequest};
+use crate::application::environments::dto::{
+    GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
+};
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
 };
 
-fn inventory(ctx: &CliContext) -> Result<ContainerInventoryHandles, String> {
+fn inventory(ctx: &CliContext, mode: RestoreMode) -> Result<ContainerInventoryHandles, String> {
     let Some(build) = ctx.container_inventory else {
         return Err("container inventory not composed".to_string());
     };
@@ -22,7 +24,7 @@ fn inventory(ctx: &CliContext) -> Result<ContainerInventoryHandles, String> {
     // alone, otherwise the working directory's layers (the collector's
     // scripts come from it, as the doctor's do).
     let selection = ctx.config_selection()?;
-    let handles = build(&ctx.base_dir(), &selection);
+    let handles = build(&ctx.base_dir(), &selection, mode);
     // An unreadable registry is not an empty one (review F3, #2033): a
     // listing would show nothing, a kill find nothing and the collector
     // would read every exited state dir as unrecorded — refuse all three
@@ -71,7 +73,8 @@ pub(crate) fn cmd_ls(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    let outcome = parse_ls(args).and_then(|all| inventory(ctx).map(|handles| (all, handles)));
+    let outcome = parse_ls(args)
+        .and_then(|all| inventory(ctx, RestoreMode::Correct).map(|handles| (all, handles)));
     match outcome {
         Ok((all, handles)) => {
             let mut records = handles.list.execute();
@@ -207,7 +210,7 @@ pub(crate) fn cmd_kill(
     stderr: &mut String,
 ) -> i32 {
     let outcome = parse_kill(args).and_then(|target| {
-        let handles = inventory(ctx)?;
+        let handles = inventory(ctx, RestoreMode::Correct)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -265,7 +268,14 @@ pub(crate) fn cmd_gc(
     stderr: &mut String,
 ) -> i32 {
     let outcome = parse_gc(args).and_then(|request| {
-        let handles = inventory(ctx)?;
+        // A dry run has no effect at all (round 3 H1, #2033): what the
+        // restore would correct is previewed, never written.
+        let mode = if request.dry_run {
+            RestoreMode::Observe
+        } else {
+            RestoreMode::Correct
+        };
+        let handles = inventory(ctx, mode)?;
         present_restore_notes(&handles, stderr);
         handles
             .gc

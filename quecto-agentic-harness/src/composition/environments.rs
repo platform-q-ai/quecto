@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::ConfigSelection;
-use crate::application::environments::dto::RestoredRegistry;
+use crate::application::environments::dto::{RestoreMode, RestoredRegistry};
 use crate::application::environments::ports::{
     ContainerConfigLookup, ContainerRuntimeInventory, ContainerRuntimePreflight,
     EnvironmentMemberShutdown, EnvironmentProcess, EnvironmentRegistryStore, MemberShutdownReport,
@@ -171,15 +171,21 @@ fn report_restore(report: &RestoredRegistry) {
 /// are reachable from here, so a kill settles none and runs the retained
 /// kill directly). The collector lists and removes unrecorded orphans
 /// through the container config the run's own selection resolves, like
-/// the doctor.
+/// the doctor. An observing `mode` (a `gc --dry-run`) restores without
+/// writing a correction (round 3 H1, #2033).
 pub fn build_container_inventory(
     base_dir: &Path,
     selection: &ConfigSelection,
+    mode: RestoreMode,
 ) -> ContainerInventoryHandles {
     // The restore's account (diagnostics, a read error) is the handles'
     // to carry: the command's presenter reports it and refuses on the
     // read error; composition prints nothing.
-    let (registry, restore) = build_restore_registry(base_dir).execute("cli");
+    let restore = build_restore_registry(base_dir);
+    let (registry, restore) = match mode {
+        RestoreMode::Correct => restore.execute("cli"),
+        RestoreMode::Observe => restore.observe("cli"),
+    };
     ContainerInventoryHandles {
         list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
         kill: Arc::new(KillEnvironment::new(

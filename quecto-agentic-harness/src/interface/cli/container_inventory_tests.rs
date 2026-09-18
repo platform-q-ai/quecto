@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::environments::dto::RestoreMode;
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environment_registry::EnvironmentOrigin;
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
@@ -273,8 +274,11 @@ fn gc_report_presents_candidates_kept_and_roots() {
 #[test]
 fn the_inventory_handles_debug_shows_the_restore_only() {
     let (_dir, ctx, _) = composed();
-    let handles =
-        (ctx.container_inventory.unwrap())(&ctx.base_dir(), &ctx.config_selection().unwrap());
+    let handles = (ctx.container_inventory.unwrap())(
+        &ctx.base_dir(),
+        &ctx.config_selection().unwrap(),
+        RestoreMode::Correct,
+    );
     let shown = format!("{handles:?}");
     assert!(shown.starts_with("ContainerInventoryHandles"), "{shown}");
     assert!(shown.contains("restore"), "{shown}");
@@ -363,5 +367,149 @@ fn an_unreadable_registry_refuses_gc_and_fails_ls_naming_the_read_error() {
             .stderr
             .contains("durable environment registry could not be read"),
         "{output:?}"
+    );
+}
+
+/// A base dir like [`composed`]'s whose inspect reports every container
+/// dead, holding a `retained` `C1` and a `running` `C3` (both with state
+/// dirs), and a global config whose `official` container config lists
+/// nothing and removes through a recording cleanup.
+fn composed_with_exited_containers() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
+    let (dir, mut ctx, _) = composed();
+    let base = ctx.base_dir();
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(state.join("env-three/workspace")).unwrap();
+    std::fs::write(state.join("env-three/container"), "quecto-env-three\n").unwrap();
+    let dead = script(
+        dir.path(),
+        "inspect.sh",
+        r#"if [ "${1:-}" = --list ]; then exit 0; fi; printf '{"status":"dead","metadata":{}}'"#,
+    );
+    let cleanup_log = dir.path().join("cleanup.log");
+    let cleanup = script(
+        dir.path(),
+        "cleanup.sh",
+        &format!(
+            "echo \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'; rm -rf '{}'/\"$QUECTO_CONTAINER_ENVIRONMENT_ID\"",
+            cleanup_log.display(),
+            state.display()
+        ),
+    );
+    let store = FileEnvironmentRegistryStore::for_base_dir(&base);
+    let mut records = store.load().unwrap();
+    let mut c3 = records[0].clone();
+    c3.environment_ref = "C3".into();
+    c3.environment_id = "env-three".into();
+    c3.name = Some("name-C3".into());
+    c3.workspace_path = state.join("env-three/workspace");
+    for record in records.iter_mut() {
+        record.retained_inspect_argv = dead.clone();
+        if record.environment_ref == "C1" {
+            record.status = EnvironmentStatus::Retained;
+        }
+    }
+    c3.retained_inspect_argv = dead.clone();
+    c3.retained_cleanup_argv = cleanup.clone();
+    for record in records.iter().chain(std::iter::once(&c3)) {
+        store.record(record).unwrap();
+    }
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::json!({"container_configs": {"official": {
+            "default": true,
+            "create": ["true", "--state-dir", state.to_string_lossy()],
+            "exec": ["true"],
+            "inspect": dead,
+            "cleanup": cleanup,
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    ctx.config_path = None;
+    (dir, ctx, cleanup_log)
+}
+
+/// Round 3 H1 (#2033): a retained environment's container has exited by
+/// design; `ls` still lists it (as `retained`, without `--all`) and no
+/// command relabels it.
+#[test]
+fn ls_lists_a_retained_environment_whose_container_exited() {
+    let (_dir, ctx, _) = composed_with_exited_containers();
+    let output = run(&["container", "ls"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert!(
+        output.stdout.contains("C1   name-C1  official  retained"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output
+            .stderr
+            .contains("note: C1 could not be verified against the runtime: retained: container exited; only container kill ends it"),
+        "{}",
+        output.stderr
+    );
+    let on_file = FileEnvironmentRegistryStore::for_base_dir(&ctx.base_dir())
+        .load()
+        .unwrap();
+    assert_eq!(on_file[0].status, EnvironmentStatus::Retained);
+}
+
+/// Round 3 H1 (#2033): `gc --dry-run` has no effect at all — the restore
+/// it runs over previews its corrections (`C3` running → stopped, its
+/// container gone) without writing them, so `environments.json` is byte
+/// for byte what it was; a real `gc` writes the correction and collects
+/// through `C3`'s own cleanup, and keeps the retained `C1` either way.
+#[test]
+fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it() {
+    let (_dir, ctx, cleanup_log) = composed_with_exited_containers();
+    let document = ctx.base_dir().join("environments.json");
+    let before = std::fs::read(&document).unwrap();
+    let output = run(&["container", "gc", "--dry-run"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert!(
+        output.stdout.contains("env-three  ")
+            && output.stdout.contains("via retained cleanup of C3"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("env-one  recorded C1 as retained"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output.stderr.contains("C3 would be recorded stopped"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(
+        std::fs::read(&document).unwrap(),
+        before,
+        "a dry run writes nothing"
+    );
+    assert!(!cleanup_log.exists(), "a dry run removes nothing");
+    let output = run(&["container", "gc"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(&cleanup_log).unwrap().trim(),
+        "env-three"
+    );
+    let on_file = FileEnvironmentRegistryStore::for_base_dir(&ctx.base_dir())
+        .load()
+        .unwrap();
+    let statuses: Vec<(&str, &EnvironmentStatus)> = on_file
+        .iter()
+        .map(|r| (r.environment_ref.as_str(), &r.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        [("C1", &EnvironmentStatus::Retained)],
+        "C3 was collected and forgotten (C2, stopped with nothing left, likewise); the retained C1 stands"
+    );
+    assert!(
+        output.stdout.contains("env-one  recorded C1 as retained"),
+        "{}",
+        output.stdout
     );
 }

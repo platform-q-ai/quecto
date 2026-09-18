@@ -139,6 +139,18 @@ pub enum EnvironmentLiveness {
     Unknown(String),
 }
 
+/// How a restore treats the corrections it finds (round 3 H1, #2033).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RestoreMode {
+    /// Corrections are written to the store conditionally: a session
+    /// start, a `container ls|kill`, a real `container gc`.
+    #[default]
+    Correct,
+    /// Corrections are seeded in memory and reported, never written: a
+    /// `container gc --dry-run` leaves the document as it found it.
+    Observe,
+}
+
 /// What restoring the durable registry into a session found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RestoredRegistry {
