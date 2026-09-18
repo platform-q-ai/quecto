@@ -307,7 +307,7 @@ What a new session can do with a restored environment:
   config's `cleanup` — the harness itself names no runtime. A `running`,
   `retained`, `killing` or `cleanup-failed` record is always **kept**
   (with the reason, pointing at `container kill`); so is any state dir
-  whose container runs, and any state dir younger than five minutes with
+  whose container runs, and any state dir younger than fifteen minutes with
   no container recorded yet (a create may be in flight — a directory
   whose age cannot be read counts as young). `--dry-run` prints the same
   judgement without an effect; the report lists what was (or would be)
