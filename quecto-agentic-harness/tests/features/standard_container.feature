@@ -39,6 +39,27 @@ Feature: The standard container is landed on master
     And the overlay entry "standard" should be the default and its create argv should be the materialised create script with "--state-dir" under the base directory, "--repo" the origin remote and "--image" "quecto-box:local"
 
   @done @issue-2024
+  Scenario: a re-init keeps the existing --repo and --image unless the flag is given, and says which
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    When I run quecto with arguments "container init --repo https://example.test/chosen --image mine:1"
+    Then the exit code should be 0
+    And the output should not contain "kept:"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the overlay entry "standard" create argv should carry "--repo" "https://example.test/chosen"
+    And the overlay entry "standard" create argv should carry "--image" "mine:1"
+    And the output should contain "kept:    --repo https://example.test/chosen (the existing entry's; pass --repo to change it)"
+    And the output should contain "kept:    --image mine:1 (the existing entry's; pass --image to change it)"
+    And the output should not contain "rewrote:"
+    When I run quecto with arguments "container init --image mine:2"
+    Then the exit code should be 0
+    And the overlay entry "standard" create argv should carry "--repo" "https://example.test/chosen"
+    And the overlay entry "standard" create argv should carry "--image" "mine:2"
+    And the output should contain "kept:    --repo https://example.test/chosen"
+    And the output should contain "rewrote: --image mine:2 (was mine:1)"
+    And the output should contain "podman build -t mine:2 -f"
+
+  @done @issue-2024
   Scenario: init beside an existing default adds the entry without the default label and says so
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     And the global configuration already labels container config "other" as the default

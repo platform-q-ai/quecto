@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
-    AssetState, CheckStatus, ContainerConfigLayer, RepositoryOrigin, StandardContainerReport,
-    StandardContainerRequest, StandardContainerStatus,
+    AssetState, CheckStatus, ContainerConfigLayer, EntryValueChange, RepositoryOrigin,
+    StandardContainerReport, StandardContainerRequest, StandardContainerStatus,
 };
 use crate::domain::redaction::redact_url_userinfo;
 
@@ -237,10 +237,17 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
             "  --repo {} (as given): a new container is a fresh clone of it\n",
             redact_url_userinfo(url)
         )),
+        (Some(url), RepositoryOrigin::ExistingEntry) => out.push_str(&format!(
+            "  --repo {} (the existing entry's): a new container is a fresh clone of it\n",
+            redact_url_userinfo(url)
+        )),
         (Some(url), _) => out.push_str(&format!(
             "  --repo {} (the checkout's origin remote): a new container is a fresh clone of it\n",
             redact_url_userinfo(url)
         )),
+        (None, RepositoryOrigin::ExistingEntry) => out.push_str(
+            "  sandbox: no --repo (the existing entry has none) — a new container is an empty workspace; rerun with --repo <url> to clone one\n",
+        ),
         (None, _) => out.push_str(
             "  sandbox: no --repo (the checkout has no origin remote and none was given) — a new container is an empty workspace; rerun with --repo <url> to clone one\n",
         ),
@@ -249,6 +256,32 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         "  --state-dir under the quecto base directory; --image {}\n",
         report.image
     ));
+    let value = |value: Option<&String>| {
+        value
+            .map(|value| redact_url_userinfo(value))
+            .unwrap_or_else(|| "(none)".to_string())
+    };
+    for (flag, change, current) in [
+        (
+            "--repo",
+            &report.repository_change,
+            report.repository.as_ref(),
+        ),
+        ("--image", &report.image_change, Some(&report.image)),
+    ] {
+        match change {
+            None => {}
+            Some(EntryValueChange::Kept) => out.push_str(&format!(
+                "  kept:    {flag} {} (the existing entry's; pass {flag} to change it)\n",
+                value(current)
+            )),
+            Some(EntryValueChange::Rewrote { previous }) => out.push_str(&format!(
+                "  rewrote: {flag} {} (was {})\n",
+                value(current),
+                value(previous.as_ref())
+            )),
+        }
+    }
     out.push_str("next:\n");
     out.push_str(&format!(
         "  1. build the image (a create never builds or pulls; the scripts drive whichever runtime `quecto container doctor` names on its runtime-cli line — run the same command with that runtime's CLI):\n     {}\n",

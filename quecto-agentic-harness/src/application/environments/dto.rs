@@ -256,10 +256,23 @@ pub struct StandardContainerRequest {
 pub enum RepositoryOrigin {
     /// `--repo` on the command line.
     Explicit,
+    /// The existing standard entry's own `--repo` (a re-init without the
+    /// flag keeps it; the origin is not re-derived).
+    ExistingEntry,
     /// The checkout's `origin` remote.
     CheckoutOrigin,
     /// Neither: the entry is a sandbox (empty workspace, no clone).
     Sandbox,
+}
+
+/// On a re-init, how one of the entry's values (`--repo`, `--image`)
+/// relates to the existing standard entry's: kept as it was, or rewritten
+/// by the flag (`previous` is the old value; `None` for a sandbox that
+/// gains a repository).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryValueChange {
+    Kept,
+    Rewrote { previous: Option<String> },
 }
 
 /// A `container_configs.<name>` entry as init writes it: every argv
@@ -277,6 +290,17 @@ pub struct ContainerConfigDocument {
 }
 
 impl ContainerConfigDocument {
+    /// The value after `flag` in the create argv, before any `--`
+    /// (the shipped scripts' convention: `--repo <url>`, `--image <tag>`).
+    pub fn create_value(&self, flag: &str) -> Option<&str> {
+        self.create
+            .iter()
+            .take_while(|arg| *arg != "--")
+            .skip_while(|arg| *arg != flag)
+            .nth(1)
+            .map(String::as_str)
+    }
+
     /// Every argv with its key, in the order the entry lists them.
     pub fn argvs(&self) -> [(&'static str, &[String]); 5] {
         [
@@ -319,6 +343,10 @@ pub struct StandardContainerReport {
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,
+    /// How `--repo` and `--image` relate to an existing standard entry's
+    /// values; `None` when there was no entry to keep from.
+    pub repository_change: Option<EntryValueChange>,
+    pub image_change: Option<EntryValueChange>,
     /// The exact command that builds `image` from the materialised
     /// bundle: the one step init leaves to the operator.
     pub build_command: String,
@@ -377,6 +405,7 @@ impl std::fmt::Display for InitialiseStandardContainerError {
                 "{} {url} carries a credential in its userinfo (any `user@` or `user:password@` over http(s) is a token or password); init will not bake it into the repo-local overlay — use a URL without any credential (a credential helper, an ssh key or `gh auth login` supplies it at clone time)",
                 match origin {
                     RepositoryOrigin::Explicit => "the --repo URL",
+                    RepositoryOrigin::ExistingEntry => "the existing standard entry's --repo",
                     _ => "the checkout's origin remote",
                 }
             ),

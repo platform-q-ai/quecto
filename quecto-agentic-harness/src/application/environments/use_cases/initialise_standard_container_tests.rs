@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::InitialiseStandardContainer;
 use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
-    ContainerConfigEntry, ContainerConfigLayer, InitialiseStandardContainerError,
+    ContainerConfigEntry, ContainerConfigLayer, EntryValueChange, InitialiseStandardContainerError,
     PersistedContainerConfig, RepositoryOrigin, StandardContainerRequest,
 };
 use crate::application::environments::ports::{
@@ -126,6 +126,7 @@ impl ContainerConfigRoster for FixedRoster {
 struct RecordingPersistence {
     written: Mutex<Vec<(String, ContainerConfigDocument)>>,
     refuse: Option<String>,
+    refuse_existing: Mutex<Option<String>>,
 }
 
 impl ContainerConfigPersistence for RecordingPersistence {
@@ -153,6 +154,20 @@ impl ContainerConfigPersistence for RecordingPersistence {
 
     fn location(&self) -> Option<PathBuf> {
         Some(PathBuf::from("/p/.quecto/config.json"))
+    }
+
+    fn existing(&self, name: &str) -> Result<Option<ContainerConfigDocument>, String> {
+        if let Some(reason) = self.refuse_existing.lock().unwrap().as_ref() {
+            return Err(reason.clone());
+        }
+        Ok(self
+            .written
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(written, _)| written == name)
+            .map(|(_, entry)| entry.clone()))
     }
 }
 
@@ -185,6 +200,7 @@ fn build_rig(
     let persistence = Arc::new(RecordingPersistence {
         written: Mutex::new(vec![]),
         refuse,
+        refuse_existing: Mutex::new(None),
     });
     let use_case = InitialiseStandardContainer::new(
         assets.clone(),
@@ -319,6 +335,105 @@ fn a_second_init_keeps_every_asset_and_rewrites_the_same_entry() {
     let written = rig.persistence.written.lock().unwrap();
     assert_eq!(written[0].1, written[1].1);
     assert_eq!(first.entry.entry, second.entry.entry);
+}
+
+#[test]
+fn a_second_init_keeps_the_existing_repo_and_image_unless_the_flag_is_given() {
+    let rig = build_rig(
+        Ok(Some("https://example.test/origin".into())),
+        ContainerConfigRosterReport {
+            configs: vec![entry("standard", true)],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut first = request("/p");
+    first.repository = Some("https://example.test/explicit".into());
+    first.image = Some("mine:1".into());
+    let first = rig.use_case.execute(&first).unwrap();
+    assert_eq!(first.repository_change, None);
+    assert_eq!(first.image_change, None);
+    // No flags: the existing entry's values stand, the origin is not
+    // re-derived, and the report says what was kept.
+    let second = rig.use_case.execute(&request("/p")).unwrap();
+    assert_eq!(
+        second.repository.as_deref(),
+        Some("https://example.test/explicit")
+    );
+    assert_eq!(second.repository_origin, RepositoryOrigin::ExistingEntry);
+    assert_eq!(second.image, "mine:1");
+    assert_eq!(second.repository_change, Some(EntryValueChange::Kept));
+    assert_eq!(second.image_change, Some(EntryValueChange::Kept));
+    assert_eq!(first.entry.entry, second.entry.entry);
+    // A flag rewrites that value and the report says so, with the old one.
+    let mut third = request("/p");
+    third.image = Some("mine:2".into());
+    let third = rig.use_case.execute(&third).unwrap();
+    assert_eq!(third.image, "mine:2");
+    assert_eq!(
+        third.repository.as_deref(),
+        Some("https://example.test/explicit")
+    );
+    assert_eq!(third.repository_change, Some(EntryValueChange::Kept));
+    assert_eq!(
+        third.image_change,
+        Some(EntryValueChange::Rewrote {
+            previous: Some("mine:1".into())
+        })
+    );
+    assert_eq!(
+        argv(&third.entry.entry, "create")[5..],
+        ["--image", "mine:2"]
+    );
+    let mut fourth = request("/p");
+    fourth.repository = Some("https://example.test/other".into());
+    let fourth = rig.use_case.execute(&fourth).unwrap();
+    assert_eq!(fourth.repository_origin, RepositoryOrigin::Explicit);
+    assert_eq!(
+        fourth.repository_change,
+        Some(EntryValueChange::Rewrote {
+            previous: Some("https://example.test/explicit".into())
+        })
+    );
+    assert_eq!(fourth.image, "mine:2");
+    // The same flag value again is a keep, not a rewrite.
+    let mut fifth = request("/p");
+    fifth.repository = Some("https://example.test/other".into());
+    let fifth = rig.use_case.execute(&fifth).unwrap();
+    assert_eq!(fifth.repository_change, Some(EntryValueChange::Kept));
+}
+
+#[test]
+fn a_kept_existing_repository_is_still_judged_for_credentials() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    rig.persistence.written.lock().unwrap().push((
+        "standard".into(),
+        ContainerConfigDocument {
+            create: vec![
+                "/p/.quecto/containers/standard/scripts/create.sh".into(),
+                "--repo".into(),
+                "https://ghp_TOKEN@example.test/r".into(),
+            ],
+            ..Default::default()
+        },
+    ));
+    let text = rig
+        .use_case
+        .execute(&request("/p"))
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("existing standard entry"), "{text}");
+    assert!(text.contains("carries a credential"), "{text}");
+    assert!(!text.contains("ghp_TOKEN"), "{text}");
+    // An unreadable existing entry is an error, never silently a fresh one.
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    *rig.persistence.refuse_existing.lock().unwrap() = Some("overlay unreadable".into());
+    let text = rig
+        .use_case
+        .execute(&request("/p"))
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("overlay unreadable"), "{text}");
 }
 
 #[test]

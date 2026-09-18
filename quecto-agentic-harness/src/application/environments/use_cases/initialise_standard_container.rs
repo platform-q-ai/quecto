@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument,
+    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument, EntryValueChange,
     InitialiseStandardContainerError, RepositoryOrigin, STANDARD_CONTAINER_CONFIG,
     STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE, StandardContainerReport,
     StandardContainerRequest, StandardEntryOutcome,
@@ -80,10 +80,23 @@ impl InitialiseStandardContainer {
         let catalogue = self.assets.catalogue();
         // The repository and the effective set are resolved before any
         // asset is written: a refusal (an untrusted overlay) leaves the
-        // project untouched.
-        let (repository, repository_origin) = match &request.repository {
-            Some(url) => (Some(url.clone()), RepositoryOrigin::Explicit),
-            None => match self
+        // project untouched. An existing standard entry keeps its --repo
+        // and --image unless the flag is given: a re-init never resets
+        // what an operator chose, and never re-derives the origin over it.
+        let existing = self
+            .persistence
+            .existing(STANDARD_CONTAINER_CONFIG)
+            .map_err(InitialiseStandardContainerError::Persist)?;
+        let previous_repository = existing
+            .as_ref()
+            .and_then(|entry| entry.create_value("--repo").map(str::to_string));
+        let previous_image = existing
+            .as_ref()
+            .and_then(|entry| entry.create_value("--image").map(str::to_string));
+        let (repository, repository_origin) = match (&request.repository, &existing) {
+            (Some(url), _) => (Some(url.clone()), RepositoryOrigin::Explicit),
+            (None, Some(_)) => (previous_repository.clone(), RepositoryOrigin::ExistingEntry),
+            (None, None) => match self
                 .origin
                 .origin(&request.project)
                 .map_err(InitialiseStandardContainerError::Origin)?
@@ -92,6 +105,24 @@ impl InitialiseStandardContainer {
                 None => (None, RepositoryOrigin::Sandbox),
             },
         };
+        let image = match (&request.image, &previous_image) {
+            (Some(image), _) => image.clone(),
+            (None, Some(image)) => image.clone(),
+            (None, None) => STANDARD_CONTAINER_IMAGE.to_string(),
+        };
+        let change = |previous: Option<&String>, current: Option<&String>| {
+            existing.as_ref().map(|_| {
+                if previous == current {
+                    EntryValueChange::Kept
+                } else {
+                    EntryValueChange::Rewrote {
+                        previous: previous.cloned(),
+                    }
+                }
+            })
+        };
+        let repository_change = change(previous_repository.as_ref(), repository.as_ref());
+        let image_change = change(previous_image.as_ref(), Some(&image));
         if let Some(url) = repository
             .as_deref()
             .filter(|url| url_carries_credential(url))
@@ -126,10 +157,6 @@ impl InitialiseStandardContainer {
             .iter()
             .find(|entry| entry.default && entry.name != STANDARD_CONTAINER_CONFIG)
             .map(|entry| entry.name.clone());
-        let image = request
-            .image
-            .clone()
-            .unwrap_or_else(|| STANDARD_CONTAINER_IMAGE.to_string());
         let entry = self.entry(
             &assets_dir,
             repository.as_deref(),
@@ -209,6 +236,8 @@ impl InitialiseStandardContainer {
             refreshed,
             repository,
             repository_origin,
+            repository_change,
+            image_change,
             build_command,
             image,
             entry: StandardEntryOutcome {

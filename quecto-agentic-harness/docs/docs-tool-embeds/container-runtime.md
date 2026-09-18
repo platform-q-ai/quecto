@@ -41,7 +41,8 @@ of them a build. Run them from the repository **root** (or pass
    whatever it declares, a symbolic link anywhere on the way to the
    bundle, and an explicit `--config` are refused before anything is
    written (`quecto config trust` first); init never adopts an overlay. Run it again any time: it
-   is idempotent.
+   is idempotent, and a re-init keeps the entry's existing `--repo` and
+   `--image` unless the flag is given (`kept:` / `rewrote:` lines say which).
 2. **Build the image** — exactly the command init printed (a create never
    builds or pulls):
    ```

@@ -175,3 +175,54 @@ fn a_selection_without_an_overlay_location_is_refused() {
     assert!(error.contains("no repo-local overlay"), "{error}");
     assert_eq!(port.check().unwrap_err(), error);
 }
+
+#[test]
+fn existing_reads_back_the_overlays_own_entry_and_never_a_global_one() {
+    let rig = Rig::new();
+    let port = rig.port();
+    assert_eq!(port.existing("standard").unwrap(), None, "no overlay yet");
+    // A global entry of the same name is not the overlay's.
+    std::fs::write(
+        rig.base_dir.join("config.json"),
+        serde_json::json!({"container_configs": {"standard": {
+            "default": true, "create": ["/g/create.sh", "--repo", "https://global.test/g"], "cleanup": ["/g/kill.sh"]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(port.existing("standard").unwrap(), None);
+    // Written through the port, read back whole (the overlay's default
+    // label un-defaults the global entry: one default in the merge).
+    let mut ours = entry(true);
+    ours.create.extend([
+        "--repo".to_string(),
+        "https://ours.test/r".to_string(),
+        "--image".to_string(),
+        "mine:1".to_string(),
+    ]);
+    port.persist("standard", &ours).unwrap();
+    let existing = port.existing("standard").unwrap().unwrap();
+    assert_eq!(existing, ours);
+    assert_eq!(existing.create_value("--repo"), Some("https://ours.test/r"));
+    assert_eq!(existing.create_value("--image"), Some("mine:1"));
+    assert_eq!(port.existing("other").unwrap(), None);
+}
+
+#[test]
+fn existing_is_none_while_the_overlay_is_untrusted() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.overlay().parent().unwrap()).unwrap();
+    std::fs::write(
+        rig.overlay(),
+        serde_json::json!({"container_configs": {"standard": {
+            "create": ["/x/create.sh", "--repo", "https://x.test/r"], "cleanup": ["/x/kill.sh"]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let port = rig.port();
+    // Untrusted content is never read back as "what we wrote before";
+    // `check` is the refusal that stops an init here first.
+    assert_eq!(port.existing("standard").unwrap(), None);
+    assert!(port.check().is_err());
+}

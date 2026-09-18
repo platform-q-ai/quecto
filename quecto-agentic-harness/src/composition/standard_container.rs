@@ -93,6 +93,52 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
     fn location(&self) -> Option<std::path::PathBuf> {
         self.selection.overlay_path().map(Path::to_path_buf)
     }
+
+    /// The overlay's own `container_configs.<name>`, read from the applied
+    /// overlay document the resolution reports (a withheld overlay is
+    /// refused by `check` before this is consulted).
+    fn existing(&self, name: &str) -> Result<Option<ContainerConfigDocument>, String> {
+        let effective = self
+            .resolve
+            .execute(&self.selection)
+            .map_err(|error| error.to_string())?;
+        Ok(effective
+            .overlay_document
+            .as_ref()
+            .and_then(|overlay| overlay.get("container_configs"))
+            .and_then(|section| section.get(name))
+            .map(document_entry))
+    }
+}
+
+/// The inverse of [`entry_document`]: the entry as the overlay spells it,
+/// read leniently (a missing or non-string argv element is dropped) —
+/// the schema's own validation ran when the overlay was applied.
+fn document_entry(document: &serde_json::Value) -> ContainerConfigDocument {
+    let argv = |key: &str| -> Vec<String> {
+        document
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    ContainerConfigDocument {
+        default: document
+            .get("default")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        create: argv("create"),
+        exec: argv("exec"),
+        inspect: argv("inspect"),
+        kill: argv("kill"),
+        cleanup: argv("cleanup"),
+    }
 }
 
 /// The entry as the configuration schema spells it: the `default` label

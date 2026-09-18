@@ -648,6 +648,10 @@ is written, so a refused init leaves the project untouched):
    drive whichever runtime the doctor's `runtime-cli` line names).
 
 Running `init` twice changes nothing (no files, byte-identical overlay).
+A re-init keeps the existing entry's `--repo` and `--image` unless the
+flag is given — the origin remote is not re-derived over a `--repo` you
+chose — and prints `kept:` / `rewrote:` lines for each so nothing changes
+silently.
 
 **The trust boundary: host-side scripts.** The overlay's trust record
 covers `.quecto/config.json` — the entry and the argv it names — not the

@@ -268,4 +268,11 @@ pub trait ContainerConfigPersistence: Send + Sync {
 
     /// The overlay file a persist would write, when the run has one.
     fn location(&self) -> Option<PathBuf>;
+
+    /// The entry `container_configs.<name>` as the project's own overlay
+    /// currently declares it (`None` when the overlay has none), so a
+    /// re-init can keep what it wrote before. Read from the applied
+    /// overlay only — never a global entry of the same name; `Err` when
+    /// the overlay cannot be read.
+    fn existing(&self, name: &str) -> Result<Option<ContainerConfigDocument>, String>;
 }
