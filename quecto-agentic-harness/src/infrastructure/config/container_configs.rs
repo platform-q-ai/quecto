@@ -29,6 +29,10 @@ pub struct ResolvedConfig {
     pub config: Config,
     pub diagnostics: Vec<String>,
     pub overlay_withheld: bool,
+    /// The `container_configs` names the applied overlay declared (#2024
+    /// S4c): the repo-bound entries of the merged set. Empty when no
+    /// overlay was applied.
+    pub overlay_entries: Vec<String>,
 }
 
 /// The launching agent's effective configuration, bound by composition to
@@ -73,15 +77,17 @@ impl EffectiveContainerConfigs for ContainerConfigsFromEffectiveConfig {
         }
         .map_err(ContainerConfigsError::Invalid)?;
         Ok(EffectiveContainerConfigSet {
-            configs: launch_configs(&resolved.config),
+            configs: launch_configs(&resolved.config, &resolved.overlay_entries),
             diagnostics: resolved.diagnostics,
             overlay_withheld: resolved.overlay_withheld,
         })
     }
 }
 
-/// Every configured entry in the launch vocabulary, sorted by name.
-pub fn launch_configs(config: &Config) -> Vec<ContainerLaunchConfig> {
+/// Every configured entry in the launch vocabulary, sorted by name;
+/// `overlay_entries` names the ones the checkout's applied overlay
+/// declared.
+pub fn launch_configs(config: &Config, overlay_entries: &[String]) -> Vec<ContainerLaunchConfig> {
     let mut configs: Vec<ContainerLaunchConfig> = config
         .container_configs
         .iter()
@@ -93,10 +99,27 @@ pub fn launch_configs(config: &Config) -> Vec<ContainerLaunchConfig> {
             exec: entry.exec.clone(),
             kill: entry.kill.clone(),
             inspect: entry.inspect.clone(),
+            repo_bound: overlay_entries.iter().any(|declared| declared == name),
+            repository: repository_from_argv(&entry.create),
         })
         .collect();
     configs.sort_by(|a, b| a.name.cmp(&b.name));
     configs
+}
+
+/// The repository a create argv bakes in, by the shipped scripts'
+/// convention: the non-empty value after `--repo`, before the `--` that
+/// separates the script's own arguments from the child command (the
+/// scripts accept no `--repo=<url>` form, so none is read). Descriptive
+/// only — the argv is executed as written, whatever this reads.
+pub fn repository_from_argv(create: &[String]) -> Option<String> {
+    create
+        .iter()
+        .take_while(|arg| *arg != "--")
+        .skip_while(|arg| *arg != "--repo")
+        .nth(1)
+        .filter(|url| !url.is_empty())
+        .cloned()
 }
 
 impl std::fmt::Debug for ContainerConfigsFromEffectiveConfig {
@@ -106,3 +129,7 @@ impl std::fmt::Debug for ContainerConfigsFromEffectiveConfig {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+#[path = "container_configs_tests.rs"]
+mod tests;

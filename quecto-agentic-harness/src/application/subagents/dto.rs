@@ -452,7 +452,10 @@ pub enum ContainerConfigSource {
 }
 
 /// One named container config as launch policy sees it: the argv sets a
-/// script-managed runtime runs, and whether `container: true` selects it.
+/// script-managed runtime runs, whether `container: true` selects it, and
+/// what an agent choosing between entries needs to know (#2024 S4c):
+/// whether the checkout's applied overlay declared it, and the repository
+/// its create argv bakes in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerLaunchConfig {
     pub name: String,
@@ -462,6 +465,57 @@ pub struct ContainerLaunchConfig {
     pub exec: Vec<String>,
     pub kill: Vec<String>,
     pub inspect: Vec<String>,
+    /// Declared by the launching agent's checkout through its applied
+    /// `.quecto/config.json` overlay (repo-bound), not by the global file.
+    pub repo_bound: bool,
+    /// The repository the create argv bakes in (`--repo <url>` for the
+    /// shipped scripts); `None` for a sandbox config or an adapter whose
+    /// argv names none in that form.
+    pub repository: Option<String>,
+}
+
+impl ContainerLaunchConfig {
+    /// The programs the argv sets run (each set's first element), once
+    /// each in `create`, `cleanup`, `exec`, `kill`, `inspect` order: the
+    /// host-side scripts a launch executes.
+    pub fn scripts(&self) -> Vec<std::path::PathBuf> {
+        let mut scripts: Vec<std::path::PathBuf> = Vec::new();
+        for argv in [
+            &self.create,
+            &self.cleanup,
+            &self.exec,
+            &self.kill,
+            &self.inspect,
+        ] {
+            if let Some(first) = argv.first().map(std::path::PathBuf::from)
+                && !scripts.contains(&first)
+            {
+                scripts.push(first);
+            }
+        }
+        scripts
+    }
+
+    /// Why launch policy would refuse this entry's argv, if it would:
+    /// `create` and `cleanup` are required, and no argument of any set may
+    /// be empty or carry a NUL. One rule for the selection and the roster.
+    pub fn argv_problem(&self) -> Option<&'static str> {
+        if self.create.is_empty() {
+            return Some("missing create argv");
+        }
+        if self.cleanup.is_empty() {
+            return Some("missing cleanup argv");
+        }
+        let unsafe_arg = |arg: &String| arg.is_empty() || arg.contains('\0');
+        self.create
+            .iter()
+            .chain(&self.cleanup)
+            .chain(&self.exec)
+            .chain(&self.kill)
+            .chain(&self.inspect)
+            .any(unsafe_arg)
+            .then_some("unsafe argv")
+    }
 }
 
 /// The container configs in effect for a source, sorted by name, and the
@@ -514,6 +568,8 @@ impl fmt::Display for ContainerConfigsError {
 
 impl std::error::Error for ContainerConfigsError {}
 
+pub use super::standard_script::StandardScriptVerdict;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
     pub source: ContainerConfigSource,
@@ -560,6 +616,15 @@ pub enum SelectContainerConfigError {
         name: String,
         what: &'static str,
     },
+    /// A standard-bundle script the entry's argv names no longer carries
+    /// the embedded bytes (or is missing, or cannot be judged): the
+    /// host-side script would run with no trust behind it, so the launch
+    /// is refused until `quecto container init --refresh` restores it.
+    StandardScriptAltered {
+        name: String,
+        script: std::path::PathBuf,
+        verdict: StandardScriptVerdict,
+    },
 }
 
 fn available(names: &[String]) -> String {
@@ -588,7 +653,10 @@ impl SelectContainerConfigError {
             Self::OverlayWithheld { diagnostics }
             | Self::NoDefault { diagnostics, .. }
             | Self::Unknown { diagnostics, .. } => diagnostics,
-            Self::RelativeConfigPath(_) | Self::Unavailable(_) | Self::InvalidArgv { .. } => &[],
+            Self::RelativeConfigPath(_)
+            | Self::Unavailable(_)
+            | Self::InvalidArgv { .. }
+            | Self::StandardScriptAltered { .. } => &[],
         }
     }
 }
@@ -626,6 +694,16 @@ impl fmt::Display for SelectContainerConfigError {
             ),
             Self::InvalidArgv { what, .. } => {
                 write!(f, "invalid container_configs configuration: {what}")
+            }
+            Self::StandardScriptAltered {
+                name,
+                script,
+                verdict,
+            } => {
+                let reason = verdict.refusal(script).unwrap_or_else(|| {
+                    format!("{} is not the standard bundle's", script.display())
+                });
+                write!(f, "container config '{name}' refused: {reason}")
             }
         }
     }

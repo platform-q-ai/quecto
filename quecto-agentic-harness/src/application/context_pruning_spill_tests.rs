@@ -396,3 +396,12 @@ async fn mem_store_trait_surface_clear_empties_entries() {
     store.clear(&id("s")).await.unwrap();
     assert!(store.list_entries(&id("s")).await.unwrap().is_empty());
 }
+
+#[test]
+fn the_retention_handles_describe_themselves_without_naming_the_store() {
+    let store = Arc::new(MemStore::default());
+    assert_eq!(
+        format!("{:?}", retention(&store)),
+        "ContextRetention { .. }"
+    );
+}

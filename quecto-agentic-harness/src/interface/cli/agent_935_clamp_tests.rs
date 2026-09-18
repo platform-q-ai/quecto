@@ -59,8 +59,8 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,

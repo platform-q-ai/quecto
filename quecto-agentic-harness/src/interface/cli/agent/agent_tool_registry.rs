@@ -31,10 +31,11 @@ pub(super) struct ToolRegistryArgs<'a> {
     /// spawn tool.
     pub(super) effort_control:
         std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
-    /// The run's container-config selection (#2024 S4a), handed to the
-    /// spawn tool.
-    pub(super) container_config_selection:
-        std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>,
+    /// The run's container-config handles (#2024 S4a, S4c): the selection
+    /// the spawn tool launches through and the discovery query the spawn
+    /// description and agent_cmd list through.
+    pub(super) container_configs:
+        crate::interface::cli::container_config_handles::ContainerConfigHandles,
     pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
@@ -71,7 +72,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         http_client,
         web_fetch_tool,
         effort_control,
-        container_config_selection,
+        container_configs,
         flags,
         stderr,
         broadcast_tx,
@@ -151,7 +152,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
             effort_control: Some(effort_control),
-            container_config_selection: Some(container_config_selection),
+            container_configs: Some(container_configs),
             environment_registry,
             kill_tool: flags.kill_tool,
             disabled_tools: &flags.disabled_tools,

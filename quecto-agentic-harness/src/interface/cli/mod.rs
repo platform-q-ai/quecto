@@ -9,10 +9,13 @@ mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
 mod container;
+pub mod container_config_handles;
 pub mod container_handles;
 mod container_inventory;
+mod container_setup;
 pub use container::{
-    ContainerDoctorBuilder, ContainerInventoryBuilder, EnvironmentRegistryBuilder,
+    ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
+    ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
 mod help;
 mod models;
@@ -213,16 +216,15 @@ pub type ToolPolicyPersistenceBuilder = fn(
 )
     -> crate::application::agent_loop::ToolPolicyPersistence;
 
-/// Composition's builder of the spawn tool's container-config selection
-/// (#2024 S4a): launch policy over the run's own configuration selection,
-/// so `container: true` resolves against the working directory's trusted
-/// overlay. Injected through the CLI context; the interface never
-/// composes the selection or reads a container config itself.
-pub type ContainerConfigSelectionBuilder =
-    fn(
-        &std::path::Path,
-        &ConfigSelection,
-    ) -> std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>;
+/// Composition's builder of the container-config handles (#2024 S4a,
+/// S4c): launch policy over the run's own configuration selection, so
+/// `container: true` resolves against the working directory's trusted
+/// overlay, and the discovery query `get_container_configs` and the spawn
+/// description's roster read the same layers. Injected through the CLI
+/// context; the interface never composes them or reads a container config
+/// itself.
+pub type ContainerConfigHandlesBuilder =
+    fn(&std::path::Path, &ConfigSelection) -> container_config_handles::ContainerConfigHandles;
 
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write
@@ -301,10 +303,11 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run refuses to start without it.
     pub tool_policy_persistence: Option<ToolPolicyPersistenceBuilder>,
-    /// Composition's container-config selection builder (#2024 S4a), from
-    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
-    /// run's spawn tool selects container configs through it.
-    pub container_config_selection: Option<ContainerConfigSelectionBuilder>,
+    /// Composition's container-config handles builder (#2024 S4a, S4c),
+    /// from the binary's `main` through [`run`]'s [`CliComposition`]; an
+    /// agent run's spawn tool selects container configs through it and its
+    /// agent_cmd lists them.
+    pub container_configs: Option<ContainerConfigHandlesBuilder>,
     /// Composition's container-doctor builder (#2024 S4b); `quecto
     /// container doctor` refuses to run without it.
     pub container_doctor: Option<ContainerDoctorBuilder>,
@@ -316,6 +319,10 @@ pub struct CliContext {
     /// Composition's container inventory builder (#2024 S4d); `quecto
     /// container ls|kill|gc` refuse to run without it.
     pub container_inventory: Option<ContainerInventoryBuilder>,
+    /// Composition's standard-container builders (#2024 S4e); `quecto
+    /// container init|status` refuse to run without them.
+    pub container_init: Option<ContainerInitBuilder>,
+    pub container_status: Option<ContainerStatusBuilder>,
 }
 
 impl CliContext {
@@ -390,10 +397,12 @@ pub struct CliComposition {
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
-    pub container_config_selection: ContainerConfigSelectionBuilder,
+    pub container_configs: ContainerConfigHandlesBuilder,
     pub container_doctor: ContainerDoctorBuilder,
     pub environment_registry: EnvironmentRegistryBuilder,
     pub container_inventory: ContainerInventoryBuilder,
+    pub container_init: ContainerInitBuilder,
+    pub container_status: ContainerStatusBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -422,10 +431,12 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),
-        container_config_selection: Some(composition.container_config_selection),
+        container_configs: Some(composition.container_configs),
         container_doctor: Some(composition.container_doctor),
         environment_registry: Some(composition.environment_registry),
         container_inventory: Some(composition.container_inventory),
+        container_init: Some(composition.container_init),
+        container_status: Some(composition.container_status),
         ..Default::default()
     };
 

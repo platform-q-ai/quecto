@@ -17,10 +17,20 @@ passes those requirements to a container coordinator, which creates the run and
 starts its local workers. A worker finishing its turn is not swarm completion.
 
 The master launches a normal agent through the existing `spawn` container
-capability. The selected named `container_configs` entry determines the image,
-repository and environment; swarm does not select a special image or start a
-separate service. Use the official isolated Docker/Podman adapter and an image
-with the current harness and Python 3. See [container configuration](../../docs/container-runtimes.md)
+capability. **The swarm runs in the container the coordinator was spawned
+into**: the master picks a `container_configs` entry by name —
+`agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists the
+effective names for the master's checkout, and the spawn tool description
+carries the same roster — and launches the coordinator with
+`"container": {"mode":"new","container_config":"<name>"}` (`"container": true`
+selects the labelled default). That entry determines the image, repository
+and environment; swarm does not select a special image or start a separate
+service. Workers are then spawned by the coordinator with `container`
+omitted (a local spawn inside the shared container). **Only the official
+isolated-PID Docker/Podman adapter (`scripts/container-runtime/docker`) can
+host a swarm**; the host-local reference scripts (`scripts/container-runtime/*.sh`)
+cannot, and neither can the host. Use an image with the current harness and
+Python 3. See [container configuration](../../docs/container-runtimes.md)
 and [subagent control](subagents.md). Agents can load `docs {"name":"swarm"}`
 without the documentation files being present in the container checkout.
 

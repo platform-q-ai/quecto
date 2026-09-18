@@ -36,11 +36,22 @@ change from the architecture side.
   errors fail there, enumerating names — not at spawn time). Explicit
   selection (`container_config: "<name>"`) never consults labels, but is
   reachable only through a config that passed load validation.
-- **Agents can see the menu.** Selection errors enumerate the live names,
-  and `quecto config get --effective container_configs` lists them before
-  a spawn. (The session-start roster in the spawn tool description this
-  ADR originally specified was removed by #1525; #2024 S4c restores a
-  discoverability surface.)
+- **Agents can see the menu.** The spawn tool description carries one
+  bounded roster line, current as of the last configuration change
+  (`Available container configs: …`,
+  ≤120 characters, `+N more` when folded; #1525 removed the unbounded
+  form, #2024 S4c restored it bounded), `agent_cmd get_container_configs`
+  returns the effective set with each entry's layer and repository live,
+  selection errors enumerate the live names, and operators run
+  `quecto config get --effective container_configs`. Three application
+  ports read the one configuration adapter for this: the launch policy's
+  `EffectiveContainerConfigs` (the raw effective set, `subagents`), the
+  doctor's `ContainerConfigLookup` (one entry for a diagnosis, S4b) and
+  the inventory's `ContainerConfigRoster` (the set as the roster and
+  `get_container_configs` present it, S4c). Each is shaped by its use
+  case's question rather than by the file; the roster and lookup are thin
+  adapters over the launch port, and a contract test pins that what the
+  roster marks default is what `container: true` launches.
 - **Selection errors teach.** Unknown-name and label-validation errors
   list the configured names so an agent can offer the menu and confirm
   instead of dead-ending.

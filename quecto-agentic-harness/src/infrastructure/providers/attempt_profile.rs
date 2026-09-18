@@ -105,3 +105,7 @@ pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
     };
     format!("HTTP {status} OpenAI stream error: {value}")
 }
+
+#[cfg(test)]
+#[path = "attempt_profile_tests.rs"]
+mod tests;

@@ -108,6 +108,24 @@ the port; `src/composition/container_configs.rs` binds it to the run's own
 configuration selection, and the spawn tool only holds and invokes the
 composed handle (a launcher composed without one refuses new containers).
 
+Agents can discover container configs (#2024 S4c). The environments
+capability's `application/environments/use_cases/list_container_configs.rs`
+lists the effective set of the launching agent's checkout through its
+`ContainerConfigRoster` port (`application/environments/ports.rs`), each
+entry with the layer that declared it and its repository; the query owns
+the rules (the `container: true` default first; no default while the
+overlay is withheld). `src/infrastructure/config/container_config_roster.rs`
+adapts the port over the launch policy's `EffectiveContainerConfigs`
+(`ContainerLaunchConfig` carries `repo_bound`, attributed from the applied
+overlay document `EffectiveConfig.overlay_document` now exposes, and
+`repository` read from the create argv). `composition/container_configs.rs`
+builds `ContainerConfigHandles { selection, roster }` over one adapter;
+the spawn tool renders `roster` into its description
+(`infrastructure/tools/spawn_discovery.rs`, one line ≤120 chars), cached
+against the port's revision token (file metadata of the layers and the
+trust record) because `definition()` is rendered for every model call, and
+`agent_cmd get_container_configs` (`agent_cmd_containers.rs`) encodes it.
+
 Container failures are diagnosable (#2024 S4b). Every container script run
 (create/exec in `spawn_container.rs`, the retained inspect/kill/cleanup in
 `environment_commands.rs`) goes through
@@ -125,6 +143,29 @@ config's create argv with `--preflight-only` and parses its
 status/check/detail/remedy lines — the checks live in the script, one list
 for the create and the doctor). `composition/environments.rs` builds the
 doctor; `interface/cli/container.rs` parses, invokes it and presents.
+
+The standard container is landed (#2024 S4e). `quecto container init` is
+the environments capability's
+`application/environments/use_cases/initialise_standard_container.rs`
+over three capability-local ports: `ContainerAssetStore` (adapted in
+`src/infrastructure/processes/containers/standard/assets.rs`, which embeds
+`assets/standard-container/Containerfile` and the official
+`scripts/container-runtime/docker/*.sh` byte-for-byte and materialises a
+missing file whole, never replacing one), `WorkspaceOrigin`
+(`standard/workspace_origin.rs`, `git remote get-url origin`) and
+`ContainerConfigPersistence` — mapped in `composition/standard_container.rs`
+onto the configuration capability's `PatchConfiguration` (the
+`catalogue_defaults.rs` pattern: the two capabilities never name each
+other; the entry goes through the one write path with trust recorded for
+its bytes). The use case owns the bundle location
+(`<project>/.quecto/containers/standard`), the entry (argv naming the
+materialised scripts, `--state-dir`, `--repo`, `--image`) and the default
+rule (only when the effective set — read through `ContainerConfigRoster`
+— has no other default). `quecto container status` is
+`use_cases/container_status.rs` over the asset store, the roster, the
+S4b lookup and preflight. `interface/cli/container_setup.rs` parses,
+invokes and presents; the CLI context carries the builders `main` hands
+in.
 
 Environments outlive sessions (#2024 S4d). The domain
 `EnvironmentRegistry` stays the pure aggregate but observes an optional

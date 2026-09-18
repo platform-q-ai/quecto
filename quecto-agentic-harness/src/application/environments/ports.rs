@@ -9,11 +9,12 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::application::environments::dto::{
-    ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, EnvironmentStateDir,
-    PreflightCheck, RuntimeContainer,
+    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
+    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness,
+    EnvironmentStateDir, PersistedContainerConfig, PreflightCheck, RuntimeContainer,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -214,4 +215,118 @@ pub trait ContainerRuntimeInventory: Send + Sync {
         config: &DiagnosableContainerConfig,
         environment_id: &str,
     ) -> Result<(), String>;
+}
+
+// ─── Container-config discovery (#2024 S4c) ─────────────────────────────────
+
+/// The raw effective container-config set of the launching agent, read the
+/// way a launch reads it: the global file with the checkout's trusted
+/// overlay merged in, each entry marked with the layer that declared it,
+/// plus whether an overlay was withheld and the layer diagnostics. The
+/// adapter reports the set as configured; the listing use case owns the
+/// rules over it (default visibility, ordering). `Err` carries why no set
+/// could be read (no configuration composed, an invalid file).
+pub trait ContainerConfigRoster: Send + Sync {
+    fn roster(&self) -> Result<ContainerConfigRosterReport, String>;
+
+    /// An opaque token that changes whenever the roster could have
+    /// changed (a configuration layer or the trust record was written)
+    /// and is otherwise stable — cheap enough to ask for on every render,
+    /// so a presenter can cache the rendered roster against it instead of
+    /// reading the configuration each time.
+    fn revision(&self) -> String;
+}
+
+/// What the roster port reports before the listing rules are applied.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContainerConfigRosterReport {
+    pub configs: Vec<ContainerConfigEntry>,
+    pub overlay_withheld: bool,
+    pub diagnostics: Vec<String>,
+}
+
+// ─── Standard container (#2024 S4e) ─────────────────────────────────────────
+
+/// The embedded standard bundle (Containerfile, runtime scripts) and its
+/// materialisation below a project. The catalogue is what this binary
+/// carries; `observe` compares a destination with the embedded bytes;
+/// `materialise` writes a missing asset (with its mode) and never
+/// replaces an existing file, so an operator's edit survives a re-init.
+/// The use case owns where the bundle goes and what a difference means.
+pub trait ContainerAssetStore: Send + Sync {
+    fn catalogue(&self) -> ContainerAssetCatalogue;
+
+    /// What the destination of `asset` below `dir` holds; `Err` when it
+    /// cannot be judged or written through (a symbolic link in the
+    /// file's place or in any directory between `root` and it), so a
+    /// dry run and a status see exactly what a materialise would refuse.
+    fn observe(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetState, String>;
+
+    /// Write `asset` below `dir`, which lies below `root` (the project):
+    /// no directory between `root` (exclusive) and the asset may be a
+    /// symbolic link, so a swapped directory cannot redirect the write
+    /// outside the project.
+    fn materialise(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
+
+    /// As `materialise`, but a regular file holding other bytes is
+    /// replaced whole (temporary file, rename) with the embedded ones and
+    /// its mode: `init --refresh`, the way back from an edit or an older
+    /// bundle. The same symbolic-link refusals apply.
+    fn refresh(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
+}
+
+/// The repository a checkout came from: its `origin` remote URL, `None`
+/// when the directory is not a git checkout or has no `origin`. `Err`
+/// carries why it could not be asked (git missing).
+pub trait WorkspaceOrigin: Send + Sync {
+    fn origin(&self, checkout: &Path) -> Result<Option<String>, String>;
+
+    /// The root of the working tree `checkout` lies in (`git rev-parse
+    /// --show-toplevel`), `None` when it is not inside a checkout.
+    /// `Err` carries why it could not be asked (git missing).
+    fn toplevel(&self, checkout: &Path) -> Result<Option<PathBuf>, String>;
+}
+
+/// Records one `container_configs.<name>` entry in the project's
+/// repo-local overlay through the configuration capability's one safe
+/// write path (composition maps this port onto it): validated as a layer
+/// and as the merge, trust recorded for exactly the bytes written, an
+/// untrusted overlay refused in that capability's own words.
+pub trait ContainerConfigPersistence: Send + Sync {
+    /// Whether a persist would be accepted as things stand (an overlay
+    /// location exists, the overlay's current content is trusted or
+    /// absent): the refusal a persist would give, before anything else
+    /// is written. Nothing is written.
+    fn check(&self) -> Result<(), String>;
+
+    fn persist(
+        &self,
+        name: &str,
+        entry: &ContainerConfigDocument,
+    ) -> Result<PersistedContainerConfig, String>;
+
+    /// The overlay file a persist would write, when the run has one.
+    fn location(&self) -> Option<PathBuf>;
+
+    /// The entry `container_configs.<name>` as the project's own overlay
+    /// currently declares it (`None` when the overlay has none), so a
+    /// re-init can keep what it wrote before. Read from the applied
+    /// overlay only — never a global entry of the same name; `Err` when
+    /// the overlay cannot be read.
+    fn existing(&self, name: &str) -> Result<Option<ContainerConfigDocument>, String>;
 }

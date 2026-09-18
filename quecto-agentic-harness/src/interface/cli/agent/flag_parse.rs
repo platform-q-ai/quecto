@@ -67,10 +67,10 @@ pub(crate) struct AgentFlags {
     /// Composition's admission-operation builder (#2024 S3), from CliContext;
     /// startup negotiation (root/child/disabled) runs through its use case.
     pub(crate) admission: Option<crate::interface::cli::AdmissionHandlesBuilder>,
-    /// Composition's container-config selection builder (#2024 S4a), from
-    /// CliContext; the spawn tool selects container configs through it.
-    pub(crate) container_config_selection:
-        Option<crate::interface::cli::ContainerConfigSelectionBuilder>,
+    /// Composition's container-config handles builder (#2024 S4a, S4c),
+    /// from CliContext; the spawn tool selects container configs through
+    /// its selection and, with agent_cmd, lists them through its roster.
+    pub(crate) container_configs: Option<crate::interface::cli::ContainerConfigHandlesBuilder>,
     /// Composition's durable environment registry builder (#2024 S4d),
     /// from CliContext; the spawn tool commits to the registry it builds.
     pub(crate) environment_registry: Option<crate::interface::cli::EnvironmentRegistryBuilder>,
@@ -100,7 +100,7 @@ impl AgentFlags {
         self.tool_policy_persistence = ctx.tool_policy_persistence;
         self.configuration = ctx.configuration;
         self.admission = ctx.admission;
-        self.container_config_selection = ctx.container_config_selection;
+        self.container_configs = ctx.container_configs;
         self.environment_registry = ctx.environment_registry;
         self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }

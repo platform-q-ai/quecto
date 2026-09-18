@@ -7,7 +7,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::CliContext;
-use super::container::USAGE;
+use super::container::TOP_USAGE as USAGE;
 use super::container_handles::ContainerInventoryHandles;
 use crate::application::environments::dto::{GcCandidate, GcRemoval, GcReport, GcRequest};
 use crate::domain::environment_registry::{

@@ -29,6 +29,14 @@ use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
 
+/// The merged document, the overlay's report, and the applied overlay's
+/// own document (`None` when it was not applied).
+type OverlaidDocument = (
+    Map<String, Value>,
+    Option<OverlayReport>,
+    Option<Map<String, Value>>,
+);
+
 pub struct ResolveEffectiveConfig {
     store: Arc<dyn ConfigDocumentStore>,
     validator: Arc<dyn ConfigValidator>,
@@ -99,6 +107,7 @@ impl ResolveEffectiveConfig {
                         overlay: None,
                         legacy_local: None,
                     },
+                    overlay_document: None,
                 })
             }
             ConfigSelection::Layered(layers) => {
@@ -119,21 +128,22 @@ impl ResolveEffectiveConfig {
                         None => (Map::new(), false),
                     },
                 };
-                let (document, overlay) = match (&layers.overlay, substituted(ConfigLayer::Overlay))
-                {
-                    (Some(path), Some(overlay)) => {
-                        let overlay = self.checked_overlay_object(path, overlay)?;
-                        (
-                            merge_overlay(global, overlay),
-                            Some(OverlayReport {
-                                path: path.clone(),
-                                state: OverlayState::Applied,
-                            }),
-                        )
-                    }
-                    (Some(path), None) => self.apply_overlay(global, path)?,
-                    (None, _) => (global, None),
-                };
+                let (document, overlay, overlay_document) =
+                    match (&layers.overlay, substituted(ConfigLayer::Overlay)) {
+                        (Some(path), Some(overlay)) => {
+                            let overlay = self.checked_overlay_object(path, overlay)?;
+                            (
+                                merge_overlay(global, overlay.clone()),
+                                Some(OverlayReport {
+                                    path: path.clone(),
+                                    state: OverlayState::Applied,
+                                }),
+                                Some(overlay),
+                            )
+                        }
+                        (Some(path), None) => self.apply_overlay(global, path)?,
+                        (None, _) => (global, None, None),
+                    };
                 match overlay
                     .as_ref()
                     .filter(|report| report.state == OverlayState::Applied)
@@ -160,19 +170,21 @@ impl ResolveEffectiveConfig {
                         overlay,
                         legacy_local,
                     },
+                    overlay_document,
                 })
             }
         }
     }
 
     /// The global document with the overlay at `path` merged in when it is
-    /// present, trusted and acceptable; otherwise the global document and
-    /// the reason the overlay did not apply.
+    /// present, trusted and acceptable (the applied overlay travels as the
+    /// third element); otherwise the global document and the reason the
+    /// overlay did not apply.
     fn apply_overlay(
         &self,
         global: Map<String, Value>,
         path: &Path,
-    ) -> Result<(Map<String, Value>, Option<OverlayReport>), EffectiveConfigError> {
+    ) -> Result<OverlaidDocument, EffectiveConfigError> {
         let report = |state| {
             Some(OverlayReport {
                 path: path.to_path_buf(),
@@ -190,9 +202,11 @@ impl ResolveEffectiveConfig {
                     reason,
                 })? {
                 OverlayDocument::Present(bytes) => bytes,
-                OverlayDocument::Absent => return Ok((global, report(OverlayState::Absent))),
+                OverlayDocument::Absent => {
+                    return Ok((global, report(OverlayState::Absent), None));
+                }
                 OverlayDocument::Refused { reason } => {
-                    return Ok((global, report(OverlayState::Refused { reason })));
+                    return Ok((global, report(OverlayState::Refused { reason }), None));
                 }
             };
         let trust = self.trust.decide(path, &bytes);
@@ -220,6 +234,7 @@ impl ResolveEffectiveConfig {
                             problem: checked.err().map(|error| error.to_string()),
                             sections,
                         }),
+                        None,
                     ));
                 }
             },
@@ -235,8 +250,9 @@ impl ResolveEffectiveConfig {
                 })?;
         }
         Ok((
-            merge_overlay(global, overlay),
+            merge_overlay(global, overlay.clone()),
             report(OverlayState::Applied),
+            Some(overlay),
         ))
     }
 

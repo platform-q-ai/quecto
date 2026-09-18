@@ -396,3 +396,16 @@ impl TeardownCompensation for FakeCompensation {
         })
     }
 }
+
+#[test]
+fn a_stopping_claim_refusal_says_why_in_one_line() {
+    assert_eq!(
+        StoppingClaimError::Unknown.to_string(),
+        "unknown delegated agent"
+    );
+    assert_eq!(
+        StoppingClaimError::AlreadyStopping.to_string(),
+        "a termination is already in flight"
+    );
+    assert_eq!(StoppingClaimError::Exited.to_string(), "already exited");
+}

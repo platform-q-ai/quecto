@@ -51,7 +51,7 @@ fn build_runtime_with_entrypoint(
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,
-        container_config_selection: None,
+        container_configs: None,
         kill_tool: None,
         disabled_tools,
         inherited_tool_policy: None,

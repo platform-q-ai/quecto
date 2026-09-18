@@ -336,3 +336,36 @@ fn realization_ignores_the_process_environment() {
     assert_eq!(configs.names(), vec!["global".to_string()]);
     assert!(Path::new(&configs.configs[0].create[0]).is_absolute());
 }
+
+#[test]
+fn the_composed_handles_and_port_adapters_describe_themselves_without_naming_their_inputs() {
+    let rig = Rig::new();
+    let handles = super::build_agent_container_config_handles(&rig.base_dir, &rig.selection());
+    assert_eq!(
+        format!("{handles:?}"),
+        "ContainerConfigHandles { selection: SelectContainerConfig { .. }, roster: ListContainerConfigs { .. } }"
+    );
+    let doctor =
+        super::super::environments::build_container_doctor(&rig.base_dir, &rig.selection());
+    assert!(
+        format!("{doctor:?}").starts_with("DiagnoseContainerRuntime"),
+        "{doctor:?}"
+    );
+    let admission = super::super::admission::build_admission_handles();
+    assert_eq!(format!("{admission:?}"), "AdmissionHandles { .. }");
+    assert_eq!(
+        format!("{:?}", admission.inspect),
+        "InspectAuthority { .. }"
+    );
+    assert_eq!(format!("{:?}", admission.reset), "ResetAuthority { .. }");
+    assert!(
+        format!("{:?}", admission.install).starts_with("InstallAuthorityService"),
+        "{:?}",
+        admission.install
+    );
+    assert!(
+        format!("{:?}", admission.uninstall).starts_with("UninstallAuthorityService"),
+        "{:?}",
+        admission.uninstall
+    );
+}

@@ -62,8 +62,8 @@ fn test_build_agent_from_config_no_config_file() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,
@@ -118,8 +118,8 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,
@@ -177,8 +177,8 @@ fn test_build_agent_from_config_invalid_json() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,
@@ -238,8 +238,8 @@ fn test_build_agent_from_config_no_providers() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,
@@ -299,8 +299,8 @@ fn test_build_agent_from_config_with_model_override() {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,

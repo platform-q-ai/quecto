@@ -12,6 +12,7 @@ use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptOutput, ScriptStdout, run_capturing_stderr_tail,
 };
+use crate::infrastructure::processes::containers::standard::integrity::refuse_altered_script;
 use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, TerminationBudget,
 };
@@ -125,7 +126,8 @@ fn report_diagnostics(diagnostics: &[String]) {
 
 /// Join an existing committed environment (#1369 slice 2): resolve the target
 /// through the authoritative registry, then run the environment's *retained*
-/// exec argv — never the currently configured script set.
+/// exec argv — never the currently configured script set — once its
+/// program is judged intact (#2024 S4e).
 async fn join_script_managed_child(
     child: &ChildCommand<'_>,
     environments: &EnvironmentRegistry,
@@ -137,6 +139,14 @@ async fn join_script_managed_child(
     if record.retained_exec_argv.is_empty() {
         return Err(DomainError::Tool(format!(
             "environment {} has no retained exec argv; its script set does not support joins",
+            record.environment_ref
+        )));
+    }
+    // The retained program is judged like the create's (#2024 S4e): a
+    // standard-bundle script altered since the create never runs.
+    if let Err(reason) = refuse_altered_script(&record.retained_exec_argv) {
+        return Err(DomainError::Tool(format!(
+            "join of environment {} refused: {reason}",
             record.environment_ref
         )));
     }

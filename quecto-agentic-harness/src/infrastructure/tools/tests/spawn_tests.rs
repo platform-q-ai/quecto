@@ -715,23 +715,3 @@ fn test_definition_documents_container_spawning() {
     assert!(config_desc.contains("absolute"));
     assert!(config_desc.contains("omit normally"));
 }
-
-#[test]
-fn test_definition_omits_the_container_config_roster() {
-    // #1525: keep the model-facing definition compact; roster details live in docs/errors.
-    let dir = tempfile::TempDir::new().unwrap();
-    let cfg = dir.path().join("config.json");
-    std::fs::write(
-        &cfg,
-        r#"{"container_configs":{
-            "quecto":{"default":true,"create":["/bin/true"],"cleanup":["/bin/true"]},
-            "alpha":{"create":["/bin/true"],"cleanup":["/bin/true"]}}}"#,
-    )
-    .unwrap();
-    let tool = SpawnTool::new(vec![]).with_parent_config_path(Some(cfg));
-    let description = tool.definition().description;
-    assert!(description.contains("true starts a new container with the default config"));
-    assert!(!description.contains("Available container configs"));
-    assert!(!description.contains("alpha"));
-    assert!(!description.contains("quecto (default)"));
-}

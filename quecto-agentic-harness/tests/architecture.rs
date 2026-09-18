@@ -422,7 +422,10 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     // The doctor's lookup rewords the withheld-overlay
                     // refusal for its own command (#2024 S4b review).
                     | "SelectContainerConfigError"
-                    | "SelectedContainerConfig",
+                    | "SelectedContainerConfig"
+                    // The embedded bundle's integrity adapter (#2024 S4e)
+                    // answers the launch policy's port with its verdict.
+                    | "StandardScriptVerdict",
                     ..,
                 ]
                 // The container-script preflight and the doctor's config
@@ -442,6 +445,22 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "EnvironmentLiveness"
                     | "EnvironmentStateDir"
                     | "RuntimeContainer",
+                    // Container-config discovery (#2024 S4c): the roster
+                    // adapter builds the inventory entries in the
+                    // capability's vocabulary; the spawn tool's roster line
+                    // presents the listing's inventory.
+                    | "ContainerConfigEntry"
+                    | "ContainerConfigInventory"
+                    | "ContainerConfigLayer"
+                    // The standard bundle (#2024 S4e): the embedded asset
+                    // store answers in the capability's asset vocabulary.
+                    | "AssetOutcome"
+                    | "AssetState"
+                    | "ContainerAsset"
+                    | "ContainerAssetCatalogue"
+                    // … and the integrity adapter locates a bundle by
+                    // the capability's own directory constant.
+                    | "STANDARD_CONTAINER_DIR",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -488,7 +507,11 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "KillEnvironment"
                     | "KilledEnvironment"
                     | "KillEnvironmentError"
-                    | "FinalizeEnvironmentMember",
+                    | "FinalizeEnvironmentMember"
+                    // The spawn and agent_cmd tools (#2024 S4c) hold the
+                    // composed container-config listing: the description's
+                    // roster line and `get_container_configs` invoke it.
+                    | "ListContainerConfigs",
                     ..,
                 ] => true,
                 // The launch port moved out of the domain into its capability
@@ -2778,6 +2801,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     // policy's read of the configuration capability's effective container
     // configs for the launching agent's checkout.
     "EffectiveContainerConfigs",
+    // Standard-script integrity (#2024 S4e): the launch policy's check
+    // that a materialised standard-bundle script still carries the
+    // embedded bytes before the host runs it.
+    "ContainerScriptIntegrity",
 ];
 
 /// Application teardown code may name the domain, its own capability and
@@ -3451,6 +3478,11 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         | ["crate", "infrastructure", "tools", "path_utils", ..] => {
             file == "systemd_service_manager.rs"
         }
+        // The embedded bundle's integrity adapter (#2024 S4e) answers the
+        // launch policy's port in its own verdict vocabulary.
+        ["crate", "application", "subagents", "dto", "StandardScriptVerdict"] => {
+            file == "integrity.rs"
+        }
         ["crate", ..] => false,
         _ => true,
     }
@@ -3481,6 +3513,15 @@ fn process_adapters_depend_only_inward() {
             "process adapter guard must allow {dep}"
         );
     }
+    // The verdict vocabulary is the integrity adapter's alone.
+    assert!(processes_dependency_allowed(
+        "integrity.rs",
+        "crate::application::subagents::dto::StandardScriptVerdict"
+    ));
+    assert!(!processes_dependency_allowed(
+        "owned_child_supervisor.rs",
+        "crate::application::subagents::dto::StandardScriptVerdict"
+    ));
     // The service manager's extra allowances are scoped to it alone.
     for dep in [
         "crate::application::admission::ports::ServiceManager",
@@ -4083,6 +4124,17 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentRegistryStore",
     "EnvironmentProcess",
     "ContainerRuntimeInventory",
+    // Container-config discovery (#2024 S4c): the effective set of the
+    // launching agent's checkout, each entry with the layer that declared
+    // it, for `get_container_configs` and the spawn description's roster.
+    "ContainerConfigRoster",
+    // The standard container (#2024 S4e): the embedded bundle and its
+    // materialisation, the checkout's origin remote, and the overlay entry
+    // written through the configuration capability's one write path
+    // (mapped in composition, in the manner of `catalogue_defaults.rs`).
+    "ContainerAssetStore",
+    "WorkspaceOrigin",
+    "ContainerConfigPersistence",
 ];
 
 /// Application environment code may name the domain, its own capability,

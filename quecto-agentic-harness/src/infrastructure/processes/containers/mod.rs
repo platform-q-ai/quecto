@@ -13,3 +13,4 @@ pub mod preflight;
 pub mod retained_scripts;
 pub mod script_inventory;
 pub mod script_stderr;
+pub mod standard;

@@ -94,6 +94,7 @@ fn container_commands_require_wiring_and_star_agent_id() {
     let missing = block_on(execute_container_command(
         None,
         None,
+        None,
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
     assert!(missing.is_error && missing.content.contains("not available"));
@@ -104,6 +105,7 @@ fn container_commands_require_wiring_and_star_agent_id() {
     let wrong_target = block_on(execute_container_command(
         Some(&query),
         Some(&uc),
+        None,
         &serde_json::json!({"agent_id":"child","command":"get_containers"}),
     ));
     assert!(wrong_target.is_error && wrong_target.content.contains("agent_id '*'"));
@@ -117,7 +119,7 @@ fn kill_container_decodes_exactly_one_string_target() {
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C1","name":"x"}),
         serde_json::json!({"agent_id":"*","command":"kill_container","ref":1}),
     ] {
-        let result = block_on(execute_container_command(None, Some(&uc), &args));
+        let result = block_on(execute_container_command(None, Some(&uc), None, &args));
         assert!(result.is_error, "{}", result.content);
     }
 }
@@ -130,6 +132,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let listing = block_on(execute_container_command(
         Some(&query),
         Some(&uc),
+        None,
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
     assert!(!listing.is_error);
@@ -145,6 +148,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let killed = block_on(execute_container_command(
         None,
         Some(&uc),
+        None,
         &serde_json::json!({"agent_id":"*","command":"kill_container","name":"tool-env"}),
     ));
     assert!(!killed.is_error, "{}", killed.content);
@@ -164,6 +168,7 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let unknown = block_on(execute_container_command(
         None,
         Some(&uc),
+        None,
         &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C9"}),
     ));
     assert!(unknown.is_error && unknown.content.contains("unknown"));
@@ -324,6 +329,7 @@ fn get_containers_marks_restored_environments_with_their_creating_session() {
     let listing = block_on(execute_container_command(
         Some(&query),
         None,
+        None,
         &serde_json::json!({"agent_id":"*","command":"get_containers"}),
     ));
     let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
@@ -335,4 +341,82 @@ fn get_containers_marks_restored_environments_with_their_creating_session() {
         entry["status"], "empty",
         "members of another session are not listed"
     );
+}
+
+struct FixedRoster(crate::application::environments::ports::ContainerConfigRosterReport);
+
+impl crate::application::environments::ports::ContainerConfigRoster for FixedRoster {
+    fn roster(
+        &self,
+    ) -> Result<crate::application::environments::ports::ContainerConfigRosterReport, String> {
+        Ok(self.0.clone())
+    }
+
+    fn revision(&self) -> String {
+        "fixed".into()
+    }
+}
+
+#[test]
+fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
+    use crate::application::environments::dto::{ContainerConfigEntry, ContainerConfigLayer};
+    use crate::application::environments::ports::ContainerConfigRosterReport;
+    use crate::application::environments::use_cases::ListContainerConfigs;
+
+    let args = serde_json::json!({"agent_id":"*","command":"get_container_configs"});
+    let missing = block_on(execute_container_command(None, None, None, &args));
+    assert!(
+        missing.is_error
+            && missing
+                .content
+                .contains("container config listing is not available in this session"),
+        "{}",
+        missing.content
+    );
+
+    let query = Arc::new(ListContainerConfigs::new(Arc::new(FixedRoster(
+        ContainerConfigRosterReport {
+            configs: vec![
+                ContainerConfigEntry {
+                    name: "alpha".into(),
+                    default: false,
+                    layer: ContainerConfigLayer::Global,
+                    repository: None,
+                    problem: None,
+                    joinable: false,
+                },
+                ContainerConfigEntry {
+                    name: "r".into(),
+                    default: true,
+                    layer: ContainerConfigLayer::Overlay,
+                    repository: Some("https://example.test/r".into()),
+                    problem: None,
+                    joinable: false,
+                },
+            ],
+            overlay_withheld: false,
+            diagnostics: vec!["warning: legacy".into()],
+        },
+    ))));
+    let listing = block_on(execute_container_command(None, None, Some(&query), &args));
+    assert!(!listing.is_error, "{}", listing.content);
+    let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "container_configs": [
+                {"name":"r","default":true,"source":"overlay","repository":"https://example.test/r","problem":null,"joinable":false},
+                {"name":"alpha","default":false,"source":"global","repository":null,"problem":null,"joinable":false}
+            ],
+            "overlay_withheld": false,
+            "diagnostics": ["warning: legacy"]
+        })
+    );
+    let wrong_target = block_on(execute_container_command(
+        None,
+        None,
+        Some(&query),
+        &serde_json::json!({"agent_id":"child","command":"get_container_configs"}),
+    ));
+    assert!(wrong_target.is_error && wrong_target.content.contains("agent_id '*'"));
 }

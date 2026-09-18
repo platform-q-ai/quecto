@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use super::script_stderr::{ScriptStdout, run_sync_capturing_stderr_tail};
+use super::standard::integrity::refuse_altered_script;
 
 /// Bound on one retained-inspect invocation. A hung inspect script must not
 /// stall the death pipeline indefinitely: the exit signal (and the awaits it
@@ -58,6 +59,7 @@ pub fn run_inspect_sync_bounded(
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained inspect argv".to_string());
     };
+    refuse_altered_script(argv).map_err(|reason| format!("retained inspect refused: {reason}"))?;
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env(ENVIRONMENT_ID_VAR, environment_id);
@@ -89,6 +91,7 @@ pub fn run_cleanup_sync(environment_id: &str, argv: &[String]) -> Result<(), Str
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained cleanup argv".to_string());
     };
+    refuse_altered_script(argv).map_err(|reason| format!("retained cleanup refused: {reason}"))?;
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env(ENVIRONMENT_ID_VAR, environment_id);

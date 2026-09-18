@@ -54,8 +54,8 @@ fn spawn_capable_flags() -> AgentFlags {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_config_selection: Some(
-            crate::composition::container_configs::build_agent_container_config_selection,
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
         environment_registry: None,
@@ -79,11 +79,10 @@ fn test_926_spawn_capable_build_has_live_notification_rx_with_real_base_dir() {
             None,
         )
         .effort,
-        container_config_selection:
-            crate::composition::container_configs::build_container_config_selection(
-                std::path::Path::new("/nonexistent-base"),
-                None,
-            ),
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
@@ -122,11 +121,10 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
             None,
         )
         .effort,
-        container_config_selection:
-            crate::composition::container_configs::build_container_config_selection(
-                std::path::Path::new("/nonexistent-base"),
-                None,
-            ),
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
         config_path: std::path::Path::new(""),
         config: &config,
         http_client: &reqwest::Client::new(),
@@ -165,11 +163,10 @@ async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
             None,
         )
         .effort,
-        container_config_selection:
-            crate::composition::container_configs::build_container_config_selection(
-                std::path::Path::new("/nonexistent-base"),
-                None,
-            ),
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
         config_path: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
