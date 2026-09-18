@@ -625,4 +625,15 @@ fn an_unset_obeys_the_same_refusals_as_a_set() {
         .unset(unset(ConfigLayer::Global, "providers.openai.api_base.y"))
         .unwrap_err();
     assert!(matches!(err, ConfigPatchError::NotAnObject { .. }), "{err}");
+    // An untrusted overlay is not unset either: that would trust its content.
+    let overlay = r#"{"agents":{"defaults":{"model":"m"}}}"#;
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, overlay)]);
+    let err = use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .unset(unset(ConfigLayer::Overlay, "agents.defaults.model"))
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigPatchError::UntrustedOverlay { .. }),
+        "{err}"
+    );
+    assert_eq!(store.content(OVERLAY).unwrap(), overlay);
 }

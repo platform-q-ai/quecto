@@ -1721,8 +1721,9 @@ fn ask_owned_child_to_stop(
 impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
     /// capability (#1970), its retained-context graph (#1978), the catalogue
-    /// handles (#1845), the provider-runtime builder and the tool-policy
-    /// persistence builder (#1849): every
+    /// handles (#1845), the provider-runtime builder, the tool-policy
+    /// persistence builder (#1849) and the container-config selection
+    /// builder (#2024 S4a): every
     /// `quecto agent …` run through `run_with_output` needs them or exits
     /// with "… capability not composed", exactly as the binary's `main`
     /// supplies them.
@@ -1737,6 +1738,8 @@ impl QuectoWorld {
             Some(quecto::composition::runtime::build_agent_provider);
         world.cli_context.tool_policy_persistence =
             Some(quecto::composition::tool_policy::build_tool_policy_persistence);
+        world.cli_context.container_config_selection =
+            Some(quecto::composition::container_configs::build_agent_container_config_selection);
         world
     }
 }
