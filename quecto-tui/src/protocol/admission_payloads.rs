@@ -38,7 +38,9 @@ pub struct AdmissionView {
     #[serde(default)]
     pub revision: u64,
     /// Broker health (#2024 S3): `connected` | `reconnecting` | `unavailable`.
-    /// Absent on the pushed `admission_state_changed` event (activity only).
+    /// Carried by `get_state` and by every pushed `admission_state_changed`
+    /// of a process bound to an authority (see `uds-protocol.md`); absent for
+    /// a process without one, or from an older harness.
     #[serde(default)]
     pub authority_status: Option<String>,
 }
@@ -160,7 +162,7 @@ impl AdmissionView {
     /// A one-glyph broker-health badge for the footer (#2024 S3): `admission ✓`
     /// when connected, `admission ⟳` while reconnecting, `admission ✗` when the
     /// authority is unavailable. `None` when the agent reported no authority
-    /// status (an older harness, or the activity-only pushed event).
+    /// status (an older harness, or a process bound to no authority).
     pub fn authority_badge(&self) -> Option<String> {
         let glyph = match self.authority_status.as_deref()? {
             "connected" => "✓",
