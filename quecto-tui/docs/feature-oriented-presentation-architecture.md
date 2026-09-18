@@ -15,6 +15,7 @@ Production ownership should converge toward these feature-oriented modules:
 - `agents`: subagent roster, lifecycle, feeds, ledger sync, focus, retention, and view projection.
 - `workflow`: workflow projection and controls.
 - `inference`: model and effort presentation.
+- `setup`: `/setup` walkthrough prompt templates and their argument parser (#2024 S6) — pure text; the agent does the setup work and asks before writing.
 - `workspace`: files, Git context, and autocomplete coordination.
 - `components`: reusable widgets and rendering primitives.
 
@@ -407,6 +408,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
+| `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
 | `shell/tui_harness_tabs.rs` | `shell` multi-tab paint/activity harness drivers (#1466) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |

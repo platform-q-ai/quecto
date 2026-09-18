@@ -95,6 +95,21 @@ impl App {
                     }
                     return;
                 }
+                _ if trimmed == "/setup" || trimmed.starts_with("/setup ") => {
+                    // #2024 S6: the TUI only composes the walkthrough text; the
+                    // agent reads the docs pages and asks before writing.
+                    match crate::setup::SetupCommand::parse(&trimmed["/setup".len()..]) {
+                        crate::setup::SetupCommand::Walkthrough(area) => {
+                            let prompt = crate::setup::setup_walkthrough_prompt(&area);
+                            self.handle_submit(&prompt);
+                        }
+                        crate::setup::SetupCommand::Usage => self.notify(
+                            crate::setup::SETUP_USAGE,
+                            crate::components::notification::NotifyLevel::Warning,
+                        ),
+                    }
+                    return;
+                }
                 "/workflow-auto" => {
                     self.toggle_workflow_auto_continue();
                     return;
