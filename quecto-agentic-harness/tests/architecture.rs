@@ -444,7 +444,7 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     // answer in the capability's own records.
                     | "EnvironmentLiveness"
                     | "EnvironmentStateDir"
-                    | "RuntimeContainer",
+                    | "RuntimeContainer"
                     // Container-config discovery (#2024 S4c): the roster
                     // adapter builds the inventory entries in the
                     // capability's vocabulary; the spawn tool's roster line

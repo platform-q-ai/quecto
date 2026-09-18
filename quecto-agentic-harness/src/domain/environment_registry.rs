@@ -220,6 +220,11 @@ struct EnvironmentRegistryState {
 pub struct EnvironmentRegistry {
     state: Arc<Mutex<EnvironmentRegistryState>>,
     journal: Option<EnvironmentJournal>,
+    /// Serialises snapshot-and-write so two transitions of one record
+    /// reach the journal in the order they happened: the snapshot is
+    /// taken and written under this lock (never under the state lock, so
+    /// a slow journal stalls no reader).
+    journal_order: Arc<Mutex<()>>,
     /// Key of the session this registry belongs to; stamped on every
     /// record it creates.
     session: Arc<str>,
@@ -236,6 +241,7 @@ impl EnvironmentRegistry {
         Self {
             state: Arc::default(),
             journal: Some(journal),
+            journal_order: Arc::default(),
             session: Arc::from(session),
         }
     }
@@ -277,11 +283,10 @@ impl EnvironmentRegistry {
         if let Some(number) = ref_number(&record.environment_ref) {
             state.next_ref = state.next_ref.max(number);
         }
-        state
-            .entries
-            .insert(record.environment_ref.clone(), record.clone());
+        let environment_ref = record.environment_ref.clone();
+        state.entries.insert(environment_ref.clone(), record);
         drop(state);
-        self.journal_record(&record);
+        self.journal_ref(&environment_ref);
     }
 
     /// Seed the registry with records another session wrote (#2024 S4d):
@@ -296,24 +301,21 @@ impl EnvironmentRegistry {
         }
     }
 
-    fn journal_record(&self, record: &EnvironmentRecord) {
-        if let Some(journal) = &self.journal {
-            (journal.recorded)(record);
-        }
-    }
-
     /// Report the record under `environment_ref` as changed, after the
-    /// state lock is released.
+    /// state lock is released: the snapshot and the write happen under
+    /// the journal order lock, so a later transition never reaches the
+    /// journal before an earlier one.
     fn journal_ref(&self, environment_ref: &str) {
-        if self.journal.is_none() {
+        let Some(journal) = &self.journal else {
             return;
-        }
+        };
+        let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
         let record = {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.entries.get(environment_ref).cloned()
         };
         if let Some(record) = record {
-            self.journal_record(&record);
+            (journal.recorded)(&record);
         }
     }
 
@@ -331,10 +333,11 @@ impl EnvironmentRegistry {
         state.inspect_failures.remove(environment_ref);
         let removed = state.entries.remove(environment_ref);
         drop(state);
-        if removed.is_some() {
-            if let Some(journal) = &self.journal {
-                (journal.forgotten)(environment_ref);
-            }
+        if removed.is_some()
+            && let Some(journal) = &self.journal
+        {
+            let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
+            (journal.forgotten)(environment_ref);
         }
         removed
     }

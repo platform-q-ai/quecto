@@ -277,3 +277,52 @@ fn gc_report_presents_candidates_kept_and_roots() {
         "{out}"
     );
 }
+
+#[test]
+fn the_inventory_handles_debug_shows_the_restore_only() {
+    let (_dir, ctx, _) = composed();
+    let handles =
+        (ctx.container_inventory.unwrap())(&ctx.base_dir(), &ctx.config_selection().unwrap());
+    let shown = format!("{handles:?}");
+    assert!(shown.starts_with("ContainerInventoryHandles"), "{shown}");
+    assert!(shown.contains("restore"), "{shown}");
+    assert_eq!(handles.restore.restored, ["C1"]);
+}
+
+#[test]
+fn a_real_gc_run_presents_removed_and_kept_entries() {
+    let report = GcReport {
+        dry_run: false,
+        config: "official".into(),
+        state_roots: vec![],
+        removable: vec![GcCandidate {
+            environment_id: "env-a".into(),
+            state_dir: None,
+            container: None,
+            removal: GcRemoval::ConfiguredCleanup {
+                config: "official".into(),
+            },
+            reason: "no container recorded; no registry record".into(),
+        }],
+        removed: vec![],
+        kept: vec![],
+        errors: vec!["env-a: cleanup exited 1".into()],
+    };
+    let mut out = String::new();
+    present_gc(&report, &mut out);
+    assert!(out.contains("scanned no state roots"), "{out}");
+    assert!(
+        out.contains("removed 0 of 1 orphaned environment:"),
+        "{out}"
+    );
+    assert!(!out.contains("nothing on disk"), "{out}");
+    let mut removed = report.clone();
+    removed.removed = removed.removable.clone();
+    removed.errors.clear();
+    let mut out = String::new();
+    present_gc(&removed, &mut out);
+    assert!(
+        out.contains("removed 1 of 1 orphaned environment:\n  env-a  nothing on disk"),
+        "{out}"
+    );
+}

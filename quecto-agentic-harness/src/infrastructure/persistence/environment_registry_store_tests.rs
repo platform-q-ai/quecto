@@ -140,3 +140,16 @@ fn concurrent_allocations_from_many_threads_never_collide() {
     all.sort_unstable();
     assert_eq!(all, (1..=40).collect::<Vec<_>>());
 }
+
+#[test]
+fn the_store_names_its_document_under_the_base_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    assert_eq!(store.path(), dir.path().join(REGISTRY_FILE_NAME));
+    assert!(format!("{store:?}").contains("environments.json"));
+    // An unreadable document (a directory in its place) is an error
+    // naming the path, not an empty registry.
+    std::fs::create_dir_all(store.path()).unwrap();
+    let error = store.load().unwrap_err();
+    assert!(error.contains("environments.json"), "{error}");
+}

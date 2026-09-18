@@ -155,3 +155,16 @@ fn remove_runs_the_configs_cleanup_for_a_well_formed_id_only() {
         .unwrap_err();
     assert!(error.contains("escapes root"), "{error}");
 }
+
+#[test]
+fn a_listing_that_hangs_is_bounded_and_reported() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let inspect = script(dir.path(), "slow.sh", "printf 'x' >&2; exit 3");
+    let error = ScriptInventory
+        .containers(&config(inspect, vec!["true".into()]))
+        .unwrap_err();
+    assert!(error.contains("exited with exit status: 3"), "{error}");
+    let missing = config(vec!["/definitely/not/here".into()], vec!["true".into()]);
+    let error = ScriptInventory.containers(&missing).unwrap_err();
+    assert!(error.contains("inspect --list"), "{error}");
+}

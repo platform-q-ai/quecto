@@ -118,11 +118,9 @@ fn lock_poison_recovery_covers_member_kill_and_inspect_paths() {
 
 // ─── Durable registry (#2024 S4d) ────────────────────────────────────────────
 
-fn test_journal() -> (
-    EnvironmentJournal,
-    Arc<Mutex<Vec<String>>>,
-    Arc<Mutex<Vec<String>>>,
-) {
+type Seen = Arc<Mutex<Vec<String>>>;
+
+fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
     let recorded = Arc::new(Mutex::new(Vec::new()));
     let forgotten = Arc::new(Mutex::new(Vec::new()));
     let counter = Arc::new(Mutex::new(10u64));

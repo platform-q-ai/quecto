@@ -233,3 +233,11 @@ fn an_unseeded_registry_journals_but_inherits_nothing() {
     registry.commit(record("C6", EnvironmentStatus::Running));
     assert_eq!(store.load().unwrap().len(), 2);
 }
+
+#[test]
+fn the_restore_debug_is_opaque_over_its_ports() {
+    let store = store_with(vec![]);
+    let process = process(|_| EnvironmentLiveness::Running);
+    let shown = format!("{:?}", RestoreRegistry::new(store, process));
+    assert_eq!(shown, "RestoreRegistry { .. }");
+}

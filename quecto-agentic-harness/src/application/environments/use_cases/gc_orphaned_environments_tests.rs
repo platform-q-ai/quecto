@@ -451,3 +451,11 @@ fn the_collector_refuses_without_a_usable_config() {
         .unwrap_err();
     assert!(refused.0.contains("unknown container config 'other'"));
 }
+
+#[test]
+fn the_collector_debug_names_its_registry_only() {
+    let rig = Rig::new();
+    let shown = format!("{:?}", rig.use_case());
+    assert!(shown.starts_with("GcOrphanedEnvironments"), "{shown}");
+    assert!(shown.contains("registry"), "{shown}");
+}
