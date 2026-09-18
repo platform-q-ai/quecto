@@ -184,6 +184,11 @@ pub enum RefAllocationError {
     JournalUnavailable(String),
 }
 
+/// A journal's record write: the record, and the status the write expects
+/// on file (`None` writes unconditionally).
+pub type RecordedFn =
+    dyn Fn(&EnvironmentRecord, Option<&EnvironmentStatus>) -> JournalWrite + Send + Sync;
+
 /// The durable side of the registry (#2024 S4d): where refs are allocated
 /// and where every committed record and transition is written. Installed
 /// by the application over its store; the registry only reports — it never
@@ -200,8 +205,7 @@ pub struct EnvironmentJournal {
     /// record on file still has that status (review F5, #2033 — a record
     /// another session created is written conditionally, never replaced
     /// whole, so a joiner's inspect cannot revert its creator's `retained`).
-    pub recorded:
-        Arc<dyn Fn(&EnvironmentRecord, Option<&EnvironmentStatus>) -> JournalWrite + Send + Sync>,
+    pub recorded: Arc<RecordedFn>,
     /// A record was removed (a rolled-back create).
     pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
 }

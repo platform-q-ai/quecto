@@ -191,7 +191,6 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
     );
 }
 
-#[test]
 /// Review F6 (#2033): a `killing` record is reported, never rewritten —
 /// its session may still be live and settling the kill; nothing here can
 /// tell. An explicit kill from this session retries it.
