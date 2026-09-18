@@ -318,3 +318,7 @@ impl App {
             });
     }
 }
+
+#[cfg(test)]
+#[path = "app_submit_setup_tests.rs"]
+mod app_submit_setup_tests;
