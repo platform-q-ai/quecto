@@ -383,7 +383,14 @@ async fn spawn_script_managed_child(
             Err(EnvironmentLookupError::Stale(_)) => {}
         }
     }
-    let environment_ref = environments.mint_ref();
+    // A durable registry that cannot allocate refuses the create (review
+    // F9, #2033): a ref minted from memory could collide with one a live
+    // session holds in the base directory's registry.
+    let environment_ref = environments.mint_ref().map_err(|error| {
+        DomainError::Tool(format!(
+            "container create refused: {error}; repair (or move aside) the base directory's environments.json and retry"
+        ))
+    })?;
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
