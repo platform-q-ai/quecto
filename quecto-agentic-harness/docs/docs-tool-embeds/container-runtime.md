@@ -138,7 +138,9 @@ restart and appears in `get_containers` with `restored: true` and
 here), `retained`, or `stopped` (its container was gone when this session
 started; other sessions' later changes show after a restart). Join one
 that is `empty`/`retained` with `container: {"mode":"existing","ref":"C1"}`
-(your joiner leaving never tears it down); stop it with `kill_container`
+(your joiner leaving never tears it down) — `empty` means its creating
+session is still alive (a member harness exits with its parent, and the
+container with it), so this is the concurrent-session case; stop it with `kill_container`
 (`ref` or `name`) — that cuts off any live members of its creating
 session. A `name` still naming a live environment is refused at create.
 From the shell:
@@ -153,15 +155,21 @@ quecto container gc [--name <config>]   # remove them (the config's inspect / in
 `gc` keeps a `running`/`cleanup-failed` record, a `retained` one
 whatever its container's state (a retained swarm box has exited by
 design; only `container kill` ends it), a state dir whose container runs
-or cannot be checked, and a directory younger than 15 minutes without a
-container (a create in flight); it judges the config's `--state-dir`
-only (a record's own retained cleanup may name one more root, for that
-record alone), and `--dry-run` writes nothing — not even to
-`environments.json`. It reports what it removed, kept and why. A
-container no record names (a harness died between create and journal)
-is ended by hand: `podman rm -f quecto-<environment-id>`. Clean up after
-yourself: kill what you created when done, and run `quecto container gc
---dry-run` when `ls` shows stopped leftovers.
+or cannot be checked, a directory younger than 15 minutes without a
+container (a create in flight), and any stopped or unrecorded directory
+whose checkout still hosts a swarm run that has not ended (`hosts swarm
+run <id> (<status>)`; the board is the run's — kill explicitly, or end
+the run, to collect); it judges the config's `--state-dir` only (a
+record's own retained cleanup may name one more root, for that record
+alone), and `--dry-run` writes nothing — not even to `environments.json`.
+It reports what it removed, kept and why. A `running` record whose box
+exited with an unfinished swarm run inside (the master died before its
+coordinator) is restored `retained`, never `stopped`. A container no
+record names (a harness died between create and journal) exits with its
+parent; while it runs, end it by hand: `podman rm -f
+quecto-<environment-id>`. Clean up after yourself: kill what you created
+when done, and run `quecto container gc --dry-run` when `ls` shows
+stopped leftovers.
 
 ## See also
 

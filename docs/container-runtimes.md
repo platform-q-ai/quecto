@@ -253,8 +253,24 @@ coordinator was PID 1, the state directory holds the board, checkout and
 unpushed work), so a dead inspect is reported as *retained: container
 exited; only container kill ends it* and the file is left alone —
 `ls` lists it as `retained`, `gc` keeps it, and only `container kill` /
-`kill_container` moves it to `stopped`. Restored records carry
-`restored: true` and `session` in `get_containers`. A spawned child
+`kill_container` moves it to `stopped`. A **`running` record whose
+container is gone but whose checkout still hosts a swarm run that has
+not ended** — the master exited (or was killed) *before* its
+coordinator, so nobody finalized the member; the coordinator's harness
+then ran its parent-loss shutdown and the box exited with the board,
+checkout and unpushed work inside — is relabelled **`retained`**, not
+`stopped`, with `metadata.retained` reading `run <id> unfinished
+(<status>); container exited; environment retained for inspection,
+kill_container to remove` (what the finalizer would have recorded had
+the master seen the coordinator go; `ls` prints the note `<ref> retained
+at restore: …`); a store that exists but cannot be read retains too. An
+ended run, the bootstrap placeholder or no store leaves it `stopped` as
+before. A record an **older build's restore relabelled `stopped` while
+it was retained** (recognisable by its own `metadata.retained` under
+`stopped` with the restore's `container not found at restore …` last
+error — an explicit kill clears that error) is restored to `retained`,
+so `container kill` can end it. Restored records carry `restored: true`
+and `session` in `get_containers`. A spawned child
 journals its own creates but is not seeded (its parent shows the fleet).
 A session that started while the file was unreadable retries the read on
 its next lookup (`get_containers`, a join, a kill), so a document
@@ -297,9 +313,17 @@ What a new session can do with a restored environment:
   `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`.
 - **join** — `spawn {"container": {"mode": "existing", "ref": "C1"}}` (or
   `"name"`) while it is `running`/`empty`/`retained`; the retained `exec`
-  runs. A joiner leaving a restored environment **never tears it down**
-  (its creating session may still hold members this session cannot see);
-  only an explicit kill ends it.
+  runs. This is the **concurrent-session** case: the environment's
+  container is still up because the session that created it is still
+  alive (or the environment is `retained`, whose box has exited and
+  which a join does not revive). Under the shipped adapter a member
+  harness runs its parent-loss shutdown and exits when the harness that
+  launched it dies, and the container exits with it — so once the
+  creating session is gone an ordinary environment is `stopped` at the
+  next restore (its container gone), not joinable. A joiner leaving a
+  restored environment **never tears it down** (its creating session may
+  still hold members this session cannot see); only an explicit kill
+  ends it.
 - **kill** — `agent_cmd kill_container` with `ref`/`name`, or `quecto
   container kill <ref|name>`: no members of another session are asked
   (none are recorded), the retained `kill` runs once, `stopped` is written
@@ -324,13 +348,27 @@ What a new session can do with a restored environment:
   found too) and removes through the record's retained `cleanup` or the
   config's `cleanup` — the harness itself names no runtime. A `running`,
   `killing` or `cleanup-failed` record is always **kept** (with the
-  reason, pointing at `container kill`); a `retained` record is kept
-  **whatever the runtime says of its container** (exited is its normal
-  state; only an explicit kill moves it to `stopped`, after which its
-  leftovers are the collector's); so is any state dir whose container
-  runs, and any state dir younger than fifteen minutes with no container
-  recorded yet (a create may be in flight — a directory whose age cannot
-  be read counts as young). `--dry-run` prints the same judgement with
+  reason, pointing at `container kill`; one seen nowhere — no directory,
+  no container — is reported the same way, never silently skipped, and
+  a `stopped` one seen nowhere has its record forgotten); a `retained`
+  record is kept **whatever the runtime says of its container** (exited
+  is its normal state; only an explicit kill moves it to `stopped`,
+  after which its leftovers are the collector's); so is any state dir
+  whose container runs (a directory under a root the record's *own*
+  cleanup names is judged by that record's own retained `inspect`, not
+  the config's), and any state dir younger than fifteen minutes with no
+  container recorded yet (a create may be in flight — a directory whose
+  age cannot be read counts as young). What would otherwise be collected
+  — a `stopped` record's directory, or an unrecorded one — is read last
+  for the coordination store its checkout may host (`workspace/repo`,
+  then `workspace`): one hosting a **swarm run that has not ended**, or a
+  store that cannot be read, is **kept** whatever the registry says —
+  `… hosts swarm run <id> (<status>); kill explicitly to collect …` — the
+  board and checkout are the run's; an ended run, the placeholder or no
+  store is collected as before. A record an older build relabelled
+  `stopped` while retained is kept likewise (`was retained; relabelled
+  by an older build`; the next `ls`/`gc` restores it to `retained`, after
+  which `container kill` ends it). `--dry-run` prints the same judgement with
   **no effect at all** — nothing on the host, and nothing written to
   `environments.json` (the corrections a restore would write are
   previewed on stderr as *would be recorded …; not written*); the report
@@ -342,11 +380,14 @@ What a new session can do with a restored environment:
   record names. `gc` keeps it (its container runs) and `ls` cannot show
   it; end it by hand: `podman rm -f quecto-<environment-id>` (docker
   likewise) and remove `<state-dir>/<environment-id>` — after which
-  `gc` collects nothing further for it. This is the pre-existing
-  child-outlives-parent behaviour: a member harness inside a container
-  keeps running when its parent dies without cleanup (the container's
-  init reaps only its own grandchildren), and only a kill through the
-  record — or the runtime by hand — ends it.
+  `gc` collects nothing further for it. Such a container does not stay
+  up for long on its own: the member harness inside it holds a
+  launch-bound connection to its parent and runs its parent-loss
+  shutdown — and exits — when that parent dies, so the container exits
+  too and `gc` then collects it as an unrecorded exited orphan (unless
+  its checkout hosts an unfinished swarm run, below). Only while the
+  parent lives, or for a script set whose member ignores parent loss,
+  is a hand kill needed.
 
 **Moving `environments.json` aside restarts the refs** (the next create is
 `C1` again) and forgets every environment it recorded: the containers
