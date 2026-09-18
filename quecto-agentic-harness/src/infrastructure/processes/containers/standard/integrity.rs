@@ -20,8 +20,9 @@ pub struct EmbeddedScriptIntegrity;
 
 impl ContainerScriptIntegrity for EmbeddedScriptIntegrity {
     fn verify(&self, script: &Path) -> StandardScriptVerdict {
-        let Some((root, relative)) = split_at_bundle(script) else {
-            return StandardScriptVerdict::NotStandard;
+        let (root, relative) = match split_at_bundle(script) {
+            Ok(split) => split,
+            Err(verdict) => return verdict,
         };
         let store = EmbeddedStandardAssets;
         let catalogue = store.catalogue();
@@ -47,30 +48,42 @@ impl ContainerScriptIntegrity for EmbeddedScriptIntegrity {
 
 /// `<root>/.quecto/containers/standard/<relative>` split at the bundle
 /// directory: the project root and the asset's path within the bundle.
-/// Only an absolute path with the bundle components exactly (no `..`)
-/// qualifies.
-fn split_at_bundle(script: &Path) -> Option<(&Path, &Path)> {
+/// Only an absolute path with the bundle components exactly qualifies;
+/// one that reaches the bundle through `..` anywhere is refused
+/// rather than passed as not the bundle's, since it may name an asset
+/// under another spelling.
+fn split_at_bundle(script: &Path) -> Result<(&Path, &Path), StandardScriptVerdict> {
     if !script.is_absolute() {
-        return None;
+        return Err(StandardScriptVerdict::NotStandard);
     }
     let mut ancestor = script.parent();
     while let Some(dir) = ancestor {
         if dir.ends_with(STANDARD_CONTAINER_DIR) {
+            let normalised = script.components().all(|c| {
+                matches!(
+                    c,
+                    std::path::Component::Normal(_)
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            });
+            if !normalised {
+                return Err(StandardScriptVerdict::Refused(
+                    "path into the standard bundle is not normalised".into(),
+                ));
+            }
             let root = dir
                 .ancestors()
-                .nth(Path::new(STANDARD_CONTAINER_DIR).components().count())?;
-            let relative = script.strip_prefix(dir).ok()?;
-            if relative
-                .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)))
-            {
-                return Some((root, relative));
-            }
-            return None;
+                .nth(Path::new(STANDARD_CONTAINER_DIR).components().count())
+                .ok_or(StandardScriptVerdict::NotStandard)?;
+            let relative = script
+                .strip_prefix(dir)
+                .map_err(|_| StandardScriptVerdict::NotStandard)?;
+            return Ok((root, relative));
         }
         ancestor = dir.parent();
     }
-    None
+    Err(StandardScriptVerdict::NotStandard)
 }
 
 #[cfg(test)]

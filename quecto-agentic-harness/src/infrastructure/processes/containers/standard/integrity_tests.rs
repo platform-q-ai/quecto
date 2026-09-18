@@ -25,9 +25,41 @@ fn splits_a_bundle_path_into_root_and_asset() {
     .unwrap();
     assert_eq!(root, Path::new("/p"));
     assert_eq!(relative, Path::new("scripts/create.sh"));
-    assert!(split_at_bundle(Path::new("/bin/create")).is_none());
-    assert!(split_at_bundle(Path::new("relative/.quecto/containers/standard/x")).is_none());
-    assert!(split_at_bundle(Path::new("/p/.quecto/containers/standard/../x")).is_none());
+    assert_eq!(
+        split_at_bundle(Path::new("/bin/create")),
+        Err(StandardScriptVerdict::NotStandard)
+    );
+    assert_eq!(
+        split_at_bundle(Path::new("relative/.quecto/containers/standard/x")),
+        Err(StandardScriptVerdict::NotStandard)
+    );
+}
+
+/// A `..` on the way into or out of the bundle is a path that could name
+/// a bundle asset under another spelling: refused outright, never "not
+/// the bundle's" (which would run it unjudged).
+#[test]
+fn a_non_normalised_path_into_the_bundle_is_refused_not_ignored() {
+    for path in [
+        "/p/.quecto/containers/standard/../standard/scripts/create.sh",
+        "/p/.quecto/containers/standard/scripts/../scripts/create.sh",
+        "/p/x/../.quecto/containers/standard/scripts/create.sh",
+    ] {
+        assert_eq!(
+            split_at_bundle(Path::new(path)),
+            Err(StandardScriptVerdict::Refused(
+                "path into the standard bundle is not normalised".into()
+            )),
+            "{path}"
+        );
+        assert!(
+            matches!(
+                EmbeddedScriptIntegrity.verify(Path::new(path)),
+                StandardScriptVerdict::Refused(reason) if reason == "path into the standard bundle is not normalised"
+            ),
+            "{path}"
+        );
+    }
 }
 
 #[test]
