@@ -100,7 +100,7 @@ and rejecting unrunnable argv) from the set its `EffectiveContainerConfigs`
 port returns — the configuration capability's *effective* configuration for
 the launching agent's checkout (trusted overlay merged entry-wise, untrusted
 overlay reported and not applied — withholding the implicit default only
-when it is refused, unparseable, or declares `container_configs`, judged in
+when it is refused, unparseable or failing the trust checks, or declares `container_configs`, judged in
 `composition/container_configs.rs` on the resolver's parsed top-level keys)
 or an explicit spawn `config` file, which
 replaces the layers. `src/infrastructure/config/container_configs.rs` adapts

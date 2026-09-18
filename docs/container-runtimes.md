@@ -308,7 +308,7 @@ by hand, or committed by someone else, needs `quecto config trust` from
 the checkout after review — an explicit, non-interactive command an agent
 can run. Until then the overlay contributes nothing to container spawns.
 `container: true` is **refused** when the withheld overlay could have
-changed the default — it is a symbolic link, unparseable, or an untrusted
+changed the default — it is a symbolic link, unparseable or failing the trust checks, or an untrusted
 document that declares `container_configs` (the default it labels is
 unknown, so an implicit selection must not quietly land in the global
 one) — with a tool error naming the overlay and `quecto config trust`. An

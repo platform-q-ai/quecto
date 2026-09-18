@@ -82,7 +82,7 @@ approved by `quecto config trust`); selection is launch policy in
 `application/subagents` over the launching agent's *checkout*, never the
 quecto base directory. An overlay that exists but was not applied makes
 an implicit `container: true` a refusal only when it *could* have changed
-the default: it is refused outright (a symbolic link), unparseable, or an
+the default: it is refused outright (a symbolic link), unparseable or failing the trust checks, or an
 untrusted document that declares `container_configs` — then the default
 it labels is unknown, so the launch must not quietly land in the global
 one. An untrusted overlay that declares no `container_configs` (say, one
