@@ -719,9 +719,9 @@ Use `~/.quecto/models.json` for community-extensible providers and model metadat
 Auth modes are explicit provider keys. The built-in vendor slots are split so quecto never silently switches between OAuth monthly-plan credentials and token-billed API keys:
 
 - `openai-api/...` uses `providers.openai.api_key` / `OPENAI_API_KEY`.
-- `openai-oauth/...` uses the stored `quecto auth login openai` credential.
+- `openai-oauth/...` uses the stored `quecto auth login --provider openai --oauth` credential.
 - `anthropic-api/...` uses `providers.anthropic.api_key` / `ANTHROPIC_API_KEY`.
-- `anthropic-oauth/...` uses the stored `quecto auth login anthropic` credential.
+- `anthropic-oauth/...` uses the stored `quecto auth login --provider anthropic --oauth` credential.
 
 Community providers use the same explicit model. API-key providers are fully data-driven. OAuth providers may reference only kernel-known OAuth identities (`openai`, `anthropic`); adding a brand-new OAuth identity requires kernel code because OAuth client IDs, scopes, token URLs, and refresh handling are security-sensitive.
 
@@ -768,7 +768,7 @@ Example: OpenAI-compatible API provider with slashful model IDs:
 
 Supported provider fields: `api` (`openai-completions` or `anthropic-messages`), `baseUrl`/`apiBase`, `auth`, `authHeader`, `allowRemoteHttp`, and `models`. API keys support `$ENV` and `${ENV}` interpolation. Supported model fields include `id`, `name`, `reasoning`, `input`, `contextWindow`, `maxTokens`, and `cost` (`input`, `output`, `cacheRead`, `cacheWrite`).
 
-To use an OAuth-backed registry provider, first run `quecto auth login openai` or `quecto auth login anthropic`, then select the registry provider key (for example `/model anthropic-oauth/claude-opus-4-8`). The `/model` selector shows `[apiKey]` or `[oauth]` so the billing/auth mode is visible before selection.
+To use an OAuth-backed registry provider, first run `quecto auth login --provider openai --oauth` or `quecto auth login --provider anthropic --oauth` (a human at a terminal; an agent stores an API key with `--token <key>` instead), then select the registry provider key (for example `/model anthropic-oauth/claude-opus-4-8`). The `/model` selector shows `[apiKey]` or `[oauth]` so the billing/auth mode is visible before selection.
 
 `providers.openai_compatible.endpoints` remains supported for OpenAI-compatible API-key endpoints, but `models.json` is preferred when you want those models to appear in `/model`.
 

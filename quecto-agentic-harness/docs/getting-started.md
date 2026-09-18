@@ -24,7 +24,8 @@ quecto auth login --provider openai --token sk-proj-your-key
 # or
 quecto auth login --provider anthropic --token sk-ant-your-key
 
-# Or OAuth (browser)
+# Or OAuth (browser) — for a human at a terminal only: it blocks until the
+# callback arrives; an agent always passes --token
 quecto auth login --provider openai --oauth
 quecto auth login --provider anthropic --oauth
 ```

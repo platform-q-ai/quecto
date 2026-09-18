@@ -54,10 +54,10 @@ same `QUECTO_BASE_DIR` (the credential store is `<base_dir>/credentials.json`,
 ```bash
 quecto auth login --provider openai --token sk-proj-…     # → Credential stored for openai
 quecto auth login --provider anthropic --token sk-ant-…   # → Credential stored for anthropic
-quecto auth login --provider openai --oauth                # browser flow
+quecto auth login --provider openai --oauth                # browser flow — human at a terminal only; an agent always passes --token
 quecto auth login --provider openai --device-code          # headless: prints a URL and a code
 quecto auth status                                         # → Credentials:  openai (token) — active
-quecto agent --no-session -m "Reply with exactly the word OK"   # → OK  (proves the default model runs)
+quecto agent --no-session -m "Reply with exactly OK"   # → OK  (proves the default model runs)
 quecto auth logout --provider openai                       # rollback → Credential removed for openai
 ```
 
@@ -84,9 +84,9 @@ Provider keys are auth-specific. Do not overload a single `openai` or `anthropic
 Built-in provider names:
 
 - `openai-api` — OpenAI API key (`OPENAI_API_KEY` or config).
-- `openai-oauth` — OpenAI OAuth credential from `quecto auth login openai`.
+- `openai-oauth` — OpenAI OAuth credential from `quecto auth login --provider openai --oauth`.
 - `anthropic-api` — Anthropic API key (`ANTHROPIC_API_KEY` or config).
-- `anthropic-oauth` — Anthropic OAuth credential from `quecto auth login anthropic`.
+- `anthropic-oauth` — Anthropic OAuth credential from `quecto auth login --provider anthropic --oauth`.
 
 The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mode is visible before selection. Bare vendor prefixes (`openai/...`, `anthropic/...`) should not be used for new configs because they hide billing mode.
 
@@ -171,7 +171,7 @@ OAuth stays kernel-owned. Community data may reference only kernel-known OAuth i
 Setup:
 
 ```bash
-quecto auth login anthropic
+quecto auth login --provider anthropic --token sk-ant-…   # or --oauth at a terminal
 ```
 
 Then select:

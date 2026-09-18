@@ -21,7 +21,7 @@ turn — never tell the user to restart.
 - `quecto version` works; `quecto status` exits 0 (its `Config:` line is the global file; `providers`, `credentials.json` and `models.json` all live in that base dir — `QUECTO_BASE_DIR` moves them; `Workspace:` does not move).
 - For a repo default: you are in the repository root and `quecto status` shows `Overlay: none` or `(trusted)` (see `docs {"name": "config"}` for `(untrusted)`).
 - The model id is qualified: `provider/model` (`openai-api/gpt-5.6-luna`, `anthropic-api/claude-…`, `<models.json key>/<id>`). The writer does not check the id against the catalogue, so prove it runs (Verify).
-- Reasoning effort is per model: OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, every `openai-oauth` model) accept `none, low, medium, high, xhigh`; Anthropic built-ins `low, medium, high, max`; xAI Grok `low, medium, high` (`grok-4.6`: `xhigh` too); `openai-api` Chat Completions ids (`gpt-5.5`, mini/nano, codex) accept none; a `models.json` model only with `"reasoning": true`. A model with no effort control refuses `set_effort`; read `get_state`'s `effortLevels`, never guess.
+- Reasoning effort is per model: OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, every `openai-oauth` model) accept `none, low, medium, high, xhigh`; Anthropic built-ins `low, medium, high, max`; xAI Grok `low, medium, high` (`grok-4.6`: `xhigh` too); `openai-api` Chat Completions ids (`gpt-5.5`, mini/nano, codex) have no effort control (`set_effort` is refused); a `models.json` model has one only with `"reasoning": true`. The file validator (`config set … agents.defaults.effort`) accepts any of `none, low, medium, high, xhigh, max` for every model; only the model rejects an unsupported level, at run time. Read `get_state`'s `effortLevels`, never guess.
 
 ## Do
 
@@ -35,8 +35,9 @@ quecto auth login --provider anthropic --token sk-ant-…      # → Credential 
 From an agent, **always pass `--token`**: without it (or with `--oauth`,
 which is the same thing) the command starts the browser OAuth flow and
 blocks until the callback arrives on `localhost:1455` — a tool call never
-returns from it. That flow, and `--device-code` (openai and custom `models.json` providers; anthropic refuses: prints a URL
-and a code, then waits), are for a human at a terminal. Ask the user for
+returns from it. `--device-code` (openai and custom `models.json` providers only; anthropic
+refuses it) prints a URL and a code, then waits — both flows are for a human
+at a terminal. Ask the user for
 the key; do not echo it back, do not write it into any file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 also work for one process. The store takes priority over
 `providers.openai.api_key` in the global file.
@@ -69,7 +70,7 @@ From a running session the same record is `set_model {"model":"openai-api/gpt-5.
 quecto auth status                                     # → Credentials:\n  openai (token) — active
 quecto config get --effective agents.defaults.model    # → "openai-api/gpt-5.6-luna"
 quecto status                                          # → Overlay: … (trusted)  Model: openai-api/gpt-5.6-luna  Effort: high
-quecto agent --no-session -m "Reply with exactly the word OK"   # prints the reply only: OK
+quecto agent --no-session -m "Reply with exactly OK"   # prints the reply only: OK
 ```
 
 The last line runs one model call on the pinned model from this directory
