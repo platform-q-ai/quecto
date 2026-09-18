@@ -70,6 +70,29 @@ dir records every kill/cleanup.
 returns `environment_ref=C1 container_config=<name>`; `agent_cmd
 get_containers` (`agent_id: "*"`) lists it as `running`.
 
+## Environments from earlier sessions
+
+Refs are durable per base dir (`<base_dir>/environments.json`): a container
+created by an earlier or concurrent session survives a restart and appears
+in `get_containers` with `restored: true` and `session` (its creator),
+status `empty` (its members are not reachable here), `retained`, or
+`stopped` (its container was gone when this session started). Join one
+that is `empty`/`retained` with `container: {"mode":"existing","ref":"C1"}`
+(your joiner leaving never tears it down); stop it with `kill_container`
+(`ref` or `name`). From the shell:
+
+```
+quecto container ls [--all]                 # live environments (--all: stopped too)
+quecto container kill <ref|name>            # retained kill, record → stopped
+quecto container gc --dry-run               # orphans: exited/unknown container AND no record or a stopped one
+quecto container gc [--name <config>] [--state-dir <dir>]   # remove them (config's inspect --list / cleanup)
+```
+
+`gc` never touches a `running`/`retained`/`cleanup-failed` record or a
+state dir whose container runs; it reports what it removed, kept and why.
+Clean up after yourself: kill what you created when done, and run
+`quecto container gc --dry-run` when `ls` shows stopped leftovers.
+
 ## See also
 
 - `docs {"name": "subagents"}` — spawning, joining, killing environments

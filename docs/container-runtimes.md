@@ -49,17 +49,24 @@ UUID, distinct from the environment's hidden UUID.
 
 ## Listing and killing environments (`agent_cmd`)
 
-The session environment registry is authoritative for `CN` ref, optional
-name, runtime id, repository, workspace, retained script set, member agent
-UUIDs, status, metadata, and last error. Two session-level `agent_cmd`
-commands expose it (use `agent_id: "*"`):
+The environment registry is authoritative for `CN` ref, optional name,
+runtime id, repository, workspace, retained script set, member agent
+UUIDs, status, metadata, and last error. It is **durable per base
+directory** (#2024 S4d, `<base_dir>/environments.json`, see "Environments
+outlive sessions" below): refs are allocated there, unique across every
+session sharing the directory, and every transition is written through.
+Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
 
-- `get_containers` — lists every environment this session committed with
-  status `running`, `empty` (live, no members), `killing`, `stopped`,
-  `cleanup-failed` (with its `last_error`), or `retained` (a swarm
-  container kept alive after its run ended or lost its coordinator, with
-  `metadata.retained` explaining which; see "Swarm environments are
-  retained"), plus workspace and members.
+- `get_containers` — lists every environment this session committed, and
+  every environment earlier or concurrent sessions of the same base
+  directory recorded (`restored: true`, `session` naming the creator,
+  `config` the container config, `created_at` epoch seconds), with
+  status `running`, `empty` (live, no members — every restored environment
+  starts so: another session's members are not reachable here),
+  `killing`, `stopped`, `cleanup-failed` (with its `last_error`), or
+  `retained` (a swarm container kept alive after its run ended or lost
+  its coordinator, with `metadata.retained` explaining which; see "Swarm
+  environments are retained"), plus workspace and members.
 - `kill_container` with `ref` or `name` — takes the environment's
   exclusive kill claim, asks every member agent to shut down over its own
   control edge (the `shutdown` protocol; a container coordinator's harness
@@ -209,10 +216,74 @@ board and checkout, read the member logs (see the adapter section). A join
 environment (relaunching the coordinator against the surviving store is not
 wired yet, and the paused run refuses activation); a joiner that exits or
 rolls back leaves the record `retained`. A retained environment outlives the
-master session that produced it (the master's shutdown retains it too):
-remove it with `kill_container` from that session while it lives, from a new
-session that joins and kills it, or manually with the adapter's `kill.sh`
-(or `podman rm -f quecto-<environment_id>` plus its state directory).
+master session that produced it (the master's shutdown retains it too), and
+its record outlives the harness: remove it with `kill_container` from that
+session while it lives, from any later session of the same base directory
+(`get_containers` lists it `retained` with `restored: true`;
+`kill_container` by ref or name), from the shell with `quecto container
+kill <ref|name>`, or manually with the adapter's `kill.sh` (or `podman rm -f
+quecto-<environment_id>` plus its state directory) — after which `quecto
+container gc` removes what is left.
+
+## Environments outlive sessions (#2024 S4d)
+
+Every harness keeps its environment registry in
+`<base_dir>/environments.json` (0600, written atomically under the same
+`<base_dir>/locks/` `flock` the configuration writer uses): for each `CN`
+ref the runtime id, name, container config, retained `exec`/`kill`/
+`cleanup`/`inspect` argv, status, workspace, repository, metadata, last
+error, the creating session's key and the creation time. **Members are not
+stored** — they belong to the session that launched them. Refs are
+allocated in the file, so two sessions on one base directory never mint
+the same `C7`, and a ref is never reused after a restart.
+
+At startup a top-level session **restores** the file: each record is
+checked against the runtime through its retained `inspect` — a
+`running`/`retained`/`cleanup-failed` record whose inspect says `dead` is
+marked `stopped` with `container not found at restore …` as its last
+error (never silently dropped); one whose inspect cannot be run is kept as
+recorded and reported unverified on stderr; a kill that was in flight
+when its session ended becomes a retryable `cleanup-failed`. Restored
+records carry `restored: true` and `session` in `get_containers`. A
+spawned child journals its own creates but is not seeded (its parent
+shows the fleet).
+
+What a new session can do with a restored environment:
+
+- **list** — `agent_cmd get_containers` (`agent_id: "*"`), or from the
+  shell `quecto container ls` (live ones; `--all` includes `stopped`):
+  `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`.
+- **join** — `spawn {"container": {"mode": "existing", "ref": "C1"}}` (or
+  `"name"`) while it is `running`/`empty`/`retained`; the retained `exec`
+  runs. A joiner leaving a restored environment **never tears it down**
+  (its creating session may still hold members this session cannot see);
+  only an explicit kill ends it.
+- **kill** — `agent_cmd kill_container` with `ref`/`name`, or `quecto
+  container kill <ref|name>`: no members of another session are asked
+  (none are recorded), the retained `kill` runs once, `stopped` is written
+  through. The creating session, if still alive, sees its member die and
+  runs its own final-member kill after yours — the shipped scripts are
+  idempotent.
+- **collect** — `quecto container gc [--dry-run] [--name <config>]
+  [--state-dir <dir>]...` removes **orphans**: environments whose
+  container is exited or unknown to the runtime **and** that the registry
+  either does not record or records `stopped`. It scans the config's
+  `--state-dir` (from its create argv), every root a record implies and
+  every `--state-dir` given; it lists containers through the config's
+  `inspect --list` (one JSON object per container the create script
+  labelled, so exited containers whose directory is already gone are
+  found too) and removes through the record's retained `cleanup` or the
+  config's `cleanup` — the harness itself names no runtime. A `running`,
+  `retained`, `killing` or `cleanup-failed` record is always **kept**
+  (with the reason, pointing at `container kill`); so is any state dir
+  whose container runs. `--dry-run` prints the same judgement without an
+  effect; the report lists what was (or would be) removed, what was kept
+  and why, and every failure.
+
+`quecto container ls|kill|gc` resolve the container config the way the
+doctor and `spawn` do (the working directory's effective configuration, or
+`--config <file>`), restore the registry for their own run, and never
+touch a live environment.
 
 ## Configuration
 
@@ -538,7 +609,16 @@ exactly one JSON object:
 
 `metadata` (required object) is merged over the environment's stored
 metadata and becomes visible via `get_containers`; `status` (optional) is
-recorded as `inspect_status`. The result is parsed with the same strict
+recorded as `inspect_status` — and judged by the registry restore
+(#2024 S4d): `running` keeps the record, `dead`/`exited`/`removed`/
+`stopped` marks it stopped, anything else (or a failed inspect) leaves it
+unverified. A missing environment directory is a truthful `dead` (cause
+`environment-removed`), not an error. With `--list` appended (no
+environment id) the script prints one JSON object per line for **every**
+environment the runtime knows — `{"environment_id": "env-…",
+"container": "quecto-env-…", "status": "running"|"dead"}` — which is how
+`quecto container gc` finds exited containers; a script set without
+`--list` cannot serve the collector (the error says so). The result is parsed with the same strict
 wire rules as `create`/`exec`: exactly these fields — unknown keys,
 trailing JSON data, and non-UTF8 output are rejected. A non-zero exit or
 invalid contract persists an actionable inspect error on the environment
@@ -555,7 +635,12 @@ session `C1` ref the create script received). Runs exactly once when a
 launch fails after creation (readiness, registration, or initial-prompt
 failure) — even when a `kill` is configured. For script sets without a
 configured `kill`, the retained `cleanup` argv also serves as the
-final-member teardown fallback.
+final-member teardown fallback. `quecto container gc` also runs it — the
+record's retained argv for a `stopped` record, the selected config's for
+an unrecorded orphan — so it must remove the container **and** the state
+directory, and must succeed when the directory is already gone (the
+shipped `kill.sh --op cleanup` then still removes the container it would
+have named, `quecto-<environment_id>`).
 
 ## The canonical reference runtime
 
