@@ -69,6 +69,16 @@ Feature: Environments outlive sessions
     And scenario teardown should leave no fixture processes running
 
   @done @issue-2024 @container-env
+  Scenario: A name two sessions both gave is ambiguous after a restart, and a new create with it is refused
+    Given script-managed child "impl-name-a" is running in a shared environment named "dup-env" with task "IMPL_NAME_A_MARKER"
+    And the durable environment registry also records a running environment "C9" named "dup-env" from session "elsewhere"
+    When the harness is restarted as session "session-two"
+    And I spawn read-only subagent "observer-dup" into existing environment name "dup-env" with task "OBSERVER_DUP_MARKER"
+    Then the spawn result should fail because environment name "dup-env" is ambiguous
+    When I spawn script-managed subagent "impl-name-c" into a new shared environment named "dup-env" with task "IMPL_NAME_C_MARKER"
+    Then the spawn result should fail because environment name "dup-env" already names more than one live environment
+
+  @done @issue-2024 @container-env
   Scenario: quecto container ls lists live environments and --all includes stopped ones
     Given script-managed child "impl-ls" is running in a shared environment named "ls-env" with task "IMPL_LS_MARKER"
     And the durable environment registry also records a stopped environment "C7" named "old-env"

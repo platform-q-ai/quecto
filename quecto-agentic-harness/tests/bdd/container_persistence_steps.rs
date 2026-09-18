@@ -266,29 +266,74 @@ fn given_runtime_loses_container(world: &mut QuectoWorld, env_ref: String) {
     expr = "the durable environment registry also records a stopped environment {string} named {string}"
 )]
 fn given_stopped_record(world: &mut QuectoWorld, env_ref: String, name: String) {
+    plant_record(
+        world,
+        &env_ref,
+        &name,
+        quecto::domain::environment_registry::EnvironmentStatus::Stopped,
+        "elsewhere",
+        false,
+    );
+}
+
+#[given(
+    expr = "the durable environment registry also records a running environment {string} named {string} from session {string}"
+)]
+fn given_running_record(world: &mut QuectoWorld, env_ref: String, name: String, session: String) {
+    plant_record(
+        world,
+        &env_ref,
+        &name,
+        quecto::domain::environment_registry::EnvironmentStatus::Running,
+        &session,
+        true,
+    );
+}
+
+/// Write a record another session would have left: `live` ones get a
+/// state dir and a running fake container so the restore believes them.
+fn plant_record(
+    world: &QuectoWorld,
+    env_ref: &str,
+    name: &str,
+    status: quecto::domain::environment_registry::EnvironmentStatus,
+    session: &str,
+    live: bool,
+) {
     let store =
         quecto::composition::environments::build_environment_registry_store(&base_path(world));
     let number: u64 = env_ref[1..].parse().unwrap();
-    let id = format!("env-stopped-{number}");
+    let id = format!("env-planted-{number}");
+    let inspect = base_path(world).join("persist-inspect.sh");
+    if live {
+        let dir = state_dir(world).join(&id);
+        std::fs::create_dir_all(dir.join("workspace")).unwrap();
+        std::fs::write(dir.join("container"), format!("quecto-{id}\n")).unwrap();
+        std::fs::write(runtime_dir(world).join(format!("quecto-{id}")), "running\n").unwrap();
+    }
     store
         .record(&quecto::domain::environment_registry::EnvironmentRecord {
-            environment_ref: env_ref,
+            environment_ref: env_ref.to_string(),
             environment_id: id.clone(),
             environment_uuid: format!("uuid-{number}"),
-            name: Some(name),
+            name: Some(name.to_string()),
             workspace_path: state_dir(world).join(&id).join("workspace"),
             repository: String::new(),
             script_name: "default".into(),
             retained_exec_argv: vec![],
             retained_kill_argv: vec![],
             retained_cleanup_argv: vec![],
-            retained_inspect_argv: vec![],
+            retained_inspect_argv: if live {
+                vec![inspect.to_string_lossy().into_owned()]
+            } else {
+                vec![]
+            },
             members: vec![],
-            status: quecto::domain::environment_registry::EnvironmentStatus::Stopped,
+            status,
             metadata: serde_json::json!({}),
             last_error: None,
             origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
-            created_by: "elsewhere".into(),
+            created_by: session.to_string(),
             created_at: Some(0),
         })
         .unwrap();
