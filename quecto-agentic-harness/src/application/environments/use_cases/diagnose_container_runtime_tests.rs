@@ -34,6 +34,8 @@ fn config(create: &[&str]) -> DiagnosableContainerConfig {
     DiagnosableContainerConfig {
         name: "official".into(),
         create: create.iter().map(|s| s.to_string()).collect(),
+        inspect: vec![],
+        cleanup: vec![],
         diagnostics: vec!["overlay note".into()],
     }
 }

@@ -29,7 +29,7 @@ use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
-use crate::infrastructure::processes::containers::runtime_inventory::RuntimeCliInventory;
+use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
 pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
@@ -108,9 +108,9 @@ pub fn build_environment_process() -> Arc<dyn EnvironmentProcess> {
     Arc::new(ScriptEnvironmentProcess)
 }
 
-/// The host's container and state-dir inventory (podman/docker on PATH).
+/// The host's environment inventory through a config's own scripts.
 pub fn build_container_runtime_inventory() -> Arc<dyn ContainerRuntimeInventory> {
-    Arc::new(RuntimeCliInventory::from_path())
+    Arc::new(ScriptInventory)
 }
 
 /// The restore use case over the production adapters for `base_dir`.
@@ -164,8 +164,13 @@ fn report_restore(report: &RestoredRegistry) {
 /// S4d): the listing, the kill and the collector over a registry restored
 /// from `base_dir` for the command's own run (no members of any session
 /// are reachable from here, so a kill settles none and runs the retained
-/// kill directly).
-pub fn build_container_inventory(base_dir: &Path) -> ContainerInventoryHandles {
+/// kill directly). The collector lists and removes unrecorded orphans
+/// through the container config the run's own selection resolves, like
+/// the doctor.
+pub fn build_container_inventory(
+    base_dir: &Path,
+    selection: &ConfigSelection,
+) -> ContainerInventoryHandles {
     let (registry, restore) = build_restore_registry(base_dir).execute("cli");
     for line in &restore.diagnostics {
         eprintln!("{line}");
@@ -179,6 +184,7 @@ pub fn build_container_inventory(base_dir: &Path) -> ContainerInventoryHandles {
         )),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,
+            build_container_config_lookup(base_dir, Some(selection.clone())),
             build_container_runtime_inventory(),
             build_environment_process(),
         )),

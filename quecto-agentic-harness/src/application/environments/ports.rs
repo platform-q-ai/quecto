@@ -197,14 +197,21 @@ pub trait EnvironmentProcess: Send + Sync {
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
 }
 
-/// The host's inventory of environments outside any registry: the
-/// containers the runtime labels `quecto.environment_id` and the state
-/// directories under a state root, with the removals the collector may
-/// ask for. The adapter removes only a container it listed and only a
-/// directory directly under the root it listed it from.
+/// The host's inventory of environments outside any registry, through a
+/// container config's own scripts (the harness knows no runtime): every
+/// environment the runtime knows (`inspect --list`), the state
+/// directories under a state root, and the removal of one environment by
+/// id (the config's `cleanup`, which takes the container and the state
+/// dir down together).
 pub trait ContainerRuntimeInventory: Send + Sync {
-    fn containers(&self) -> Result<Vec<RuntimeContainer>, String>;
-    fn remove_container(&self, name: &str) -> Result<(), String>;
+    fn containers(
+        &self,
+        config: &DiagnosableContainerConfig,
+    ) -> Result<Vec<RuntimeContainer>, String>;
     fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String>;
-    fn remove_environment_dir(&self, root: &Path, dir: &Path) -> Result<(), String>;
+    fn remove(
+        &self,
+        config: &DiagnosableContainerConfig,
+        environment_id: &str,
+    ) -> Result<(), String>;
 }

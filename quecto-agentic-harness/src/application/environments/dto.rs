@@ -12,14 +12,39 @@ pub struct ContainerRuntimeTarget {
     pub name: Option<String>,
 }
 
-/// The config a diagnosis runs against: its name, the `create` argv whose
-/// script hosts the preflight, and the layer diagnostics the selection
-/// reported while resolving it.
+/// The config a diagnosis (or the collector, #2024 S4d) runs against: its
+/// name, the `create` argv whose script hosts the preflight, the
+/// `inspect` and `cleanup` argv the collector lists and removes
+/// environments through, and the layer diagnostics the selection reported
+/// while resolving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosableContainerConfig {
     pub name: String,
     pub create: Vec<String>,
+    pub inspect: Vec<String>,
+    pub cleanup: Vec<String>,
     pub diagnostics: Vec<String>,
+}
+
+impl DiagnosableContainerConfig {
+    /// The state root the config's create argv names, by the shipped
+    /// scripts' convention (`--state-dir <dir>` before any `--`); `None`
+    /// for a script set that keeps its state elsewhere.
+    pub fn state_root(&self) -> Option<std::path::PathBuf> {
+        let mut argv = self.create.iter();
+        while let Some(arg) = argv.next() {
+            if arg == "--" {
+                return None;
+            }
+            if arg == "--state-dir" {
+                return argv
+                    .next()
+                    .filter(|value| !value.is_empty() && *value != "--")
+                    .map(std::path::PathBuf::from);
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,13 +154,13 @@ pub struct RestoredRegistry {
     pub diagnostics: Vec<String>,
 }
 
-/// One container the runtime knows under the `quecto.environment_id`
-/// label.
+/// One environment the runtime knows, as the config's `inspect --list`
+/// reports it: the environment id the create script labelled it with,
+/// the runtime's own name for it, and whether it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeContainer {
-    pub name: String,
-    /// The label's value, when the runtime reported one.
-    pub environment_id: Option<String>,
+    pub environment_id: String,
+    pub container: String,
     pub running: bool,
 }
 
@@ -154,7 +179,11 @@ pub struct EnvironmentStateDir {
 pub struct GcRequest {
     /// Report without removing anything.
     pub dry_run: bool,
-    /// State roots to scan besides those the registry's records imply.
+    /// The container config whose scripts list and remove unrecorded
+    /// environments (`--name`; `None` is the labelled default).
+    pub config: Option<String>,
+    /// State roots to scan besides the config's and those the registry's
+    /// records imply.
     pub state_roots: Vec<std::path::PathBuf>,
 }
 
@@ -164,9 +193,8 @@ pub enum GcRemoval {
     /// The stopped record's retained `cleanup` argv, which removes the
     /// container and the state dir together.
     RetainedCleanup { environment_ref: String },
-    /// No record: the runtime container (if any) is removed, then the
-    /// state dir (if any).
-    Direct,
+    /// No record: the config's `cleanup` argv, given the environment id.
+    ConfiguredCleanup { config: String },
 }
 
 /// One environment the collector judged.
@@ -187,11 +215,27 @@ pub struct GcKept {
     pub reason: String,
 }
 
+/// The collector's refusal: no container config to list and remove
+/// through (the selection's own account, or a config without `inspect`
+/// or `cleanup`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GcRefused(pub String);
+
+impl std::fmt::Display for GcRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for GcRefused {}
+
 /// The collector's account: what it would remove (dry run) or removed,
 /// what it kept, and what went wrong.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcReport {
     pub dry_run: bool,
+    /// The container config whose scripts served the collection.
+    pub config: String,
     /// The state roots that were scanned.
     pub state_roots: Vec<std::path::PathBuf>,
     pub removable: Vec<GcCandidate>,

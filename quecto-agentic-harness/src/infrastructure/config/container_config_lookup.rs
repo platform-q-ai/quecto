@@ -47,6 +47,8 @@ impl ContainerConfigLookup for SelectedConfigLookup {
         Ok(DiagnosableContainerConfig {
             name: selected.config.name,
             create: selected.config.create,
+            inspect: selected.config.inspect,
+            cleanup: selected.config.cleanup,
             diagnostics: selected.diagnostics,
         })
     }

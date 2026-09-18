@@ -67,8 +67,12 @@ fn composed() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
     store
         .record(&record("C2", "env-two", EnvironmentStatus::Stopped))
         .unwrap();
+    let cwd = dir.path().join("cwd");
+    std::fs::create_dir_all(&cwd).unwrap();
     let ctx = CliContext {
         base_dir: Some(base),
+        cwd: Some(cwd),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
         container_inventory: Some(crate::composition::environments::build_container_inventory),
         ..Default::default()
     };
@@ -122,6 +126,8 @@ fn ls_on_an_empty_base_dir_says_so() {
     let dir = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(dir.path().to_path_buf()),
+        cwd: Some(dir.path().to_path_buf()),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
         container_inventory: Some(crate::composition::environments::build_container_inventory),
         ..Default::default()
     };
@@ -174,9 +180,17 @@ fn commands_refuse_without_a_composed_inventory() {
 }
 
 #[test]
-fn gc_parses_dry_run_and_state_dirs_and_refuses_the_rest() {
-    let request = parse_gc(&["--dry-run".into(), "--state-dir".into(), "/s".into()]).unwrap();
+fn gc_parses_dry_run_name_and_state_dirs_and_refuses_the_rest() {
+    let request = parse_gc(&[
+        "--dry-run".into(),
+        "--name".into(),
+        "box".into(),
+        "--state-dir".into(),
+        "/s".into(),
+    ])
+    .unwrap();
     assert!(request.dry_run);
+    assert_eq!(request.config.as_deref(), Some("box"));
     assert_eq!(request.state_roots, vec![std::path::PathBuf::from("/s")]);
     assert!(
         parse_gc(&["--state-dir".into()])
@@ -184,10 +198,28 @@ fn gc_parses_dry_run_and_state_dirs_and_refuses_the_rest() {
             .contains("--state-dir requires")
     );
     assert!(
+        parse_gc(&["--name".into()])
+            .unwrap_err()
+            .contains("--name requires")
+    );
+    assert!(
+        parse_gc(&["--name".into(), "a".into(), "--name".into(), "b".into()])
+            .unwrap_err()
+            .contains("--name may be given once")
+    );
+    assert!(
         parse_gc(&["--force".into()])
             .unwrap_err()
             .contains("unknown argument --force")
     );
+}
+
+#[test]
+fn gc_without_a_container_config_is_refused_in_the_collectors_words() {
+    let (_dir, ctx, _) = composed();
+    let output = run(&["container", "gc", "--dry-run"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(output.stderr.contains("container config"), "{output:?}");
 }
 
 #[test]
@@ -202,13 +234,16 @@ fn ages_are_compact() {
 fn gc_report_presents_candidates_kept_and_roots() {
     let report = GcReport {
         dry_run: true,
+        config: "official".into(),
         state_roots: vec!["/s".into()],
         removable: vec![
             GcCandidate {
                 environment_id: "env-a".into(),
                 state_dir: Some("/s/env-a".into()),
                 container: Some("quecto-env-a".into()),
-                removal: GcRemoval::Direct,
+                removal: GcRemoval::ConfiguredCleanup {
+                    config: "official".into(),
+                },
                 reason: "container quecto-env-a exited; no registry record".into(),
             },
             GcCandidate {
@@ -234,7 +269,8 @@ fn gc_report_presents_candidates_kept_and_roots() {
         out.contains("would remove 2 orphaned environments:"),
         "{out}"
     );
-    assert!(out.contains("  env-a  /s/env-a + container quecto-env-a  [container quecto-env-a exited; no registry record; directly]"), "{out}");
+    assert!(out.contains("container config \"official\"\n"), "{out}");
+    assert!(out.contains("  env-a  /s/env-a + container quecto-env-a  [container quecto-env-a exited; no registry record; via cleanup of config 'official']"), "{out}");
     assert!(out.contains("  env-b  container quecto-env-b (no state dir)  [recorded C3 as stopped; via retained cleanup of C3]"), "{out}");
     assert!(
         out.contains("kept 1 environment:\n  env-c  container quecto-env-c is running"),

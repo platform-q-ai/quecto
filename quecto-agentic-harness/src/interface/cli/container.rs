@@ -31,9 +31,9 @@ pub type EnvironmentRegistryBuilder =
 /// Composition's builder of the `container ls|kill|gc` handles (#2024
 /// S4d) over a registry restored from the base directory.
 pub type ContainerInventoryBuilder =
-    fn(&std::path::Path) -> super::container_handles::ContainerInventoryHandles;
+    fn(&std::path::Path, &ConfigSelection) -> super::container_handles::ContainerInventoryHandles;
 
-pub(super) const USAGE: &str = "usage: quecto container doctor [--name <config>]\n       quecto container ls [--all]\n       quecto container kill <ref|name>\n       quecto container gc [--dry-run] [--state-dir <dir>]...\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+pub(super) const USAGE: &str = "usage: quecto container doctor [--name <config>]\n       quecto container ls [--all]\n       quecto container kill <ref|name>\n       quecto container gc [--dry-run] [--name <config>] [--state-dir <dir>]...\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 pub(crate) fn cmd_container(
     ctx: &CliContext,

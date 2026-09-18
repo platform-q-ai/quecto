@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Official Docker adapter for the Quecto container-runtime contract: `inspect`.
-#   inspect.sh --state-dir <dir>
-# Environment: QUECTO_CONTAINER_ENVIRONMENT_ID
+#   inspect.sh --state-dir <dir>          # one environment (QUECTO_CONTAINER_ENVIRONMENT_ID)
+#   inspect.sh --state-dir <dir> --list   # every environment the runtime knows
+# Environment: QUECTO_CONTAINER_ENVIRONMENT_ID (not needed with --list)
 #
 # Reports the container's truth post-mortem. Bounded by Quecto's 5s
 # inspect timeout, so only cheap `podman`/`docker inspect` calls happen here.
+# `--list` (#2024 S4d, `quecto container gc`) prints one JSON object per
+# container carrying the `quecto.environment_id` label —
+# `{"environment_id": ..., "container": ..., "status": "running"|"dead"}` —
+# so the collector learns about exited containers whose state dir is gone
+# without the harness knowing the runtime.
 set -euo pipefail
 
 log() { printf 'container-runtime-docker inspect: %s\n' "$*" >&2; }
@@ -32,6 +38,7 @@ fi
 [ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
 state_dir=""
+list=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -39,10 +46,26 @@ while [ "$#" -gt 0 ]; do
     state_dir="$2"
     shift 2
     ;;
+  --list)
+    list=1
+    shift
+    ;;
   *) die "unknown argument: $1" ;;
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+if [ "$list" = 1 ]; then
+  # Every container the create script labelled, whatever its state.
+  "$cli" ps -a --filter label=quecto.environment_id \
+    --format '{{.Names}}\t{{.State}}\t{{.Label "quecto.environment_id"}}' 2>/dev/null |
+    while IFS=$'\t' read -r name state env_id; do
+      [ -n "$name" ] || continue
+      case "$state" in running) status=running ;; *) status=dead ;; esac
+      jq -cn --arg id "$env_id" --arg container "$name" --arg status "$status" \
+        '{environment_id: $id, container: $container, status: $status}'
+    done
+  exit 0
+fi
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
 [ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 case "$id" in

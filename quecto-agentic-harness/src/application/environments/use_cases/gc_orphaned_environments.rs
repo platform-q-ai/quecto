@@ -4,17 +4,19 @@
 //! runtime container is gone or exited AND the registry either knows
 //! nothing about it or records it `stopped`. Everything else is kept and
 //! said so — a `running`, `retained`, `killing` or `cleanup-failed` record
-//! with a live container, an unknown state dir whose container still runs,
-//! or a record whose liveness the runtime could not confirm. The collector
-//! never kills: a stopped record is removed through its own retained
-//! `cleanup` (the script that knows the layout), an unrecorded orphan by
-//! removing its exited container and then its state dir. A dry run reports
-//! the same judgement without an effect.
+//! (its liveness is the kill's to settle, never the collector's), an
+//! unknown state dir whose container still runs. The collector never
+//! kills: a stopped record is removed through its own retained `cleanup`
+//! (the script set that created it), an unrecorded orphan through the
+//! selected container config's `cleanup` — the harness knows no runtime;
+//! the scripts list (`inspect --list`) and remove. A dry run reports the
+//! same judgement without an effect.
 //!
-//! The state roots scanned are the ones the request names plus the ones
-//! the registry's records imply (the parent of each record's environment
-//! directory); containers the runtime lists under the environment label
-//! are judged even when their state dir is already gone.
+//! The state roots scanned are the config's own (`--state-dir` in its
+//! create argv), the ones the request names and the ones the registry's
+//! records imply (the parent of each record's environment directory);
+//! containers the runtime lists are judged even when their state dir is
+//! already gone.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,12 +26,14 @@ use crate::domain::environment_registry::{
 };
 
 use super::super::dto::{
-    EnvironmentLiveness, GcCandidate, GcKept, GcRemoval, GcReport, GcRequest, RuntimeContainer,
+    ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, GcCandidate, GcKept,
+    GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer,
 };
-use super::super::ports::{ContainerRuntimeInventory, EnvironmentProcess};
+use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
 
 pub struct GcOrphanedEnvironments {
     registry: EnvironmentRegistry,
+    configs: Arc<dyn ContainerConfigLookup>,
     inventory: Arc<dyn ContainerRuntimeInventory>,
     process: Arc<dyn EnvironmentProcess>,
 }
@@ -72,19 +76,34 @@ struct Sighting<'a> {
 impl GcOrphanedEnvironments {
     pub fn new(
         registry: EnvironmentRegistry,
+        configs: Arc<dyn ContainerConfigLookup>,
         inventory: Arc<dyn ContainerRuntimeInventory>,
         process: Arc<dyn EnvironmentProcess>,
     ) -> Self {
         Self {
             registry,
+            configs,
             inventory,
             process,
         }
     }
 
-    pub fn execute(&self, request: &GcRequest) -> GcReport {
+    pub fn execute(&self, request: &GcRequest) -> Result<GcReport, GcRefused> {
+        let config = self
+            .configs
+            .lookup(&ContainerRuntimeTarget {
+                name: request.config.clone(),
+            })
+            .map_err(GcRefused)?;
+        if config.inspect.is_empty() || config.cleanup.is_empty() {
+            return Err(GcRefused(format!(
+                "container config '{}' has no inspect or cleanup script: the collector cannot list or remove environments through it",
+                config.name
+            )));
+        }
         let mut report = GcReport {
             dry_run: request.dry_run,
+            config: config.name.clone(),
             ..GcReport::default()
         };
         let records = self.registry.entries();
@@ -94,10 +113,11 @@ impl GcOrphanedEnvironments {
             .collect();
 
         let mut roots: BTreeSet<PathBuf> = request.state_roots.iter().cloned().collect();
+        roots.extend(config.state_root());
         roots.extend(records.iter().filter_map(implied_state_root));
         report.state_roots = roots.iter().cloned().collect();
 
-        let containers = match self.inventory.containers() {
+        let containers = match self.inventory.containers(&config) {
             Ok(containers) => containers,
             Err(error) => {
                 // Without the runtime's word nothing can be called exited:
@@ -105,12 +125,16 @@ impl GcOrphanedEnvironments {
                 report
                     .errors
                     .push(format!("container runtime inventory unavailable: {error}"));
-                return report;
+                return Ok(report);
             }
         };
-        let container_by_name: BTreeMap<&str, &RuntimeContainer> = containers
+        let by_container: BTreeMap<&str, &RuntimeContainer> = containers
             .iter()
-            .map(|container| (container.name.as_str(), container))
+            .map(|container| (container.container.as_str(), container))
+            .collect();
+        let by_environment: BTreeMap<&str, &RuntimeContainer> = containers
+            .iter()
+            .map(|container| (container.environment_id.as_str(), container))
             .collect();
 
         let mut judged: BTreeSet<String> = BTreeSet::new();
@@ -127,18 +151,25 @@ impl GcOrphanedEnvironments {
             };
             for dir in dirs {
                 judged.insert(dir.environment_id.clone());
+                // The runtime's entry: by the container the dir names, or
+                // by the environment id it was labelled with.
                 let container = dir
                     .container
                     .as_deref()
-                    .and_then(|name| container_by_name.get(name).copied());
+                    .and_then(|name| by_container.get(name).copied())
+                    .or_else(|| by_environment.get(dir.environment_id.as_str()).copied());
                 self.judge(
                     Sighting {
                         environment_id: &dir.environment_id,
                         state_dir: Some(&dir.path),
-                        container_name: dir.container.as_deref(),
+                        container_name: dir
+                            .container
+                            .as_deref()
+                            .or(container.map(|c| c.container.as_str())),
                         container,
                         record: by_id.get(dir.environment_id.as_str()).copied(),
                     },
+                    &config,
                     &mut report,
                 );
             }
@@ -146,31 +177,36 @@ impl GcOrphanedEnvironments {
         // Containers whose state dir is already gone (or lives under a
         // root nobody named).
         for container in &containers {
-            let Some(environment_id) = container.environment_id.as_deref() else {
-                continue;
-            };
-            if !judged.insert(environment_id.to_string()) {
+            if container.environment_id.is_empty()
+                || !judged.insert(container.environment_id.clone())
+            {
                 continue;
             }
             self.judge(
                 Sighting {
-                    environment_id,
+                    environment_id: &container.environment_id,
                     state_dir: None,
-                    container_name: Some(container.name.as_str()),
+                    container_name: Some(container.container.as_str()),
                     container: Some(container),
-                    record: by_id.get(environment_id).copied(),
+                    record: by_id.get(container.environment_id.as_str()).copied(),
                 },
+                &config,
                 &mut report,
             );
         }
         if !request.dry_run {
-            self.remove(&mut report);
+            self.remove(&config, &mut report);
         }
-        report
+        Ok(report)
     }
 
     /// One environment's verdict from its state dir, container and record.
-    fn judge(&self, sighting: Sighting<'_>, report: &mut GcReport) {
+    fn judge(
+        &self,
+        sighting: Sighting<'_>,
+        config: &DiagnosableContainerConfig,
+        report: &mut GcReport,
+    ) {
         let Sighting {
             environment_id,
             state_dir,
@@ -185,7 +221,10 @@ impl GcOrphanedEnvironments {
             })
         };
         if let Some(container) = container.filter(|container| container.running) {
-            keep(report, format!("container {} is running", container.name));
+            keep(
+                report,
+                format!("container {} is running", container.container),
+            );
             return;
         }
         let container_state = match (container_name, container) {
@@ -194,11 +233,15 @@ impl GcOrphanedEnvironments {
             (None, _) => "no container recorded".to_string(),
         };
         let removal = match record {
-            None => GcRemoval::Direct,
+            None => GcRemoval::ConfiguredCleanup {
+                config: config.name.clone(),
+            },
             Some(record) => match record.status {
                 EnvironmentStatus::Stopped => {
                     if record.retained_cleanup_argv.is_empty() {
-                        GcRemoval::Direct
+                        GcRemoval::ConfiguredCleanup {
+                            config: config.name.clone(),
+                        }
                     } else {
                         GcRemoval::RetainedCleanup {
                             environment_ref: record.environment_ref.clone(),
@@ -209,10 +252,9 @@ impl GcOrphanedEnvironments {
                 | EnvironmentStatus::Retained
                 | EnvironmentStatus::Killing
                 | EnvironmentStatus::CleanupFailed => {
-                    // The registry believes it live; the runtime's list
-                    // says otherwise. Ask the record's own inspect before
-                    // calling it an orphan — and even then never remove a
-                    // record the registry has not stopped: say so.
+                    // The registry believes it live. Never remove a record
+                    // the registry has not stopped: say what the runtime
+                    // and its own inspect think and point at the kill.
                     let verdict = match self.process.observe(record) {
                         EnvironmentLiveness::Running => "its inspect reports it running",
                         EnvironmentLiveness::Gone => {
@@ -248,7 +290,7 @@ impl GcOrphanedEnvironments {
         });
     }
 
-    fn remove(&self, report: &mut GcReport) {
+    fn remove(&self, config: &DiagnosableContainerConfig, report: &mut GcReport) {
         let records = self.registry.entries();
         for candidate in report.removable.clone() {
             let outcome = match &candidate.removal {
@@ -256,10 +298,20 @@ impl GcOrphanedEnvironments {
                     .iter()
                     .find(|record| &record.environment_ref == environment_ref)
                     .ok_or_else(|| format!("record {environment_ref} vanished"))
-                    .and_then(|record| self.process.cleanup(record))
-                    .and_then(|()| self.remove_leftovers(&candidate)),
-                GcRemoval::Direct => self.remove_leftovers(&candidate),
+                    .and_then(|record| self.process.cleanup(record)),
+                GcRemoval::ConfiguredCleanup { .. } => {
+                    self.inventory.remove(config, &candidate.environment_id)
+                }
             };
+            let outcome = outcome.and_then(|()| match &candidate.state_dir {
+                // The script owns the layout: a cleanup that leaves the
+                // directory behind is reported, never finished by hand.
+                Some(dir) if self.dir_still_listed(dir) => Err(format!(
+                    "cleanup ran but {} is still there; remove it by hand or fix the script",
+                    dir.display()
+                )),
+                _ => Ok(()),
+            });
             match outcome {
                 Ok(()) => report.removed.push(candidate),
                 Err(error) => report
@@ -269,26 +321,15 @@ impl GcOrphanedEnvironments {
         }
     }
 
-    /// Remove what is still there after (or instead of) the retained
-    /// cleanup: the exited container the runtime still lists, then the
-    /// state dir.
-    fn remove_leftovers(&self, candidate: &GcCandidate) -> Result<(), String> {
-        if let Some(name) = &candidate.container {
-            let listed = self
-                .inventory
-                .containers()?
-                .iter()
-                .any(|container| &container.name == name);
-            if listed {
-                self.inventory.remove_container(name)?;
-            }
-        }
-        if let Some(dir) = &candidate.state_dir {
-            let root = dir
-                .parent()
-                .ok_or_else(|| format!("{} has no parent", dir.display()))?;
-            self.inventory.remove_environment_dir(root, dir)?;
-        }
-        Ok(())
+    /// Whether the root still lists `dir` after a removal (through the
+    /// inventory port: the application reads no filesystem).
+    fn dir_still_listed(&self, dir: &Path) -> bool {
+        let Some(root) = dir.parent() else {
+            return false;
+        };
+        self.inventory
+            .environment_dirs(root)
+            .map(|dirs| dirs.iter().any(|listed| listed.path == dir))
+            .unwrap_or(false)
     }
 }

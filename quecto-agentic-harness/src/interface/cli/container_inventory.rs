@@ -18,7 +18,11 @@ fn inventory(ctx: &CliContext) -> Result<ContainerInventoryHandles, String> {
     let Some(build) = ctx.container_inventory else {
         return Err("container inventory not composed".to_string());
     };
-    Ok(build(&ctx.base_dir()))
+    // The selection carries an explicit `--config` when given: that file
+    // alone, otherwise the working directory's layers (the collector's
+    // scripts come from it, as the doctor's do).
+    let selection = ctx.config_selection()?;
+    Ok(build(&ctx.base_dir(), &selection))
 }
 
 fn fail(stderr: &mut String, error: &str) -> i32 {
@@ -218,6 +222,15 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--dry-run" | "-n" => request.dry_run = true,
+            "--name" => {
+                let value = rest
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| format!("--name requires a container config name\n{USAGE}"))?;
+                if request.config.replace(value.clone()).is_some() {
+                    return Err(format!("--name may be given once\n{USAGE}"));
+                }
+            }
             "--state-dir" => {
                 let value = rest
                     .next()
@@ -239,7 +252,10 @@ pub(crate) fn cmd_gc(
 ) -> i32 {
     let outcome = parse_gc(args).and_then(|request| {
         let handles = inventory(ctx)?;
-        Ok(handles.gc.execute(&request))
+        handles
+            .gc
+            .execute(&request)
+            .map_err(|refused| refused.to_string())
     });
     match outcome {
         Ok(report) => {
@@ -258,7 +274,7 @@ fn candidate_line(candidate: &GcCandidate) -> String {
         GcRemoval::RetainedCleanup { environment_ref } => {
             format!("via retained cleanup of {environment_ref}")
         }
-        GcRemoval::Direct => "directly".to_string(),
+        GcRemoval::ConfiguredCleanup { config } => format!("via cleanup of config '{config}'"),
     };
     let what = match (&candidate.state_dir, &candidate.container) {
         (Some(dir), Some(container)) => format!("{} + container {container}", dir.display()),
@@ -273,9 +289,9 @@ fn candidate_line(candidate: &GcCandidate) -> String {
 }
 
 fn present_gc(report: &GcReport, stdout: &mut String) {
+    stdout.push_str(&format!("container config \"{}\"\n", report.config));
     if report.state_roots.is_empty() {
-        stdout
-            .push_str("scanned no state roots (no environment recorded; pass --state-dir <dir>)\n");
+        stdout.push_str("scanned no state roots (the config names none and no environment is recorded; pass --state-dir <dir>)\n");
     } else {
         stdout.push_str("scanned state roots:\n");
         for root in &report.state_roots {

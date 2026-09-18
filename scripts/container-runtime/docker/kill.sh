@@ -56,7 +56,11 @@ case "$id" in
 esac
 env_dir="$state_dir/$id"
 if [ ! -d "$env_dir" ]; then
-  # Already gone (e.g. cleanup after a kill): succeed idempotently.
+  # State already gone (cleanup after a kill, or a collector removing an
+  # exited container whose directory vanished, #2024 S4d): remove the
+  # container the create script would have named, then succeed
+  # idempotently.
+  "$cli" rm -f "quecto-$id" >/dev/null 2>&1 || true
   printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log" 2>/dev/null || true
   exit 0
 fi
