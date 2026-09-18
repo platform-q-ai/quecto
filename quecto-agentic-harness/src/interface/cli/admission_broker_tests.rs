@@ -38,12 +38,11 @@ fn administration_requires_a_section_an_action_and_a_running_authority() {
         r#"{"providers":{"anthropic":{"api_key":"k"}}}"#,
     )
     .unwrap();
-    // With no admission section, status addresses the default directory
-    // (`<base_dir>/admission`) and reports it as not running rather than
-    // erroring on the missing section (#2024 S3: status is cwd-independent).
+    // With no admission section there is no broker to address: status errors
+    // naming the missing section (an explicit --directory would override).
     let (code, _, err) = run(&ctx, &["status"]);
     assert_eq!(code, 1);
-    assert!(err.contains("not running"), "{err}");
+    assert!(err.contains("no `admission` section"), "{err}");
     let (code, _, err) = run(&ctx, &[]);
     assert_eq!(code, 2);
     assert!(err.contains("expected one of"), "{err}");

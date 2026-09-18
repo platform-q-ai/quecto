@@ -17,7 +17,6 @@ use crate::application::admission::dto::{
 };
 use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
 use crate::infrastructure::config::Config;
-use crate::infrastructure::config_admission::default_admission_directory;
 
 /// Parsed options shared by the broker actions.
 struct BrokerArgs {
@@ -73,8 +72,13 @@ fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
 /// The global config path a broker command addresses: an explicit `--config`,
 /// else `<base_dir>/config.json` (never the cwd overlay).
 fn global_config_path(ctx: &CliContext, opts: &BrokerArgs) -> PathBuf {
+    // An explicit `--config` is captured globally into `ctx.config_path` before
+    // the subcommand's args are seen, so it wins; a `--config` in the
+    // subcommand's own args is a fallback. Absent both, the global file — never
+    // the cwd overlay (S1 made `admission` global-only).
     opts.config
         .clone()
+        .or_else(|| ctx.config_path.clone())
         .unwrap_or_else(|| ctx.base_dir().join("config.json"))
 }
 
@@ -91,24 +95,34 @@ fn resolve_directory(ctx: &CliContext, opts: &BrokerArgs) -> Result<PathBuf, Str
         }
         return Ok(directory.clone());
     }
+    // Without an explicit --directory, the global config (never the cwd
+    // overlay) names the broker to address. No configured `admission` section
+    // means there is no broker to address: error rather than guessing the
+    // default directory, so `status`/`reset` are unambiguous.
     let base_dir = ctx.base_dir();
     let config_path = global_config_path(ctx, opts);
-    if config_path.exists() {
-        let config = Config::load(config_path.to_str().unwrap_or(""))
-            .map_err(|e| {
-                format!(
-                    "admission-broker: failed to load config {}: {e}",
-                    config_path.display()
-                )
-            })?
-            .with_admission_base_dir(&base_dir);
-        match config.admission_proposal() {
-            Ok(Some((directory, _))) => return Ok(directory),
-            Ok(None) => {}
-            Err(error) => return Err(format!("admission-broker: {error}")),
-        }
+    if !config_path.exists() {
+        return Err(format!(
+            "admission-broker: config {} not found; no `admission` section to address",
+            config_path.display()
+        ));
     }
-    Ok(default_admission_directory(&base_dir))
+    let config = Config::load(config_path.to_str().unwrap_or(""))
+        .map_err(|e| {
+            format!(
+                "admission-broker: failed to load config {}: {e}",
+                config_path.display()
+            )
+        })?
+        .with_admission_base_dir(&base_dir);
+    match config.admission_proposal() {
+        Ok(Some((directory, _))) => Ok(directory),
+        Ok(None) => Err(
+            "admission-broker: no `admission` section is configured; nothing to address (or pass --directory)"
+                .to_string(),
+        ),
+        Err(error) => Err(format!("admission-broker: {error}")),
+    }
 }
 
 pub(crate) fn cmd_admission_broker(
