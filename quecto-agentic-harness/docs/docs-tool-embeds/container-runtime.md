@@ -19,6 +19,27 @@ is the operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 - The `--repo` URL reachable with your credentials (`git ls-remote`).
 - A `--state-dir` you own and can write.
 
+## How to find configs and refs
+
+- **Which configs exist for this checkout** (global file plus the trusted
+  `.quecto/config.json` overlay): the `spawn` tool description carries one
+  line — `Available container configs: r (default, repo-bound), quecto (global), …`
+  (`repo-bound` = declared by this repository's overlay; `+N more` folds a
+  long list; `(repo overlay untrusted — run quecto config trust)` means
+  `container: true` is refused until then). For detail, live:
+  `agent_cmd {"agent_id":"*","command":"get_container_configs"}` →
+  `{"container_configs":[{"name","default","source":"overlay"|"global","repository"}],"overlay_withheld":bool,"diagnostics":[…]}`
+  — the `container: true` default first; `repository` is what a new
+  container clones (`null` = sandbox). Operators: `quecto config get --effective container_configs`.
+- **Which environments are running** (for `{"mode":"existing"}` joins and
+  `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}`
+  → `containers[]` with `ref` (`C1`, session-scoped), `name`, `status`,
+  `workspace`, `repository`, `members`. A spawn result names its ref and
+  config: `environment_ref=C1 container_config=<name>`.
+- **What a new container is**: a fresh clone of the config's `--repo` at its
+  default branch. Your working tree, branch and uncommitted changes are not
+  inside; push a branch and tell the child to fetch/checkout it.
+
 ## Diagnose: `quecto container doctor`
 
 ```

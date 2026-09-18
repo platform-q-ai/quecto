@@ -6,6 +6,26 @@ container/coordinator, then supervises it through `agent_cmd`. The coordinator
 creates the run before spawning local workers. Never reset a run or spawn nested
 containers to evade its limit. See `docs {"name":"subagents"}` for launching.
 
+## Which container
+
+- **The swarm runs in the container the coordinator was spawned into.** There
+  is no swarm image or swarm config: the host master picks a `container_configs`
+  entry — `agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists
+  the names (the spawn description carries the same roster) — and names it
+  explicitly: `spawn {"agent_id":"coordinator","task":"…","container":{"mode":"new","container_config":"<name>"}}`
+  (`"container": true` = the labelled default). The result's
+  `container_config=<name>` confirms the choice; a new container is a fresh
+  clone of that config's `--repo`, not the master's working tree.
+- **Workers are spawned with `container` omitted** (a local spawn inside the
+  shared container); any other `container` value from a swarm member is
+  refused. They inherit the container's identity through their environment.
+- **Only the official isolated-PID adapter (`scripts/container-runtime/docker`)
+  can host a swarm.** The host-local reference scripts
+  (`scripts/container-runtime/*.sh`) cannot host a swarm, and neither can the
+  host: `swarm` there fails with `swarm is container-only`. A config on the
+  wrong adapter fails at `op=create`, not at spawn — check the config's
+  `create` argv first (`quecto config get --effective container_configs`).
+
 ## Python versus external commands
 
 The default Python process limit is **RLIMIT_NPROC=1**. `swarm` Python is for

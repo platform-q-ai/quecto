@@ -382,7 +382,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
                "get_state", "get_messages", "get_message", "get_report", "swarm_control",
                "get_session_stats", "get_subagents", "get_subagents_all",
-               "get_containers", "kill_container",
+               "get_containers", "get_container_configs", "kill_container",
                "set_model", "set_effort", "clear_history"],
       "description": "Command to send. For completed spawned work, use get_messages without count/before."
     },
@@ -458,7 +458,8 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
-| `get_containers` | With `agent_id: "*"`, list spawned container environments | No |
+| `get_containers` | With `agent_id: "*"`, list spawned container environments (refs for `{"mode":"existing"}`) | No |
+| `get_container_configs` | With `agent_id: "*"`, list the container configs `spawn` can select for this checkout: `{"container_configs":[{"name","default","source":"overlay"\|"global","repository"}],"overlay_withheld","diagnostics"}`, the `container: true` default first (#2024 S4c) | No |
 | `kill_container` | With `agent_id: "*"`, terminate a spawned container by `ref` or `name` | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
