@@ -55,9 +55,14 @@ fn systemctl_lifecycle_calls_reach_the_binary() {
     let (m, log) = manager(&tmp);
     m.daemon_reload().unwrap();
     m.enable_now().unwrap();
+    m.restart().unwrap();
     assert!(m.disable_now().unwrap());
     let logged = std::fs::read_to_string(&log).unwrap();
     assert!(logged.contains("--user daemon-reload"), "{logged}");
+    assert!(
+        logged.contains(&format!("--user restart {UNIT_NAME}")),
+        "{logged}"
+    );
     assert!(
         logged.contains(&format!("--user enable --now {UNIT_NAME}")),
         "{logged}"

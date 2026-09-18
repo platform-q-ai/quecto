@@ -62,9 +62,14 @@ fn lifecycle_calls_reach_systemctl_user() {
     let (m, log) = under_test(&tmp);
     m.daemon_reload().unwrap();
     m.enable_now().unwrap();
+    m.restart().unwrap();
     assert!(m.disable_now().unwrap());
     let logged = std::fs::read_to_string(&log).unwrap();
     assert!(logged.contains("--user daemon-reload"), "{logged}");
     assert!(logged.contains("--user enable --now"), "{logged}");
+    assert!(
+        logged.contains("--user restart quecto-admission-broker.service"),
+        "{logged}"
+    );
     assert!(logged.contains("--user disable --now"), "{logged}");
 }

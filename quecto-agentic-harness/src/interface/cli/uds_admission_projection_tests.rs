@@ -263,7 +263,17 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
 #[test]
 fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
-    let hook = admission_event_hook(tx.clone());
+    let hook = admission_event_hook(
+        tx.clone(),
+        Some(Arc::new(|| {
+            super::uds_admission_projection::AuthorityView {
+                directory: "/home/me/.quecto/admission".into(),
+                epoch: 4,
+                connected: true,
+                status: "connected",
+            }
+        })),
+    );
     hook(&waiting_activity(3, 1_500));
     let line = rx.try_recv().unwrap();
     let event: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -271,6 +281,9 @@ fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     assert_eq!(event["admission"]["waiting"], 1);
     assert_eq!(event["admission"]["revision"], 3);
     assert_eq!(event["admission"]["longestWaitSeconds"], 1);
+    // The live authority view rides on the pushed event (M8).
+    assert_eq!(event["admission"]["authorityStatus"], "connected");
+    assert_eq!(event["admission"]["epoch"], 4);
     assert!(rx.try_recv().is_err(), "exactly one event");
     // No connected client: the transition is dropped, never an error.
     drop(rx);

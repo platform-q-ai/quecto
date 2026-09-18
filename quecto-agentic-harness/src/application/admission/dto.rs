@@ -94,6 +94,10 @@ pub enum ServiceAction {
     EnabledAndStarted {
         unit: String,
     },
+    /// A changed unit was rewritten and the running service restarted on it.
+    Restarted {
+        unit: String,
+    },
     DisabledAndStopped {
         unit: String,
     },

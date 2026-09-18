@@ -127,6 +127,10 @@ impl AuthorityServiceManager for SystemdUserServiceManager {
         self.run_checked(&["enable", "--now", UNIT_NAME])
     }
 
+    fn restart(&self) -> Result<(), String> {
+        self.run_checked(&["restart", UNIT_NAME])
+    }
+
     fn disable_now(&self) -> Result<bool, String> {
         // `disable --now` on a not-enabled unit is not a hard failure: report
         // it as "nothing to disable" so uninstall stays idempotent.

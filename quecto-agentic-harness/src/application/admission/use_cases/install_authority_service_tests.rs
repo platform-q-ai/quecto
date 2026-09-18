@@ -57,6 +57,10 @@ impl AuthorityServiceManager for FakeManager {
         self.record("disable_now");
         Ok(true)
     }
+    fn restart(&self) -> Result<(), String> {
+        self.record("restart");
+        Ok(())
+    }
 }
 
 fn request(dry_run: bool) -> InstallServiceRequest {
@@ -71,11 +75,62 @@ fn request(dry_run: bool) -> InstallServiceRequest {
 #[test]
 fn the_unit_runs_the_broker_with_an_explicit_config_and_restarts() {
     let contents = InstallAuthorityService::unit_contents(&request(false));
-    assert!(contents.contains(
-        "ExecStart=/usr/bin/quecto admission-broker run --config /home/me/.quecto/config.json"
-    ));
+    // Paths are quoted so a space in $HOME or the install prefix survives.
+    assert!(
+        contents.contains(
+            "ExecStart=\"/usr/bin/quecto\" admission-broker run --config \"/home/me/.quecto/config.json\""
+        ),
+        "{contents}"
+    );
     assert!(contents.contains("Restart=on-failure"));
     assert!(contents.contains("WantedBy=default.target"));
+}
+
+#[test]
+fn the_unit_has_no_ordering_cycle_and_never_loops_on_a_busy_lock() {
+    let contents = InstallAuthorityService::unit_contents(&request(false));
+    // `WantedBy=default.target` already orders default.target *after* the
+    // service; `After=default.target` would close a cycle and systemd would
+    // drop the job at login (H3). Order after basic.target instead.
+    assert!(!contents.contains("After=default.target"), "{contents}");
+    assert!(contents.contains("After=basic.target"), "{contents}");
+    // Exit 3 is `Busy`: another broker holds the directory lock. Restarting
+    // would spin against it every RestartSec.
+    assert!(
+        contents.contains("RestartPreventExitStatus=3"),
+        "{contents}"
+    );
+}
+
+#[test]
+fn a_changed_unit_is_rewritten_and_the_service_restarted() {
+    let manager = Arc::new(FakeManager::default());
+    let uc = InstallAuthorityService::new(manager.clone());
+    uc.execute(request(false)).unwrap();
+    manager.calls.lock().unwrap().clear();
+    let mut changed = request(false);
+    changed.binary = PathBuf::from("/opt/new/quecto");
+    let report = uc.execute(changed).unwrap();
+    // A running broker keeps serving the old unit until restarted;
+    // `enable --now` alone would leave it on the stale ExecStart.
+    assert_eq!(
+        *manager.calls.lock().unwrap(),
+        vec!["write_unit", "daemon_reload", "enable_now", "restart"]
+    );
+    assert!(matches!(report.actions[0], ServiceAction::WroteUnit { .. }));
+    assert!(
+        report
+            .actions
+            .iter()
+            .any(|a| matches!(a, ServiceAction::Restarted { .. }))
+    );
+    // A dry run of a further change plans the restart too.
+    let mut planned = request(true);
+    planned.binary = PathBuf::from("/opt/newer/quecto");
+    let report = uc.execute(planned).unwrap();
+    assert!(report.actions.iter().any(
+        |a| matches!(a, ServiceAction::Planned { description } if description.contains("restart"))
+    ));
 }
 
 #[test]

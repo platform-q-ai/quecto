@@ -53,4 +53,6 @@ pub trait AuthorityServiceManager: Send + Sync {
     /// `systemctl --user disable --now <unit>`; `Ok(false)` when the unit was
     /// not enabled/loaded (so uninstall stays idempotent).
     fn disable_now(&self) -> Result<bool, String>;
+    /// `systemctl --user restart <unit>`: pick up a rewritten unit.
+    fn restart(&self) -> Result<(), String>;
 }

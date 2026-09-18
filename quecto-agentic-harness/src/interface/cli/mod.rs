@@ -95,7 +95,7 @@ impl AdmissionStateProbe {
 pub fn admission_broadcast_hook(
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
 ) -> crate::infrastructure::admission::ActivityHook {
-    uds_admission_projection::admission_event_hook(broadcast_tx)
+    uds_admission_projection::admission_event_hook(broadcast_tx, None)
 }
 
 #[cfg(any(test, feature = "test-support"))]

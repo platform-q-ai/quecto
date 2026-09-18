@@ -159,9 +159,9 @@ pub(crate) fn attach_process_admission(
         ));
     }
     let view_of = process.clone();
-    let hook = admission_event_hook_with_authority(
+    let hook = admission_event_hook(
         broadcast_tx.clone(),
-        std::sync::Arc::new(move || AuthorityView::of(&view_of)),
+        Some(std::sync::Arc::new(move || AuthorityView::of(&view_of))),
     );
     process.on_transition(hook.clone());
     let observation = process.observation();
@@ -170,25 +170,19 @@ pub(crate) fn attach_process_admission(
     }));
 }
 
-/// Hook that broadcasts one `admission_state_changed` event per transition
-/// (activity only; the authority-less form used where no binding exists).
+/// Hook that broadcasts one `admission_state_changed` event per transition;
+/// with an `authority` reader each event also carries the live authority
+/// view (`authorityStatus` and friends), so a client's badge never waits for
+/// a `get_state`.
 pub(crate) fn admission_event_hook(
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
-) -> crate::infrastructure::admission::ActivityHook {
-    std::sync::Arc::new(move |activity: &AdmissionActivity| {
-        broadcast(&broadcast_tx, project(activity));
-    })
-}
-
-/// Hook that broadcasts one `admission_state_changed` event per transition,
-/// each carrying the live authority view (`authorityStatus` and friends).
-pub(crate) fn admission_event_hook_with_authority(
-    broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    authority: std::sync::Arc<dyn Fn() -> AuthorityView + Send + Sync>,
+    authority: Option<std::sync::Arc<dyn Fn() -> AuthorityView + Send + Sync>>,
 ) -> crate::infrastructure::admission::ActivityHook {
     std::sync::Arc::new(move |activity: &AdmissionActivity| {
         let mut snapshot = project(activity);
-        authority().apply(&mut snapshot);
+        if let Some(authority) = &authority {
+            authority().apply(&mut snapshot);
+        }
         broadcast(&broadcast_tx, snapshot);
     })
 }

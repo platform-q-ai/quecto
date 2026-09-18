@@ -44,6 +44,10 @@ impl AuthorityServiceManager for FakeManager {
         self.calls.lock().unwrap().push("disable_now".into());
         Ok(true)
     }
+    fn restart(&self) -> Result<(), String> {
+        self.calls.lock().unwrap().push("restart".into());
+        Ok(())
+    }
 }
 
 fn dir() -> PathBuf {

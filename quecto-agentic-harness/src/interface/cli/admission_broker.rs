@@ -361,6 +361,7 @@ fn describe_action(action: &ServiceAction) -> String {
         }
         ServiceAction::DaemonReloaded => "reloaded the user daemon".to_string(),
         ServiceAction::EnabledAndStarted { unit } => format!("enabled and started {unit}"),
+        ServiceAction::Restarted { unit } => format!("restarted {unit} on the rewritten unit"),
         ServiceAction::DisabledAndStopped { unit } => format!("disabled and stopped {unit}"),
         ServiceAction::NothingToDisable { unit } => format!("{unit} was not enabled"),
         ServiceAction::Planned { description } => format!("(dry run) {description}"),
