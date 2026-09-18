@@ -296,21 +296,29 @@ What a new session can do with a restored environment:
   through. The creating session, if still alive, sees its member die and
   runs its own final-member kill after yours — the shipped scripts are
   idempotent.
-- **collect** — `quecto container gc [--dry-run] [--name <config>]
-  [--state-dir <dir>]...` removes **orphans**: environments whose
-  container is exited or unknown to the runtime **and** that the registry
-  either does not record or records `stopped`. It scans the config's
-  `--state-dir` (from its create argv), every root a record implies and
-  every `--state-dir` given; it lists containers through the config's
+- **collect** — `quecto container gc [--dry-run] [--name <config>]`
+  removes **orphans**: environments whose container is exited or unknown
+  to the runtime **and** that the registry either does not record or
+  records `stopped`. It scans the config's `--state-dir` (from its create
+  argv) and every root a record implies; it lists containers through the config's
   `inspect --list` (one JSON object per container the create script
   labelled, so exited containers whose directory is already gone are
   found too) and removes through the record's retained `cleanup` or the
   config's `cleanup` — the harness itself names no runtime. A `running`,
   `retained`, `killing` or `cleanup-failed` record is always **kept**
   (with the reason, pointing at `container kill`); so is any state dir
-  whose container runs. `--dry-run` prints the same judgement without an
-  effect; the report lists what was (or would be) removed, what was kept
-  and why, and every failure.
+  whose container runs, and any state dir younger than five minutes with
+  no container recorded yet (a create may be in flight — a directory
+  whose age cannot be read counts as young). `--dry-run` prints the same
+  judgement without an effect; the report lists what was (or would be)
+  removed, what was kept and why, and every failure.
+
+**Moving `environments.json` aside restarts the refs** (the next create is
+`C1` again) and forgets every environment it recorded: the containers
+themselves keep running, but no session lists, joins or kills them by ref
+any more — they become orphans for `quecto container gc` once they exit
+(or for `podman rm -f` by hand). That is the intended outcome of moving
+the file aside; repair it in place instead when the environments matter.
 
 `quecto container ls|kill|gc` resolve the container config the way the
 doctor and `spawn` do (the working directory's effective configuration, or

@@ -367,13 +367,27 @@ fn a_young_directory_without_a_container_is_a_create_in_flight_and_kept() {
         .iter()
         .map(|c| c.environment_id.as_str())
         .collect();
-    assert_eq!(removable, ["env-ageless", "env-old"]);
-    assert_eq!(report.kept.len(), 1);
-    assert_eq!(report.kept[0].environment_id, "env-fresh");
+    assert_eq!(removable, ["env-old"]);
+    // Round 2 F-F (#2033): an unreadable age is no evidence the create is
+    // not in flight — it keeps the grace like a young directory.
+    let mut kept: Vec<(&str, &str)> = report
+        .kept
+        .iter()
+        .map(|k| (k.environment_id.as_str(), k.reason.as_str()))
+        .collect();
+    kept.sort();
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    assert_eq!(kept[0].0, "env-ageless");
     assert!(
-        report.kept[0].reason.contains("a create may be in flight"),
-        "{:?}",
-        report.kept
+        kept[0].1.contains("age could not be read")
+            && kept[0].1.contains("a create may be in flight"),
+        "{kept:?}"
+    );
+    assert_eq!(kept[1].0, "env-fresh");
+    assert!(
+        kept[1].1.contains("the directory is 30s old")
+            && kept[1].1.contains("a create may be in flight"),
+        "{kept:?}"
     );
 }
 

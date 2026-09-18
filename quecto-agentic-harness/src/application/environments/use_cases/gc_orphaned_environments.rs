@@ -283,15 +283,21 @@ impl GcOrphanedEnvironments {
             (EnvironmentLiveness::Gone, Some(name)) => format!("container {name} gone or exited"),
             (EnvironmentLiveness::Gone, None) => "no container recorded".to_string(),
         };
+        // A directory whose age cannot be read counts as young (round 2
+        // F-F, #2033): the grace protects a create in flight, and not
+        // knowing the age is no evidence there is none.
         if container_name.is_none()
             && record.is_none()
-            && age_secs.is_some_and(|age| age < CREATE_GRACE_SECS)
+            && age_secs.is_none_or(|age| age < CREATE_GRACE_SECS)
         {
+            let age = match age_secs {
+                Some(age) => format!("the directory is {age}s old"),
+                None => "the directory's age could not be read".to_string(),
+            };
             keep(
                 report,
                 format!(
-                    "no container recorded yet and the directory is {}s old: a create may be in flight (older than {CREATE_GRACE_SECS}s it is collected)",
-                    age_secs.unwrap_or(0)
+                    "no container recorded yet and {age}: a create may be in flight (older than {CREATE_GRACE_SECS}s it is collected)"
                 ),
             );
             return;
