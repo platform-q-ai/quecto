@@ -169,7 +169,7 @@ pub fn mint_environment_uuid() -> String {
 }
 
 pub use super::environment_journal::{
-    EnvironmentJournal, JournalWrite, RecordedFn, RefAllocationError,
+    EnvironmentJournal, JournalWrite, RecordedFn, RefAllocationError, merge_metadata,
 };
 
 /// Proof that the caller holds the exclusive right to run this environment's
@@ -414,9 +414,9 @@ impl EnvironmentRegistry {
         if record.origin != EnvironmentOrigin::Restored {
             return;
         }
-        let (known, adopt) = match outcome {
-            JournalWrite::Written => (record.status, false),
-            JournalWrite::Superseded { current } => (current, true),
+        let (known, adopted) = match outcome {
+            JournalWrite::Written => (record.status, None),
+            JournalWrite::Superseded { current, metadata } => (current, Some(metadata)),
             JournalWrite::Unavailable => return,
         };
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -428,11 +428,16 @@ impl EnvironmentRegistry {
         // authority until `complete_kill`/`fail_kill`/`retain` settle it
         // (a claim's write superseded by a `stopped` elsewhere still
         // settles as this session's kill found things).
-        if adopt
+        // The file's metadata comes with it (round 3, #2033): the other
+        // session's keys are adopted under this session's own, so a later
+        // write of this record carries them back rather than dropping
+        // them.
+        if let Some(metadata) = adopted
             && !state.kill_claims.contains(environment_ref)
             && let Some(record) = state.entries.get_mut(environment_ref)
         {
             record.status = known.clone();
+            record.metadata = merge_metadata(metadata, &record.metadata);
         }
         state.journalled.insert(environment_ref.to_string(), known);
     }

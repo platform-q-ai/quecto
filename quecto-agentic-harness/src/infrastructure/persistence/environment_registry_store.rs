@@ -9,6 +9,8 @@
 //! [`EnvironmentRegistryStore`] port.
 //!
 //! Members are not stored: they belong to the session that launched them.
+//! A conditional write (`correct`) merges its metadata over the file's;
+//! an unconditional one (`record`) replaces the record whole.
 //! An unreadable document (corrupt JSON, a newer version) is an error the
 //! restore reports; it is never silently replaced — a write on top of it
 //! fails the same way, so a broken file stops the registry rather than
@@ -19,7 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::application::environments::dto::CorrectionOutcome;
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environment_registry::{
-    EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, ref_number,
+    EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, merge_metadata, ref_number,
 };
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::config::writer::{exclusive_hold, lock_dir_for};
@@ -147,9 +149,15 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
                 current.into_record(record.environment_ref.clone()),
             )));
         }
+        // A conditional write is another session's view of the record:
+        // its metadata goes over the file's, key by key (round 3, #2033),
+        // so a key it never saw — the creator's retention reason — is
+        // kept, and one it names is its value.
+        let mut wire = RecordWire::from(record);
+        wire.metadata = merge_metadata(current.metadata.clone(), &wire.metadata);
         document
             .environments
-            .insert(record.environment_ref.clone(), RecordWire::from(record));
+            .insert(record.environment_ref.clone(), wire);
         self.write(&document)?;
         Ok(CorrectionOutcome::Applied)
     }

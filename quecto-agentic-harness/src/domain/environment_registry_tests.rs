@@ -287,6 +287,7 @@ fn restored_records_are_journalled_compare_and_set_on_the_last_known_status() {
             if *superseded.lock().unwrap() {
                 JournalWrite::Superseded {
                     current: EnvironmentStatus::Retained,
+                    metadata: serde_json::json!({"retained": "elsewhere"}),
                 }
             } else {
                 JournalWrite::Written
@@ -314,6 +315,11 @@ fn restored_records_are_journalled_compare_and_set_on_the_last_known_status() {
         registry.get("C2").unwrap().status,
         EnvironmentStatus::Retained,
         "the superseding status is adopted in memory"
+    );
+    assert_eq!(
+        registry.get("C2").unwrap().metadata["retained"],
+        "elsewhere",
+        "the file's metadata is adopted with it (round 3, #2033)"
     );
     let claim = registry.begin_inspect("C2", "observer-3").unwrap();
     registry.record_inspect_failure(claim, "later");
@@ -354,6 +360,7 @@ fn a_superseded_write_never_overwrites_an_outstanding_kill_claim() {
                 if *superseded.lock().unwrap() {
                     JournalWrite::Superseded {
                         current: EnvironmentStatus::Stopped,
+                        metadata: serde_json::Value::Null,
                     }
                 } else {
                     JournalWrite::Written
@@ -524,4 +531,31 @@ fn an_unreadable_registry_reads_the_store_again_on_a_lookup_and_clears_the_error
     );
     // A journal-less registry never reloads either.
     assert_eq!(EnvironmentRegistry::new().read_error(), None);
+}
+
+/// Round 3 (#2033, cosmetic): adopting a superseding write merges the
+/// file's metadata under this session's own keys; a non-object on either
+/// side never turns an object into nothing.
+#[test]
+fn merge_metadata_keeps_both_sides_keys_and_lets_the_writer_win() {
+    use super::merge_metadata;
+    assert_eq!(
+        merge_metadata(
+            serde_json::json!({"a": 1, "retained": "why"}),
+            &serde_json::json!({"a": 2, "cause": "seen"})
+        ),
+        serde_json::json!({"a": 2, "retained": "why", "cause": "seen"})
+    );
+    assert_eq!(
+        merge_metadata(serde_json::json!({"a": 1}), &serde_json::Value::Null),
+        serde_json::json!({"a": 1})
+    );
+    assert_eq!(
+        merge_metadata(serde_json::Value::Null, &serde_json::json!({"a": 1})),
+        serde_json::json!({"a": 1})
+    );
+    assert_eq!(
+        merge_metadata(serde_json::json!({"a": 1}), &serde_json::json!("text")),
+        serde_json::json!("text")
+    );
 }

@@ -203,9 +203,62 @@ fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
         "the joiner's inspect must not revert the creator's retention: {on_file:?}"
     );
     assert_eq!(on_file.metadata["retained"], "run ended: complete");
-    // A joiner's explicit kill is a transition from what is on file now.
+    // Round 3 (#2033, cosmetic): the joiner adopts the creator's metadata
+    // with the status it learnt superseded its write, and keeps its own.
+    let in_memory = joiner.get("C1").unwrap();
+    assert_eq!(in_memory.status, EnvironmentStatus::Retained);
+    assert_eq!(in_memory.metadata["retained"], "run ended: complete");
+    assert_eq!(in_memory.metadata["cause"], "observed");
+    // A joiner's explicit kill is a transition from what is on file now,
+    // and its write merges over the file's metadata: the creator's
+    // `retained` reason survives a write that never named it.
     let claim = joiner.begin_kill("C1").unwrap();
-    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Killing);
+    let on_file = &store.load().unwrap()[0];
+    assert_eq!(on_file.status, EnvironmentStatus::Killing);
+    assert_eq!(on_file.metadata["retained"], "run ended: complete");
+    assert_eq!(on_file.metadata["cause"], "observed");
     joiner.complete_kill(claim);
     assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Stopped);
+}
+
+/// Round 3 (#2033, cosmetic): a conditional write merges its metadata
+/// over what is on file — a key the writer never saw (another session's)
+/// survives, a key it names is its value — while an unconditional write
+/// (the creator's own record) replaces the record whole.
+#[test]
+fn a_correction_merges_its_metadata_over_the_files_and_a_record_replaces_it() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    let mut created = record("C1", EnvironmentStatus::Running);
+    created.metadata = serde_json::json!({"container": "quecto-1", "retained": "ended"});
+    store.record(&created).unwrap();
+    let mut joiner = created.clone();
+    joiner.metadata = serde_json::json!({"container": "quecto-1", "cause": "observed"});
+    joiner.status = EnvironmentStatus::Killing;
+    assert_eq!(
+        store.correct(&joiner, &EnvironmentStatus::Running).unwrap(),
+        crate::application::environments::dto::CorrectionOutcome::Applied
+    );
+    let on_file = &store.load().unwrap()[0];
+    assert_eq!(on_file.status, EnvironmentStatus::Killing);
+    assert_eq!(
+        on_file.metadata,
+        serde_json::json!({"container": "quecto-1", "retained": "ended", "cause": "observed"})
+    );
+    // A superseded correction hands back the file's record, metadata and all.
+    let superseded = store.correct(&joiner, &EnvironmentStatus::Running).unwrap();
+    match superseded {
+        crate::application::environments::dto::CorrectionOutcome::Superseded(current) => {
+            assert_eq!(current.metadata["retained"], "ended");
+        }
+        other => panic!("{other:?}"),
+    }
+    // An unconditional write replaces the record whole.
+    let mut rewritten = created.clone();
+    rewritten.metadata = serde_json::json!({"container": "quecto-1"});
+    store.record(&rewritten).unwrap();
+    assert_eq!(
+        store.load().unwrap()[0].metadata,
+        serde_json::json!({"container": "quecto-1"})
+    );
 }

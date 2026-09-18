@@ -116,12 +116,14 @@ impl RestoreRegistry {
                                     tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another session moved the environment on; its state stands");
                                     JournalWrite::Superseded {
                                         current: current.status,
+                                        metadata: current.metadata,
                                     }
                                 }
                                 // Forgotten by its creator (a rolled-back
                                 // create): nothing of it to keep.
                                 CorrectionOutcome::Forgotten => JournalWrite::Superseded {
                                     current: EnvironmentStatus::Stopped,
+                                    metadata: entry.metadata.clone(),
                                 },
                             })
                         }
