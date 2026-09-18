@@ -104,11 +104,11 @@ Never print secrets. Finish with a summary of what changed and how to roll each 
             "Pin `{model}` as the default model for this repo. First read the docs page `models` \
 (`docs {{\"name\":\"models\"}}`) and the \"Pin the default model\" row of the docs page `setup` \
 (`docs {{\"name\":\"setup\"}}`). Check the current state (`quecto status`, \
-`quecto config get --effective agents.defaults.model`, and whether `{model}` is a model the \
-catalogue lists) and report it in one line; then propose the exact `quecto config set \
-agents.defaults.model` command for the repo overlay and ASK before writing or installing anything. \
-After my yes, run the verify command from the runbook. Never print secrets. Finish with a summary \
-of what changed and how to roll it back (`quecto config unset agents.defaults.model`)."
+`quecto config get --effective agents.defaults.model`) and report it in one line; then propose the \
+exact `quecto config set agents.defaults.model` command for the repo overlay and ASK before writing \
+or installing anything. After my yes, run the verify commands from that runbook row. Never print \
+secrets. Finish with a summary of what changed and how to roll it back \
+(`quecto config unset agents.defaults.model`)."
         ),
         SetupArea::Admission => "Enable the admission broker for this host (one broker per host, \
 never per repo). First read the docs page `admission-broker` (`docs {\"name\":\"admission-broker\"}`) \
