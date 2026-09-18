@@ -344,7 +344,6 @@ async fn accept_loop(
 }
 
 const JOURNAL_PROBE_INTERVAL: Duration = Duration::from_millis(250);
-
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
 }
