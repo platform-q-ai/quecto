@@ -9,6 +9,10 @@
 //! as recorded and reported unverified, and a kill that was in flight when
 //! its session ended is a retryable `cleanup-failed`. The restored records
 //! arrive without members and are never torn down by a joiner's exit.
+//! A correction is written **conditionally** — only while the record on
+//! file still has the status that was loaded — so a restore (or a `quecto
+//! container ls`, which restores afresh) never reverts what a concurrent
+//! session did in the meantime; seeded records are never written back.
 //! Every transition the session makes afterwards is journalled through the
 //! same store, and refs are allocated through it.
 use std::sync::Arc;
@@ -17,7 +21,7 @@ use crate::domain::environment_registry::{
     EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 
-use super::super::dto::{EnvironmentLiveness, RestoredRegistry};
+use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoredRegistry};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
 
 pub struct RestoreRegistry {
@@ -101,9 +105,36 @@ impl RestoreRegistry {
             }
         };
         let mut restored = Vec::with_capacity(records.len());
-        for mut record in records {
-            self.judge(&mut record, &mut report);
-            restored.push(record);
+        for record in records {
+            let loaded_status = record.status.clone();
+            let mut judged = record;
+            let corrected = self.judge(&mut judged, &mut report);
+            if !corrected {
+                restored.push(judged);
+                continue;
+            }
+            // Written only while nobody else moved the record on; when
+            // somebody did, what they wrote is the truth to seed with.
+            match self.store.correct(&judged, &loaded_status) {
+                Ok(CorrectionOutcome::Applied) => restored.push(judged),
+                Ok(CorrectionOutcome::Superseded(current)) => {
+                    report.diagnostics.push(format!(
+                        "{} changed while it was being checked ({} → {}); the other session's state stands",
+                        judged.environment_ref,
+                        judged.status_label(),
+                        current.status_label()
+                    ));
+                    restored.push(*current);
+                }
+                Ok(CorrectionOutcome::Forgotten) => {}
+                Err(error) => {
+                    report.diagnostics.push(format!(
+                        "{} could not be corrected in the durable registry: {error}",
+                        judged.environment_ref
+                    ));
+                    restored.push(judged);
+                }
+            }
         }
         registry.restore(restored);
         (registry, report)
@@ -111,27 +142,34 @@ impl RestoreRegistry {
 
     /// Correct one record against the runtime. Terminal records need no
     /// check; a live-looking one is believed only when its container is.
-    fn judge(&self, record: &mut EnvironmentRecord, report: &mut RestoredRegistry) {
+    /// `true` when the record was changed and must be written.
+    fn judge(&self, record: &mut EnvironmentRecord, report: &mut RestoredRegistry) -> bool {
         let environment_ref = record.environment_ref.clone();
         match record.status {
-            EnvironmentStatus::Stopped => {}
+            EnvironmentStatus::Stopped => false,
             EnvironmentStatus::Killing => {
                 // The claim died with its session: nothing will settle it.
                 record.status = EnvironmentStatus::CleanupFailed;
                 record.last_error = Some(KILL_INTERRUPTED.to_string());
                 report.restored.push(environment_ref);
+                true
             }
             EnvironmentStatus::Running
             | EnvironmentStatus::Retained
             | EnvironmentStatus::CleanupFailed => match self.process.observe(record) {
-                EnvironmentLiveness::Running => report.restored.push(environment_ref),
+                EnvironmentLiveness::Running => {
+                    report.restored.push(environment_ref);
+                    false
+                }
                 EnvironmentLiveness::Gone => {
                     record.status = EnvironmentStatus::Stopped;
                     record.last_error = Some(GONE_AT_RESTORE.to_string());
                     report.stopped.push(environment_ref);
+                    true
                 }
                 EnvironmentLiveness::Unknown(reason) => {
                     report.unverified.push((environment_ref, reason));
+                    false
                 }
             },
         }

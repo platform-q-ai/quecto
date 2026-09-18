@@ -1,5 +1,5 @@
 //! `quecto container ls [--all]`, `quecto container kill <ref|name>` and
-//! `quecto container gc [--dry-run] [--state-dir <dir>]...` (#2024 S4d):
+//! `quecto container gc [--dry-run] [--name <config>]` (#2024 S4d):
 //! parse the arguments, invoke one composed use case over the base
 //! directory's restored environment registry, present the outcome. The
 //! interface restores nothing and runs no script itself.
@@ -231,13 +231,6 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
                     return Err(format!("--name may be given once\n{USAGE}"));
                 }
             }
-            "--state-dir" => {
-                let value = rest
-                    .next()
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("--state-dir requires a directory\n{USAGE}"))?;
-                request.state_roots.push(std::path::PathBuf::from(value));
-            }
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -275,6 +268,9 @@ fn candidate_line(candidate: &GcCandidate) -> String {
             format!("via retained cleanup of {environment_ref}")
         }
         GcRemoval::ConfiguredCleanup { config } => format!("via cleanup of config '{config}'"),
+        GcRemoval::ForgetRecord { environment_ref } => {
+            format!("by forgetting record {environment_ref}")
+        }
     };
     let what = match (&candidate.state_dir, &candidate.container) {
         (Some(dir), Some(container)) => format!("{} + container {container}", dir.display()),
@@ -291,7 +287,7 @@ fn candidate_line(candidate: &GcCandidate) -> String {
 fn present_gc(report: &GcReport, stdout: &mut String) {
     stdout.push_str(&format!("container config \"{}\"\n", report.config));
     if report.state_roots.is_empty() {
-        stdout.push_str("scanned no state roots (the config names none and no environment is recorded; pass --state-dir <dir>)\n");
+        stdout.push_str("scanned no state roots (the config's create argv names no --state-dir and none of its records implies one)\n");
     } else {
         stdout.push_str("scanned state roots:\n");
         for root in &report.state_roots {

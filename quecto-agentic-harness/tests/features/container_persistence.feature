@@ -100,6 +100,7 @@ Feature: Environments outlive sessions
     Given script-managed child "impl-gc" is running in a shared environment with task "IMPL_GC_MARKER"
     And an orphaned environment state dir "env-orphan01" with an exited fake container is planted in the state dir
     And an orphaned environment state dir "env-orphan02" without any container is planted in the state dir
+    And a fresh environment state dir "env-fresh04" without any container is planted in the state dir
     And an exited fake container "quecto-env-ghost03" with no state dir is left in the fake runtime
     When I run quecto with arguments "container gc --dry-run"
     Then the exit code should be 0
@@ -107,6 +108,7 @@ Feature: Environments outlive sessions
     And the gc report should list "env-orphan02" as removable
     And the gc report should list "env-ghost03" as removable
     And the gc report should keep the environment of "C1" as live
+    And the gc report should keep "env-fresh04" as a create in flight
     And the state dir should still contain "env-orphan01"
     And the state dir should still contain "env-orphan02"
     And the fake runtime should still know container "quecto-env-ghost03"
@@ -117,6 +119,7 @@ Feature: Environments outlive sessions
     And the fake runtime should no longer know container "quecto-env-orphan01"
     And the fake runtime should no longer know container "quecto-env-ghost03"
     And the state dir should still contain the environment of "C1"
+    And the state dir should still contain "env-fresh04"
     And the fake runtime should still know the container of "C1"
 
   @done @issue-2024 @container-env

@@ -5,7 +5,10 @@
 # Environment: QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Removes the environment's container (force) and its state directory,
-# after proving the directory resolves under the trusted state root.
+# after proving the directory resolves under the trusted state root. When
+# the directory is already gone (a completed kill, a collector's pass over
+# an exited container, #2024 S4d) the container the create would have
+# named — `quecto-<environment_id>` — is still removed, for either op.
 set -euo pipefail
 
 log() { printf 'container-runtime-docker kill: %s\n' "$*" >&2; }
@@ -58,8 +61,8 @@ env_dir="$state_dir/$id"
 if [ ! -d "$env_dir" ]; then
   # State already gone (cleanup after a kill, or a collector removing an
   # exited container whose directory vanished, #2024 S4d): remove the
-  # container the create script would have named, then succeed
-  # idempotently.
+  # container the create script would have named — on the plain `kill`
+  # op too — then succeed idempotently.
   "$cli" rm -f "quecto-$id" >/dev/null 2>&1 || true
   printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log" 2>/dev/null || true
   exit 0

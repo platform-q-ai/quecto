@@ -99,19 +99,25 @@ fn environment_dirs_are_the_env_prefixed_directories_with_their_container_file()
     std::fs::create_dir_all(root.join("other")).unwrap();
     std::fs::write(root.join("creates.log"), "env-a\n").unwrap();
     std::fs::write(root.join("env-file"), "").unwrap();
-    let dirs = ScriptInventory.environment_dirs(&root).unwrap();
+    let mut dirs = ScriptInventory.environment_dirs(&root).unwrap();
+    assert!(dirs.iter().all(|dir| dir.age_secs.is_some()), "{dirs:?}");
+    for dir in &mut dirs {
+        dir.age_secs = None;
+    }
     assert_eq!(
         dirs,
         vec![
             EnvironmentStateDir {
                 path: root.join("env-a"),
                 environment_id: "env-a".into(),
-                container: None
+                container: None,
+                age_secs: None,
             },
             EnvironmentStateDir {
                 path: root.join("env-b"),
                 environment_id: "env-b".into(),
-                container: Some("quecto-env-b".into())
+                container: Some("quecto-env-b".into()),
+                age_secs: None,
             },
         ]
     );

@@ -212,7 +212,10 @@ fn restored_records_arrive_without_members_and_are_never_torn_down_by_a_joiner()
     let restored = registry.get("C2").unwrap();
     assert_eq!(restored.origin, EnvironmentOrigin::Restored);
     assert!(restored.members.is_empty());
-    assert_eq!(recorded.lock().unwrap().as_slice(), ["C2:empty"]);
+    assert!(
+        recorded.lock().unwrap().is_empty(),
+        "seeding is never journalled"
+    );
     registry.add_member("C2", "joiner").unwrap();
     assert!(
         registry.remove_member("C2", "joiner").unwrap().is_none(),

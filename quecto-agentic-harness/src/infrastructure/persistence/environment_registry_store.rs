@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::application::environments::dto::CorrectionOutcome;
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, ref_number,
@@ -125,6 +126,32 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
                 .environments
                 .insert(record.environment_ref.clone(), RecordWire::from(record));
         })
+    }
+
+    fn correct(
+        &self,
+        record: &EnvironmentRecord,
+        expected: &EnvironmentStatus,
+    ) -> Result<CorrectionOutcome, String> {
+        let _hold = exclusive_hold(&self.lock_dir, &self.path)?;
+        let mut document = self.read()?;
+        let Some(current) = document.environments.get(&record.environment_ref) else {
+            return Ok(CorrectionOutcome::Forgotten);
+        };
+        if EnvironmentStatus::from(current.status) != *expected {
+            let current = document
+                .environments
+                .remove(&record.environment_ref)
+                .expect("looked up above");
+            return Ok(CorrectionOutcome::Superseded(Box::new(
+                current.into_record(record.environment_ref.clone()),
+            )));
+        }
+        document
+            .environments
+            .insert(record.environment_ref.clone(), RecordWire::from(record));
+        self.write(&document)?;
+        Ok(CorrectionOutcome::Applied)
     }
 
     fn forget(&self, environment_ref: &str) -> Result<(), String> {

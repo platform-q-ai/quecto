@@ -152,3 +152,44 @@ fn an_empty_base_dir_loads_nothing_and_a_broken_document_is_an_error_left_in_pla
     assert!(store.forget("C1").is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"garbage");
 }
+
+#[test]
+fn a_correction_is_written_only_while_the_record_still_has_the_expected_status() {
+    use quecto::application::environments::dto::CorrectionOutcome;
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = port(dir.path());
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    let mut stopped = record("C1", EnvironmentStatus::Stopped);
+    stopped.last_error = Some("gone at restore".into());
+    assert_eq!(
+        store
+            .correct(&stopped, &EnvironmentStatus::Running)
+            .unwrap(),
+        CorrectionOutcome::Applied
+    );
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Stopped);
+    // Somebody else moved on: the correction is refused and what is on
+    // file comes back.
+    let mut retained = record("C1", EnvironmentStatus::Retained);
+    retained.members.clear();
+    match store
+        .correct(&stopped, &EnvironmentStatus::Running)
+        .unwrap()
+    {
+        CorrectionOutcome::Superseded(current) => {
+            assert_eq!(current.status, EnvironmentStatus::Stopped);
+            assert_eq!(current.last_error.as_deref(), Some("gone at restore"));
+        }
+        other => panic!("{other:?}"),
+    }
+    store.forget("C1").unwrap();
+    assert_eq!(
+        store
+            .correct(&retained, &EnvironmentStatus::Running)
+            .unwrap(),
+        CorrectionOutcome::Forgotten
+    );
+    assert!(store.load().unwrap().is_empty());
+}

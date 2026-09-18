@@ -181,21 +181,13 @@ fn commands_refuse_without_a_composed_inventory() {
 
 #[test]
 fn gc_parses_dry_run_name_and_state_dirs_and_refuses_the_rest() {
-    let request = parse_gc(&[
-        "--dry-run".into(),
-        "--name".into(),
-        "box".into(),
-        "--state-dir".into(),
-        "/s".into(),
-    ])
-    .unwrap();
+    let request = parse_gc(&["--dry-run".into(), "--name".into(), "box".into()]).unwrap();
     assert!(request.dry_run);
     assert_eq!(request.config.as_deref(), Some("box"));
-    assert_eq!(request.state_roots, vec![std::path::PathBuf::from("/s")]);
     assert!(
-        parse_gc(&["--state-dir".into()])
+        parse_gc(&["--state-dir".into(), "/s".into()])
             .unwrap_err()
-            .contains("--state-dir requires")
+            .contains("unknown argument --state-dir")
     );
     assert!(
         parse_gc(&["--name".into()])

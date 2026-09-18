@@ -360,6 +360,29 @@ async fn spawn_script_managed_child(
 ) -> Result<PreparedChild, DomainError> {
     let container = &selected.config;
     let config_name = container.name.as_str();
+    // Names are durable across sessions now (#2024 S4d): a name that
+    // still names a live environment — this session's or a restored one
+    // — would make every later `name` lookup ambiguous, so it is refused
+    // before any ref is minted or script runs.
+    if let Some(name) = environment_name(config) {
+        use crate::domain::environment_registry::{EnvironmentLookupError, EnvironmentTarget};
+        match environments.resolve(&EnvironmentTarget::Name(name.clone())) {
+            Ok(live) => {
+                return Err(DomainError::Tool(format!(
+                    "environment name '{name}' already names {} ({}); pick another name or kill it first",
+                    live.environment_ref,
+                    live.status_label()
+                )));
+            }
+            Err(EnvironmentLookupError::Ambiguous(_)) => {
+                return Err(DomainError::Tool(format!(
+                    "environment name '{name}' already names more than one live environment; pick another name"
+                )));
+            }
+            Err(EnvironmentLookupError::Unknown(_) | EnvironmentLookupError::Stopped(_)) => {}
+            Err(EnvironmentLookupError::Stale(_)) => {}
+        }
+    }
     let environment_ref = environments.mint_ref();
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);

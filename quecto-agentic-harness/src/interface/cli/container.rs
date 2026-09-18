@@ -38,7 +38,7 @@ pub type ContainerInventoryBuilder =
     fn(&std::path::Path, &ConfigSelection) -> super::container_handles::ContainerInventoryHandles;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
-pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all]\nusage: quecto container kill <ref|name>\nusage: quecto container gc [--dry-run] [--name <config>] [--state-dir <dir>]...\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all]\nusage: quecto container kill <ref|name>\nusage: quecto container gc [--dry-run] [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 /// Composition's builder of `quecto container init` (#2024 S4e): the
 /// standard bundle materialised below the project and the overlay entry

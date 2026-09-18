@@ -302,6 +302,18 @@ fn given_orphan_with_exited_container(world: &mut QuectoWorld, id: String) {
     std::fs::create_dir_all(dir.join("workspace")).unwrap();
     std::fs::write(dir.join("container"), format!("quecto-{id}\n")).unwrap();
     std::fs::write(runtime_dir(world).join(format!("quecto-{id}")), "exited\n").unwrap();
+    age_dir(&dir);
+}
+
+/// Make a planted directory older than the collector's create grace, so
+/// it reads as abandoned rather than as a create in flight.
+fn age_dir(dir: &std::path::Path) {
+    let status = std::process::Command::new("touch")
+        .args(["-d", "2 hours ago"])
+        .arg(dir)
+        .status()
+        .expect("touch the planted directory");
+    assert!(status.success(), "touch -d failed");
 }
 
 #[given(
@@ -310,7 +322,31 @@ fn given_orphan_with_exited_container(world: &mut QuectoWorld, id: String) {
 fn given_orphan_without_container(world: &mut QuectoWorld, id: String) {
     let dir = state_dir(world).join(&id);
     std::fs::create_dir_all(dir.join("workspace")).unwrap();
-    std::fs::write(dir.join("container"), format!("quecto-{id}\n")).unwrap();
+    age_dir(&dir);
+}
+
+#[given(
+    expr = "a fresh environment state dir {string} without any container is planted in the state dir"
+)]
+fn given_fresh_orphan(world: &mut QuectoWorld, id: String) {
+    let dir = state_dir(world).join(&id);
+    std::fs::create_dir_all(dir.join("workspace")).unwrap();
+}
+
+#[then(expr = "the gc report should keep {string} as a create in flight")]
+fn then_gc_keeps_fresh(world: &mut QuectoWorld, id: String) {
+    let kept = world
+        .stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("kept"))
+        .any(|line| {
+            line.starts_with(&format!("  {id}  ")) && line.contains("create may be in flight")
+        });
+    assert!(
+        kept,
+        "gc report should keep {id} as in flight:\n{}",
+        world.stdout
+    );
 }
 
 #[given(expr = "an exited fake container {string} with no state dir is left in the fake runtime")]

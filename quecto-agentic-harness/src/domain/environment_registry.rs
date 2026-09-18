@@ -291,13 +291,20 @@ impl EnvironmentRegistry {
 
     /// Seed the registry with records another session wrote (#2024 S4d):
     /// they arrive `Restored` with no members (the creating session's
-    /// members are unreachable here). Each is journalled back so a status
-    /// the restore corrected is durable.
+    /// members are unreachable here). Seeding is not a transition and is
+    /// never journalled: what the restore corrected it already wrote
+    /// conditionally, and writing a loaded record back whole would revert
+    /// whatever another session did meanwhile. The ref counter still moves
+    /// past every seeded ref.
     pub fn restore(&self, records: Vec<EnvironmentRecord>) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         for mut record in records {
             record.origin = EnvironmentOrigin::Restored;
             record.members.clear();
-            self.commit(record);
+            if let Some(number) = ref_number(&record.environment_ref) {
+                state.next_ref = state.next_ref.max(number);
+            }
+            state.entries.insert(record.environment_ref.clone(), record);
         }
     }
 

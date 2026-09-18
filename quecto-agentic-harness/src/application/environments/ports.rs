@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 
 use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
-    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness,
-    EnvironmentStateDir, PersistedContainerConfig, PreflightCheck, RuntimeContainer,
+    ContainerConfigEntry, ContainerRuntimeTarget, CorrectionOutcome, DiagnosableContainerConfig,
+    EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
+    RuntimeContainer,
 };
-use crate::domain::environment_registry::EnvironmentRecord;
+use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -184,6 +185,14 @@ pub trait EnvironmentRegistryStore: Send + Sync {
     fn load(&self) -> Result<Vec<EnvironmentRecord>, String>;
     /// Write `record` under its ref, replacing what was there.
     fn record(&self, record: &EnvironmentRecord) -> Result<(), String>;
+    /// Write `record` only if the record on file still has `expected`
+    /// status (read and written under the exclusive hold): a restore's
+    /// correction must never revert what another session did meanwhile.
+    fn correct(
+        &self,
+        record: &EnvironmentRecord,
+        expected: &EnvironmentStatus,
+    ) -> Result<CorrectionOutcome, String>;
     /// Remove the record under `environment_ref` (a rolled-back create).
     fn forget(&self, environment_ref: &str) -> Result<(), String>;
 }
@@ -209,6 +218,14 @@ pub trait ContainerRuntimeInventory: Send + Sync {
         &self,
         config: &DiagnosableContainerConfig,
     ) -> Result<Vec<RuntimeContainer>, String>;
+    /// One environment's liveness through the config's `inspect` argv
+    /// given its id — the authority for a state directory, whatever the
+    /// listing labelled.
+    fn inspect(
+        &self,
+        config: &DiagnosableContainerConfig,
+        environment_id: &str,
+    ) -> EnvironmentLiveness;
     fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String>;
     fn remove(
         &self,

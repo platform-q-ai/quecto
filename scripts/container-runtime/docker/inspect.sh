@@ -55,15 +55,22 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
 if [ "$list" = 1 ]; then
-  # Every container the create script labelled, whatever its state.
-  "$cli" ps -a --filter label=quecto.environment_id \
-    --format '{{.Names}}\t{{.State}}\t{{.Label "quecto.environment_id"}}' 2>/dev/null |
-    while IFS=$'\t' read -r name state env_id; do
-      [ -n "$name" ] || continue
-      case "$state" in running) status=running ;; *) status=dead ;; esac
-      jq -cn --arg id "$env_id" --arg container "$name" --arg status "$status" \
-        '{environment_id: $id, container: $container, status: $status}'
-    done
+  # Every container the create script labelled with THIS state root,
+  # whatever its state (a container of another root or base dir is not
+  # this collector's). Containers created before the root label existed
+  # are reached through their state directory instead. A runtime that
+  # cannot answer is a failure with its own words, never an empty list.
+  root_label="$(cd "$state_dir" 2>/dev/null && pwd -P || printf '%s' "$state_dir")"
+  listing="$("$cli" ps -a --filter label=quecto.environment_id --filter "label=quecto.state_dir=$root_label" \
+    --format '{{.Names}}\t{{.State}}\t{{.Label "quecto.environment_id"}}')" || die "$cli ps failed"
+  printf '%s\n' "$listing" | while IFS=$'\t' read -r name state env_id; do
+    [ -n "$name" ] || continue
+    # Only a container the runtime calls finished is dead; created,
+    # paused or restarting ones are still somebody's.
+    case "$state" in exited | dead | stopped) status=dead ;; *) status=running ;; esac
+    jq -cn --arg id "$env_id" --arg container "$name" --arg status "$status" \
+      '{environment_id: $id, container: $container, status: $status}'
+  done
   exit 0
 fi
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
@@ -74,11 +81,17 @@ esac
 env_dir="$state_dir/$id"
 if [ ! -d "$env_dir" ]; then
   # The environment's state is gone (a manual `rm -rf`, a completed kill
-  # whose record outlived it): that is a truthful "dead", not an error —
-  # a restore (#2024 S4d) marks the record stopped instead of keeping it
-  # unverified forever.
-  jq -cn --arg cli "$cli" \
-    '{status: "dead", metadata: {runtime: $cli, cause: "environment-removed"}}'
+  # whose record outlived it). The container the create would have named
+  # may still run: ask the runtime before calling it dead, so a restore
+  # (#2024 S4d) never stops a live environment — and marks a truly gone
+  # one stopped instead of keeping it unverified forever.
+  if [ "$("$cli" inspect --format '{{.State.Running}}' "quecto-$id" 2>/dev/null)" = true ]; then
+    jq -cn --arg cli "$cli" --arg container "quecto-$id" \
+      '{status: "running", metadata: {runtime: $cli, container: $container, cause: "state-dir-removed"}}'
+  else
+    jq -cn --arg cli "$cli" \
+      '{status: "dead", metadata: {runtime: $cli, cause: "environment-removed"}}'
+  fi
   exit 0
 fi
 resolved="$(cd "$env_dir" && pwd -P)"

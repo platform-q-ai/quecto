@@ -91,18 +91,28 @@ fn environment_dirs_lists_env_entries_directly_under_the_root_with_their_contain
     std::fs::create_dir_all(root.join("env-b")).unwrap();
     std::fs::create_dir_all(root.join("not-env")).unwrap();
     std::fs::write(root.join("creates.log"), "").unwrap();
+    let mut listed = port().environment_dirs(&root).unwrap();
+    assert!(
+        listed.iter().all(|dir| dir.age_secs.is_some()),
+        "{listed:?}"
+    );
+    for dir in &mut listed {
+        dir.age_secs = None;
+    }
     assert_eq!(
-        port().environment_dirs(&root).unwrap(),
+        listed,
         vec![
             EnvironmentStateDir {
                 path: root.join("env-a"),
                 environment_id: "env-a".into(),
-                container: Some("quecto-env-a".into())
+                container: Some("quecto-env-a".into()),
+                age_secs: None,
             },
             EnvironmentStateDir {
                 path: root.join("env-b"),
                 environment_id: "env-b".into(),
-                container: None
+                container: None,
+                age_secs: None,
             },
         ]
     );
@@ -142,4 +152,37 @@ fn remove_runs_the_configs_cleanup_for_one_well_formed_id_and_reports_its_failur
         .remove(&config(vec![], failing), "env-two")
         .unwrap_err();
     assert!(error.contains("escapes the state root"), "{error}");
+}
+
+#[test]
+fn inspect_asks_the_configs_inspect_for_one_well_formed_id() {
+    use quecto::application::environments::dto::EnvironmentLiveness;
+    let dir = tempfile::TempDir::new().unwrap();
+    let inspect = script(
+        dir.path(),
+        "inspect.sh",
+        r#"[ "${@: -1}" != --list ] || exit 9
+case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
+  env-live) printf '{"status":"running","metadata":{}}' ;;
+  env-gone) printf '{"status":"dead","metadata":{}}' ;;
+  *) echo 'unknown' >&2; exit 1 ;;
+esac"#,
+    );
+    let inspecting = config(inspect, vec![]);
+    assert_eq!(
+        port().inspect(&inspecting, "env-live"),
+        EnvironmentLiveness::Running
+    );
+    assert_eq!(
+        port().inspect(&inspecting, "env-gone"),
+        EnvironmentLiveness::Gone
+    );
+    assert!(matches!(
+        port().inspect(&inspecting, "env-other"),
+        EnvironmentLiveness::Unknown(reason) if reason.contains("unknown")
+    ));
+    assert!(matches!(
+        port().inspect(&inspecting, "../env-live"),
+        EnvironmentLiveness::Unknown(reason) if reason.contains("not an environment id")
+    ));
 }

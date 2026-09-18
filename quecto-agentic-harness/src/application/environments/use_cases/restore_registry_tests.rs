@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::dto::EnvironmentLiveness;
+use super::super::dto::{CorrectionOutcome, EnvironmentLiveness};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
 use super::{GONE_AT_RESTORE, KILL_INTERRUPTED, RestoreRegistry};
 use crate::domain::environment_registry::{
@@ -14,6 +14,7 @@ struct FakeStore {
     fail_load: bool,
     fail_writes: bool,
     forgotten: Mutex<Vec<String>>,
+    corrections: Mutex<Vec<String>>,
 }
 
 impl EnvironmentRegistryStore for FakeStore {
@@ -48,6 +49,32 @@ impl EnvironmentRegistryStore for FakeStore {
         records.push(record.clone());
         Ok(())
     }
+    fn correct(
+        &self,
+        record: &EnvironmentRecord,
+        expected: &EnvironmentStatus,
+    ) -> Result<CorrectionOutcome, String> {
+        if self.fail_writes {
+            return Err("disk full".into());
+        }
+        let mut records = self.records.lock().unwrap();
+        let Some(current) = records
+            .iter_mut()
+            .find(|r| r.environment_ref == record.environment_ref)
+        else {
+            return Ok(CorrectionOutcome::Forgotten);
+        };
+        if current.status != *expected {
+            return Ok(CorrectionOutcome::Superseded(Box::new(current.clone())));
+        }
+        *current = record.clone();
+        self.corrections
+            .lock()
+            .unwrap()
+            .push(record.environment_ref.clone());
+        Ok(CorrectionOutcome::Applied)
+    }
+
     fn forget(&self, environment_ref: &str) -> Result<(), String> {
         if self.fail_writes {
             return Err("disk full".into());
@@ -147,10 +174,21 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
         registry.get("C4").unwrap().status,
         EnvironmentStatus::Stopped
     );
-    // The corrected status was journalled back.
+    // Only the corrected record was written, conditionally; nothing else
+    // was written back.
+    assert_eq!(store.corrections.lock().unwrap().as_slice(), ["C2"]);
     let on_file = store.load().unwrap();
     let c2 = on_file.iter().find(|r| r.environment_ref == "C2").unwrap();
     assert_eq!(c2.status, EnvironmentStatus::Stopped);
+    assert_eq!(
+        on_file
+            .iter()
+            .find(|r| r.environment_ref == "C1")
+            .unwrap()
+            .members,
+        ["old-member"],
+        "a seeded record is never written back"
+    );
 }
 
 #[test]
@@ -240,4 +278,68 @@ fn the_restore_debug_is_opaque_over_its_ports() {
     let process = process(|_| EnvironmentLiveness::Running);
     let shown = format!("{:?}", RestoreRegistry::new(store, process));
     assert_eq!(shown, "RestoreRegistry { .. }");
+}
+
+#[test]
+fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seeded() {
+    // The store's record moves to `stopped` (another session's kill)
+    // between the load and the correction: the restore must not write its
+    // own verdict over it, and seeds what is on file.
+    struct MovingStore {
+        inner: Arc<FakeStore>,
+    }
+    impl EnvironmentRegistryStore for MovingStore {
+        fn allocate_ref(&self) -> Result<u64, String> {
+            self.inner.allocate_ref()
+        }
+        fn load(&self) -> Result<Vec<EnvironmentRecord>, String> {
+            let loaded = self.inner.load()?;
+            // After the load, somebody else stops C1 and retains C2.
+            let mut c1 = record("C1", EnvironmentStatus::Stopped);
+            c1.last_error = Some("killed elsewhere".into());
+            self.inner.record(&c1).unwrap();
+            self.inner.forget("C2").unwrap();
+            Ok(loaded)
+        }
+        fn record(&self, record: &EnvironmentRecord) -> Result<(), String> {
+            self.inner.record(record)
+        }
+        fn correct(
+            &self,
+            record: &EnvironmentRecord,
+            expected: &EnvironmentStatus,
+        ) -> Result<CorrectionOutcome, String> {
+            self.inner.correct(record, expected)
+        }
+        fn forget(&self, environment_ref: &str) -> Result<(), String> {
+            self.inner.forget(environment_ref)
+        }
+    }
+    let inner = store_with(vec![
+        record("C1", EnvironmentStatus::Running),
+        record("C2", EnvironmentStatus::Running),
+    ]);
+    let process = process(|_| EnvironmentLiveness::Gone);
+    let (registry, report) = RestoreRegistry::new(
+        Arc::new(MovingStore {
+            inner: inner.clone(),
+        }),
+        process,
+    )
+    .execute("s");
+    assert!(inner.corrections.lock().unwrap().is_empty());
+    let c1 = registry.get("C1").unwrap();
+    assert_eq!(c1.last_error.as_deref(), Some("killed elsewhere"));
+    assert!(
+        registry.get("C2").is_none(),
+        "a forgotten record is not resurrected"
+    );
+    assert_eq!(report.stopped, ["C1", "C2"]);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("C1 changed while it was being checked")),
+        "{report:?}"
+    );
 }

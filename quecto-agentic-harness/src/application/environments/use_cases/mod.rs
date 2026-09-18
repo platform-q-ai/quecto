@@ -13,7 +13,7 @@ mod restore_registry;
 pub use container_status::ContainerStatus;
 pub use diagnose_container_runtime::DiagnoseContainerRuntime;
 pub use finalize_environment_member::FinalizeEnvironmentMember;
-pub use gc_orphaned_environments::{GcOrphanedEnvironments, implied_state_root};
+pub use gc_orphaned_environments::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
 pub use initialise_standard_container::{InitialiseStandardContainer, STATE_DIR_NAME};
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_container_configs::ListContainerConfigs;

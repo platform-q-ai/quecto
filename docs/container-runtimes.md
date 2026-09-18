@@ -629,13 +629,18 @@ metadata and becomes visible via `get_containers`; `status` (optional) is
 recorded as `inspect_status` — and judged by the registry restore
 (#2024 S4d): `running` keeps the record, `dead`/`exited`/`removed`/
 `stopped` marks it stopped, anything else (or a failed inspect) leaves it
-unverified. A missing environment directory is a truthful `dead` (cause
-`environment-removed`), not an error. With `--list` appended (no
-environment id) the script prints one JSON object per line for **every**
-environment the runtime knows — `{"environment_id": "env-…",
-"container": "quecto-env-…", "status": "running"|"dead"}` — which is how
-`quecto container gc` finds exited containers; a script set without
-`--list` cannot serve the collector (the error says so). The result is parsed with the same strict
+unverified. A missing environment directory is not an error: the shipped
+Docker/Podman script asks the runtime about `quecto-<environment_id>` and
+reports `running` (cause `state-dir-removed`) or a truthful `dead` (cause
+`environment-removed`); the host-local reference reports `dead`. With
+`--list` appended (no environment id) the script prints one JSON object
+per line for every environment the runtime knows **under this state
+root** (the create labels each container `quecto.state_dir=<root>`) —
+`{"environment_id": "env-…", "container": "quecto-env-…", "status":
+"running"|"dead"}`, `dead` only for a container the runtime calls
+exited/dead/stopped — which is how `quecto container gc` finds exited
+containers whose directory is gone; a script set without `--list` cannot
+serve the collector (the error says so). The result is parsed with the same strict
 wire rules as `create`/`exec`: exactly these fields — unknown keys,
 trailing JSON data, and non-UTF8 output are rejected. A non-zero exit or
 invalid contract persists an actionable inspect error on the environment

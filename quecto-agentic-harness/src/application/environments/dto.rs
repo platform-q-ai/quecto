@@ -172,6 +172,22 @@ pub struct EnvironmentStateDir {
     pub path: std::path::PathBuf,
     pub environment_id: String,
     pub container: Option<String>,
+    /// Seconds since the directory was last modified, when known: a young
+    /// directory without a container may be a create still in flight.
+    pub age_secs: Option<u64>,
+}
+
+/// What a conditional correction of a stored record came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorrectionOutcome {
+    /// The record on file still had the expected status; the correction
+    /// was written.
+    Applied,
+    /// Another party changed the record meanwhile; the correction was not
+    /// written and this is the record as it stands.
+    Superseded(Box<crate::domain::environment_registry::EnvironmentRecord>),
+    /// The record was removed meanwhile (a rolled-back create).
+    Forgotten,
 }
 
 /// What `quecto container gc` is asked to do.
@@ -180,21 +196,23 @@ pub struct GcRequest {
     /// Report without removing anything.
     pub dry_run: bool,
     /// The container config whose scripts list and remove unrecorded
-    /// environments (`--name`; `None` is the labelled default).
+    /// environments (`--name`; `None` is the labelled default). The
+    /// collector scans that config's own state root and the roots the
+    /// records it created imply — never another config's directories.
     pub config: Option<String>,
-    /// State roots to scan besides the config's and those the registry's
-    /// records imply.
-    pub state_roots: Vec<std::path::PathBuf>,
 }
 
 /// How an orphan would be (or was) removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcRemoval {
     /// The stopped record's retained `cleanup` argv, which removes the
-    /// container and the state dir together.
+    /// container and the state dir together; the record is then forgotten.
     RetainedCleanup { environment_ref: String },
     /// No record: the config's `cleanup` argv, given the environment id.
     ConfiguredCleanup { config: String },
+    /// A stopped record with nothing left on disk or in the runtime: the
+    /// record alone is forgotten.
+    ForgetRecord { environment_ref: String },
 }
 
 /// One environment the collector judged.

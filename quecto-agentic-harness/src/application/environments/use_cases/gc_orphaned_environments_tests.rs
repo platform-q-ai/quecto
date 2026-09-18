@@ -6,7 +6,7 @@ use super::super::dto::{
     GcRemoval, GcRequest, RuntimeContainer,
 };
 use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
-use super::{GcOrphanedEnvironments, implied_state_root};
+use super::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
@@ -27,10 +27,14 @@ impl ContainerConfigLookup for FakeLookup {
     }
 }
 
+/// The fake host: state dirs with their inspect verdict, the listing,
+/// what was removed.
 #[derive(Default)]
 struct FakeInventory {
     containers: Mutex<Vec<RuntimeContainer>>,
     dirs: Mutex<Vec<EnvironmentStateDir>>,
+    /// The config's inspect verdict per environment id (default: gone).
+    liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
     fail_list: bool,
     removed: Mutex<Vec<String>>,
     /// Ids whose cleanup leaves the dir behind.
@@ -47,6 +51,15 @@ impl ContainerRuntimeInventory for FakeInventory {
         }
         Ok(self.containers.lock().unwrap().clone())
     }
+    fn inspect(&self, _config: &DiagnosableContainerConfig, id: &str) -> EnvironmentLiveness {
+        self.liveness
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(seen, _)| seen == id)
+            .map(|(_, l)| l.clone())
+            .unwrap_or(EnvironmentLiveness::Gone)
+    }
     fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String> {
         if root == Path::new("/unreadable") {
             return Err("permission denied".into());
@@ -62,24 +75,17 @@ impl ContainerRuntimeInventory for FakeInventory {
         dirs.sort_by(|a, b| a.environment_id.cmp(&b.environment_id));
         Ok(dirs)
     }
-    fn remove(
-        &self,
-        _config: &DiagnosableContainerConfig,
-        environment_id: &str,
-    ) -> Result<(), String> {
-        if environment_id == "env-broken" {
+    fn remove(&self, _config: &DiagnosableContainerConfig, id: &str) -> Result<(), String> {
+        if id == "env-broken" {
             return Err("cleanup exited 1".into());
         }
-        self.removed.lock().unwrap().push(environment_id.into());
+        self.removed.lock().unwrap().push(id.into());
         self.containers
             .lock()
             .unwrap()
-            .retain(|c| c.environment_id != environment_id);
-        if !self.stubborn.iter().any(|id| id == environment_id) {
-            self.dirs
-                .lock()
-                .unwrap()
-                .retain(|d| d.environment_id != environment_id);
+            .retain(|c| c.environment_id != id);
+        if !self.stubborn.iter().any(|s| s == id) {
+            self.dirs.lock().unwrap().retain(|d| d.environment_id != id);
         }
         Ok(())
     }
@@ -89,7 +95,7 @@ impl ContainerRuntimeInventory for FakeInventory {
 struct FakeProcess {
     liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
     cleaned: Mutex<Vec<String>>,
-    dirs: Option<Arc<FakeInventory>>,
+    host: Option<Arc<FakeInventory>>,
 }
 
 impl EnvironmentProcess for FakeProcess {
@@ -107,14 +113,12 @@ impl EnvironmentProcess for FakeProcess {
             .lock()
             .unwrap()
             .push(record.environment_ref.clone());
-        if let Some(inventory) = &self.dirs {
-            inventory
-                .dirs
+        if let Some(host) = &self.host {
+            host.dirs
                 .lock()
                 .unwrap()
                 .retain(|d| d.environment_id != record.environment_id);
-            inventory
-                .containers
+            host.containers
                 .lock()
                 .unwrap()
                 .retain(|c| c.environment_id != record.environment_id);
@@ -161,6 +165,7 @@ fn dir(id: &str, container: Option<&str>) -> EnvironmentStateDir {
         path: PathBuf::from("/s").join(id),
         environment_id: id.into(),
         container: container.map(str::to_string),
+        age_secs: Some(CREATE_GRACE_SECS * 2),
     }
 }
 
@@ -174,21 +179,24 @@ fn container(id: &str, running: bool) -> RuntimeContainer {
 
 struct Rig {
     registry: EnvironmentRegistry,
-    inventory: Arc<FakeInventory>,
+    host: Arc<FakeInventory>,
     process: Arc<FakeProcess>,
     lookup: Result<DiagnosableContainerConfig, String>,
 }
 
 impl Rig {
     fn new() -> Self {
-        let inventory = Arc::new(FakeInventory::default());
+        Self::over(FakeInventory::default())
+    }
+    fn over(host: FakeInventory) -> Self {
+        let host = Arc::new(host);
         Self {
             registry: EnvironmentRegistry::new(),
             process: Arc::new(FakeProcess {
-                dirs: Some(inventory.clone()),
+                host: Some(host.clone()),
                 ..Default::default()
             }),
-            inventory,
+            host,
             lookup: Ok(config()),
         }
     }
@@ -196,9 +204,17 @@ impl Rig {
         GcOrphanedEnvironments::new(
             self.registry.clone(),
             Arc::new(FakeLookup(self.lookup.clone())),
-            self.inventory.clone(),
+            self.host.clone(),
             self.process.clone(),
         )
+    }
+    fn dry_run(&self) -> super::super::dto::GcReport {
+        self.use_case()
+            .execute(&GcRequest {
+                dry_run: true,
+                config: None,
+            })
+            .unwrap()
     }
 }
 
@@ -228,7 +244,7 @@ fn the_configs_state_root_is_read_from_its_create_argv() {
 }
 
 #[test]
-fn orphans_are_exited_or_unknown_containers_with_no_record_or_a_stopped_one() {
+fn orphans_are_gone_environments_with_no_record_or_a_stopped_one_and_the_rest_is_kept() {
     let rig = Rig::new();
     rig.registry
         .commit(record("C1", "env-live", EnvironmentStatus::Running));
@@ -236,138 +252,185 @@ fn orphans_are_exited_or_unknown_containers_with_no_record_or_a_stopped_one() {
         .commit(record("C2", "env-stopped", EnvironmentStatus::Stopped));
     rig.registry
         .commit(record("C3", "env-believed", EnvironmentStatus::Retained));
+    // A record of another config under another root: not this collector's.
+    let mut other = record("C4", "env-other", EnvironmentStatus::Stopped);
+    other.script_name = "other".into();
+    other.workspace_path = "/t/env-other/workspace".into();
+    rig.registry.commit(other);
     *rig.process.liveness.lock().unwrap() = vec![("C3".into(), EnvironmentLiveness::Gone)];
-    *rig.inventory.dirs.lock().unwrap() = vec![
+    *rig.host.liveness.lock().unwrap() = vec![
+        ("env-live".into(), EnvironmentLiveness::Running),
+        ("env-unlabelled-live".into(), EnvironmentLiveness::Running),
+        (
+            "env-unsure".into(),
+            EnvironmentLiveness::Unknown("daemon down".into()),
+        ),
+    ];
+    *rig.host.dirs.lock().unwrap() = vec![
         dir("env-live", Some("quecto-env-live")),
         dir("env-stopped", Some("quecto-env-stopped")),
         dir("env-believed", Some("quecto-env-believed")),
         dir("env-orphan", Some("quecto-env-orphan")),
         dir("env-nocontainer", None),
-        dir("env-running-unknown", Some("quecto-env-running-unknown")),
+        dir("env-unlabelled-live", Some("quecto-env-unlabelled-live")),
+        dir("env-unsure", Some("quecto-env-unsure")),
+        EnvironmentStateDir {
+            path: "/t/env-other".into(),
+            environment_id: "env-other".into(),
+            container: None,
+            age_secs: Some(CREATE_GRACE_SECS * 2),
+        },
     ];
-    *rig.inventory.containers.lock().unwrap() = vec![
+    *rig.host.containers.lock().unwrap() = vec![
         container("env-live", true),
-        container("env-stopped", false),
         container("env-orphan", false),
-        container("env-running-unknown", true),
         container("env-ghost", false),
+        container("env-ghost-running", true),
     ];
-    let report = rig
-        .use_case()
-        .execute(&GcRequest {
-            dry_run: true,
-            config: None,
-            state_roots: vec![PathBuf::from("/extra")],
-        })
-        .unwrap();
+    let report = rig.dry_run();
     assert!(report.dry_run);
     assert_eq!(report.config, "box");
-    assert_eq!(
-        report.state_roots,
-        vec![PathBuf::from("/extra"), PathBuf::from("/s")]
-    );
+    assert_eq!(report.state_roots, vec![PathBuf::from("/s")]);
     let removable: Vec<(&str, &GcRemoval)> = report
         .removable
         .iter()
         .map(|c| (c.environment_id.as_str(), &c.removal))
         .collect();
+    let configured = GcRemoval::ConfiguredCleanup {
+        config: "box".into(),
+    };
     assert_eq!(
         removable,
         vec![
-            (
-                "env-nocontainer",
-                &GcRemoval::ConfiguredCleanup {
-                    config: "box".into()
-                }
-            ),
-            (
-                "env-orphan",
-                &GcRemoval::ConfiguredCleanup {
-                    config: "box".into()
-                }
-            ),
+            ("env-nocontainer", &configured),
+            ("env-orphan", &configured),
             (
                 "env-stopped",
                 &GcRemoval::RetainedCleanup {
                     environment_ref: "C2".into()
                 }
             ),
-            (
-                "env-ghost",
-                &GcRemoval::ConfiguredCleanup {
-                    config: "box".into()
-                }
-            ),
+            ("env-ghost", &configured),
         ]
     );
     let ghost = &report.removable[3];
     assert_eq!(ghost.state_dir, None);
     assert_eq!(ghost.container.as_deref(), Some("quecto-env-ghost"));
-    let kept: Vec<&str> = report
+    let kept: Vec<(&str, &str)> = report
         .kept
         .iter()
-        .map(|k| k.environment_id.as_str())
+        .map(|k| (k.environment_id.as_str(), k.reason.as_str()))
         .collect();
-    assert_eq!(kept, ["env-believed", "env-live", "env-running-unknown"]);
-    let believed = &report.kept[0];
-    assert!(
-        believed.reason.contains("recorded C3 as retained"),
-        "{believed:?}"
+    assert_eq!(kept.len(), 5, "{kept:?}");
+    assert_eq!(kept[0].0, "env-believed");
+    assert!(kept[0].1.contains("recorded C3 as retained"), "{kept:?}");
+    assert!(kept[0].1.contains("quecto container kill"), "{kept:?}");
+    assert_eq!(
+        kept[1],
+        ("env-live", "container quecto-env-live is running")
+    );
+    assert_eq!(
+        kept[2],
+        (
+            "env-unlabelled-live",
+            "container quecto-env-unlabelled-live is running"
+        ),
+        "the config's inspect, not the listing, decides a directory"
     );
     assert!(
-        believed.reason.contains("inspect reports it gone"),
-        "{believed:?}"
+        kept[3].1.contains("could not be confirmed: daemon down"),
+        "{kept:?}"
     );
-    assert!(
-        believed.reason.contains("quecto container kill"),
-        "{believed:?}"
+    assert_eq!(
+        kept[4],
+        (
+            "env-ghost-running",
+            "container quecto-env-ghost-running is running"
+        )
     );
     assert!(report.removed.is_empty() && report.errors.is_empty());
-    assert!(rig.inventory.removed.lock().unwrap().is_empty());
+    assert!(rig.host.removed.lock().unwrap().is_empty());
     assert!(rig.process.cleaned.lock().unwrap().is_empty());
 }
 
 #[test]
-fn a_real_run_removes_through_the_retained_or_configured_cleanup_and_reports_leftovers() {
+fn a_young_directory_without_a_container_is_a_create_in_flight_and_kept() {
     let rig = Rig::new();
+    let mut young = dir("env-fresh", None);
+    young.age_secs = Some(30);
+    let mut unknown_age = dir("env-ageless", None);
+    unknown_age.age_secs = None;
+    *rig.host.dirs.lock().unwrap() = vec![young, unknown_age, dir("env-old", None)];
+    let report = rig.dry_run();
+    let removable: Vec<&str> = report
+        .removable
+        .iter()
+        .map(|c| c.environment_id.as_str())
+        .collect();
+    assert_eq!(removable, ["env-ageless", "env-old"]);
+    assert_eq!(report.kept.len(), 1);
+    assert_eq!(report.kept[0].environment_id, "env-fresh");
+    assert!(
+        report.kept[0].reason.contains("a create may be in flight"),
+        "{:?}",
+        report.kept
+    );
+}
+
+#[test]
+fn a_real_run_removes_through_the_right_cleanup_forgets_collected_records_and_reports_leftovers() {
+    let rig = Rig::over(FakeInventory {
+        stubborn: vec!["env-stubborn".into()],
+        ..Default::default()
+    });
     rig.registry
         .commit(record("C2", "env-stopped", EnvironmentStatus::Stopped));
     let mut no_cleanup = record("C4", "env-bare", EnvironmentStatus::Stopped);
     no_cleanup.retained_cleanup_argv.clear();
     rig.registry.commit(no_cleanup);
-    *rig.inventory.dirs.lock().unwrap() = vec![
+    // Stopped with nothing left anywhere: the record alone is forgotten.
+    rig.registry
+        .commit(record("C5", "env-memory", EnvironmentStatus::Stopped));
+    *rig.host.dirs.lock().unwrap() = vec![
         dir("env-stopped", Some("quecto-env-stopped")),
         dir("env-bare", None),
         dir("env-orphan", Some("quecto-env-orphan")),
         dir("env-broken", None),
         dir("env-stubborn", None),
     ];
-    *rig.inventory.containers.lock().unwrap() = vec![container("env-orphan", false)];
-    let rig = Rig {
-        inventory: Arc::new(FakeInventory {
-            containers: Mutex::new(rig.inventory.containers.lock().unwrap().clone()),
-            dirs: Mutex::new(rig.inventory.dirs.lock().unwrap().clone()),
-            stubborn: vec!["env-stubborn".into()],
-            ..Default::default()
-        }),
-        ..rig
-    };
-    let process = Arc::new(FakeProcess {
-        dirs: Some(rig.inventory.clone()),
-        ..Default::default()
-    });
-    let rig = Rig { process, ..rig };
+    *rig.host.containers.lock().unwrap() = vec![container("env-orphan", false)];
     let report = rig.use_case().execute(&GcRequest::default()).unwrap();
-    let removed: Vec<&str> = report
+    let removed: Vec<(&str, &GcRemoval)> = report
         .removed
         .iter()
-        .map(|c| c.environment_id.as_str())
+        .map(|c| (c.environment_id.as_str(), &c.removal))
         .collect();
-    assert_eq!(removed, ["env-bare", "env-orphan", "env-stopped"]);
+    assert_eq!(
+        removed.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        ["env-bare", "env-orphan", "env-stopped", "env-memory"]
+    );
+    assert_eq!(
+        removed[3].1,
+        &GcRemoval::ForgetRecord {
+            environment_ref: "C5".into()
+        }
+    );
     assert_eq!(rig.process.cleaned.lock().unwrap().as_slice(), ["C2"]);
     assert_eq!(
-        rig.inventory.removed.lock().unwrap().as_slice(),
+        rig.host.removed.lock().unwrap().as_slice(),
         ["env-bare", "env-orphan", "env-stubborn"]
+    );
+    // Collected records are forgotten; the failed ones stay.
+    let remaining: Vec<String> = rig
+        .registry
+        .entries()
+        .into_iter()
+        .map(|r| r.environment_ref)
+        .collect();
+    assert_eq!(
+        remaining,
+        ["C4"],
+        "C4 had no retained cleanup: the config's ran, the record stays stopped"
     );
     assert_eq!(report.errors.len(), 2, "{:?}", report.errors);
     assert!(
@@ -383,43 +446,52 @@ fn a_real_run_removes_through_the_retained_or_configured_cleanup_and_reports_lef
 }
 
 #[test]
-fn a_running_record_with_a_live_container_is_kept_whatever_its_inspect_says() {
+fn a_live_record_is_kept_whatever_the_runtime_lists() {
     let rig = Rig::new();
     rig.registry
         .commit(record("C1", "env-live", EnvironmentStatus::CleanupFailed));
-    *rig.inventory.dirs.lock().unwrap() = vec![dir("env-live", Some("quecto-env-live"))];
-    *rig.inventory.containers.lock().unwrap() = vec![container("env-live", true)];
-    let report = rig.use_case().execute(&GcRequest::default()).unwrap();
+    *rig.host.dirs.lock().unwrap() = vec![dir("env-live", Some("quecto-env-live"))];
+    *rig.process.liveness.lock().unwrap() = vec![("C1".into(), EnvironmentLiveness::Running)];
+    let report = rig.dry_run();
     assert!(report.removable.is_empty());
-    assert_eq!(
-        report.kept[0].reason,
-        "container quecto-env-live is running"
+    assert!(
+        report.kept[0]
+            .reason
+            .contains("recorded C1 as cleanup-failed"),
+        "{:?}",
+        report.kept
+    );
+    assert!(
+        report.kept[0]
+            .reason
+            .contains("retained inspect reports it running"),
+        "{:?}",
+        report.kept
     );
 }
 
 #[test]
 fn an_unavailable_inventory_judges_nothing_and_an_unreadable_root_is_reported() {
-    let mut rig = Rig::new();
-    rig.inventory = Arc::new(FakeInventory {
+    let rig = Rig::over(FakeInventory {
         fail_list: true,
         ..Default::default()
     });
-    let report = rig.use_case().execute(&GcRequest::default()).unwrap();
+    let report = rig.dry_run();
     assert!(report.removable.is_empty() && report.kept.is_empty());
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].contains("inspect --list unsupported"));
 
-    let rig = Rig::new();
-    let report = rig
-        .use_case()
-        .execute(&GcRequest {
-            dry_run: true,
-            config: None,
-            state_roots: vec![PathBuf::from("/unreadable")],
-        })
-        .unwrap();
+    let mut rig = Rig::new();
+    let mut config = config();
+    config.create = vec!["create".into(), "--state-dir".into(), "/unreadable".into()];
+    rig.lookup = Ok(config);
+    let report = rig.dry_run();
     assert_eq!(report.errors.len(), 1);
-    assert!(report.errors[0].contains("state root /unreadable not scanned: permission denied"));
+    assert!(
+        report.errors[0].contains("state root /unreadable not scanned: permission denied"),
+        "{:?}",
+        report.errors
+    );
 }
 
 #[test]
@@ -446,7 +518,6 @@ fn the_collector_refuses_without_a_usable_config() {
         .execute(&GcRequest {
             dry_run: true,
             config: Some("other".into()),
-            state_roots: vec![],
         })
         .unwrap_err();
     assert!(refused.0.contains("unknown container config 'other'"));
