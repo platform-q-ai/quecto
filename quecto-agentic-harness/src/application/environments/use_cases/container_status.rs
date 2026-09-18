@@ -75,6 +75,9 @@ impl ContainerStatus {
             Err(reason) => (None, false, vec![reason]),
         };
         let standard_default = entry.as_ref().map(|entry| match entry.layer {
+            // The same rule as the listing query: a launch refuses a broken
+            // entry before any label or rule is consulted.
+            ContainerConfigLayer::Overlay if entry.problem.is_some() => StandardDefault::Refused,
             ContainerConfigLayer::Overlay if entry.default => StandardDefault::RepoDefault,
             ContainerConfigLayer::Overlay => StandardDefault::LabelRemoved,
             ContainerConfigLayer::Global => StandardDefault::GlobalEntry {
@@ -83,7 +86,7 @@ impl ContainerStatus {
         });
         if standard_default == Some(StandardDefault::LabelRemoved) {
             diagnostics.push(format!(
-                "the overlay's {STANDARD_CONTAINER_CONFIG} entry lost its \"default\": true label; container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
+                "the overlay's {STANDARD_CONTAINER_CONFIG} entry lost its \"default\": true label (removed with `quecto config unset --local`; a raw edit would have un-trusted the overlay); container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
             ));
         }
         let (image, preflight_error) = if entry.is_some() {

@@ -202,7 +202,7 @@ fn an_overlay_standard_entry_is_the_default_over_a_labelled_global_default() {
     assert_eq!(
         inventory.diagnostics,
         vec![
-            "container config 'standard' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label; restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`".to_string()
+            "container config 'standard' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label (removed with `quecto config unset --local`); restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`".to_string()
         ]
     );
 }
@@ -270,5 +270,13 @@ fn a_withheld_overlay_marks_no_default_even_with_a_standard_entry_reported() {
     }))));
     let inventory = query.execute().unwrap();
     assert_eq!(inventory.default_entry(), None);
-    assert_eq!(inventory.diagnostics, vec!["untrusted".to_string()]);
+    // A withheld overlay contributes no entry, so this report shape is one
+    // no adapter produces; the rule still steps aside and the pre-existing
+    // multiple-defaults diagnostic is kept, never dropped.
+    assert_eq!(inventory.diagnostics[0], "untrusted");
+    assert!(
+        inventory.diagnostics[1].starts_with("multiple container configs are labeled"),
+        "{:?}",
+        inventory.diagnostics
+    );
 }

@@ -113,7 +113,8 @@ capability's `application/environments/use_cases/list_container_configs.rs`
 lists the effective set of the launching agent's checkout through its
 `ContainerConfigRoster` port (`application/environments/ports.rs`), each
 entry with the layer that declared it and its repository; the query owns
-the rules (the `container: true` default first; no default while the
+the rules (the `container: true` default first — the repo-bound
+`standard` whatever the labels say, #2035; no default while the
 overlay is withheld). `src/infrastructure/config/container_config_roster.rs`
 adapts the port over the launch policy's `EffectiveContainerConfigs`
 (`ContainerLaunchConfig` carries `repo_bound`, attributed from the applied

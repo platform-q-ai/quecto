@@ -553,6 +553,9 @@ global file with the trusted overlay merged entry-wise, resolved fresh at
 every spawn — so a repository binds itself to a container config with
 `quecto config set --local container_configs.<name> '{"default":true,…}'`
 and rolls back with `quecto config unset --local container_configs.<name>`.
+A repository's `standard` entry (written by `quecto container init`) is its
+default by rule: `container: true` selects it whatever the global file or
+another overlay entry labels (#2035).
 There is no separate container trust record or `[y/N]` prompt: `quecto
 config trust` is the one approval, and an untrusted overlay contributes
 nothing — `container: true` is then refused with the diagnostic in the tool

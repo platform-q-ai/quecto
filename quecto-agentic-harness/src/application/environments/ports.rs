@@ -167,7 +167,8 @@ pub trait EnvironmentMemberShutdown: Send + Sync {
 /// The container config a diagnosis targets, resolved the way a launch
 /// resolves it: the effective configuration of the working directory
 /// (its trusted overlay merged over the global file) or an explicit file,
-/// the named entry or the labelled default. Implemented by infrastructure
+/// the named entry or what `container: true` selects (the repo-bound
+/// `standard`, else the labelled default). Implemented by infrastructure
 /// over the launch policy's selection; composition binds the checkout.
 pub trait ContainerConfigLookup: Send + Sync {
     fn lookup(&self, target: &ContainerRuntimeTarget)

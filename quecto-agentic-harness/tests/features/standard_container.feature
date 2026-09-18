@@ -75,6 +75,10 @@ Feature: The standard container is landed on master
   Scenario: init over an overlay that labels another entry default moves the label to standard and names what it displaced
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     And the checkout binds itself to default container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    When I run quecto with arguments "container init --dry-run"
+    Then the exit code should be 0
+    And the output should contain "displaced default: r (the overlay entry would lose its"
+    And the overlay entry "r" should be the default
     When I run quecto with arguments "container init"
     Then the exit code should be 0
     And the overlay entry "standard" should be the default

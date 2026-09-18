@@ -282,7 +282,7 @@ fn an_overlay_standard_entry_whose_label_was_removed_is_still_the_default_by_rul
     assert_eq!(
         status.diagnostics,
         [
-            "the overlay's standard entry lost its \"default\": true label; container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`"
+            "the overlay's standard entry lost its \"default\": true label (removed with `quecto config unset --local`; a raw edit would have un-trusted the overlay); container: true still selects it (a repo's standard container is its default) — restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`"
         ]
     );
 }
@@ -311,4 +311,20 @@ fn a_global_standard_entry_is_not_the_repos_and_its_label_is_reported_as_is() {
 fn no_entry_means_no_default_state() {
     let status = status_for(vec![entry("other", ContainerConfigLayer::Global)]);
     assert_eq!(status.standard_default, None);
+}
+
+#[test]
+fn a_broken_overlay_standard_entry_is_refused_not_the_repos_default_whatever_its_label() {
+    let mut broken = entry("standard", ContainerConfigLayer::Overlay);
+    broken.problem = Some("missing create argv".into());
+    let status = status_for(vec![entry("other", ContainerConfigLayer::Global), broken]);
+    assert_eq!(status.standard_default, Some(StandardDefault::Refused));
+    assert!(
+        !status
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("still selects it")),
+        "{:?}",
+        status.diagnostics
+    );
 }

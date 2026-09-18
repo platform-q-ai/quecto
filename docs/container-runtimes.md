@@ -434,8 +434,11 @@ definition of a working context. Exactly one entry must carry
 `"default": true` — the config `container: true` selects when the checkout's
 overlay declares no `standard` entry (a repo's `standard`, written by
 `quecto container init`, is its default by rule: `container: true` selects
-it whatever the global file or another overlay entry labels, even after a
-hand edit removed its own label); zero or multiple
+it whatever the global file or another overlay entry labels, even after
+`quecto config unset --local container_configs.standard.default` removed
+its own label — a raw edit of the overlay un-trusts it instead, and the
+label can only go while another entry carries one, since a merge with no
+default is refused at load); zero or multiple
 default labels fail at config **load** time with an error naming the
 configured entries. Operations are argv arrays executed directly — no
 shell interpolation — and the repository (with any auth it needs) is part
@@ -977,7 +980,9 @@ are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
 or `quecto config set --local container_configs.standard.default true` —
-when a hand edit removed the label, since launch policy still selects it;
+when `quecto config unset --local` removed the label (possible only while
+another entry is labelled; a raw edit un-trusts the overlay and status then
+reports `withheld`), since launch policy still selects it;
 `default`/`not default` by label for a global entry of that name, which is
 nobody's standard; its `--repo`), the trust of the overlay
 (`trusted`, or `withheld` with the remedy; a destination init would refuse,

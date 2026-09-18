@@ -89,16 +89,27 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
             Some(displaced) => {
                 // The trust refusal first, in its own words: an untrusted
                 // overlay reports no document, which must not read as "no
-                // such entry". The section is read here and replaced under
-                // the patch's hold; init is an operator command, and a
-                // concurrent hand edit of the same overlay in that window
-                // is the operator's race to lose, as with any editor.
+                // such entry". The section is read here, OUTSIDE the
+                // patch's exclusive hold (the patch takes a value, not a
+                // mutation), so a `config set --local` that lands between
+                // this read and the write below is overwritten by the
+                // section read here — a window the single-key path does
+                // not have. Init is an operator command; closing it means
+                // a held read-mutate-write in the configuration capability.
                 self.check()?;
                 let mut section = self.overlay_section()?;
-                let Some(other) = section.get_mut(displaced).and_then(Value::as_object_mut) else {
-                    return Err(format!(
-                        "cannot move the default label from container_configs.{displaced}: the repo-local overlay declares no such entry"
-                    ));
+                let other = match section.get_mut(displaced) {
+                    Some(Value::Object(other)) => other,
+                    Some(_) => {
+                        return Err(format!(
+                            "cannot move the default label from container_configs.{displaced}: the repo-local overlay's entry is not an object"
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "cannot move the default label from container_configs.{displaced}: the repo-local overlay declares no such entry"
+                        ));
+                    }
                 };
                 other.remove("default");
                 section.insert(name.to_string(), entry_document(entry));

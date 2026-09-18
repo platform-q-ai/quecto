@@ -19,7 +19,7 @@ First bare `get_messages` returns the latest substantive assistant message, not 
 - Never poll `get_subagents` / `get_subagents_all` / `get_state` as a wait loop; never bash-sleep for a child.
 - `get_state` = occasional live state/effort/model/progress (+ slim workflow identity/step if selected), with `generation`; `since` returns `{ "unchanged": true, "generation": N }` when nothing changed.
 - `get_subagents_all` (`agent_id: "*"`) is session-wide inventory of top-level children; `get_subagents` lists one live child's nested children only.
-- Reviewers / non-editors: `read_only: true` (**not a sandbox**: `bash` can still mutate).
+- Reviewers / non-editors: `read_only: true` (**not a hard sandbox**: `bash` can still mutate).
 - Exact multi-step process: `workflow_spec` or `workflow: true` (`docs {"name":"workflow"}`).
 
 ## Reuse
@@ -43,7 +43,7 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 5. `overlay_withheld: true` / `container: true refused` → the overlay is untrusted, refused or unparseable; `diagnostics` says which (`quecto config trust` if untrusted), then retry.
 6. Follow the completion sequence above; `get_containers` lists the environment (`ref` for joins).
 
-- Match the user's phrasing to a config name; if ambiguous, offer the names.
+- Match the user's phrasing to a config name; if ambiguous, offer them.
 - **This repository's container**: effective configs = the global file's plus the cwd's trusted `.quecto/config.json` overlay, merged entry-wise; a repo's `standard` entry is its default by rule, else an overlay `"default": true` un-defaults global entries. Runbook: `docs {"name": "container-runtime"}`; hand-rolled: `quecto config set --local container_configs.<name> '{"default":true,…}'`; undo: `config unset --local`. Only for runs started without `--config`, never inside a container child.
 - An untrusted overlay is not applied: `container: true` is **refused** when it declares `container_configs`, is unparseable, fails the trust checks or is a symlink; one without `container_configs` launches the global default with a warning. A named `container_config` launches from the global set, diagnostic in result.
 - New-container spawns read the effective configuration at every spawn; you normally need no `config`. An explicit `config` replaces both layers (absolute path). Joins use the retained config.

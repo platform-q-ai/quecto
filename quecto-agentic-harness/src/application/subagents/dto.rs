@@ -589,7 +589,8 @@ pub use super::standard_script::StandardScriptVerdict;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
     pub source: ContainerConfigSource,
-    /// `container_config: "<name>"`; `None` selects the labelled default.
+    /// `container_config: "<name>"`; `None` selects the checkout's
+    /// repo-bound `standard` entry, else the labelled default.
     pub name: Option<String>,
 }
 

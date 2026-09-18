@@ -67,22 +67,28 @@ impl ListContainerConfigs {
                 entry.default = false;
             }
         }
-        let repo_standard = configs.iter().position(|entry| {
-            entry.layer == ContainerConfigLayer::Overlay && entry.name == STANDARD_CONTAINER_CONFIG
-        });
+        // A withheld overlay contributes no entry, so no repo-bound
+        // standard can be present then; the filter says so for a report
+        // that claims otherwise (every label was cleared above).
+        let repo_standard = configs
+            .iter()
+            .position(|entry| {
+                entry.layer == ContainerConfigLayer::Overlay
+                    && entry.name == STANDARD_CONTAINER_CONFIG
+            })
+            .filter(|_| !report.overlay_withheld);
         match repo_standard {
-            Some(index) if !report.overlay_withheld => {
+            Some(index) => {
                 let launchable = configs[index].problem.is_none();
                 if launchable && !configs[index].default {
                     diagnostics.push(format!(
-                        "container config '{STANDARD_CONTAINER_CONFIG}' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label; restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
+                        "container config '{STANDARD_CONTAINER_CONFIG}' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label (removed with `quecto config unset --local`); restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
                     ));
                 }
                 for (position, entry) in configs.iter_mut().enumerate() {
                     entry.default = position == index && launchable;
                 }
             }
-            Some(_) => {}
             None if defaults.len() > 1 => {
                 diagnostics.push(format!(
                     "multiple container configs are labeled \"default\": true ({}); container: true is refused until exactly one is",

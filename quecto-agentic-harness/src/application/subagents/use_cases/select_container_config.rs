@@ -81,9 +81,11 @@ impl SelectContainerConfig {
                 Some(standard) => standard,
                 None => {
                     // The configuration capability enforces exactly one
-                    // default for a non-empty set, so the only way to arrive
-                    // here without one is an empty set; the arm still
-                    // enumerates so a bypass cannot fail silently.
+                    // default for a non-empty loaded set, so the only way
+                    // to arrive here without one is an empty set; the arm
+                    // still enumerates so a bypass (an in-memory set no
+                    // loader would produce, as the tests build) cannot
+                    // fail silently.
                     let mut defaults: Vec<&ContainerLaunchConfig> =
                         set.configs.iter().filter(|config| config.default).collect();
                     defaults.sort_by(|a, b| a.name.cmp(&b.name));

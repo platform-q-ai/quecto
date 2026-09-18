@@ -230,7 +230,8 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     );
     if let Some(displaced) = &entry.displaced_default {
         out.push_str(&format!(
-            "  displaced default: {displaced} (the overlay entry lost its \"default\": true label in the same write; select it by name with container: {{\"mode\":\"new\",\"container_config\":\"{displaced}\"}})\n"
+            "  displaced default: {displaced} (the overlay entry {} its \"default\": true label in the same write; select it by name with container: {{\"mode\":\"new\",\"container_config\":\"{displaced}\"}})\n",
+            if report.dry_run { "would lose" } else { "lost" }
         ));
     }
     if let Some(global) = &entry.overridden_global_default {
@@ -371,6 +372,7 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
             let default = match status.standard_default {
                 Some(StandardDefault::RepoDefault) => "default",
                 Some(StandardDefault::LabelRemoved) => "default by rule",
+                Some(StandardDefault::Refused) => "refused as configured",
                 Some(StandardDefault::GlobalEntry { labelled: true }) => "default",
                 Some(StandardDefault::GlobalEntry { labelled: false }) | None => "not default",
             };
