@@ -215,3 +215,22 @@ Feature: Environments outlive sessions
     And the output should contain "killed C8 (swarm-env)"
     And the durable environment registry should record "C8" with status "stopped" created by "elsewhere"
     And the state dir should no longer contain the environment of "C8"
+
+  @done @issue-2024 @container-env
+  Scenario: quecto container gc never scans or removes through a record whose workspace lies outside the config's state dir
+    Given script-managed child "impl-scope" is running in a shared environment with task "IMPL_SCOPE_MARKER"
+    And the durable environment registry also records a stopped environment "C6" named "foreign-env" whose state dir lies outside the config's state dir and whose fake container has exited
+    And an orphaned environment state dir "env-orphan06" with an exited fake container is planted in the state dir
+    When I run quecto with arguments "container gc --dry-run"
+    Then the exit code should be 0
+    And the gc report should scan only the config's state dir
+    And the gc report should keep the environment of "C6" as outside the config's state dir
+    And the gc report should list "env-orphan06" as removable
+    When I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C6" as outside the config's state dir
+    And the persistent runtime should never have removed the environment of "C6"
+    And the foreign state dir should still contain the environment of "C6"
+    And the fake runtime should still know the exited container of "C6"
+    And the durable environment registry should record "C6" with status "stopped" created by "elsewhere"
+    And the state dir should no longer contain "env-orphan06"

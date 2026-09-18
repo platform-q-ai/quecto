@@ -162,3 +162,91 @@ fn then_never_removed(world: &mut QuectoWorld, env_ref: String) {
         "no kill or cleanup should have run for {id}: {operations:?}"
     );
 }
+
+// ─── M1: a foreign workspace never widens the scan ──────────────────────────
+
+fn foreign_root(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("foreign-state")
+}
+
+#[given(
+    expr = "the durable environment registry also records a stopped environment {string} named {string} whose state dir lies outside the config's state dir and whose fake container has exited"
+)]
+fn given_foreign_record(world: &mut QuectoWorld, env_ref: String, name: String) {
+    let root = foreign_root(world);
+    std::fs::create_dir_all(&root).unwrap();
+    plant(
+        world,
+        &env_ref,
+        &name,
+        EnvironmentStatus::Stopped,
+        &root,
+        "exited",
+    );
+}
+
+#[then("the gc report should scan only the config's state dir")]
+fn then_gc_scans_only_the_state_dir(world: &mut QuectoWorld) {
+    let roots: Vec<&str> = world
+        .stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("scanned state roots:"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .map(str::trim)
+        .collect();
+    assert_eq!(
+        roots,
+        [state_dir(world).to_string_lossy().as_ref()],
+        "{}",
+        world.stdout
+    );
+}
+
+#[then(
+    expr = "the gc report should keep the environment of {string} as outside the config's state dir"
+)]
+fn then_gc_keeps_outside(world: &mut QuectoWorld, env_ref: String) {
+    let id = environment_id_of(world, &env_ref);
+    let kept = world
+        .stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("kept"))
+        .any(|line| {
+            line.starts_with(&format!("  {id}  "))
+                && line.contains(&format!("recorded {env_ref} at "))
+                && line.contains("outside this config's state dir")
+                && line.contains("not collected")
+        });
+    assert!(
+        kept,
+        "gc report should keep {id} as outside the state dir:\n{}",
+        world.stdout
+    );
+    assert!(
+        !world.stdout.contains(&format!("  {id}  ")) || kept,
+        "{}",
+        world.stdout
+    );
+}
+
+#[then(expr = "the foreign state dir should still contain the environment of {string}")]
+fn then_foreign_dir_contains(world: &mut QuectoWorld, env_ref: String) {
+    let id = environment_id_of(world, &env_ref);
+    assert!(
+        foreign_root(world).join(&id).join("container").is_file(),
+        "{id} should still be under the foreign root"
+    );
+}
+
+#[then(expr = "the fake runtime should still know the exited container of {string}")]
+fn then_runtime_knows_exited(world: &mut QuectoWorld, env_ref: String) {
+    let id = environment_id_of(world, &env_ref);
+    let path = runtime_dir(world).join(format!("quecto-{id}"));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().trim(),
+        "exited",
+        "{}",
+        path.display()
+    );
+}
