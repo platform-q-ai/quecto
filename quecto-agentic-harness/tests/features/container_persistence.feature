@@ -194,6 +194,11 @@ Feature: Environments outlive sessions
   Scenario: A retained environment whose container exited survives restore and gc; only container kill ends it
     Given script-managed child "impl-retained" is running in a shared environment with task "IMPL_RETAINED_MARKER"
     And the durable environment registry also records a retained environment "C8" named "swarm-env" whose fake container has exited
+    When the harness is restarted as session "session-two"
+    And I run container command "get_containers"
+    Then the container command result should not be an error
+    And the container listing should include "C8" with status "retained" and 0 members
+    And the durable environment registry should record "C8" with status "retained" created by "elsewhere"
     When I run quecto with arguments "container ls"
     Then the exit code should be 0
     And the container table should list "C8" with name "swarm-env" status "retained" config "default" and created-by "elsewhere"
