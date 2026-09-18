@@ -14,7 +14,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 - Rootless `podman` (preferred) or `docker` ≥ 20.10 on PATH, plus `jq` and `git`; `gh` logged in (`gh auth status`) if children must push or use the GitHub API (without it: a warning, no token inside).
 - The repository's `origin` remote is a URL the host can clone with its own credentials (`git ls-remote --exit-code origin` exits 0), with **no credential embedded** (init refuses `https://user:secret@…` and `https://ghp_…@…`). No remote = a sandbox entry (empty workspace), which init says.
 - `quecto status` shows `Overlay: none` or `(trusted)`. An `(untrusted)` overlay is refused by init whatever it declares: `quecto config trust` first (after review). An explicit `--config` is refused too.
-- Disk and network for one image build (Debian trixie-slim + git, gh, jq, curl, ripgrep, fd, python3; no toolchain).
+- Disk and network for one image build (~300 MB: Debian trixie-slim + git, gh, jq, curl, ripgrep, fd, python3; no toolchain).
 
 ## Do
 
@@ -80,7 +80,7 @@ container config "standard" (create: /repo/.quecto/containers/standard/scripts/c
   ✓ gh           gh at /usr/bin/gh
   ✓ image        image quecto-box:local is present
   ✓ repo         --repo https://github.com/org/app.git is reachable
-  ✓ state-dir    state dir /home/me/.quecto/container-environments is writable and owned by the current user
+  ✓ state-dir    state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
 0 checks failed, 0 warnings
 ```
 
