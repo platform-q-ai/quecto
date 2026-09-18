@@ -12,6 +12,7 @@ fn main() {
             retention: quecto::composition::sessions::build_retention_handles,
             fresh_session_identity: quecto::composition::sessions::build_fresh_session_identity,
             configuration: quecto::composition::configuration::build_configuration_handles,
+            admission: quecto::composition::admission::build_admission_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles,
             provider_runtime: quecto::composition::runtime::build_agent_provider,
             tool_policy_persistence:

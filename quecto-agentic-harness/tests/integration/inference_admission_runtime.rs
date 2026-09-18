@@ -400,6 +400,7 @@ async fn explicit_aliases_survive_credential_and_model_rebuild_with_exact_budget
             &Candidate {
                 providers: &config(&server.uri(), "old-secret"),
                 admission: Some(&proposal),
+                inherit: false,
             },
             &inputs,
         )
@@ -410,6 +411,7 @@ async fn explicit_aliases_survive_credential_and_model_rebuild_with_exact_budget
             &Candidate {
                 providers: &config(&server.uri(), "rotated-secret"),
                 admission: Some(&proposal.clone()),
+                inherit: false,
             },
             &inputs,
         )
@@ -458,6 +460,7 @@ async fn unknown_explicit_account_alias_rejects_composition_before_http() {
         &Candidate {
             providers: &config(&server.uri(), "secret"),
             admission: Some(&proposal),
+            inherit: false,
         },
         &inputs(dir.path()),
     );
@@ -503,6 +506,7 @@ async fn assert_restart_only_reload_retains_live_runtime(mutation: &str) {
             &Candidate {
                 providers: &providers,
                 admission: Some(&proposal),
+                inherit: false,
             },
             &inputs,
             &ports,
@@ -518,6 +522,7 @@ async fn assert_restart_only_reload_retains_live_runtime(mutation: &str) {
             &Candidate {
                 providers: &providers,
                 admission: Some(&noop),
+                inherit: false,
             },
             &inputs,
             &ports,
@@ -556,6 +561,7 @@ async fn assert_restart_only_reload_retains_live_runtime(mutation: &str) {
             &Candidate {
                 providers: &candidate_providers,
                 admission: (mutation != "disable").then_some(&changed),
+                inherit: false,
             },
             &inputs,
             &ports,

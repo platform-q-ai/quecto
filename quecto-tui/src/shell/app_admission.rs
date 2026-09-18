@@ -82,6 +82,17 @@ impl App {
             .master_session
             .footer
             .set_admission(label.clone(), view.compact_label());
+        // Broker health (#2024 S3): update only when the agent reported an
+        // authority status. A bound harness pushes it on every
+        // `admission_state_changed` (including link-health changes), so the
+        // badge is live; an older harness's activity-only event must not
+        // clear the badge the last `get_state` established.
+        if let Some(health) = view.authority_badge() {
+            self.ac_mut()
+                .master_session
+                .footer
+                .set_admission_health(Some(health));
+        }
         match label.filter(|_| waiting) {
             Some(label) => {
                 let message = format!("⏳ {} (Esc to interrupt)", capitalize(&label));
@@ -115,6 +126,10 @@ impl App {
             .master_session
             .footer
             .set_admission(None, None);
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_health(None);
         self.restore_spinner_after_wait();
     }
 

@@ -37,6 +37,12 @@ pub struct AdmissionView {
     pub groups: Vec<AdmissionGroupView>,
     #[serde(default)]
     pub revision: u64,
+    /// Broker health (#2024 S3): `connected` | `reconnecting` | `unavailable`.
+    /// Carried by `get_state` and by every pushed `admission_state_changed`
+    /// of a process bound to an authority (see `uds-protocol.md`); absent for
+    /// a process without one, or from an older harness.
+    #[serde(default)]
+    pub authority_status: Option<String>,
 }
 
 /// Groups are already bounded by the agent's configuration; this guards the
@@ -151,6 +157,20 @@ impl AdmissionView {
             "unavailable" => "unavailable".to_string(),
             _ => "throttled".to_string(),
         })
+    }
+
+    /// A one-glyph broker-health badge for the footer (#2024 S3): `admission ✓`
+    /// when connected, `admission ⟳` while reconnecting, `admission ✗` when the
+    /// authority is unavailable. `None` when the agent reported no authority
+    /// status (an older harness, or a process bound to no authority).
+    pub fn authority_badge(&self) -> Option<String> {
+        let glyph = match self.authority_status.as_deref()? {
+            "connected" => "✓",
+            "reconnecting" => "⟳",
+            "unavailable" => "✗",
+            _ => return None,
+        };
+        Some(format!("admission {glyph}"))
     }
 
     fn cooldown_text(group: &AdmissionGroupView) -> String {

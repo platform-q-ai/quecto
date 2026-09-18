@@ -17,6 +17,10 @@ pub enum ProviderErrorClass {
     Client,
     Network,
     Cancelled,
+    /// The inference-admission gate refused the attempt before any request
+    /// was made (#2024 S3): a policy or capability decision, terminal for
+    /// this process. Never a malformed request, never a provider credential.
+    Admission,
     Unknown,
 }
 
@@ -48,6 +52,7 @@ impl ProviderErrorClass {
             Self::Client => "client",
             Self::Network => "network",
             Self::Cancelled => "cancelled",
+            Self::Admission => "admission",
             Self::Unknown => "unknown",
         }
     }
@@ -67,6 +72,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
 
     if msg.starts_with("stream completed without assistant output: synthetic=empty_stream") {
         return ProviderErrorClass::EmptyStream;
+    }
+
+    if let Some(class) = classify_admission_error(msg) {
+        return class;
     }
 
     let lowered = msg.to_ascii_lowercase();
@@ -211,6 +220,53 @@ fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
 /// (already lowercased) to avoid catching genuine permission failures.
 fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
     lowered.contains("access to the chat endpoint is denied")
+}
+
+/// Errors raised by the inference-admission gate (#2024 S3) before any
+/// provider request is made, prefixed `admission: ` by the remote gate. The
+/// rule is exhaustive over the admission client's error renderings and never
+/// falls through to the keyword paths: "authority" contains `auth`, and an
+/// `Auth` class would give re-authenticate advice and make the OAuth
+/// decorator refresh and *re-send* — a second admission attempt.
+///
+/// * `admission refused: …` — a policy or capability decision (a child whose
+///   capability was revoked, a root facing a changed policy, a refused scope):
+///   nothing inside this attempt loop changes it, so it is terminal
+///   `Admission`. Not `Auth` (a provider credential rejection: key-check hint,
+///   OAuth refresh) and not `Client` (a malformed request: repaired and
+///   re-sent); the message itself says what to do (respawn, restart).
+/// * `admission capability rejected` — the authority no longer honours this
+///   process's credential: terminal `Admission`, for the same reason.
+/// * `admission authority was reset` — the acquire was queued across an
+///   authority reset: terminal for this attempt; the next one re-registers.
+/// * `admission queue wait deadline elapsed`, `admission ledger not durable`,
+///   `admission protocol violation: …`, `unsupported admission protocol: …` —
+///   the gate could not admit this attempt: terminal `Admission`.
+/// * `admission request cancelled` — the caller's own cancellation.
+/// * `admission transport failure: …` — the link to the broker failed (socket
+///   gone, reconnection exhausted): retryable `Network`, since a later attempt
+///   reconnects when the broker is back.
+/// * `admission authority connection closed` — the broker went away while
+///   this attempt waited: retryable `Network`. The retry re-enters the gate
+///   (each leaf attempt acquires afresh) over the link's reconnect; it never
+///   resends around it.
+/// * anything else with the prefix — terminal `Admission`.
+fn classify_admission_error(msg: &str) -> Option<ProviderErrorClass> {
+    let detail = msg.strip_prefix("admission: ")?;
+    Some(if detail.starts_with("admission request cancelled") {
+        ProviderErrorClass::Cancelled
+    } else if detail.starts_with("admission transport failure")
+        || detail.starts_with("admission authority connection closed")
+    {
+        ProviderErrorClass::Network
+    } else {
+        // `admission refused:`, `admission capability rejected`,
+        // `admission authority was reset`, `admission queue wait deadline
+        // elapsed`, `admission ledger not durable`, `admission protocol
+        // violation:`, `unsupported admission protocol:` and any rendering
+        // added later: terminal, and never the keyword paths.
+        ProviderErrorClass::Admission
+    })
 }
 
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {

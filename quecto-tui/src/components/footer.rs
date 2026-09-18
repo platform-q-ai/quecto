@@ -26,6 +26,9 @@ pub struct Footer {
     admission: Option<String>,
     /// The panel-row form of the same label ("12s").
     admission_compact: Option<String>,
+    /// Broker health badge (#2024 S3): "admission ✓" / "⟳" / "✗"; `None` when
+    /// the agent reported no authority status.
+    admission_health: Option<String>,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -55,6 +58,7 @@ impl Footer {
             effort: None,
             admission: None,
             admission_compact: None,
+            admission_health: None,
             pwd,
         }
     }
@@ -64,6 +68,15 @@ impl Footer {
     pub fn set_admission(&mut self, label: Option<String>, compact: Option<String>) {
         self.admission = label;
         self.admission_compact = compact;
+    }
+
+    /// Show (or clear) the broker-health badge (#2024 S3), presentation only.
+    pub fn set_admission_health(&mut self, health: Option<String>) {
+        self.admission_health = health;
+    }
+
+    pub fn admission_health(&self) -> Option<&str> {
+        self.admission_health.as_deref()
     }
 
     pub fn admission(&self) -> Option<&str> {
@@ -268,6 +281,12 @@ impl Component for Footer {
         // visible as waiting, never as an idle or stalled agent.
         if let Some(admission) = &self.admission {
             right = format!("{} {admission} · {right}", theme::ADMISSION_INDICATOR);
+        }
+        // Broker health rides beside the model regardless of wait state
+        // (#2024 S3): a session shows its authority is reachable even when
+        // nothing is queued. Presentation only.
+        if let Some(health) = &self.admission_health {
+            right = format!("{health} · {right}");
         }
         let right = right.as_str();
         let left_width = visible_width(&left);

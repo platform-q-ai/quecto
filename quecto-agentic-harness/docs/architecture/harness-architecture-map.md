@@ -302,6 +302,39 @@ interface (`src/interface/cli/{config_cmd.rs, config_loading.rs,
 commands.rs}`) parses `quecto config get|set|trust`, loads through the
 handles and presents the layer report in `quecto status`.
 
+## Admission operation: one host-wide broker, agent-operable
+
+The admission-operation capability (`src/application/admission/`, #2024 S3,
+owner epic #1910) is the agent-operable side of the single host-wide inference
+broker. Its use cases under `use_cases/` are `inspect_authority`,
+`reset_authority`, `install_authority_service`, `uninstall_authority_service`
+(idempotent, with the systemd unit template as pure policy) and
+`negotiate_authority` — the one home of the rule that a **child inherits its
+parent's authority unconditionally** (#2023): an inherited `--admission-context`
+always wins over the child's own (possibly `null`) config. Its capability-local
+ports (`ports.rs`) are `AuthorityAdmin` (admin-socket inspect/reset, addressed
+by directory) and `AuthorityServiceManager` (the systemd *user* unit and
+`systemctl --user` lifecycle); connection and reconnect stay behind the existing
+admission client port. DTOs are in `dto.rs`.
+
+Infrastructure: `src/infrastructure/admission/admin_adapter.rs`
+(`SocketAuthorityAdmin` over `AdminConnection`), `link.rs` (`AuthorityLink`, the
+reconnecting connection every gate routes through — a root re-registers after a
+broker restart/reset, a child fails closed) wired into `process.rs` and
+`remote_gate.rs`, and `src/infrastructure/processes/local/systemd_service_manager.rs`
+(`SystemdUserServiceManager`; the contract test uses a fake `systemctl`). The
+byte-equal child check is retired: `provider_runtime_admission.rs`'s
+`AdmissionRuntimeCandidate` carries an `inherit` flag (composition sets it from
+`ProcessAdmission::inherits_authority`), and `binding` resolves a `*`/`default`
+alias for unlisted slots. Composition (`src/composition/admission.rs`) builds
+`AdmissionHandles` (`src/interface/cli/admission_handles.rs`) `main` hands the
+CLI through `CliComposition.admission`; the interface
+(`src/interface/cli/admission_broker.rs`) parses one command into one use case
+and presents the outcome (naming the directory), addressing the global config
+(never the cwd overlay). `get_state.admission` gains `directory`, `epoch`,
+`connected` and `authorityStatus` (`uds_admission_projection.rs`,
+`uds_execution_state.rs`), which quecto-tui renders as a footer health badge.
+
 ## Baseline subsystem checks
 
 Use these focused checks while hardening the architecture. The full pre-push gate

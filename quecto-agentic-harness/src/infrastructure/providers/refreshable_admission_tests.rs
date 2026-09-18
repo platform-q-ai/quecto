@@ -122,3 +122,100 @@ async fn denied_resend_keeps_the_refreshed_provider() {
         "the refreshed provider was retained; no second refresh"
     );
 }
+
+/// A provider whose first call fails with an admission-gate error; the
+/// message is what the remote gate produces (`admission: ` + `ClientError`).
+#[derive(Debug)]
+struct AdmissionFailingProvider {
+    call_count: Arc<AtomicU32>,
+    message: &'static str,
+}
+impl LlmProvider for AdmissionFailingProvider {
+    fn name(&self) -> &str {
+        "mock"
+    }
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            Err(DomainError::Provider(format!(
+                "admission: {}",
+                self.message
+            )))
+        })
+    }
+}
+
+/// An admission-gate error is not a credential rejection: no OAuth refresh
+/// and, above all, no resend — a resend would be a second admission attempt
+/// for the same request. Covers every `ClientError` rendering, including
+/// the "authority" ones whose wording used to match the `auth` keyword.
+#[tokio::test]
+async fn admission_errors_never_refresh_or_resend() {
+    for message in [
+        "admission capability rejected",
+        "unsupported admission protocol: v9",
+        "admission refused: scope not registered",
+        "admission ledger not durable",
+        "admission request cancelled",
+        "admission queue wait deadline elapsed",
+        "admission authority was reset",
+        "admission authority connection closed",
+        "admission protocol violation: reply without id",
+        "admission transport failure: broken pipe",
+        "unexpected reply Ready",
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = Arc::new(CredentialStore::new(tmp.path()));
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-live".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(i64::MAX),
+                refresh_token: Some("rt-old".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let refreshed = Arc::new(AtomicU32::new(0));
+        let refreshed_in_fn = refreshed.clone();
+        let refresh_fn: RefreshFn = Arc::new(move |_store, _provider| {
+            refreshed_in_fn.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok("sk-ant-oat01-fresh".to_string()) })
+        });
+        let refreshable = RefreshableProvider::new(RefreshableConfig {
+            inner: Arc::new(AdmissionFailingProvider {
+                call_count: call_count.clone(),
+                message,
+            }),
+            store,
+            provider_name: "anthropic".to_string(),
+            credential_provider: "anthropic".to_string(),
+            refresh_fn,
+            factory: make_mock_factory(call_count.clone(), 0),
+        });
+
+        let err = refreshable
+            .chat(test_request())
+            .await
+            .expect_err("admission errors surface unchanged");
+        assert!(
+            matches!(&err, DomainError::Provider(m) if *m == format!("admission: {message}")),
+            "{message}: {err}"
+        );
+        assert_eq!(
+            refreshed.load(Ordering::SeqCst),
+            0,
+            "refreshed on {message:?}"
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "resent on {message:?}"
+        );
+    }
+}

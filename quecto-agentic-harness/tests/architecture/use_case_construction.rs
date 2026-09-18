@@ -46,6 +46,8 @@ const USE_CASES: &[&str] = &[
     "FinalizeEnvironmentMember",
     "FindUseCase",
     "HarnessShutdownTransaction",
+    "InspectAuthority",
+    "InstallAuthorityService",
     "KillDelegatedAgent",
     "KillDelegatedAgentPorts",
     "KillEnvironment",
@@ -53,6 +55,7 @@ const USE_CASES: &[&str] = &[
     "ListModels",
     "ListRetainedContext",
     "ListSessions",
+    "NegotiateAuthority",
     "ObserveOwnedChildExit",
     "OwnerConclusionPorts",
     "PatchConfiguration",
@@ -63,6 +66,7 @@ const USE_CASES: &[&str] = &[
     "RecoverMessage",
     "RefreshCatalogueSources",
     "ReloadRuntimeConfiguration",
+    "ResetAuthority",
     "ResolveEffectiveConfig",
     "ResumeSavedSession",
     "RetainContext",
@@ -78,6 +82,7 @@ const USE_CASES: &[&str] = &[
     "TerminateAllDelegatedAgentsPorts",
     "TerminateDelegatedAgent",
     "TrustConfigOverlay",
+    "UninstallAuthorityService",
     "WebFetchUseCase",
 ];
 

@@ -1,4 +1,6 @@
-use super::uds_admission_projection::{AdmissionSnapshot, project, waiting_progress};
+use super::uds_admission_projection::{
+    AdmissionSnapshot, AuthorityView, project, waiting_progress,
+};
 use crate::application::ports::AdmissionObservation;
 use crate::domain::agent::AgentProgressEvent;
 use crate::domain::inference_admission::AdmissionActivity;
@@ -59,6 +61,9 @@ pub struct ExecutionState {
     phase: &'static str,
     /// Read port of this process's admission activity, when admission is on.
     admission: Option<Arc<dyn AdmissionObservation>>,
+    /// Authority-level facts (#2024 S3): directory, epoch, and a live probe
+    /// of the connection so `get_state.admission` carries broker health.
+    authority: Option<AuthorityProbe>,
     /// Last admission revision folded into `visible_generation`.
     observed_admission_revision: u64,
     /// Single monotonic cursor exposed by the slim `get_state` projection.
@@ -76,6 +81,30 @@ pub struct ExecutionState {
     recent: VecDeque<(Instant, bool)>,
     message_count: usize,
     hidden_message_count: usize,
+}
+
+/// A live probe of the process's authority binding (#2024 S3): every
+/// snapshot reads the current directory, epoch and health, so a reconnection
+/// or reset behind the binding is reported, never a view captured at attach.
+#[derive(Clone)]
+pub(crate) struct AuthorityProbe {
+    view: Arc<dyn Fn() -> AuthorityView + Send + Sync>,
+}
+
+impl std::fmt::Debug for AuthorityProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthorityProbe").finish_non_exhaustive()
+    }
+}
+
+impl AuthorityProbe {
+    pub(crate) fn new(view: Arc<dyn Fn() -> AuthorityView + Send + Sync>) -> Self {
+        Self { view }
+    }
+
+    fn view(&self) -> AuthorityView {
+        (self.view)()
+    }
 }
 
 #[derive(Debug)]
@@ -105,6 +134,7 @@ impl Default for ExecutionState {
         Self {
             phase: "idle",
             admission: None,
+            authority: None,
             observed_admission_revision: 0,
             visible_generation: 1,
             observed_session_generation: 0,
@@ -134,6 +164,12 @@ impl ExecutionState {
     /// cursor and its view rides on every snapshot.
     pub(crate) fn set_admission_source(&mut self, source: Arc<dyn AdmissionObservation>) {
         self.admission = Some(source);
+    }
+
+    /// Attach the authority-level probe (#2024 S3): directory, epoch and a
+    /// live connection check that `get_state.admission` reports as health.
+    pub(crate) fn set_admission_authority(&mut self, probe: AuthorityProbe) {
+        self.authority = Some(probe);
     }
 
     fn admission_activity(&self) -> Option<AdmissionActivity> {
@@ -328,7 +364,24 @@ impl ExecutionState {
                 tool_calls_completed: recent_completed,
                 tool_calls_failed: recent_failed,
             },
-            admission: admission_activity.as_ref().map(project),
+            admission: {
+                let mut snapshot = admission_activity.as_ref().map(project);
+                // The authority facts ride on `get_state` even when there is
+                // no live attempt activity yet: a bound session always reports
+                // its directory, epoch and health.
+                if let Some(probe) = &self.authority {
+                    let view = probe.view();
+                    match &mut snapshot {
+                        Some(existing) => view.apply(existing),
+                        None => {
+                            let mut base = project(&AdmissionActivity::default());
+                            view.apply(&mut base);
+                            snapshot = Some(base);
+                        }
+                    }
+                }
+                snapshot
+            },
         }
     }
 }

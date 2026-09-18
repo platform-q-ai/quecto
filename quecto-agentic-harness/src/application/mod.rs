@@ -1,3 +1,4 @@
+pub mod admission;
 pub mod agent_loop;
 mod agent_loop_lifecycle_compat;
 mod agent_loop_policy;

@@ -20,6 +20,7 @@ fn leading_config_dispatches_to_following_agent_subcommand() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),

@@ -213,6 +213,13 @@ async fn admission_broker_manual_is_discoverable_and_actionable() {
                 "monotonic",
                 "rebases",
                 "#1708",
+                // #2024 S3 recovery story: roots re-register, children are
+                // respawned, and the parent is told how it sees that.
+                "Recovery: reset and broker restart",
+                "its parent must respawn it",
+                "authorityStatus: \"unavailable\"",
+                "restart required",
+                "RestartPreventExitStatus=3",
             ] {
                 assert!(result.content.contains(required), "manual lacks {required}");
             }

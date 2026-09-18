@@ -249,6 +249,7 @@ fn test_agent_config_flag_loads_custom_path() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -284,6 +285,7 @@ fn test_agent_config_flag_missing_value() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -310,6 +312,7 @@ fn test_agent_config_flag_nonexistent_path() {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),

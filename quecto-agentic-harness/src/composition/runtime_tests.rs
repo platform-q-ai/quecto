@@ -126,3 +126,74 @@ fn admission_candidate_is_the_configured_proposal_or_none() {
         "invalid sections are not candidates"
     );
 }
+
+/// M5c (#2024 S3): only a child composes with `inherit = true`; a root offers
+/// its configured section as a validated candidate, never inherits.
+#[test]
+fn only_a_child_binding_inherits_at_composition() {
+    use crate::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+    use crate::infrastructure::admission::{
+        AuthorityDirectory, AuthorityServer, Negotiation, negotiate, write_admission_context,
+    };
+    use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let group = GroupId::new("g").unwrap();
+    let proposal = AdmissionRuntimeProposal {
+        policy: AdmissionConfig {
+            groups: std::collections::BTreeMap::from([(
+                group.clone(),
+                GroupPolicy {
+                    capacity: 1,
+                    reserve: 0,
+                    min_interval_ms: 1,
+                    queue_capacity: 1,
+                    queue_timeout_ms: 1,
+                    attempt_timeout_ms: 1,
+                    fallback_base_ms: 1,
+                    max_cooldown_ms: 1,
+                },
+            )]),
+            aliases: std::collections::BTreeMap::from([("a".into(), group)]),
+            max_scopes: 8,
+            terminal_capacity: 8,
+        },
+        bindings: std::collections::BTreeMap::from([("openai".into(), "a".into())]),
+    };
+    let server = rt
+        .block_on(AuthorityServer::start(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal,
+        ))
+        .unwrap();
+    let mut config = Config::default();
+    config.admission = serde_json::from_str(&format!(
+        r#"{{"directory":{:?},"groups":{{"g":{{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}}}},"aliases":{{"a":"g"}},"bindings":{{"openai":"a"}}}}"#,
+        directory.to_string_lossy()
+    ))
+    .unwrap();
+    let root = negotiate(Negotiation::Root {
+        directory: directory.clone(),
+    })
+    .unwrap();
+    let (inherit, candidate) = admission_inheritance(&root, &config);
+    assert!(!inherit, "a root never inherits");
+    assert_eq!(candidate.unwrap().bindings["openai"], "a");
+
+    let credential = rt.block_on(root.connection().register_child()).unwrap();
+    let context = temp.path().join("child.json");
+    write_admission_context(&context, &root.endpoint(), &credential).unwrap();
+    let child = negotiate(Negotiation::Child { context }).unwrap();
+    // Whatever its own config says (here: a differing section), a child
+    // inherits and offers no candidate to validate.
+    config.admission.as_mut().unwrap().bindings.clear();
+    let (inherit, candidate) = admission_inheritance(&child, &config);
+    assert!(inherit, "a child always inherits");
+    assert!(candidate.is_none());
+    rt.block_on(server.shutdown());
+}

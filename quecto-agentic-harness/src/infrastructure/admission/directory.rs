@@ -52,6 +52,29 @@ impl AuthorityDirectory {
         Ok(dir)
     }
 
+    /// Wrap a path as an authority directory without validating or creating
+    /// it (#2024 S3): the reconnecting link keeps the path and re-validates
+    /// via [`existing`](Self::existing) on each reconnection.
+    pub fn from_directory(path: &Path) -> Self {
+        Self {
+            root: path.to_path_buf(),
+        }
+    }
+
+    /// The owner-only check alone, for a path an operator named explicitly
+    /// (`--directory`): it must be a directory owned by the current user and
+    /// closed to group/other. Nothing is created.
+    pub fn check_private_path(path: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(path)?;
+        if !meta.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} is not a directory", path.display()),
+            ));
+        }
+        check_private(path, &meta)
+    }
+
     pub fn path(&self) -> &Path {
         &self.root
     }
@@ -63,6 +86,12 @@ impl AuthorityDirectory {
     }
     pub fn admin_socket(&self) -> PathBuf {
         self.root.join(ADMIN_SOCKET)
+    }
+    /// The admin socket path for a directory without opening or validating it
+    /// (the admin client just tries to connect; a stale/missing socket
+    /// surfaces as "not running"). Used by the operator status/reset ops.
+    pub fn admin_socket_for(directory: &Path) -> PathBuf {
+        directory.join(ADMIN_SOCKET)
     }
     pub fn lock_path(&self) -> PathBuf {
         self.root.join(LOCK_FILE)

@@ -599,3 +599,34 @@ fn forwarded_admission_identity_cannot_be_spoofed() {
         "agent_start still reaches the registry"
     );
 }
+
+/// M7 (#2024 S3): a child's authority health is forwarded (vocabulary-checked,
+/// never a free string) so the parent sees a child whose capability is gone
+/// — `unavailable` after a reset — without polling its socket; anything
+/// outside the vocabulary is dropped.
+#[test]
+fn forwarded_child_admission_carries_its_authority_health() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let line = r#"{"type":"admission_state_changed","admission":{"waiting":0,"admitted":0,"groups":[],"counters":{"completed":1,"refused":1,"cancelled":0,"abandoned":0},"hidden":0,"revision":4,"epoch":1,"connected":false,"authorityStatus":"unavailable","directory":"/private"}}"#;
+    super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    let admission = &fwd["admission"];
+    assert_eq!(admission["authorityStatus"], "unavailable");
+    assert_eq!(admission["connected"], false);
+    assert_eq!(admission["epoch"], 1);
+    assert_eq!(admission["counters"]["refused"], 1);
+    assert!(
+        admission.get("directory").is_none(),
+        "the child's directory path is not the parent's business"
+    );
+    let bogus = r#"{"type":"admission_state_changed","admission":{"waiting":0,"admitted":0,"groups":[],"hidden":0,"revision":5,"authorityStatus":"<script>","connected":"yes"}}"#;
+    super::handle_monitor_line(bogus, "child", &registry, None, Some(&tx), Some("root"));
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert!(fwd["admission"].get("authorityStatus").is_none());
+    assert!(fwd["admission"].get("connected").is_none());
+}

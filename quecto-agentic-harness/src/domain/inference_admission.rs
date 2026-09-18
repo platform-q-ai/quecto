@@ -38,7 +38,7 @@ pub enum WorkloadClass {
     Background,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupPolicy {
     pub capacity: usize,
     pub reserve: usize,
@@ -51,7 +51,7 @@ pub struct GroupPolicy {
     pub max_cooldown_ms: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionConfig {
     pub groups: BTreeMap<GroupId, GroupPolicy>,
     pub aliases: BTreeMap<String, GroupId>,

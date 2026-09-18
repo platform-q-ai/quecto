@@ -9,6 +9,7 @@ fn ctx(dir: &std::path::Path) -> CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -40,6 +41,8 @@ fn administration_requires_a_section_an_action_and_a_running_authority() {
         r#"{"providers":{"anthropic":{"api_key":"k"}}}"#,
     )
     .unwrap();
+    // With no admission section there is no broker to address: status errors
+    // naming the missing section (an explicit --directory would override).
     let (code, _, err) = run(&ctx, &["status"]);
     assert_eq!(code, 1);
     assert!(err.contains("no `admission` section"), "{err}");
@@ -96,7 +99,12 @@ fn status_and_reset_talk_to_the_running_authority() {
     assert_eq!(status["groups"]["g"]["active"], 0);
     let (code, out, err) = run(&ctx, &["reset"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out.trim(), r#"{"epoch":2}"#);
+    let reset: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(reset["epoch"], 2);
+    assert!(
+        reset["directory"].is_string(),
+        "reset names the directory: {out}"
+    );
     assert!(err.contains("reset acknowledged"), "{err}");
     rt.block_on(server.shutdown());
 }
@@ -160,4 +168,63 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     assert_eq!(outcome, 0, "{err}");
     assert!(out.contains("stopped"), "{out}");
     assert!(!dir.client_socket().exists(), "sockets removed on stop");
+}
+
+/// Lows (#2024 S3 review): an explicit `--directory` is validated like the
+/// config path (absolute, never the base directory or an ancestor of it,
+/// owner-only when it exists), and `run --directory X --config Y` is
+/// accepted when X is the directory Y configures and refused loudly when not.
+#[test]
+fn an_explicit_directory_is_validated_and_run_honours_or_refuses_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = ctx(temp.path());
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+
+    let (code, _, err) = run(&ctx, &["status", "--directory", "relative/dir"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("absolute"), "{err}");
+    let base = temp.path().to_str().unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", base]);
+    assert_eq!(code, 1);
+    assert!(err.contains("base directory"), "{err}");
+    let parent = temp.path().parent().unwrap().to_str().unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", parent]);
+    assert_eq!(code, 1);
+    assert!(err.contains("ancestor"), "{err}");
+    let shared = temp.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", shared.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(err.contains("0700"), "{err}");
+    // A valid, absent directory is simply not running.
+    let (code, _, err) = run(
+        &ctx,
+        &["status", "--directory", authority.to_str().unwrap()],
+    );
+    assert_eq!(code, 1);
+    assert!(err.contains("not running"), "{err}");
+
+    // `run`: the global extractor already moved `--config` into the context
+    // (as `quecto --config Y admission-broker run --directory X` does), so a
+    // matching --directory is accepted and a different one refused.
+    let opts = parse_args(
+        &["--directory".to_string(), authority.display().to_string()],
+        &mut String::new(),
+    )
+    .unwrap();
+    let (directory, _) = run_plan(&ctx, &opts).expect("matching --directory is honoured");
+    assert_eq!(directory, authority);
+    let other = temp.path().join("other");
+    let opts = parse_args(
+        &["--directory".to_string(), other.display().to_string()],
+        &mut String::new(),
+    )
+    .unwrap();
+    let error = run_plan(&ctx, &opts).unwrap_err();
+    assert!(error.contains("does not match"), "{error}");
+    assert!(error.contains(&authority.display().to_string()), "{error}");
 }

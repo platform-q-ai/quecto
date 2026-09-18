@@ -82,6 +82,7 @@ fn an_agent_run_refuses_to_start_without_a_composed_provider_runtime() {
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -109,6 +110,7 @@ fn an_agent_run_refuses_to_start_without_composed_tool_policy_persistence() {
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -123,6 +125,66 @@ fn an_agent_run_refuses_to_start_without_composed_tool_policy_persistence() {
     assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
     assert!(
         stderr.contains("agent: tool-policy persistence capability not composed"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_agent_run_refuses_to_start_without_composed_container_config_selection() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        container_config_selection: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    let mut flags =
+        parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
+    flags.adopt_context(&ctx);
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        stderr.contains("agent: container-config selection capability not composed"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_agent_run_refuses_to_start_without_a_composed_admission_builder() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
+        admission: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    let mut flags =
+        parse_agent_flags(&["--mode".to_string(), "uds".to_string()], &mut stderr).unwrap();
+    flags.adopt_context(&ctx);
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        stderr.contains("agent: admission capability not composed"),
         "{stderr}"
     );
 }

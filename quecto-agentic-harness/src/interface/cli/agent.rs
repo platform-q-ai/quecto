@@ -1,7 +1,6 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::configuration::dto::ConfigSelection;
-use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
@@ -205,6 +204,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         provider_runtime: None,
         tool_policy_persistence: None,
         configuration: None,
+        admission: None,
         container_config_selection: None,
         stdin_is_tty: false,
         admission_context,
@@ -374,7 +374,7 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("agent: container-config selection capability not composed\n");
         return None;
     };
-    if !admission_startup::negotiate(&config, flags.admission_context.as_deref(), stderr) {
+    if !admission_startup::negotiate_from_flags(&config, flags, stderr) {
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();
@@ -526,35 +526,9 @@ use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_regist
 mod run_session;
 pub(crate) use run_session::run_agent_session;
 
-/// The identity a UDS loop opens on (#1976): ephemeral (never persisted),
-/// the named `cli:<name>` session, or a fresh user-chat identity drawn from
-/// composition's generator — the interface generates no key.
-fn resolve_startup_identity(
-    ctx: &CliContext,
-    flags: &AgentFlags,
-    ephemeral: bool,
-    stderr: &mut String,
-) -> Option<SessionIdentity> {
-    if ephemeral {
-        return Some(SessionIdentity::ephemeral());
-    }
-    if let Some(name) = flags.session_name.as_deref() {
-        // Admitted by the same allowlist at flag parse; a refusal here is
-        // defensive.
-        return match SessionIdentity::named_cli(name) {
-            Ok(identity) => Some(identity),
-            Err(e) => {
-                stderr.push_str(&format!("{e}\n"));
-                None
-            }
-        };
-    }
-    let Some(fresh_identity) = ctx.fresh_session_identity else {
-        stderr.push_str("agent: fresh session identity generator not composed\n");
-        return None;
-    };
-    Some(fresh_identity().fresh_identity())
-}
+#[path = "agent/startup_identity.rs"]
+mod startup_identity;
+use startup_identity::resolve_startup_identity;
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before

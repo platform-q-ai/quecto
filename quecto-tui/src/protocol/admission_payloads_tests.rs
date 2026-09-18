@@ -133,3 +133,30 @@ fn compact_label_fits_a_panel_row() {
     view.groups[0].cooldown.as_mut().unwrap().state = "unavailable".into();
     assert_eq!(view.compact_label().as_deref(), Some("unavailable"));
 }
+
+#[test]
+fn the_authority_badge_reflects_broker_health() {
+    // #2024 S3: presentation only — one glyph per authorityStatus, and None
+    // when the agent reported no status (an older harness / activity-only event).
+    let mut view = AdmissionView::default();
+    assert_eq!(view.authority_badge(), None);
+    view.authority_status = Some("connected".into());
+    assert_eq!(view.authority_badge().as_deref(), Some("admission ✓"));
+    view.authority_status = Some("reconnecting".into());
+    assert_eq!(view.authority_badge().as_deref(), Some("admission ⟳"));
+    view.authority_status = Some("unavailable".into());
+    assert_eq!(view.authority_badge().as_deref(), Some("admission ✗"));
+    view.authority_status = Some("something-else".into());
+    assert_eq!(view.authority_badge(), None);
+}
+
+#[test]
+fn parse_admission_reads_the_authority_status() {
+    let value = serde_json::json!({
+        "waiting": 0,
+        "authorityStatus": "connected",
+    });
+    let view = parse_admission(&value, &|s: &str| s.to_string()).unwrap();
+    assert_eq!(view.authority_status.as_deref(), Some("connected"));
+    assert_eq!(view.authority_badge().as_deref(), Some("admission ✓"));
+}

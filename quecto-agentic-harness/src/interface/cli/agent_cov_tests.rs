@@ -443,6 +443,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
@@ -491,6 +492,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
         container_config_selection: Some(
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
