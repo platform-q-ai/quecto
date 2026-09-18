@@ -34,10 +34,13 @@ impl ContainerAssetStore for FixedAssets {
 
     fn observe(&self, _: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
         let index: usize = asset.path[1..].parse().unwrap();
-        Ok(self.0[index])
+        match self.0[index] {
+            AssetState::Refused => Err(format!("{} is a symbolic link", asset.path)),
+            state => Ok(state),
+        }
     }
 
-    fn materialise(&self, _: &Path, _: &ContainerAsset) -> Result<AssetOutcome, String> {
+    fn materialise(&self, _: &Path, _: &Path, _: &ContainerAsset) -> Result<AssetOutcome, String> {
         unreachable!("status never writes")
     }
 }
@@ -153,7 +156,11 @@ fn a_complete_setup_is_healthy_and_the_image_check_comes_from_the_entrys_preflig
 #[test]
 fn a_missing_bundle_and_no_entry_run_no_preflight() {
     let status = ContainerStatus::new(
-        Arc::new(FixedAssets(vec![AssetState::Missing, AssetState::Differs])),
+        Arc::new(FixedAssets(vec![
+            AssetState::Missing,
+            AssetState::Differs,
+            AssetState::Refused,
+        ])),
         Arc::new(FixedRoster(Ok(ContainerConfigRosterReport::default()))),
         Arc::new(RecordingLookup {
             answer: Err("unreachable".into()),
@@ -165,6 +172,8 @@ fn a_missing_bundle_and_no_entry_run_no_preflight() {
     assert!(!status.healthy());
     assert_eq!(status.assets_present(), 1);
     assert_eq!(status.assets_differing(), 1);
+    assert_eq!(status.assets[2].1, AssetState::Refused);
+    assert_eq!(status.diagnostics, ["a2 is a symbolic link"]);
     assert!(status.entry.is_none());
     assert!(status.image.is_none());
     assert!(status.preflight_error.is_none());

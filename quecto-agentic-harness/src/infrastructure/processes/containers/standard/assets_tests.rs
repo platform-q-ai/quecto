@@ -59,7 +59,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         AssetState::Missing
     );
     assert_eq!(
-        store.materialise(dir.path(), create).unwrap(),
+        store.materialise(dir.path(), dir.path(), create).unwrap(),
         AssetOutcome::Written
     );
     let path = dir.path().join("scripts/create.sh");
@@ -77,7 +77,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         AssetState::Identical
     );
     assert_eq!(
-        store.materialise(dir.path(), create).unwrap(),
+        store.materialise(dir.path(), dir.path(), create).unwrap(),
         AssetOutcome::KeptIdentical
     );
     std::fs::write(&path, "edited").unwrap();
@@ -86,7 +86,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         AssetState::Differs
     );
     assert_eq!(
-        store.materialise(dir.path(), create).unwrap(),
+        store.materialise(dir.path(), dir.path(), create).unwrap(),
         AssetOutcome::KeptDiffering
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
@@ -96,7 +96,9 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         .collect();
     assert_eq!(leftovers, ["create.sh"], "no temporary file remains");
     let containerfile = &catalogue.assets[0];
-    store.materialise(dir.path(), containerfile).unwrap();
+    store
+        .materialise(dir.path(), dir.path(), containerfile)
+        .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -122,7 +124,9 @@ fn a_symbolic_link_in_an_assets_place_is_refused_not_followed() {
     std::os::unix::fs::symlink(&target, dir.path().join("Containerfile")).unwrap();
     let error = store.observe(dir.path(), containerfile).unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
-    let error = store.materialise(dir.path(), containerfile).unwrap_err();
+    let error = store
+        .materialise(dir.path(), dir.path(), containerfile)
+        .unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "x");
 }
@@ -138,13 +142,32 @@ fn a_symbolic_link_in_a_directorys_place_is_refused_not_followed() {
     let bundle = dir.path().join("bundle");
     std::fs::create_dir_all(&bundle).unwrap();
     std::os::unix::fs::symlink(&elsewhere, bundle.join("scripts")).unwrap();
-    let error = store.materialise(&bundle, create).unwrap_err();
+    let error = store.materialise(dir.path(), &bundle, create).unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
     assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
     // The bundle directory itself being a link is refused too.
     let linked_bundle = dir.path().join("linked-bundle");
     std::os::unix::fs::symlink(&elsewhere, &linked_bundle).unwrap();
-    let error = store.materialise(&linked_bundle, create).unwrap_err();
+    let error = store
+        .materialise(dir.path(), &linked_bundle, create)
+        .unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
+    assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_between_the_root_and_the_bundle_is_refused() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let create = &store.catalogue().assets[1];
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join(".quecto")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, project.join(".quecto/containers")).unwrap();
+    let bundle = project.join(".quecto/containers/standard");
+    let error = store.materialise(&project, &bundle, create).unwrap_err();
+    assert!(error.contains("containers is a symbolic link"), "{error}");
     assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
 }

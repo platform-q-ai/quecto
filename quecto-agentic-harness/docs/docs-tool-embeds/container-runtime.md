@@ -10,8 +10,9 @@ is the operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 ## Set up the standard container for a repository (`quecto container init`)
 
 The one supported way to give a repository a container: four commands, one
-of them a build. Run them from the repository's directory (or pass
-`--project <abs dir>`).
+of them a build. Run them from the repository **root** (or pass
+`--project <root>`): the overlay written is the working directory's own
+`.quecto/config.json`, and an agent started at the root reads only that one.
 
 1. **Initialise** — writes the bundle and binds the repository:
    ```
@@ -27,21 +28,27 @@ of them a build. Run them from the repository's directory (or pass
    `<project>/.quecto/config.json` through the config writer, so the overlay
    is trusted for exactly those bytes. The entry's argv name the
    materialised scripts, `--state-dir <base dir>/container-environments`,
-   `--repo <origin>` (omitted = sandbox, and init says so), `--image <tag>`;
-   it is the default unless another entry already is (then init adds it
-   without the label and says so — select it with
-   `container: {"mode":"new","container_config":"standard"}`). An untrusted
-   overlay is refused (`quecto config trust` first); init never adopts one.
-   Run it again any time: it is idempotent.
+   `--repo <origin>` (omitted = sandbox, and init says so; an origin with
+   `user:token@` embedded is refused — pass a credential-free `--repo`),
+   `--image <tag>`; it is the default unless another entry already is (then
+   init adds it without the label and says so — select it with
+   `container: {"mode":"new","container_config":"standard"}` and diagnose
+   it with `quecto container doctor --name standard`). An untrusted overlay,
+   whatever it declares, is refused before anything is written (`quecto
+   config trust` first); init never adopts one. Run it again any time: it
+   is idempotent.
 2. **Build the image** — exactly the command init printed (a create never
    builds or pulls):
    ```
    podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard
    ```
-   The image is Debian trixie-slim with bash, git, gh, jq, curl, ripgrep,
-   fd, python3 and no toolchain; derive `FROM` it for a project that needs
-   one and pass `--image` to init. Only the tag has to exist locally: there
-   is no approval record or digest ritual.
+   (docker-only host: the same command with `docker`; the scripts drive
+   whichever runtime the doctor's `runtime-cli` line names — Docker CLI
+   ≥ 20.10, since the create runs with `--pull=never`.) The image is Debian
+   trixie-slim with bash, git, gh, jq, curl, ripgrep, fd, python3 and no
+   toolchain; derive `FROM` it for a project that needs one and pass
+   `--image` to init. Only the tag has to exist locally: there is no
+   approval record or digest ritual.
 3. **Verify** — `quecto container status` (assets, entry, trust, image: exit
    0 when all are in place) and `quecto container doctor` (the full
    preflight: runtime, jq, git, gh, image, `--repo` reachable, state dir —
@@ -68,7 +75,7 @@ delete `.quecto/containers/standard`.
 ## Preconditions (what a create needs)
 
 - A container runtime on PATH: rootless `podman` (preferred) or `docker`
-  (`QUECTO_CONTAINER_CLI` overrides the choice).
+  ≥ 20.10 (`QUECTO_CONTAINER_CLI` overrides the choice).
 - `jq` and, for a config with `--repo`, `git`; `gh` is optional (without it
   members get no GitHub token, so pushes and the GitHub API fail inside).
 - The image (`--image <img>` in the create argv, or `QUECTO_DOCKER_IMAGE`,

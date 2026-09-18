@@ -219,6 +219,9 @@ pub enum AssetState {
     Identical,
     /// The file exists with other bytes (an edit, an older version).
     Differs,
+    /// The destination cannot be judged or written through (a symbolic
+    /// link, a directory in a file's place); init refuses it.
+    Refused,
 }
 
 /// What materialising one asset did: an existing file is never replaced.
@@ -319,6 +322,12 @@ pub struct StandardContainerReport {
 pub enum InitialiseStandardContainerError {
     /// The project path is not absolute.
     ProjectNotAbsolute(std::path::PathBuf),
+    /// The quecto base directory (where the state dir goes) is not
+    /// absolute; the argv written must not depend on a later cwd.
+    BaseDirNotAbsolute(std::path::PathBuf),
+    /// The checkout's `origin` URL embeds credentials; init refuses to
+    /// bake them into the shareable overlay.
+    OriginCarriesCredentials(String),
     /// An asset could not be observed or written.
     Asset {
         path: std::path::PathBuf,
@@ -341,6 +350,15 @@ impl std::fmt::Display for InitialiseStandardContainerError {
             Self::ProjectNotAbsolute(path) => {
                 write!(f, "--project must be an absolute path: {}", path.display())
             }
+            Self::BaseDirNotAbsolute(path) => write!(
+                f,
+                "the quecto base directory must be an absolute path: {}",
+                path.display()
+            ),
+            Self::OriginCarriesCredentials(url) => write!(
+                f,
+                "the checkout's origin remote {url} carries credentials (user:token@host); init will not bake them into the repo-local overlay — pass --repo <url without them>"
+            ),
             Self::Asset { path, reason } => write!(f, "asset {}: {reason}", path.display()),
             Self::Origin(reason) => write!(f, "cannot read the checkout's origin: {reason}"),
             Self::Configuration(reason) => write!(f, "{reason}"),
@@ -372,10 +390,11 @@ pub struct StandardContainerStatus {
 }
 
 impl StandardContainerStatus {
+    /// Assets that are in place as embedded or as edited.
     pub fn assets_present(&self) -> usize {
         self.assets
             .iter()
-            .filter(|(_, state)| *state != AssetState::Missing)
+            .filter(|(_, state)| matches!(state, AssetState::Identical | AssetState::Differs))
             .count()
     }
 

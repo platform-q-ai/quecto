@@ -70,6 +70,7 @@ Feature: The standard container is landed on master
     When I run quecto with arguments "container init --dry-run"
     Then the exit code should be 0
     And the output should contain "would write"
+    And the output should not contain "trusted for exactly these bytes"
     And no standard container asset should exist under ".quecto/containers/standard"
     And the checkout should carry no overlay
 
@@ -81,6 +82,40 @@ Feature: The standard container is landed on master
     Then the exit code should be 1
     And the stderr should contain "is not trusted"
     And the stderr should contain "quecto config trust"
+    And no standard container asset should exist under ".quecto/containers/standard"
+
+  @done @issue-2024
+  Scenario: an untrusted overlay that declares no container config is refused before any asset is written, on a dry run too
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the checkout carries an untrusted overlay pinning only the default model "m"
+    When I run quecto with arguments "container init --dry-run"
+    Then the exit code should be 1
+    And the stderr should contain "is not trusted"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 1
+    And the stderr should contain "is not trusted"
+    And no standard container asset should exist under ".quecto/containers/standard"
+
+  @done @issue-2024
+  Scenario: an origin remote that embeds credentials is refused rather than written into the overlay
+    Given the current directory is a git checkout whose origin remote is "https://user:ghp_secret@example.test/x/y"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 1
+    And the stderr should contain "carries credentials"
+    And the stderr should contain "https://***@example.test/x/y"
+    And the output should not contain "ghp_secret"
+    And the checkout should carry no overlay
+    And no standard container asset should exist under ".quecto/containers/standard"
+
+  @done @issue-2024
+  Scenario: init beside an existing default tells the agent how to select the entry and diagnose it by name
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the global configuration already labels container config "other" as the default
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the output should contain "select it with container: {"
+    And the output should contain "container_config"
+    And the output should contain "quecto container doctor --name standard"
 
   @done @issue-2024
   Scenario: status before init says what is missing

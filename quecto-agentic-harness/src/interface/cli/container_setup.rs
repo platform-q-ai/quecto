@@ -108,6 +108,19 @@ fn project_selection(
     Ok((project, selection))
 }
 
+/// The base directory as an absolute path: the state dir the entry's
+/// argv names must not depend on the cwd a later create runs in.
+fn absolute_base_dir(ctx: &CliContext) -> Result<PathBuf, String> {
+    let base_dir = ctx.base_dir();
+    match std::fs::canonicalize(&base_dir) {
+        Ok(path) => Ok(path),
+        Err(_) if base_dir.is_absolute() => Ok(base_dir),
+        Err(_) => std::env::current_dir()
+            .map(|cwd| cwd.join(&base_dir))
+            .map_err(|error| format!("cannot resolve base dir {}: {error}", base_dir.display())),
+    }
+}
+
 pub(crate) fn cmd_init(
     ctx: &CliContext,
     args: &[String],
@@ -119,7 +132,7 @@ pub(crate) fn cmd_init(
             return Err("container init not composed".to_string());
         };
         let (project, selection) = project_selection(ctx, parsed.project)?;
-        build(&ctx.base_dir(), &selection)
+        build(&absolute_base_dir(ctx)?, &selection)
             .execute(&StandardContainerRequest {
                 project,
                 repository: parsed.repository,
@@ -177,15 +190,24 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "the repo-local overlay".to_string());
     out.push_str(&format!(
-        "container config \"{}\" {} container_configs.{} in {location} (trusted for exactly these bytes)\n",
+        "container config \"{}\" {} container_configs.{} in {location}{}\n",
         entry.name,
-        if report.dry_run { "would be written as" } else { "written as" },
-        entry.name
+        if report.dry_run {
+            "would be written as"
+        } else {
+            "written as"
+        },
+        entry.name,
+        if report.dry_run {
+            ""
+        } else {
+            " (trusted for exactly these bytes)"
+        }
     ));
     match &entry.existing_default {
         None => out.push_str("  default: true — `spawn container: true` selects it\n"),
         Some(other) => out.push_str(&format!(
-            "  not the default: {other} is already the default; select it by name (container_config: \"{}\") or move the label with `quecto config set`\n",
+            "  not the default: {other} is already the default; select it with container: {{\"mode\":\"new\",\"container_config\":\"{}\"}} or move the label with `quecto config set`\n",
             entry.name
         )),
     }
@@ -208,10 +230,16 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     ));
     out.push_str("next:\n");
     out.push_str(&format!(
-        "  1. build the image (a create never builds or pulls):\n     {}\n",
+        "  1. build the image (a create never builds or pulls; the scripts drive whichever runtime `quecto container doctor` names on its runtime-cli line — run the same command with that runtime's CLI):\n     {}\n",
         report.build_command
     ));
-    out.push_str("  2. quecto container doctor   — every check ✓\n");
+    match &entry.existing_default {
+        None => out.push_str("  2. quecto container doctor   — every check ✓\n"),
+        Some(_) => out.push_str(&format!(
+            "  2. quecto container doctor --name {}   — every check ✓\n",
+            entry.name
+        )),
+    }
     out.push_str(
         "  3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true} from an agent in this project; agent_cmd get_containers lists it\n",
     );
@@ -228,7 +256,7 @@ pub(crate) fn cmd_status(
             return Err("container status not composed".to_string());
         };
         let (project, selection) = project_selection(ctx, project)?;
-        Ok(build(&ctx.base_dir(), &selection).execute(&project))
+        Ok(build(&absolute_base_dir(ctx)?, &selection).execute(&project))
     });
     match outcome {
         Ok(status) => {
@@ -252,7 +280,12 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
     ));
     let present = status.assets_present();
     let total = status.assets.len();
-    if present == 0 {
+    let refused = status
+        .assets
+        .iter()
+        .filter(|(_, state)| *state == AssetState::Refused)
+        .count();
+    if present == 0 && refused == 0 {
         out.push_str("  assets:  missing — run `quecto container init`\n");
     } else if status.assets_differing() > 0 || present < total {
         out.push_str(&format!(
@@ -265,6 +298,7 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
                 AssetState::Missing => "missing",
                 AssetState::Identical => "ok",
                 AssetState::Differs => "differs",
+                AssetState::Refused => "refused",
             };
             out.push_str(&format!("           {word:<8} {}\n", path.display()));
         }

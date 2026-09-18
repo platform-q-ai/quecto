@@ -43,14 +43,21 @@ impl ContainerStatus {
     pub fn execute(&self, project: &Path) -> StandardContainerStatus {
         let assets_dir = project.join(STANDARD_CONTAINER_DIR);
         let catalogue = self.assets.catalogue();
+        let mut asset_diagnostics = Vec::new();
         let assets = catalogue
             .assets
             .iter()
             .map(|asset| {
-                let state = self
-                    .assets
-                    .observe(&assets_dir, asset)
-                    .unwrap_or(AssetState::Missing);
+                let state = match self.assets.observe(&assets_dir, asset) {
+                    Ok(state) => state,
+                    // A destination that cannot be judged (a symbolic
+                    // link, a directory in a file's place) is not
+                    // "missing": init would refuse it, so say why.
+                    Err(reason) => {
+                        asset_diagnostics.push(reason);
+                        AssetState::Refused
+                    }
+                };
                 (assets_dir.join(&asset.path), state)
             })
             .collect();
@@ -76,6 +83,7 @@ impl ContainerStatus {
         if let Some(reason) = &preflight_error {
             diagnostics.push(reason.clone());
         }
+        diagnostics.extend(asset_diagnostics);
         StandardContainerStatus {
             assets_dir,
             version: catalogue.version,

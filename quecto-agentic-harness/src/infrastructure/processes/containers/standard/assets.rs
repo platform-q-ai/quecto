@@ -85,20 +85,31 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
         }
     }
 
-    fn materialise(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetOutcome, String> {
+    fn materialise(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
         match self.observe(dir, asset)? {
             AssetState::Identical => return Ok(AssetOutcome::KeptIdentical),
             AssetState::Differs => return Ok(AssetOutcome::KeptDiffering),
+            AssetState::Refused => {
+                return Err(format!(
+                    "{} is not a regular file; refusing to write it",
+                    dir.join(&asset.path).display()
+                ));
+            }
             AssetState::Missing => {}
         }
         let destination = dir.join(&asset.path);
         let parent = destination
             .parent()
             .ok_or_else(|| format!("{} has no parent directory", destination.display()))?;
-        refuse_symlinked_directories(dir, parent)?;
+        refuse_symlinked_directories(root, parent)?;
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-        refuse_symlinked_directories(dir, parent)?;
+        refuse_symlinked_directories(root, parent)?;
         let mut temporary = tempfile::Builder::new()
             .prefix(".quecto-asset-")
             .tempfile_in(parent)
@@ -143,14 +154,16 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
     }
 }
 
-/// No existing directory from `dir` down to `parent` may be a symbolic
-/// link: a bundle directory swapped for a link would otherwise redirect
-/// the materialised files outside the project. Checked before the
-/// directories are created and again after, so a link that appeared in
-/// between is caught too (the file itself is placed with no-clobber).
-fn refuse_symlinked_directories(dir: &Path, parent: &Path) -> Result<(), String> {
+/// No existing directory below `root` (exclusive) down to `parent` may
+/// be a symbolic link: `.quecto`, `containers` or the bundle directory
+/// swapped for a link would otherwise redirect the materialised files
+/// outside the project (the overlay loader refuses the same components
+/// on its way to `.quecto/config.json`). Checked before the directories
+/// are created and again after, so a link that appeared in between is
+/// caught too (the file itself is placed with no-clobber).
+fn refuse_symlinked_directories(root: &Path, parent: &Path) -> Result<(), String> {
     let mut current = parent;
-    loop {
+    while current != root && current.starts_with(root) {
         if let Ok(meta) = std::fs::symlink_metadata(current)
             && meta.file_type().is_symlink()
         {
@@ -159,14 +172,12 @@ fn refuse_symlinked_directories(dir: &Path, parent: &Path) -> Result<(), String>
                 current.display()
             ));
         }
-        if current == dir {
-            return Ok(());
-        }
         match current.parent() {
-            Some(next) if current.starts_with(dir) => current = next,
-            _ => return Ok(()),
+            Some(next) => current = next,
+            None => break,
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

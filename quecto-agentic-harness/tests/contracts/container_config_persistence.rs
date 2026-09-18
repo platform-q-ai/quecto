@@ -7,7 +7,9 @@
 //! written without the label, an untrusted overlay refused in that
 //! capability's own words with nothing written, an entry the schema
 //! refuses (no argv) likewise, a selection without an overlay location
-//! refused; `location` names the overlay file.
+//! refused; `check` gives the refusal a persist would give (untrusted
+//! overlay of any content, no overlay location) and passes for an absent
+//! or trusted overlay, writing nothing; `location` names the overlay file.
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -171,4 +173,5 @@ fn a_selection_without_an_overlay_location_is_refused() {
     assert_eq!(port.location(), None);
     let error = port.persist("standard", &entry(true)).unwrap_err();
     assert!(error.contains("no repo-local overlay"), "{error}");
+    assert_eq!(port.check().unwrap_err(), error);
 }

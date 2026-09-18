@@ -209,7 +209,16 @@ pub trait ContainerAssetStore: Send + Sync {
 
     fn observe(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String>;
 
-    fn materialise(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetOutcome, String>;
+    /// Write `asset` below `dir`, which lies below `root` (the project):
+    /// no directory between `root` (exclusive) and the asset may be a
+    /// symbolic link, so a swapped directory cannot redirect the write
+    /// outside the project.
+    fn materialise(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
 }
 
 /// The repository a checkout came from: its `origin` remote URL, `None`
@@ -225,6 +234,12 @@ pub trait WorkspaceOrigin: Send + Sync {
 /// and as the merge, trust recorded for exactly the bytes written, an
 /// untrusted overlay refused in that capability's own words.
 pub trait ContainerConfigPersistence: Send + Sync {
+    /// Whether a persist would be accepted as things stand (an overlay
+    /// location exists, the overlay's current content is trusted or
+    /// absent): the refusal a persist would give, before anything else
+    /// is written. Nothing is written.
+    fn check(&self) -> Result<(), String>;
+
     fn persist(
         &self,
         name: &str,

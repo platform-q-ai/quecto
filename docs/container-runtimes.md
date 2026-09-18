@@ -581,7 +581,10 @@ the binary carries: the official Docker/Podman adapter scripts (below) plus
 a Containerfile for the image they launch by default. `quecto container
 init` materialises it under the repository and binds the repository to it
 through the repo-local overlay; nothing is copied from the source tree and
-no config is hand-edited.
+no config is hand-edited. Run it from the **repository root** (or pass
+`--project <root>`): the overlay is the working directory's own
+`.quecto/config.json`, so an init run from a subdirectory binds that
+subdirectory, which an agent started at the root never reads.
 
 ```
 quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]
@@ -593,11 +596,18 @@ What `init` does, in order (a refusal leaves the project untouched):
 1. Resolves the repository: `--repo`, else the checkout's `origin` remote
    (`git remote get-url origin`), else none — a **sandbox** entry (empty
    workspace, no clone), which the output names as such.
-2. Reads the effective container-config set (global file plus the trusted
-   overlay). An overlay that exists but is **not trusted** is refused with
-   the way out (`quecto config trust`): init never adopts content it did
-   not write. If another entry is already the default, the standard entry
-   is added **without** the `default` label and the output says so.
+   An origin that embeds credentials (`https://user:token@host/…`) is
+   refused — the overlay is a shareable repository file — pass `--repo`
+   with a credential-free URL instead.
+2. Asks the configuration writer whether it would accept the write, and
+   reads the effective container-config set (global file plus the trusted
+   overlay). An overlay that exists but is **not trusted**, whatever it
+   declares, is refused with the way out (`quecto config trust`), on a
+   `--dry-run` too: init never adopts content it did not write. If another
+   entry is already the default, the standard entry is added **without**
+   the `default` label and the output says so, with the `container:
+   {"mode":"new","container_config":"standard"}` selector and `quecto
+   container doctor --name standard`.
 3. Materialises `<project>/.quecto/containers/standard/` —
    `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
    `scripts/inspect.sh`, `scripts/kill.sh` (the scripts byte-identical to
@@ -617,13 +627,16 @@ What `init` does, in order (a refusal leaves the project untouched):
    appends it before the child command).
 5. Prints the files, the entry and the one step left — the exact build
    command:
-   `podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`.
+   `podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
+   (on a docker-only host, the same command with `docker`: the scripts
+   drive whichever runtime the doctor's `runtime-cli` line names).
 
 Running `init` twice changes nothing (no files, byte-identical overlay).
 
 **Image approval.** The image only has to exist locally under the tag the
-entry names: the create's preflight checks `podman image exists` and the
-`run` passes `--pull=never`, so nothing is ever fetched implicitly. An
+entry names: the create's preflight checks `podman image exists` /
+`docker image inspect` and the `run` passes `--pull=never` (podman; Docker
+CLI ≥ 20.10), so nothing is ever fetched implicitly. An
 earlier draft (PR #2020) bound a digest-pinned image to a signed approval
 record through four `QUECTO_PODMAN_*` variables; that ritual is not carried
 over: it had to be performed by hand for every rebuild, put four
@@ -643,7 +656,9 @@ carry a glibc the binary runs on (Debian trixie does for current builds).
 is missing: the assets (`present (5 of 5, version 1)`, or which differ or
 are missing), the `standard` entry of the effective set (default or not,
 declared by the overlay or globally, its `--repo`), the trust of the overlay
-(`trusted`, or `withheld` with the remedy), and the image as the entry's own
+(`trusted`, or `withheld` with the remedy; a destination init would refuse,
+such as a symbolic link in a file's place, is listed as `refused` with a
+`note:`), and the image as the entry's own
 create preflight reports it (`--preflight-only`, the S4b contract — the
 same line `quecto container doctor` shows).
 
@@ -793,7 +808,7 @@ Design properties:
   `jq`, `git` (when `--repo` is given), `gh` (a warning only: without it
   members get no GitHub token), the image present in the local store
   (`podman image exists` / `docker image inspect`; **never an implicit
-  pull**), `--repo` reachable (`git ls-remote`, bounded by
+  pull** — the `run` passes `--pull=never`, which needs Docker CLI ≥ 20.10), `--repo` reachable (`git ls-remote`, bounded by
   `QUECTO_REPO_CHECK_TIMEOUT`, default 15 s, no credential prompt), and the
   state dir writable and owned by the current user (or, when it does not
   exist yet, creatable under a writable parent) — before the environment

@@ -4,7 +4,8 @@
 //! `observe` tells a missing, identical and differing destination apart;
 //! `materialise` writes a missing asset whole with its mode and never
 //! replaces an existing file (identical or edited); a symbolic link in an
-//! asset's place is refused, not followed; nothing is left beside the
+//! asset's place is refused, not followed, and so is one in a directory's
+//! place anywhere below the project root; nothing is left beside the
 //! asset (no temporary file).
 use std::path::Path;
 use std::sync::Arc;
@@ -71,7 +72,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         AssetState::Missing
     );
     assert_eq!(
-        port.materialise(dir.path(), &asset).unwrap(),
+        port.materialise(dir.path(), dir.path(), &asset).unwrap(),
         AssetOutcome::Written
     );
     let path = dir.path().join(&asset.path);
@@ -89,7 +90,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         AssetState::Identical
     );
     assert_eq!(
-        port.materialise(dir.path(), &asset).unwrap(),
+        port.materialise(dir.path(), dir.path(), &asset).unwrap(),
         AssetOutcome::KeptIdentical
     );
     std::fs::write(&path, "edited").unwrap();
@@ -98,7 +99,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         AssetState::Differs
     );
     assert_eq!(
-        port.materialise(dir.path(), &asset).unwrap(),
+        port.materialise(dir.path(), dir.path(), &asset).unwrap(),
         AssetOutcome::KeptDiffering
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
@@ -107,6 +108,23 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["create.sh"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_in_a_directorys_place_below_the_root_is_refused() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = port();
+    let asset = port.catalogue().assets[1].clone();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, project.join(".quecto")).unwrap();
+    let bundle = project.join(".quecto/containers/standard");
+    let error = port.materialise(&project, &bundle, &asset).unwrap_err();
+    assert!(error.contains("symbolic link"), "{error}");
+    assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
 }
 
 #[cfg(unix)]
@@ -124,7 +142,7 @@ fn a_symbolic_link_in_an_assets_place_is_refused() {
             .contains("symbolic link")
     );
     assert!(
-        port.materialise(dir.path(), &asset)
+        port.materialise(dir.path(), dir.path(), &asset)
             .unwrap_err()
             .contains("symbolic link")
     );

@@ -52,7 +52,18 @@ impl ContainerAssetStore for MemoryAssets {
         )
     }
 
-    fn materialise(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetOutcome, String> {
+    fn materialise(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        assert!(
+            dir.starts_with(root),
+            "{} not below {}",
+            dir.display(),
+            root.display()
+        );
         let state = self.observe(dir, asset)?;
         Ok(match state {
             AssetState::Missing => {
@@ -64,6 +75,7 @@ impl ContainerAssetStore for MemoryAssets {
             }
             AssetState::Identical => AssetOutcome::KeptIdentical,
             AssetState::Differs => AssetOutcome::KeptDiffering,
+            AssetState::Refused => unreachable!(),
         })
     }
 }
@@ -95,6 +107,10 @@ struct RecordingPersistence {
 }
 
 impl ContainerConfigPersistence for RecordingPersistence {
+    fn check(&self) -> Result<(), String> {
+        self.refuse.clone().map_or(Ok(()), Err)
+    }
+
     fn persist(
         &self,
         name: &str,
@@ -398,7 +414,7 @@ fn a_withheld_overlay_refuses_before_any_asset_is_written() {
 }
 
 #[test]
-fn a_persist_refusal_is_the_configuration_capabilitys_own_words() {
+fn a_persist_refusal_is_the_configuration_capabilitys_own_words_and_writes_no_asset() {
     let rig = build_rig(
         Ok(None),
         ContainerConfigRosterReport::default(),
@@ -409,6 +425,56 @@ fn a_persist_refusal_is_the_configuration_capabilitys_own_words() {
         error.to_string(),
         "overlay /p/.quecto/config.json is not trusted (sha256 abc)"
     );
+    assert!(
+        rig.assets.disk.lock().unwrap().is_empty(),
+        "no asset written"
+    );
+    let mut dry = request("/p");
+    dry.dry_run = true;
+    let error = rig.use_case.execute(&dry).unwrap_err();
+    assert!(
+        error.to_string().contains("is not trusted"),
+        "a dry run refuses too"
+    );
+}
+
+#[test]
+fn an_origin_with_credentials_is_refused_and_never_written() {
+    let rig = build_rig(
+        Ok(Some("https://user:tok123@example.test/r.git".into())),
+        ContainerConfigRosterReport::default(),
+        None,
+    );
+    let error = rig.use_case.execute(&request("/p")).unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("carries credentials"), "{text}");
+    assert!(text.contains("https://***@example.test/r.git"), "{text}");
+    assert!(!text.contains("tok123"), "{text}");
+    assert!(rig.persistence.written.lock().unwrap().is_empty());
+    assert!(rig.assets.disk.lock().unwrap().is_empty());
+    // An explicit --repo with credentials is the operator's call.
+    let mut explicit = request("/p");
+    explicit.repository = Some("https://user:tok123@example.test/r.git".into());
+    assert!(rig.use_case.execute(&explicit).is_ok());
+}
+
+#[test]
+fn a_relative_base_dir_is_refused() {
+    let assets = Arc::new(MemoryAssets {
+        disk: Mutex::new(BTreeMap::new()),
+    });
+    let use_case = InitialiseStandardContainer::new(
+        assets,
+        Arc::new(FixedOrigin(Ok(None))),
+        Arc::new(FixedRoster(Ok(ContainerConfigRosterReport::default()))),
+        Arc::new(RecordingPersistence::default()),
+        PathBuf::from("../base"),
+    );
+    let error = use_case.execute(&request("/p")).unwrap_err();
+    assert!(matches!(
+        error,
+        InitialiseStandardContainerError::BaseDirNotAbsolute(_)
+    ));
 }
 
 #[test]

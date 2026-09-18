@@ -71,6 +71,11 @@ impl InitialiseStandardContainer {
                 request.project.clone(),
             ));
         }
+        if !self.base_dir.is_absolute() {
+            return Err(InitialiseStandardContainerError::BaseDirNotAbsolute(
+                self.base_dir.clone(),
+            ));
+        }
         let assets_dir = request.project.join(STANDARD_CONTAINER_DIR);
         let catalogue = self.assets.catalogue();
         // The repository and the effective set are resolved before any
@@ -83,6 +88,11 @@ impl InitialiseStandardContainer {
                 .origin(&request.project)
                 .map_err(InitialiseStandardContainerError::Origin)?
             {
+                Some(url) if url_carries_userinfo(&url) => {
+                    return Err(InitialiseStandardContainerError::OriginCarriesCredentials(
+                        crate::domain::redaction::redact_url_userinfo(&url),
+                    ));
+                }
                 Some(url) => (Some(url), RepositoryOrigin::CheckoutOrigin),
                 None => (None, RepositoryOrigin::Sandbox),
             },
@@ -97,6 +107,14 @@ impl InitialiseStandardContainer {
                 roster.diagnostics.join("; ")
             )));
         }
+        // The write's own refusal (no overlay location, an untrusted
+        // overlay of any content) is asked for before an asset is
+        // written, so a refused init leaves the project untouched — on a
+        // dry run too, which must promise no success a real run would
+        // not deliver.
+        self.persistence
+            .check()
+            .map_err(InitialiseStandardContainerError::Persist)?;
         let existing_default = roster
             .configs
             .iter()
@@ -113,6 +131,18 @@ impl InitialiseStandardContainer {
             existing_default.is_none(),
         );
 
+        // The entry first: it is the refusal-prone write, and an asset
+        // failure after it is healed by running init again.
+        let path = if request.dry_run {
+            self.persistence.location()
+        } else {
+            Some(
+                self.persistence
+                    .persist(STANDARD_CONTAINER_CONFIG, &entry)
+                    .map_err(InitialiseStandardContainerError::Persist)?
+                    .path,
+            )
+        };
         let mut written = Vec::new();
         let mut kept = Vec::new();
         let mut differing = Vec::new();
@@ -123,10 +153,16 @@ impl InitialiseStandardContainer {
                     AssetState::Missing => AssetOutcome::Written,
                     AssetState::Identical => AssetOutcome::KeptIdentical,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
+                    AssetState::Refused => {
+                        return Err(InitialiseStandardContainerError::Asset {
+                            path,
+                            reason: "the destination is not a regular file".into(),
+                        });
+                    }
                 }
             } else {
                 self.assets
-                    .materialise(&assets_dir, asset)
+                    .materialise(&request.project, &assets_dir, asset)
                     .map_err(|reason| InitialiseStandardContainerError::Asset {
                         path: path.clone(),
                         reason,
@@ -139,16 +175,6 @@ impl InitialiseStandardContainer {
             }
         }
 
-        let path = if request.dry_run {
-            self.persistence.location()
-        } else {
-            Some(
-                self.persistence
-                    .persist(STANDARD_CONTAINER_CONFIG, &entry)
-                    .map_err(InitialiseStandardContainerError::Persist)?
-                    .path,
-            )
-        };
         let build_command = catalogue.build_command_for(&image, &assets_dir);
         Ok(StandardContainerReport {
             assets_dir,
@@ -223,6 +249,13 @@ impl InitialiseStandardContainer {
             cleanup,
         }
     }
+}
+
+/// `scheme://user[:password]@host/…`: credentials in the URL's userinfo.
+fn url_carries_userinfo(url: &str) -> bool {
+    url.split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or("").contains('@'))
+        .unwrap_or(false)
 }
 
 impl std::fmt::Debug for InitialiseStandardContainer {

@@ -78,6 +78,14 @@ fn given_checkout_with_origin(world: &mut QuectoWorld) {
     );
 }
 
+#[given(expr = "the current directory is a git checkout whose origin remote is {string}")]
+fn given_checkout_with_named_origin(world: &mut QuectoWorld, url: String) {
+    ensure_temp_dir(world);
+    let checkout = checkout(world);
+    git(&checkout, &["init", "-q"]);
+    git(&checkout, &["remote", "add", "origin", &url]);
+}
+
 #[given("the current directory is a git checkout without an origin remote")]
 fn given_checkout_without_origin(world: &mut QuectoWorld) {
     ensure_temp_dir(world);

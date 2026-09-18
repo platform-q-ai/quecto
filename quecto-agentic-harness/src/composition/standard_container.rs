@@ -15,8 +15,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::configuration::dto::{ConfigLayer, ConfigPatch, ConfigSelection};
-use crate::application::configuration::use_cases::PatchConfiguration;
+use crate::application::configuration::dto::{
+    ConfigLayer, ConfigPatch, ConfigPatchError, ConfigSelection, OverlayState,
+};
+use crate::application::configuration::use_cases::{PatchConfiguration, ResolveEffectiveConfig};
 use crate::application::environments::dto::{ContainerConfigDocument, PersistedContainerConfig};
 use crate::application::environments::ports::ContainerConfigPersistence;
 use crate::application::environments::use_cases::{ContainerStatus, InitialiseStandardContainer};
@@ -28,16 +30,46 @@ use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 /// handle bound to one run's selection.
 pub struct OverlayContainerConfigWriter {
     patch: Arc<PatchConfiguration>,
+    resolve: Arc<ResolveEffectiveConfig>,
     selection: ConfigSelection,
 }
 
 impl OverlayContainerConfigWriter {
-    pub fn new(patch: Arc<PatchConfiguration>, selection: ConfigSelection) -> Self {
-        Self { patch, selection }
+    pub fn new(
+        patch: Arc<PatchConfiguration>,
+        resolve: Arc<ResolveEffectiveConfig>,
+        selection: ConfigSelection,
+    ) -> Self {
+        Self {
+            patch,
+            resolve,
+            selection,
+        }
     }
 }
 
 impl ContainerConfigPersistence for OverlayContainerConfigWriter {
+    /// The patch's own refusals, asked of the same resolution the patch
+    /// validates against, in the patch's own words.
+    fn check(&self) -> Result<(), String> {
+        let Some(path) = self.selection.overlay_path().map(Path::to_path_buf) else {
+            return Err(ConfigPatchError::NoOverlayLocation.to_string());
+        };
+        let effective = self
+            .resolve
+            .execute(&self.selection)
+            .map_err(|error| error.to_string())?;
+        match effective.sources.overlay.map(|report| report.state) {
+            Some(OverlayState::Untrusted { fingerprint, .. }) => {
+                Err(ConfigPatchError::UntrustedOverlay { path, fingerprint }.to_string())
+            }
+            Some(OverlayState::Refused { reason }) => {
+                Err(ConfigPatchError::Refused { path, reason }.to_string())
+            }
+            Some(OverlayState::Applied | OverlayState::Absent) | None => Ok(()),
+        }
+    }
+
     fn persist(
         &self,
         name: &str,
@@ -132,6 +164,7 @@ pub fn build_container_config_persistence(
     });
     Arc::new(OverlayContainerConfigWriter::new(
         handles.patch,
+        handles.resolve,
         selection.clone(),
     ))
 }
