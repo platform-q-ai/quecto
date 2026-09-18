@@ -13,6 +13,7 @@
 //! install, never `admission-broker run` from a tool call).
 
 #[cfg(test)]
+#[path = "setup_tests.rs"]
 mod tests;
 
 /// Which part of the setup decision tree a `/setup` invocation targets.
