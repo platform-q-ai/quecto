@@ -2,15 +2,19 @@
 //! arguments, invoke the composed diagnosis for the working directory's
 //! effective container config (or the `--config` file's), present each
 //! check with its remedy. Exit 1 when any check failed or the diagnosis
-//! could not be made. The interface resolves no config and runs no
-//! script itself.
+//! could not be made. `quecto container init|status` (#2024 S4e) parse
+//! and present the standard bundle's initialisation and standing the
+//! same way (`container_setup.rs`). The interface resolves no config and
+//! runs no script itself.
 
 use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeDiagnosis, ContainerRuntimeTarget,
 };
-use crate::application::environments::use_cases::DiagnoseContainerRuntime;
+use crate::application::environments::use_cases::{
+    ContainerStatus, DiagnoseContainerRuntime, InitialiseStandardContainer,
+};
 use crate::domain::redaction::redact_url_userinfo;
 
 /// Composition's builder of the container-runtime doctor: the create
@@ -20,7 +24,17 @@ use crate::domain::redaction::redact_url_userinfo;
 pub type ContainerDoctorBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<DiagnoseContainerRuntime>;
 
-const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+/// Composition's builder of `quecto container init` (#2024 S4e): the
+/// standard bundle materialised below the project and the overlay entry
+/// written through the configuration capability's one write path.
+pub type ContainerInitBuilder =
+    fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<InitialiseStandardContainer>;
+
+/// Composition's builder of `quecto container status` (#2024 S4e).
+pub type ContainerStatusBuilder =
+    fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<ContainerStatus>;
+
+const USAGE: &str = "usage: quecto container <init|status|doctor> …\n  init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\n  status [--project <abs dir>]\n  doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 pub(crate) fn cmd_container(
     ctx: &CliContext,
@@ -30,6 +44,8 @@ pub(crate) fn cmd_container(
 ) -> i32 {
     match args.first().map(String::as_str) {
         Some("doctor") => cmd_doctor(ctx, &args[1..], stdout, stderr),
+        Some("init") => super::container_setup::cmd_init(ctx, &args[1..], stdout, stderr),
+        Some("status") => super::container_setup::cmd_status(ctx, &args[1..], stdout, stderr),
         _ => {
             stderr.push_str(USAGE);
             1

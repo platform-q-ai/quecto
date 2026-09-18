@@ -62,6 +62,21 @@ pub(super) fn help_text(out: &mut String) {
     );
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
+        "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\n",
+    );
+    out.push_str(
+        "                  Materialise the standard Containerfile and rootless-Podman runtime\n",
+    );
+    out.push_str(
+        "                  scripts under <project>/.quecto/containers/standard and bind the\n",
+    );
+    out.push_str(
+        "                  project to them (container_configs.standard in the trusted overlay)\n",
+    );
+    out.push_str(
+        "              status [--project <abs dir>]  Assets, entry, trust and image standing\n",
+    );
+    out.push_str(
         "              doctor [--name <config>]  Run the effective container config's create\n",
     );
     out.push_str(

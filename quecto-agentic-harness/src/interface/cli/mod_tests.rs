@@ -38,6 +38,8 @@ fn test_composition() -> CliComposition {
         container_configs:
             crate::composition::container_configs::build_agent_container_config_handles,
         container_doctor: crate::composition::environments::build_container_doctor,
+        container_init: crate::composition::standard_container::build_standard_container_init,
+        container_status: crate::composition::standard_container::build_container_status,
     }
 }
 

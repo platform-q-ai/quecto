@@ -165,3 +165,201 @@ impl ContainerConfigInventory {
         self.configs.iter().find(|entry| entry.default)
     }
 }
+
+// ─── Standard container (#2024 S4e) ─────────────────────────────────────────
+
+/// The name of the container config `quecto container init` writes.
+pub const STANDARD_CONTAINER_CONFIG: &str = "standard";
+
+/// The image the standard config launches when `init` is not told
+/// another: the tag the official adapter set already defaults to, so the
+/// Containerfile init materialises is its missing build input.
+pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-box:local";
+
+/// Where the standard bundle lives below a project: the assets are
+/// materialised here and the config entry's argv names them here.
+pub const STANDARD_CONTAINER_DIR: &str = ".quecto/containers/standard";
+
+/// One file of the embedded standard bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerAsset {
+    /// Relative to the bundle directory (`Containerfile`,
+    /// `scripts/create.sh`).
+    pub path: String,
+    pub contents: Vec<u8>,
+    pub executable: bool,
+}
+
+/// The embedded bundle this binary carries, with its version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerAssetCatalogue {
+    pub version: u32,
+    pub assets: Vec<ContainerAsset>,
+}
+
+/// What an asset's destination holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetState {
+    Missing,
+    /// The file exists with exactly the embedded bytes.
+    Identical,
+    /// The file exists with other bytes (an edit, an older version).
+    Differs,
+}
+
+/// What materialising one asset did: an existing file is never replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetOutcome {
+    Written,
+    KeptIdentical,
+    KeptDiffering,
+}
+
+/// `quecto container init` as the use case receives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardContainerRequest {
+    /// The project (checkout) the bundle and overlay belong to; absolute.
+    pub project: std::path::PathBuf,
+    /// `--repo <url>`; `None` derives the checkout's `origin` remote.
+    pub repository: Option<String>,
+    /// `--image <tag>`; `None` is [`STANDARD_CONTAINER_IMAGE`].
+    pub image: Option<String>,
+    /// Report what would be written; write nothing.
+    pub dry_run: bool,
+}
+
+/// Where the repository the entry bakes in came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepositoryOrigin {
+    /// `--repo` on the command line.
+    Explicit,
+    /// The checkout's `origin` remote.
+    CheckoutOrigin,
+    /// Neither: the entry is a sandbox (empty workspace, no clone).
+    Sandbox,
+}
+
+/// The config entry init wrote (or would write).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardEntryOutcome {
+    pub name: String,
+    /// The overlay file the entry lives in; `None` on a dry run without
+    /// a known location.
+    pub path: Option<std::path::PathBuf>,
+    /// Whether the entry carries `"default": true`.
+    pub default: bool,
+    /// The name of the entry that is already the default, when ours is
+    /// not.
+    pub existing_default: Option<String>,
+    /// The entry as written, so the presenter can show it verbatim.
+    pub entry: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardContainerReport {
+    pub assets_dir: std::path::PathBuf,
+    pub version: u32,
+    pub written: Vec<std::path::PathBuf>,
+    pub kept: Vec<std::path::PathBuf>,
+    /// Existing files that differ from the embedded bytes; kept as they
+    /// are (delete one to have init refresh it).
+    pub differing: Vec<std::path::PathBuf>,
+    pub repository: Option<String>,
+    pub repository_origin: RepositoryOrigin,
+    pub image: String,
+    pub entry: StandardEntryOutcome,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InitialiseStandardContainerError {
+    /// The project path is not absolute.
+    ProjectNotAbsolute(std::path::PathBuf),
+    /// An asset could not be observed or written.
+    Asset {
+        path: std::path::PathBuf,
+        reason: String,
+    },
+    /// The checkout's origin could not be read.
+    Origin(String),
+    /// The effective container-config set could not be read, or the
+    /// checkout's overlay is withheld (untrusted): init never trusts an
+    /// overlay it did not write.
+    Configuration(String),
+    /// The overlay entry could not be written (the configuration
+    /// capability's own account, e.g. an untrusted overlay).
+    Persist(String),
+}
+
+impl std::fmt::Display for InitialiseStandardContainerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProjectNotAbsolute(path) => {
+                write!(f, "--project must be an absolute path: {}", path.display())
+            }
+            Self::Asset { path, reason } => write!(f, "asset {}: {reason}", path.display()),
+            Self::Origin(reason) => write!(f, "cannot read the checkout's origin: {reason}"),
+            Self::Configuration(reason) => write!(f, "{reason}"),
+            Self::Persist(reason) => write!(f, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for InitialiseStandardContainerError {}
+
+/// `quecto container status`: where the standard bundle stands for a
+/// project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardContainerStatus {
+    pub assets_dir: std::path::PathBuf,
+    pub version: u32,
+    pub assets: Vec<(std::path::PathBuf, AssetState)>,
+    /// The `standard` entry of the effective set, when present.
+    pub entry: Option<ContainerConfigEntry>,
+    /// The checkout's overlay was not applied (untrusted or refused).
+    pub overlay_withheld: bool,
+    pub diagnostics: Vec<String>,
+    /// The create preflight's `image` check for the entry, when the
+    /// preflight could run.
+    pub image: Option<PreflightCheck>,
+    /// Why the preflight could not run (no entry, a script that refuses
+    /// the mode), when it could not.
+    pub preflight_error: Option<String>,
+}
+
+impl StandardContainerStatus {
+    pub fn assets_present(&self) -> usize {
+        self.assets
+            .iter()
+            .filter(|(_, state)| *state != AssetState::Missing)
+            .count()
+    }
+
+    pub fn assets_differing(&self) -> usize {
+        self.assets
+            .iter()
+            .filter(|(_, state)| *state == AssetState::Differs)
+            .count()
+    }
+
+    /// Everything a container spawn needs is in place: every asset as
+    /// embedded, the entry present, the overlay applied, the image
+    /// present.
+    pub fn healthy(&self) -> bool {
+        self.assets_present() == self.assets.len()
+            && self.assets_differing() == 0
+            && self.entry.is_some()
+            && !self.overlay_withheld
+            && self
+                .image
+                .as_ref()
+                .is_some_and(|check| check.status == CheckStatus::Passed)
+    }
+}
+
+/// How a persisted container-config entry landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedContainerConfig {
+    pub path: std::path::PathBuf,
+    pub created: bool,
+}

@@ -1,0 +1,34 @@
+# The standard Quecto container image (#2024 S4e).
+#
+# Build input for the `standard` container config `quecto container init`
+# writes; a create never builds or pulls an image, so build it once:
+#
+#   podman build -t quecto-box:local -f .quecto/containers/standard/Containerfile .quecto/containers/standard
+#
+# What the image must provide: a glibc userland the identity-mounted host
+# `quecto` binary runs on, `/bin/sh` (the create script sources the
+# provider-key file through it), `git` and `gh` (agents clone, push and use
+# the GitHub API inside), and the everyday tools an agent's `exec` reaches
+# for. Deliberately tool-only: no compiler, no Cargo, no Node — a project
+# that needs a toolchain derives its own image FROM this one and points the
+# entry's `--image` at it.
+FROM docker.io/library/debian:trixie-slim
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG STANDARD_IMAGE_VERSION=1
+LABEL org.opencontainers.image.title="Quecto standard container" \
+      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}"
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      bash ca-certificates coreutils findutils grep sed curl jq less git \
+      openssh-client gh ripgrep fd-find python3 python3-venv procps \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+# The child binary and its arguments come from the create script's argv
+# (the child is the container's main process under `--init`); an empty
+# entrypoint keeps an image-owned command from getting in front of it.
+ENTRYPOINT []
+CMD []
+WORKDIR /workspace

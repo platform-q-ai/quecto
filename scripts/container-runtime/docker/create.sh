@@ -194,7 +194,9 @@ last_line() { printf '%s' "$1" | tr -d '\r' | tail -n 1; }
 
 # The image is looked up in the local store only: a create never pulls
 # implicitly (an unattended pull of an unexpected image is not this
-# script's decision to make). A runtime that cannot answer (daemon down,
+# script's decision to make); the `run` below says so too (`--pull=never`),
+# so a tag that vanished between preflight and run fails instead of
+# fetching whatever a registry serves under that name. A runtime that cannot answer (daemon down,
 # socket permission, timeout) is reported as its own failure, not as a
 # missing image.
 if [ -n "$cli" ]; then
@@ -496,13 +498,13 @@ fi
 if [ -n "$secret_env_file" ]; then
   # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
   # child as the container's PID 1. Requires /bin/sh in the image.
-  "$cli" run -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
-  "$cli" run -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \

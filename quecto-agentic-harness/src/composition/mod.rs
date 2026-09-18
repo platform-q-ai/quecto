@@ -12,6 +12,7 @@ pub mod runtime;
 pub mod session_home;
 pub mod session_report;
 pub mod sessions;
+pub mod standard_container;
 pub mod subagent_lifecycle;
 pub mod subagent_teardown;
 pub mod subagent_termination;

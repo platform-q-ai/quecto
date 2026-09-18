@@ -9,8 +9,11 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use std::path::{Path, PathBuf};
+
 use crate::application::environments::dto::{
-    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
+    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigEntry,
+    ContainerRuntimeTarget, DiagnosableContainerConfig, PersistedContainerConfig, PreflightCheck,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -190,4 +193,43 @@ pub struct ContainerConfigRosterReport {
     pub configs: Vec<ContainerConfigEntry>,
     pub overlay_withheld: bool,
     pub diagnostics: Vec<String>,
+}
+
+// ─── Standard container (#2024 S4e) ─────────────────────────────────────────
+
+/// The embedded standard bundle (Containerfile, runtime scripts) and its
+/// materialisation below a project. The catalogue is what this binary
+/// carries; `observe` compares a destination with the embedded bytes;
+/// `materialise` writes a missing asset (with its mode) and never
+/// replaces an existing file, so an operator's edit survives a re-init.
+/// The use case owns where the bundle goes and what a difference means.
+pub trait ContainerAssetStore: Send + Sync {
+    fn catalogue(&self) -> ContainerAssetCatalogue;
+
+    fn observe(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String>;
+
+    fn materialise(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetOutcome, String>;
+}
+
+/// The repository a checkout came from: its `origin` remote URL, `None`
+/// when the directory is not a git checkout or has no `origin`. `Err`
+/// carries why it could not be asked (git missing).
+pub trait WorkspaceOrigin: Send + Sync {
+    fn origin(&self, checkout: &Path) -> Result<Option<String>, String>;
+}
+
+/// Records one `container_configs.<name>` entry in the project's
+/// repo-local overlay through the configuration capability's one safe
+/// write path (composition maps this port onto it): validated as a layer
+/// and as the merge, trust recorded for exactly the bytes written, an
+/// untrusted overlay refused in that capability's own words.
+pub trait ContainerConfigPersistence: Send + Sync {
+    fn persist(
+        &self,
+        name: &str,
+        entry: serde_json::Value,
+    ) -> Result<PersistedContainerConfig, String>;
+
+    /// The overlay file a persist would write, when the run has one.
+    fn location(&self) -> Option<PathBuf>;
 }
