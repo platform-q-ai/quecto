@@ -197,14 +197,25 @@ fn given_checkout_adds_named(world: &mut QuectoWorld, name: String, repo: String
 )]
 fn given_checkout_untrusted_overlay(world: &mut QuectoWorld, name: String, repo: String) {
     let entry = overlay_entry(world, &repo, true);
+    write_untrusted_overlay(
+        world,
+        serde_json::json!({"container_configs": {name: entry}}),
+    );
+}
+
+#[given(expr = "the checkout carries an untrusted overlay pinning only the default model {string}")]
+fn given_checkout_untrusted_model_overlay(world: &mut QuectoWorld, model: String) {
+    write_untrusted_overlay(
+        world,
+        serde_json::json!({"agents": {"defaults": {"model": model}}}),
+    );
+}
+
+/// The checkout's overlay written straight to disk, never trusted.
+fn write_untrusted_overlay(world: &QuectoWorld, document: serde_json::Value) {
     let overlay = checkout(world).join(".quecto").join("config.json");
     std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
-    std::fs::write(
-        &overlay,
-        serde_json::to_string_pretty(&serde_json::json!({"container_configs": {name: entry}}))
-            .unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&overlay, serde_json::to_string_pretty(&document).unwrap()).unwrap();
     assert!(
         !base_path(world).join("config-overlay-trust.json").exists(),
         "the overlay must not be trusted"
@@ -309,7 +320,17 @@ fn then_spawn_carries_overlay_diagnostic(world: &mut QuectoWorld) {
         "expected the diagnostic {diagnostic:?}… in the tool result: {}",
         result.content
     );
-    if !result.is_error {
+    if result.is_error && !result.content.contains("container: true refused") {
+        // A refusal quotes the diagnostic in its own sentence; every other
+        // failed selection appends it to the error line.
+        assert!(
+            result
+                .content
+                .contains("; Configuration diagnostics: repo-local config overlay"),
+            "a failed selection appends the diagnostics to the error line: {}",
+            result.content
+        );
+    } else if !result.is_error {
         assert!(
             result
                 .content

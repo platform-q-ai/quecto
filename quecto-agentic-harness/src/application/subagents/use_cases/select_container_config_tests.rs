@@ -291,7 +291,8 @@ fn an_explicit_name_launches_from_the_global_set_with_the_withheld_overlay_repor
         .unwrap();
     assert_eq!(selected.config.name, "other");
     assert_eq!(selected.diagnostics, vec![UNTRUSTED.to_string()]);
-    // A name the global set lacks still enumerates the global menu.
+    // A name the global set lacks still enumerates the global menu — and
+    // names the withheld overlay, the likely reason the name is missing.
     let err = select
         .execute(&request(
             ContainerConfigSource::LaunchingAgent,
@@ -299,8 +300,43 @@ fn an_explicit_name_launches_from_the_global_set_with_the_withheld_overlay_repor
         ))
         .unwrap_err();
     assert_eq!(
+        err,
+        SelectContainerConfigError::Unknown {
+            name: "repo-only".into(),
+            available: vec!["global".into(), "other".into()],
+            diagnostics: vec![UNTRUSTED.into()],
+        }
+    );
+    assert_eq!(
         err.to_string(),
-        "unknown container config 'repo-only' (available container configs: global, other)"
+        format!(
+            "unknown container config 'repo-only' (available container configs: global, other); Configuration diagnostics: {UNTRUSTED}"
+        )
+    );
+    assert_eq!(err.diagnostics(), [UNTRUSTED.to_string()]);
+}
+
+#[test]
+fn a_no_default_refusal_carries_the_layer_diagnostics() {
+    // A retired-local-file warning (no withheld overlay) rides the
+    // no-default refusal too, one `Configuration diagnostics:` per line.
+    let (select, _) = use_case(Ok(set(
+        vec![entry("alpha", false)],
+        vec!["warning: legacy", "second line"],
+    )));
+    let err = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "no container config is labeled \"default\": true (available container configs: alpha); Configuration diagnostics: warning: legacy; Configuration diagnostics: second line"
+    );
+    assert_eq!(
+        err,
+        SelectContainerConfigError::NoDefault {
+            available: vec!["alpha".into()],
+            diagnostics: vec!["warning: legacy".into(), "second line".into()],
+        }
     );
 }
 

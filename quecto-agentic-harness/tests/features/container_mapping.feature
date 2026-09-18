@@ -55,6 +55,24 @@ Feature: A repository binds itself to a container config through its overlay
     And the script-managed runtime should have received no repository
 
   @done @issue-2024 @container-spawn
+  Scenario: A name only the untrusted overlay defines is unknown and the result names the withheld overlay
+    Given the checkout carries an untrusted overlay binding container config "r" with repository "https://example.test/repo-r"
+    When I spawn script-managed subagent "container-untrusted-overlay-only" with script "r" and no config argument and task "CONTAINER_UNTRUSTED_OVERLAY_ONLY_MARKER"
+    Then the spawn result should fail with "unknown container config 'r' (available container configs: alternate, default)"
+    And the spawn result should carry the configuration diagnostic naming the checkout's overlay
+    And the script-managed runtime should not have been invoked
+
+  @done @issue-2024 @container-spawn
+  Scenario: An untrusted overlay that cannot have changed the container set warns and keeps the global default
+    Given the checkout carries an untrusted overlay pinning only the default model "pinned-model"
+    When I spawn script-managed subagent "container-untrusted-model-only" with default selection and no config argument and task "CONTAINER_UNTRUSTED_MODEL_ONLY_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "default"
+    And the spawn result should carry the configuration diagnostic naming the checkout's overlay
+    And the script-managed runtime should have used container script "default"
+    And the script-managed runtime should have received no repository
+
+  @done @issue-2024 @container-spawn
   Scenario: A trusted overlay whose merge is invalid fails the spawn naming the overlay before any script runs
     Given the checkout carries a trusted overlay labelling both "r1" and "r2" as default container configs
     When I spawn script-managed subagent "container-invalid-merge" with default selection and no config argument and task "CONTAINER_INVALID_MERGE_MARKER"

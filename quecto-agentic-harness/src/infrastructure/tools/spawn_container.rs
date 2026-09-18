@@ -88,7 +88,8 @@ pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =
 /// file with its checkout's trusted overlay — supplies the entries. The
 /// layer diagnostics (an untrusted or refused overlay that was not
 /// applied) reach the operator's stderr, as every other load reports
-/// them, and travel with the selection into the spawn result.
+/// them, and travel with the selection into the spawn result — or, when
+/// the selection fails, inside the tool error's text.
 fn select_container_config(
     selection: Option<&SelectContainerConfig>,
     config: &SubagentConfig,
@@ -105,11 +106,18 @@ fn select_container_config(
             source,
             name: name.clone(),
         })
-        .map_err(|error| DomainError::Tool(error.to_string()))?;
-    if !selected.diagnostics.is_empty() {
-        eprintln!("{}", selected.diagnostics.join("\n"));
-    }
+        .map_err(|error| {
+            report_diagnostics(error.diagnostics());
+            DomainError::Tool(error.to_string())
+        })?;
+    report_diagnostics(&selected.diagnostics);
     Ok(selected)
+}
+
+fn report_diagnostics(diagnostics: &[String]) {
+    if !diagnostics.is_empty() {
+        eprintln!("{}", diagnostics.join("\n"));
+    }
 }
 
 /// Join an existing committed environment (#1369 slice 2): resolve the target

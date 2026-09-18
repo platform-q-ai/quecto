@@ -472,9 +472,12 @@ pub struct ContainerLaunchConfig {
 pub struct EffectiveContainerConfigSet {
     pub configs: Vec<ContainerLaunchConfig>,
     pub diagnostics: Vec<String>,
-    /// The checkout has an overlay that was NOT applied (untrusted or
-    /// refused): `configs` is the global set alone, and whatever default
-    /// the overlay labels is unknown to launch policy.
+    /// The checkout has an overlay that was NOT applied and could have
+    /// changed the default (refused, unparseable, or declaring
+    /// `container_configs`): `configs` is the global set alone, and
+    /// whatever default the overlay labels is unknown to launch policy.
+    /// An unapplied overlay that cannot have touched the container set
+    /// leaves this false and travels in `diagnostics` alone.
     pub overlay_withheld: bool,
 }
 
@@ -532,20 +535,25 @@ pub enum SelectContainerConfigError {
     /// path may supply argv that this process will execute.
     RelativeConfigPath(std::path::PathBuf),
     Unavailable(ContainerConfigsError),
-    /// `container: true` from a checkout whose overlay exists but was not
-    /// applied (#2024 S4a): the default it labels is unknown, so an
-    /// implicit selection must not quietly land in the global one. The
-    /// layer diagnostics say why the overlay was withheld.
+    /// `container: true` from a checkout whose overlay was not applied and
+    /// could have changed the default (#2024 S4a: refused, unparseable,
+    /// or declaring `container_configs`): the default it labels is
+    /// unknown, so an implicit selection must not quietly land in the
+    /// global one. The layer diagnostics say why the overlay was withheld.
     OverlayWithheld {
         diagnostics: Vec<String>,
     },
-    /// `container: true` with no entry labelled `"default": true`.
+    /// `container: true` with no entry labelled `"default": true`. The
+    /// layer diagnostics ride along: a withheld overlay is the likely
+    /// reason the expected entry is missing.
     NoDefault {
         available: Vec<String>,
+        diagnostics: Vec<String>,
     },
     Unknown {
         name: String,
         available: Vec<String>,
+        diagnostics: Vec<String>,
     },
     /// The selected entry cannot be run: `what` names the argv fault.
     InvalidArgv {
@@ -562,6 +570,29 @@ fn available(names: &[String]) -> String {
     }
 }
 
+/// The layer diagnostics appended to an error line, one
+/// `; Configuration diagnostics: <line>` each, so the reason an entry is
+/// missing (a withheld overlay) is never dropped from the text.
+fn appended(diagnostics: &[String]) -> String {
+    diagnostics
+        .iter()
+        .map(|line| format!("; Configuration diagnostics: {line}"))
+        .collect()
+}
+
+impl SelectContainerConfigError {
+    /// The configuration-layer diagnostics the failed selection carried,
+    /// for a caller that reports them on its own channel too.
+    pub fn diagnostics(&self) -> &[String] {
+        match self {
+            Self::OverlayWithheld { diagnostics }
+            | Self::NoDefault { diagnostics, .. }
+            | Self::Unknown { diagnostics, .. } => diagnostics,
+            Self::RelativeConfigPath(_) | Self::Unavailable(_) | Self::InvalidArgv { .. } => &[],
+        }
+    }
+}
+
 impl fmt::Display for SelectContainerConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -574,18 +605,24 @@ impl fmt::Display for SelectContainerConfigError {
                 "container: true refused: the checkout's repo-local config overlay was not applied, so the container config it labels default is unknown ({}); trust it, or name a container_config explicitly to launch from the global configuration",
                 diagnostics.join("; ")
             ),
-            Self::NoDefault { available: names } => write!(
+            Self::NoDefault {
+                available: names,
+                diagnostics,
+            } => write!(
                 f,
-                "no container config is labeled \"default\": true (available container configs: {})",
-                available(names)
+                "no container config is labeled \"default\": true (available container configs: {}){}",
+                available(names),
+                appended(diagnostics)
             ),
             Self::Unknown {
                 name,
                 available: names,
+                diagnostics,
             } => write!(
                 f,
-                "unknown container config '{name}' (available container configs: {})",
-                available(names)
+                "unknown container config '{name}' (available container configs: {}){}",
+                available(names),
+                appended(diagnostics)
             ),
             Self::InvalidArgv { what, .. } => {
                 write!(f, "invalid container_configs configuration: {what}")

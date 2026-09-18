@@ -6,10 +6,13 @@
 //! [`EffectiveContainerConfigs`] port; this use case owns the rules —
 //! an explicit name wins, otherwise the one entry labelled `"default":
 //! true`; an implicit default is refused while the checkout's overlay is
-//! withheld (untrusted or refused), because the default it labels is
-//! unknown — an explicit name launches from the global set and carries
+//! withheld — not applied and able to have changed the default (refused,
+//! unparseable, or declaring `container_configs`) — because the default
+//! it labels is unknown; an explicit name launches from the global set and carries
 //! the overlay's diagnostic; every refusal enumerates the live names so
-//! an agent can offer the menu; a selected entry must carry runnable
+//! an agent can offer the menu, and an unknown name or missing default
+//! carries the layer diagnostics too (a withheld overlay is the likely
+//! reason the entry is absent); a selected entry must carry runnable
 //! `create` and `cleanup` argv with no empty or NUL-bearing argument.
 
 use std::sync::Arc;
@@ -56,6 +59,7 @@ impl SelectContainerConfig {
                 .ok_or_else(|| SelectContainerConfigError::Unknown {
                     name: name.to_string(),
                     available: available.clone(),
+                    diagnostics: set.diagnostics.clone(),
                 })?,
             None => {
                 // The configuration capability enforces exactly one default
@@ -67,7 +71,12 @@ impl SelectContainerConfig {
                 defaults.sort_by(|a, b| a.name.cmp(&b.name));
                 match defaults.as_slice() {
                     [only] => *only,
-                    _ => return Err(SelectContainerConfigError::NoDefault { available }),
+                    _ => {
+                        return Err(SelectContainerConfigError::NoDefault {
+                            available,
+                            diagnostics: set.diagnostics.clone(),
+                        });
+                    }
                 }
             }
         };

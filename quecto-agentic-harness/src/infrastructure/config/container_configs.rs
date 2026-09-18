@@ -22,7 +22,8 @@ use crate::infrastructure::config::Config;
 
 /// A configuration resolved for a container launch: the realized `Config`,
 /// the layer diagnostics the configuration capability reported, and
-/// whether an overlay that exists was withheld (untrusted or refused).
+/// whether an overlay that exists was withheld in a way that leaves the
+/// default container config unknown (composition decides the rule).
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub config: Config,
