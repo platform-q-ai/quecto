@@ -7,14 +7,11 @@ fn run(args: &[&str], ctx: &CliContext) -> CliOutput {
     crate::interface::cli::run_with_output(argv, ctx)
 }
 
+/// A script run through `bash` (a file executed directly by a
+/// multi-threaded test process can race a concurrent fork, ETXTBSY).
 fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    std::fs::write(&path, format!("{body}\n")).unwrap();
     path.to_string_lossy().into_owned()
 }
 
@@ -34,7 +31,7 @@ fn composed(lines: &str) -> (tempfile::TempDir, CliContext) {
     std::fs::write(
         base.join("config.json"),
         serde_json::json!({"container_configs": {"box": {
-            "default": true, "create": [create, "--state-dir", "/s"], "cleanup": ["/bin/true"]
+            "default": true, "create": ["bash", create, "--state-dir", "/s"], "cleanup": ["/bin/true"]
         }}})
         .to_string(),
     )

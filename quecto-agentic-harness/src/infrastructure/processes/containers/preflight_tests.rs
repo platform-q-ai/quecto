@@ -1,14 +1,12 @@
 use super::*;
 
-fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
+/// The create argv of a script run through `bash` (a file executed
+/// directly by a multi-threaded test process can race a concurrent fork
+/// holding it open, ETXTBSY).
+fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    path.to_string_lossy().into_owned()
+    std::fs::write(&path, format!("{body}\n")).unwrap();
+    vec!["bash".to_string(), path.to_string_lossy().into_owned()]
 }
 
 fn config(create: Vec<String>) -> DiagnosableContainerConfig {
@@ -66,9 +64,9 @@ fn the_script_is_run_with_the_flag_appended_and_its_lines_are_the_checks() {
             recorder.display()
         ),
     );
-    let checks = ScriptPreflight
-        .preflight(&config(vec![create, "--state-dir".into(), "/s".into()]))
-        .unwrap();
+    let mut argv = create;
+    argv.extend(["--state-dir".to_string(), "/s".to_string()]);
+    let checks = ScriptPreflight.preflight(&config(argv)).unwrap();
     assert_eq!(checks.len(), 2);
     assert_eq!(checks[1].status, CheckStatus::Failed);
     assert_eq!(
@@ -85,14 +83,10 @@ fn a_script_that_refuses_the_flag_reports_its_own_words() {
         "legacy.sh",
         "echo 'legacy: unknown argument --preflight-only' >&2\nexit 1",
     );
-    let error = ScriptPreflight
-        .preflight(&config(vec![create.clone()]))
-        .unwrap_err();
+    let error = ScriptPreflight.preflight(&config(create)).unwrap_err();
     assert_eq!(
         error,
-        format!(
-            "create script {create} does not support --preflight-only or reported no checks (exit exit status: 1): legacy: unknown argument --preflight-only"
-        )
+        "create script bash does not support --preflight-only or reported no checks (exit exit status: 1): legacy: unknown argument --preflight-only"
     );
 }
 
