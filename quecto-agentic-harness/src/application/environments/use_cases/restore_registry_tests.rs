@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
-use super::{GONE_AT_RESTORE, KILL_INTERRUPTED, RestoreRegistry};
+use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RestoreRegistry};
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
@@ -192,14 +192,33 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
 }
 
 #[test]
-fn a_kill_in_flight_when_its_session_ended_becomes_retryable_cleanup_failed() {
+/// Review F6 (#2033): a `killing` record is reported, never rewritten —
+/// its session may still be live and settling the kill; nothing here can
+/// tell. An explicit kill from this session retries it.
+#[test]
+fn a_kill_in_flight_is_reported_not_relabelled_and_an_explicit_kill_retries_it() {
     let store = store_with(vec![record("C1", EnvironmentStatus::Killing)]);
     let process = process(|_| panic!("a killing record is not inspected"));
-    let (registry, report) = RestoreRegistry::new(store, process).execute("s");
-    assert_eq!(report.restored, ["C1"]);
+    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    assert!(report.restored.is_empty(), "{report:?}");
+    assert_eq!(report.unverified.len(), 1, "{report:?}");
+    assert_eq!(report.unverified[0].0, "C1");
+    assert_eq!(report.unverified[0].1, KILL_IN_FLIGHT);
+    assert!(
+        store.corrections.lock().unwrap().is_empty(),
+        "nothing written"
+    );
     let c1 = registry.get("C1").unwrap();
-    assert_eq!(c1.status, EnvironmentStatus::CleanupFailed);
-    assert_eq!(c1.last_error.as_deref(), Some(KILL_INTERRUPTED));
+    assert_eq!(c1.status, EnvironmentStatus::Killing);
+    assert_eq!(c1.last_error, None);
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Killing);
+    // The operator's explicit retry claims it (the other session's claim
+    // is not visible here) and journals the outcome.
+    let claim = registry
+        .begin_kill("C1")
+        .expect("a restored killing record is retryable");
+    registry.complete_kill(claim);
+    assert_eq!(store.load().unwrap()[0].status, EnvironmentStatus::Stopped);
 }
 
 #[test]

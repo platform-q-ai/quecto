@@ -7,7 +7,9 @@
 //! reason as its last error (never silently dropped — the ref stays listed
 //! and is never reused), a record the runtime cannot be asked about is kept
 //! as recorded and reported unverified, and a kill that was in flight when
-//! its session ended is a retryable `cleanup-failed`. The restored records
+//! this session started is reported as such — never relabelled, since its
+//! session may still be live and settling it (review F6, #2033); an
+//! explicit kill from here retries it. The restored records
 //! arrive without members and are never torn down by a joiner's exit.
 //! A correction is written **conditionally** — only while the record on
 //! file still has the status that was loaded — so a restore (or a `quecto
@@ -38,9 +40,9 @@ impl std::fmt::Debug for RestoreRegistry {
 /// The last error a record gone at restore carries.
 pub const GONE_AT_RESTORE: &str = "container not found at restore: the runtime reports it gone";
 
-/// The last error a kill interrupted by its session's end carries.
-pub const KILL_INTERRUPTED: &str =
-    "kill was in flight when its session ended; retry kill_container";
+/// The reason a `killing` record is reported unverified at restore.
+pub const KILL_IN_FLIGHT: &str =
+    "kill in flight (its session may be live and settling it); kill_container retries it";
 
 impl RestoreRegistry {
     pub fn new(
@@ -173,11 +175,12 @@ impl RestoreRegistry {
         match record.status {
             EnvironmentStatus::Stopped => false,
             EnvironmentStatus::Killing => {
-                // The claim died with its session: nothing will settle it.
-                record.status = EnvironmentStatus::CleanupFailed;
-                record.last_error = Some(KILL_INTERRUPTED.to_string());
-                report.restored.push(environment_ref);
-                true
+                // Whether its session is still settling the kill cannot
+                // be told from here: say so, change nothing.
+                report
+                    .unverified
+                    .push((environment_ref, KILL_IN_FLIGHT.to_string()));
+                false
             }
             EnvironmentStatus::Running
             | EnvironmentStatus::Retained

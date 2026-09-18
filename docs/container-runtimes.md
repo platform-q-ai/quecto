@@ -243,11 +243,42 @@ checked against the runtime through its retained `inspect` — a
 `running`/`retained`/`cleanup-failed` record whose inspect says `dead` is
 marked `stopped` with `container not found at restore …` as its last
 error (never silently dropped); one whose inspect cannot be run is kept as
-recorded and reported unverified on stderr; a kill that was in flight
-when its session ended becomes a retryable `cleanup-failed`. Restored
-records carry `restored: true` and `session` in `get_containers`. A
-spawned child journals its own creates but is not seeded (its parent
-shows the fleet).
+recorded and reported unverified on stderr; a record found `killing` is
+reported as *kill in flight (its session may be live and settling it)*
+and left as it is — nothing here can tell whether that session is dead —
+and an explicit `kill_container` / `quecto container kill` from the new
+session retries it. Restored records carry `restored: true` and `session`
+in `get_containers`. A spawned child journals its own creates but is not
+seeded (its parent shows the fleet).
+
+**What the file is trusted for.** A record is trusted as written: the
+retained `exec`/`kill`/`cleanup`/`inspect` argv are run verbatim from the
+record, not re-resolved through the configuration in effect now (the
+config's scripts may have moved or changed since; the record's are the
+ones that created the environment). `config` (the config's name) and
+`created_by` are provenance for the listing, not a re-lookup. The one
+exception is the standard bundle's scripts: an `init`-materialised
+`.quecto/container/*.sh` is re-judged against the embedded bundle before
+a join or kill runs it (S4e integrity), whichever record names it. The
+file is 0600 under the base directory — whoever can write it can run
+argv as the harness user, exactly as with the configuration file.
+
+**Durable names are check-then-act.** A create refuses a `name` that
+still names a live environment (this session's or a restored one) by
+reading the registry *before* the create script runs; two sessions
+creating the same name at the same moment can both pass that check, and
+the name is then ambiguous — `mode: existing` by name fails ambiguous and
+`kill_container` by name asks for the ref. Refs are allocated under the
+file lock and never collide. While the registry file is unreadable
+(corrupt, a newer version) the session starts with an empty registry,
+**every container create is refused** (a ref minted from memory could
+collide with one a live session holds) and `quecto container ls|kill|gc`
+refuse in the same words; a session's later journal writes are reported
+on stderr when they fail, never retried silently. Writes to a record
+another session created (a joiner's inspect metadata, its kill) are
+compare-and-set on the status this session last saw on file: when the
+creator has moved the record on meanwhile (say to `retained`), the
+creator's state stands and nothing is reverted.
 
 What a new session can do with a restored environment:
 

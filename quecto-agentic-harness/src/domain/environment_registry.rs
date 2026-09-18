@@ -546,29 +546,41 @@ impl EnvironmentRegistry {
 
     /// Claim the exclusive right to run this environment's kill operation.
     /// Refused while another claim is outstanding (no double-kill) and after a
-    /// successful kill; allowed again after a failed kill (retry).
+    /// successful kill; allowed again after a failed kill (retry). A
+    /// restored record found `killing` holds another session's claim,
+    /// which this registry cannot see settle: an explicit kill here is the
+    /// operator's retry and claims it (review F6, #2033).
     pub fn begin_kill(&self, environment_ref: &str) -> Result<KillClaim, EnvironmentLookupError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let record = state
             .entries
             .get_mut(environment_ref)
             .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
-        match record.status {
+        let claimable = match record.status {
             EnvironmentStatus::Running
             | EnvironmentStatus::CleanupFailed
-            | EnvironmentStatus::Retained => {
-                record.status = EnvironmentStatus::Killing;
-                let claim = KillClaim {
-                    environment_ref: record.environment_ref.clone(),
-                };
-                drop(state);
-                self.journal_ref(environment_ref);
-                Ok(claim)
-            }
-            EnvironmentStatus::Killing => Err(EnvironmentLookupError::Stale(
+            | EnvironmentStatus::Retained => true,
+            EnvironmentStatus::Killing => record.origin == EnvironmentOrigin::Restored,
+            EnvironmentStatus::Stopped => false,
+        };
+        if claimable {
+            record.status = EnvironmentStatus::Killing;
+            let claim = KillClaim {
+                environment_ref: record.environment_ref.clone(),
+            };
+            drop(state);
+            self.journal_ref(environment_ref);
+            return Ok(claim);
+        }
+        match record.status {
+            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
                 record.environment_ref.clone(),
             )),
-            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
+            // This session's own claim is outstanding: no double-kill.
+            EnvironmentStatus::Killing
+            | EnvironmentStatus::Running
+            | EnvironmentStatus::CleanupFailed
+            | EnvironmentStatus::Retained => Err(EnvironmentLookupError::Stale(
                 record.environment_ref.clone(),
             )),
         }
