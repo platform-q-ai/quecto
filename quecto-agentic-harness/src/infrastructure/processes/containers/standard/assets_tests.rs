@@ -126,3 +126,25 @@ fn a_symbolic_link_in_an_assets_place_is_refused_not_followed() {
     assert!(error.contains("symbolic link"), "{error}");
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "x");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_in_a_directorys_place_is_refused_not_followed() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let create = &store.catalogue().assets[1];
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let bundle = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, bundle.join("scripts")).unwrap();
+    let error = store.materialise(&bundle, create).unwrap_err();
+    assert!(error.contains("symbolic link"), "{error}");
+    assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+    // The bundle directory itself being a link is refused too.
+    let linked_bundle = dir.path().join("linked-bundle");
+    std::os::unix::fs::symlink(&elsewhere, &linked_bundle).unwrap();
+    let error = store.materialise(&linked_bundle, create).unwrap_err();
+    assert!(error.contains("symbolic link"), "{error}");
+    assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+}
