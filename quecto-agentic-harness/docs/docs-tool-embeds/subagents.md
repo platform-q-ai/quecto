@@ -31,7 +31,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 ## Ending children
 
 - `agent_cmd kill` (by UUID) asks the child to shut down over its control connection; it settles its own children the same way. Result `graceful` / `fallback` / `already-exited`; an idle child ends in milliseconds, worst case ≈ 19 s.
-- Children end with their launcher. Restore is history only: re-spawn what you need.
+- Children end with their launcher. Restore is history only: re-spawn as needed.
 
 ## Container spawning (named container configs)
 
@@ -41,10 +41,10 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 - **This repository's container**: effective configs = the global file's plus the working directory's trusted `.quecto/config.json` overlay, merged entry-wise (an overlay `"default": true` un-defaults the global entries), so `container: true` in a bound repository lands in its container. Bind: `quecto config set --local container_configs.<name> '{"default":true,…}'`; undo: `quecto config unset --local container_configs.<name>`. The binding applies only to runs started without `--config`, never inside a container child (it gets the global file). Runbook: `docs {"name": "config"}`.
 - An untrusted overlay is not applied: `container: true` is **refused** (the result names the overlay and `quecto config trust`); a named `container_config` launches from the global set, diagnostic in the result.
 - `container: true` — new container via the config labeled default. `{"mode":"new","container_config"?,"name"?}` — a named config, with an optional container name for later joins/kills. A config with no repository is a sandbox (empty workspace).
-- New-container spawns read the effective configuration at every spawn — you normally need no `config`. An explicit `config` replaces both layers (like `--config`) and must be absolute. Joins (`mode: "existing"`) use the container's retained config, never `config`.
+- New-container spawns read the effective configuration at every spawn — you normally need no `config`. An explicit `config` replaces both layers (like `--config`) and must be an absolute path. Joins (`mode: "existing"`) use the container's retained config, never `config`.
 - Success returns `environment_ref=C1 container_config=<name>` (ref session-scoped, never reused). The child is a normal subagent — the completion sequence applies.
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`). Members share the workspace, each with its own identity.
-- `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`/`retained`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the config's kill operation runs exactly once; the result carries the environment ref and up to 20 terminated member ids/names (`omitted_agents` on overflow); a failed kill is retryable.
+- `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`/`retained`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the config's kill operation runs exactly once; the result carries the environment ref and up to 20 terminated member ids/names (`omitted_agents` on overflow); a failed kill can be retried.
 - When the last member of an ordinary environment exits, it tears itself down — no kill needed. A swarm container is the exception: `retained` after the run ends (`metadata.retained` says whether the run ended or lost its coordinator) for inspection; it needs `kill_container`.
 
 ## Running a bounded swarm

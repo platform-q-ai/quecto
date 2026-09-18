@@ -146,6 +146,10 @@ fn subagents_embed_teaches_container_environments() {
         "kill_container",
         "absolute path",
         "effective configuration",
+        "container_config=<name>",
+        "without `--config`",
+        "never inside a container child",
+        "`quecto config trust`",
     ] {
         assert!(doc.contains(needle), "subagents embed misses {needle}");
     }
