@@ -9,7 +9,7 @@
 
 use crate::TuiWorld;
 use cucumber::then;
-use quecto_tui::setup::{SETUP_USAGE, SetupArea, SetupCommand, setup_walkthrough_prompt};
+use quecto_tui::setup::{SETUP_USAGE, SetupCommand, setup_walkthrough_prompt};
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
@@ -194,34 +194,6 @@ fn then_no_prompt_command(world: &mut TuiWorld) {
 fn then_no_user_turn(world: &mut TuiWorld) {
     let entries = drive(world, |h| h.active_user_entries());
     assert!(entries.is_empty(), "no user turn expected, got {entries:?}");
-}
-
-#[then(
-    "every setup walkthrough prompt asks before writing, forbids secrets and dry-runs the service install"
-)]
-fn then_every_prompt_is_safe(_world: &mut TuiWorld) {
-    let areas = [
-        SetupArea::All,
-        SetupArea::Model("openai-api/gpt-5.5".to_string()),
-        SetupArea::Admission,
-        SetupArea::Container,
-        SetupArea::Auth,
-    ];
-    for area in areas {
-        let prompt = setup_walkthrough_prompt(&area);
-        for needle in [
-            "ASK before writing or installing anything",
-            "never pass `--show-secrets`",
-            "always with `--token`",
-            "`quecto admission-broker install-service --dry-run` first",
-            "never run `quecto admission-broker run` from a tool call",
-        ] {
-            assert!(
-                prompt.contains(needle),
-                "prompt for {area:?} must say {needle:?}, got:\n{prompt}"
-            );
-        }
-    }
 }
 
 #[then(expr = "the help listing shows {string}")]

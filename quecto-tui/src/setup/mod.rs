@@ -73,18 +73,20 @@ impl SetupCommand {
     }
 }
 
-/// Shape check for a `provider/model` id: exactly one `/`, both halves
-/// non-empty, and only `[A-Za-z0-9._:-]` — an allowlist, so quotes,
+/// Shape check for a `provider/model` id, matching the harness catalogue:
+/// only the first `/` separates provider from model, so the model half may
+/// itself contain `/` (`fireworks/accounts/fireworks/models/glm-5p2`); every
+/// segment non-empty and only `[A-Za-z0-9._:-]` — an allowlist, so quotes,
 /// backticks, `$(…)`, leading `--flags` and bare words never reach the prompt.
 fn model_id_is_plain(model: &str) -> bool {
-    let plain = |half: &str| {
-        !half.is_empty()
-            && half
+    let plain = |segment: &str| {
+        !segment.is_empty()
+            && segment
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
     };
     match model.split_once('/') {
-        Some((provider, name)) => plain(provider) && plain(name),
+        Some((provider, name)) => plain(provider) && name.split('/').all(plain),
         None => false,
     }
 }

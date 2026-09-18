@@ -57,7 +57,8 @@ fn model_variant_takes_exactly_one_plain_id() {
         "model --show-secrets",
         "model /m",
         "model p/",
-        "model a/b/c",
+        "model p//m",
+        "model p/m/",
         "model p/m;rm",
         "model p/m\u{e9}",
     ] {
@@ -202,4 +203,15 @@ fn every_prompt_carries_the_affirmative_safety_rules() {
         assert!(prompt.ends_with('.'), "prompt ends cleanly for {area:?}");
         assert!(!prompt.contains('\t'));
     }
+}
+
+#[test]
+fn nested_model_ids_are_accepted_like_the_catalogue_does() {
+    // Only the first `/` separates provider from model (Fireworks style).
+    assert_eq!(
+        SetupCommand::parse("model fireworks/accounts/fireworks/models/glm-5p2"),
+        SetupCommand::Walkthrough(SetupArea::Model(
+            "fireworks/accounts/fireworks/models/glm-5p2".to_string()
+        ))
+    );
 }

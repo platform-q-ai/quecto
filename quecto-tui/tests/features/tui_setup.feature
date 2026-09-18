@@ -57,9 +57,6 @@ Feature: /setup submits the agent-executable setup walkthrough (#2024 S6)
     And sub-agent "a1" received no setup command
     And the selected sub-agent transcript has no user turn
 
-  Scenario: every setup prompt is safe by construction
-    Then every setup walkthrough prompt asks before writing, forbids secrets and dry-runs the service install
-
   Scenario: /help lists /setup and it autocompletes
     Then the help listing shows "/setup"
     And the slash-command autocomplete offers "setup"
