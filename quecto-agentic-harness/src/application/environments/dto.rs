@@ -190,11 +190,25 @@ pub struct ContainerAsset {
     pub executable: bool,
 }
 
-/// The embedded bundle this binary carries, with its version.
+/// The embedded bundle this binary carries, with its version and the
+/// command that builds its image (a template over `{image}` and `{dir}`,
+/// the bundle directory): what runtime builds it is the bundle's
+/// knowledge, never the application's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerAssetCatalogue {
     pub version: u32,
     pub assets: Vec<ContainerAsset>,
+    pub build_command: String,
+}
+
+impl ContainerAssetCatalogue {
+    /// The build command for `image` from the bundle at `dir`.
+    pub fn build_command_for(&self, image: &str, dir: &std::path::Path) -> String {
+        self.build_command
+            .trim()
+            .replace("{image}", image)
+            .replace("{dir}", &dir.to_string_lossy())
+    }
 }
 
 /// What an asset's destination holds.
@@ -294,6 +308,9 @@ pub struct StandardContainerReport {
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,
+    /// The exact command that builds `image` from the materialised
+    /// bundle: the one step init leaves to the operator.
+    pub build_command: String,
     pub entry: StandardEntryOutcome,
     pub dry_run: bool,
 }

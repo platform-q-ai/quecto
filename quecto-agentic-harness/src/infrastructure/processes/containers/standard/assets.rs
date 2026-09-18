@@ -1,10 +1,13 @@
 //! The embedded standard bundle behind the environments capability's
 //! [`ContainerAssetStore`] port (#2024 S4e). The runtime scripts ARE the
-//! official adapter set under `scripts/container-runtime/docker/` — one
-//! source, compiled in, so a materialised bundle honours the same
-//! preflight (`--preflight-only`, S4b) and swarm (`QUECTO_SWARM_*`, S4c)
-//! contracts the repository's own copy does — plus the Containerfile of
-//! the image they launch by default. Materialisation is create-only: a
+//! official adapter set under `scripts/container-runtime/` (its
+//! container-engine subdirectory) — one source, compiled in, so a
+//! materialised bundle honours the same preflight (`--preflight-only`,
+//! S4b) and swarm (`QUECTO_SWARM_*`, S4c) contracts the repository's own
+//! copy does — plus the Containerfile of the image they launch by default
+//! and the command that builds it (`build-command`, a template the bundle
+//! owns so the runtime's name never enters this crate). Materialisation
+//! is create-only: a
 //! missing file is written whole (temporary file, fsync, rename, with
 //! its mode); an existing file is compared and left alone; a symbolic
 //! link in the destination's place is refused rather than followed.
@@ -22,10 +25,11 @@ use crate::application::environments::ports::ContainerAssetStore;
 pub const STANDARD_ASSET_VERSION: u32 = 1;
 
 const CONTAINERFILE: &str = include_str!("../../../../../assets/standard-container/Containerfile");
-const CREATE: &str = include_str!("../../../../../../scripts/container-runtime/docker/create.sh");
-const EXEC: &str = include_str!("../../../../../../scripts/container-runtime/docker/exec.sh");
-const INSPECT: &str = include_str!("../../../../../../scripts/container-runtime/docker/inspect.sh");
-const KILL: &str = include_str!("../../../../../../scripts/container-runtime/docker/kill.sh");
+const BUILD_COMMAND: &str = include_str!("../../../../../assets/standard-container/build-command");
+const CREATE: &str = include_str!("../../../../../assets/standard-container/scripts/create.sh");
+const EXEC: &str = include_str!("../../../../../assets/standard-container/scripts/exec.sh");
+const INSPECT: &str = include_str!("../../../../../assets/standard-container/scripts/inspect.sh");
+const KILL: &str = include_str!("../../../../../assets/standard-container/scripts/kill.sh");
 
 /// `(relative path, contents, executable)` of every asset, in the order
 /// init writes and status lists them.
@@ -44,6 +48,7 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
     fn catalogue(&self) -> ContainerAssetCatalogue {
         ContainerAssetCatalogue {
             version: STANDARD_ASSET_VERSION,
+            build_command: BUILD_COMMAND.to_string(),
             assets: ASSETS
                 .iter()
                 .map(|(path, contents, executable)| ContainerAsset {

@@ -2,13 +2,13 @@
 //! parse the arguments, invoke the composed use case for the project
 //! (the working directory unless `--project` names another), present
 //! the report. `init` prints the files it materialised, the entry it
-//! wrote and where, and the exact `podman build` command that is the one
-//! step left; `status` prints one line each for the assets, the entry,
+//! wrote and where, and the exact build command that is the one step
+//! left (the bundle's own, so no runtime is named here); `status` prints one line each for the assets, the entry,
 //! the trust and the image (asked of the entry's own create preflight)
 //! and exits 1 while anything is missing. The interface resolves no
 //! config, reads no file and runs no script itself.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
@@ -143,16 +143,6 @@ pub(crate) fn cmd_init(
     }
 }
 
-/// The build command init prints: the image the entry launches, built
-/// from the materialised Containerfile with the bundle as context.
-pub fn build_command(image: &str, assets_dir: &Path) -> String {
-    format!(
-        "podman build -t {image} -f {} {}",
-        assets_dir.join("Containerfile").display(),
-        assets_dir.display()
-    )
-}
-
 fn present_init(report: &StandardContainerReport, out: &mut String) {
     let verb = if report.dry_run {
         "would write"
@@ -219,7 +209,7 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     out.push_str("next:\n");
     out.push_str(&format!(
         "  1. build the image (a create never builds or pulls):\n     {}\n",
-        build_command(&report.image, &report.assets_dir)
+        report.build_command
     ));
     out.push_str("  2. quecto container doctor   — every check ✓\n");
     out.push_str(

@@ -18,6 +18,7 @@ impl ContainerAssetStore for FixedAssets {
     fn catalogue(&self) -> ContainerAssetCatalogue {
         ContainerAssetCatalogue {
             version: 3,
+            build_command: String::new(),
             assets: self
                 .0
                 .iter()

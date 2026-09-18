@@ -1,5 +1,5 @@
 //! `quecto container init` (#2024 S4e): materialise the standard bundle
-//! (Containerfile, rootless-Podman runtime scripts) below the project and
+//! (Containerfile, the official runtime scripts) below the project and
 //! bind the project to it through its repo-local overlay. The use case
 //! decides where the bundle goes (`<project>/.quecto/containers/standard`),
 //! what the entry says (the script paths exactly where the assets were
@@ -149,6 +149,7 @@ impl InitialiseStandardContainer {
                     .path,
             )
         };
+        let build_command = catalogue.build_command_for(&image, &assets_dir);
         Ok(StandardContainerReport {
             assets_dir,
             version: catalogue.version,
@@ -157,6 +158,7 @@ impl InitialiseStandardContainer {
             differing,
             repository,
             repository_origin,
+            build_command,
             image,
             entry: StandardEntryOutcome {
                 name: STANDARD_CONTAINER_CONFIG.to_string(),

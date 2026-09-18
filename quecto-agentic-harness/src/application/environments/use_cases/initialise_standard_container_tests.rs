@@ -21,6 +21,7 @@ struct MemoryAssets {
 fn catalogue() -> ContainerAssetCatalogue {
     ContainerAssetCatalogue {
         version: 7,
+        build_command: "build -t {image} {dir}\n".into(),
         assets: vec![
             ContainerAsset {
                 path: "Containerfile".into(),
@@ -205,6 +206,10 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
     );
     assert_eq!(report.repository_origin, RepositoryOrigin::CheckoutOrigin);
     assert_eq!(report.image, "quecto-box:local");
+    assert_eq!(
+        report.build_command,
+        "build -t quecto-box:local /p/.quecto/containers/standard"
+    );
     assert!(report.entry.default);
     assert_eq!(report.entry.existing_default, None);
     assert_eq!(

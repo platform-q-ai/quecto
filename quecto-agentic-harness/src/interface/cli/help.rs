@@ -65,7 +65,7 @@ pub(super) fn help_text(out: &mut String) {
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\n",
     );
     out.push_str(
-        "                  Materialise the standard Containerfile and rootless-Podman runtime\n",
+        "                  Materialise the standard Containerfile and container runtime\n",
     );
     out.push_str(
         "                  scripts under <project>/.quecto/containers/standard and bind the\n",

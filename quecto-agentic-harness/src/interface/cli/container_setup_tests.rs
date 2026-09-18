@@ -76,14 +76,3 @@ fn init_and_status_refuse_to_run_uncomposed() {
         output.stderr
     );
 }
-
-#[test]
-fn the_build_command_names_the_image_and_the_materialised_containerfile() {
-    assert_eq!(
-        build_command(
-            "quecto-box:local",
-            Path::new("/p/.quecto/containers/standard")
-        ),
-        "podman build -t quecto-box:local -f /p/.quecto/containers/standard/Containerfile /p/.quecto/containers/standard"
-    );
-}
