@@ -80,8 +80,15 @@ only and require a trust gate before repo-supplied argv may execute
 capability) and the one trust record (`config-overlay-trust.json`,
 approved by `quecto config trust`); selection is launch policy in
 `application/subagents` over the launching agent's *checkout*, never the
-quecto base directory. An overlay that exists but is withheld (untrusted
-or refused) makes an implicit `container: true` a refusal — the default it
-labels is unknown, so the launch must not quietly land in the global
-one — while an explicitly named config launches from the global set; the
+quecto base directory. An overlay that exists but was not applied makes
+an implicit `container: true` a refusal only when it *could* have changed
+the default: it is refused outright (a symbolic link), unparseable, or an
+untrusted document that declares `container_configs` — then the default
+it labels is unknown, so the launch must not quietly land in the global
+one. An untrusted overlay that declares no `container_configs` (say, one
+that only pins `agents.defaults`) cannot have changed the set, so the
+global default launches and the overlay's diagnostic travels as a warning;
+the rule reads the resolver's already-parsed top-level keys and applies
+nothing. An explicitly named config always launches from the global set,
+and a name the global set lacks fails naming the withheld overlay; every
 spawn result names the selected config and carries the layer diagnostics.

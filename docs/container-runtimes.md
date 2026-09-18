@@ -306,13 +306,20 @@ in `<base_dir>/config-overlay-trust.json` (canonical path + SHA-256).
 `quecto config set` records trust for what it writes; an overlay written
 by hand, or committed by someone else, needs `quecto config trust` from
 the checkout after review — an explicit, non-interactive command an agent
-can run. Until then the overlay contributes nothing to container spawns:
-`container: true` is **refused** (the default the overlay labels is
+can run. Until then the overlay contributes nothing to container spawns.
+`container: true` is **refused** when the withheld overlay could have
+changed the default — it is a symbolic link, unparseable, or an untrusted
+document that declares `container_configs` (the default it labels is
 unknown, so an implicit selection must not quietly land in the global
-one) with a tool error naming the overlay and `quecto config trust`; a
+one) — with a tool error naming the overlay and `quecto config trust`. An
+untrusted overlay that declares no `container_configs` (one that only pins
+`agents.defaults.model`, say) cannot have changed the set: the global
+default launches and the result carries the diagnostic as a warning. A
 named `container_config` launches from the global set and its result
-carries the same diagnostic under `Configuration diagnostics:`. The spawn
-also prints the diagnostic to stderr, as `quecto status` does. There is
+carries the same diagnostic under `Configuration diagnostics:`; a name
+only the withheld overlay defines is `unknown container config` with the
+diagnostic appended to the error. The spawn also prints the diagnostic to
+stderr, as `quecto status` does. There is
 no separate container trust record and no `[y/N]` prompt on the spawn
 path any more (the pre-#2024 `container-config-trust.json` is not read;
 approve such an overlay once with `quecto config trust`). Container
