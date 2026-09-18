@@ -230,7 +230,7 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     );
     if let Some(displaced) = &entry.displaced_default {
         out.push_str(&format!(
-            "  displaced default: {displaced} (the overlay entry {} its \"default\": true label in the same write; select it by name with container: {{\"mode\":\"new\",\"container_config\":\"{displaced}\"}})\n",
+            "  displaced default: {displaced} (the overlay entry {} its \"default\": true label in the same write; select it by name with container: {{\"mode\":\"new\",\"container_config\":\"{displaced}\"}}; to make it the default again after removing standard: quecto config set --local container_configs.{displaced}.default true)\n",
             if report.dry_run { "would lose" } else { "lost" }
         ));
     }

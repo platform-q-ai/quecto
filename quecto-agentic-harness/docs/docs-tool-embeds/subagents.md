@@ -61,11 +61,9 @@ only the official isolated-PID adapter can host a swarm (host-local scripts
 and the host cannot). Workers are spawned by the coordinator with
 `container` omitted. Workflow eligibility follows swarm participation, not
 containerization: an ordinary container agent may run with `workflow: true`,
-guards and a bound spec. Never enable them for swarm workers: those launches
-are rejected, a join into a container whose run exists fails before inference,
-an agent running a workflow cannot create a run, the workflow tool refuses
-inside a swarm, and members that joined before the run existed fall under the
-same rule once it does (create the run before spawning workers).
+guards and a bound spec; never enable them for swarm workers (rejected at
+launch, and a join into a container whose run exists fails before inference;
+create the run before spawning workers).
 Give the coordinator the goal, constraints, command/review acceptance criteria,
 member limit (itself included) and deadline. It calls `swarm` `op=create` before
 spawning workers; the external master supervises and is not a member.

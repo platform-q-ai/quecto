@@ -498,8 +498,9 @@ quecto config set --local container_configs.app '{"default":true,"create":["/abs
 ```
 
 Then, from an agent started in that checkout, `spawn` with
-`container: true` creates the container with `app`'s `create` argv; from
-any other directory the global default still applies. The binding applies
+`container: true` creates the container with `app`'s `create` argv (unless
+the overlay also declares `standard`, which wins by rule); from any other
+directory the global default still applies. The binding applies
 only to runs started *without* `--config` (an explicit `--config` file
 replaces both layers, as a spawn `config` argument does) and never inside
 a container child: the child is started with the global file and has no
