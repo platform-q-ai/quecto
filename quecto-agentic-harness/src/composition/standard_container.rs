@@ -87,6 +87,13 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
         let (key_path, value) = match displace_default {
             None => (format!("container_configs.{name}"), entry_document(entry)),
             Some(displaced) => {
+                // The trust refusal first, in its own words: an untrusted
+                // overlay reports no document, which must not read as "no
+                // such entry". The section is read here and replaced under
+                // the patch's hold; init is an operator command, and a
+                // concurrent hand edit of the same overlay in that window
+                // is the operator's race to lose, as with any editor.
+                self.check()?;
                 let mut section = self.overlay_section()?;
                 let Some(other) = section.get_mut(displaced).and_then(Value::as_object_mut) else {
                     return Err(format!(

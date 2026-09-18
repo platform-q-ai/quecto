@@ -288,3 +288,24 @@ fn displacing_an_entry_the_overlay_does_not_declare_is_refused_untouched() {
     assert!(error.contains("declares no such entry"), "{error}");
     assert_eq!(std::fs::read(rig.overlay()).unwrap(), before);
 }
+
+#[test]
+fn displacing_over_an_untrusted_overlay_is_the_trust_refusal_not_a_missing_entry() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.overlay().parent().unwrap()).unwrap();
+    let hand_written = serde_json::json!({"container_configs": {"other": {
+        "default": true, "create": ["/c"], "cleanup": ["/k"]
+    }}})
+    .to_string();
+    std::fs::write(rig.overlay(), &hand_written).unwrap();
+    let error = rig
+        .port()
+        .persist("standard", &entry(true), Some("other"))
+        .unwrap_err();
+    assert!(error.contains("is not trusted"), "{error}");
+    assert!(!error.contains("declares no such entry"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(rig.overlay()).unwrap(),
+        hand_written
+    );
+}

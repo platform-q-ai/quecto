@@ -321,10 +321,13 @@ impl ContainerConfigLayer {
 pub struct ContainerConfigEntry {
     pub name: String,
     /// What `container: true` selects — exactly as launch policy would:
-    /// false on every entry while the checkout's overlay is withheld
-    /// (the default is then unknown and an implicit selection refused),
-    /// on an entry a launch would refuse, and on all of them when more
-    /// than one is labelled default.
+    /// the checkout's own `standard` entry whatever the labels say
+    /// (#2035); false on every entry while the checkout's overlay is
+    /// withheld (the default is then unknown and an implicit selection
+    /// refused), on an entry a launch would refuse, and on all of them
+    /// when more than one is labelled default and no repo-bound
+    /// `standard` exists. (In the roster port's report it is still the
+    /// raw label.)
     pub default: bool,
     pub layer: ContainerConfigLayer,
     /// The repository a new environment clones, when the config bakes
