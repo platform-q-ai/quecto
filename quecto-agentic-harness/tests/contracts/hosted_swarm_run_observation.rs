@@ -93,6 +93,7 @@ async fn an_environment_without_a_store_observes_no_store_and_cannot_record_a_lo
         SwarmRunObservation::NoStore
     );
     let hosted = quecto::domain::environment_retention::HostedSwarmRun {
+        id: "run-contract".into(),
         status: RunStatus::Running,
         outcome: None,
         coordinator: "coordinator".into(),

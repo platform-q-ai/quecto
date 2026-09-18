@@ -44,6 +44,9 @@ impl MemberFinalizeMode {
 /// The swarm run an environment hosts, as observed from outside it (#1924).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostedSwarmRun {
+    /// The run's own id, the name an operator sees in `swarm_control`
+    /// receipts and the reason a box is kept for an unfinished run.
+    pub id: String,
     pub status: RunStatus,
     /// The outcome a paused run holds after an orderly end (#1729); `None`
     /// for a live run or a plain supervisor pause.

@@ -129,6 +129,7 @@ impl EnvironmentProcessCommands for HostedRunPort {
 
 fn running_swarm() -> HostedSwarmRun {
     HostedSwarmRun {
+        id: "run-42".to_string(),
         status: RunStatus::Running,
         outcome: None,
         coordinator: "member-42".to_string(),

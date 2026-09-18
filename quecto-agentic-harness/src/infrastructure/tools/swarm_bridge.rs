@@ -244,7 +244,12 @@ fn decode_hosted_run(
         .as_str()
         .map(coordination::decode_status)
         .transpose()?;
+    let id = status["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| DomainError::Tool("swarm status carries no run id".into()))?;
     Ok(crate::domain::environment_retention::HostedSwarmRun {
+        id: id.to_owned(),
         status: coordination::decode_status(run_status)?,
         outcome,
         coordinator: coordinator.to_owned(),

@@ -399,7 +399,11 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
     let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone());
     let hosted = store.hosted_run().unwrap().unwrap();
     assert_eq!((hosted.status, hosted.outcome), (RunStatus::Running, None));
-    store.record_lost_coordinator("coordinator").unwrap();
+    // The observation names the run (#2033 round 4): the store's own id,
+    // the same one the loss receipt carries.
+    assert_eq!(hosted.id.len(), 32, "{hosted:?}");
+    let loss = store.record_lost_coordinator("coordinator").unwrap();
+    assert_eq!(loss.run.id, hosted.id);
 
     // Through the same port the parent's `swarm_control status` uses.
     let receipt = context.apply(RunControlAction::Status).await.unwrap();
