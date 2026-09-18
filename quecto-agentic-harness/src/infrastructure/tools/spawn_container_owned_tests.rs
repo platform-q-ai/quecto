@@ -28,6 +28,7 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
         cleanup_argv: vec!["true".into()],
         environments: Some(registry.clone()),
         stderr_tail: None,
+        container_diagnostics: Vec::new(),
     };
     prepared.rollback_once().await;
     assert!(prepared.cleanup_argv.is_empty());
@@ -54,6 +55,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     });
     config.config_path = Some(cfg_path);
     let registry = EnvironmentRegistry::new();
+    let selection = super::tests::test_selection(dir.path());
     let prepared = spawn_prepared_child(
         &config,
         &ChildCommand {
@@ -65,7 +67,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
             admission_dir: None,
         },
         &registry,
-        None,
+        Some(&selection),
     )
     .await
     .unwrap();
@@ -187,8 +189,8 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     assert!(err.to_string().contains("retained exec"), "{err}");
 }
 
-#[test]
-fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
+#[tokio::test]
+async fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
     // #1410 accepted trade-off: exactly-one-default is a LOAD invariant, so a
     // config file with entries but no `"default": true` label blocks ALL
     // container spawns — including explicitly named selection, which needs no
@@ -205,9 +207,23 @@ fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
         name: None,
     });
     config.config_path = Some(cfg_path);
-    let err = load_container_config(&config, None, Path::new("/tmp"))
-        .unwrap_err()
-        .to_string();
+    let selection = super::tests::test_selection(dir.path());
+    let err = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            swarm_context: None,
+            supervisor: &test_supervisor(),
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+            admission_dir: None,
+        },
+        &EnvironmentRegistry::new(),
+        Some(&selection),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("no container config is labeled"), "{err}");
     assert!(err.contains("a"), "error must enumerate names: {err}");
 }

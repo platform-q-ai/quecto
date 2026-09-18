@@ -37,6 +37,9 @@ fn flags() -> AgentFlags {
         admission_context: None,
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         stdin_is_tty: false,
     }
 }
@@ -73,6 +76,11 @@ fn build_tool_registry_uses_empty_session_for_no_session() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -109,6 +117,11 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -147,6 +160,11 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -201,6 +219,11 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -254,6 +277,11 @@ fn build_tool_registry_registers_agent_control_tools_as_official_native() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -331,6 +359,11 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,
@@ -384,6 +417,11 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config: &config,
         http_client: &http,

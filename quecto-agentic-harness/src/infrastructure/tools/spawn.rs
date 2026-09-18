@@ -30,56 +30,6 @@ use super::subagent_registry::NotificationTx;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
 
-const EMPTY_ROSTER: &str = "none configured";
-
-/// Session-start roster line for the tool description (#1410): the available
-/// container configs from the parent's effective config, with the default
-/// marked. Composition-time IO — called once when the tool is built, never
-/// from `definition()`. Deliberately uses the same loader (`Config::load`) as
-/// the spawn-time `load_container_config`, so the roster and spawn selection
-/// cannot diverge on loader behavior.
-fn container_config_roster(parent_config_path: Option<&Path>, checkout: &Path) -> String {
-    let Some(path) = parent_config_path else {
-        return EMPTY_ROSTER.to_string();
-    };
-    let config = SubagentConfig {
-        task: None,
-        container: crate::domain::subagent::ContainerSelection::Local,
-        agent_id: None,
-        system: None,
-        config_path: Some(path.to_path_buf()),
-        workflow: false,
-        workflow_guards: false,
-        workflow_spec: None,
-        model: None,
-        effort: None,
-        disable_tools: Vec::new(),
-        read_only: false,
-    };
-    let Ok(cfg) = super::spawn_container::load_container_config_for_roster(&config, None, checkout)
-    else {
-        return "unavailable (config failed to load)".to_string();
-    };
-    let names = super::spawn_container::container_config_names(&cfg);
-    if names.is_empty() {
-        if checkout.join(".quecto").join("config.json").is_file() {
-            return "none configured (repo-local .quecto/config.json present; approve if untrusted before use)".to_string();
-        }
-        return EMPTY_ROSTER.to_string();
-    }
-    names
-        .iter()
-        .map(|name| {
-            if cfg.container_configs[name].default {
-                format!("{name} (default)")
-            } else {
-                name.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// non-string entry is an LLM-addressable error, not a silent skip.
 fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
     let mut tools: Vec<String> = Vec::new();
@@ -153,14 +103,17 @@ pub struct SpawnTool {
     /// once at composition and injected).
     pub(super) environment_registry: EnvironmentRegistry,
     /// The parent agent's own config path, plumbed from the composition root
-    /// (#1369 follow-up). Container spawns without an explicit `config`
-    /// argument fall back to it for loading `container_configs`.
+    /// (#1369 follow-up): the `--config` a container child is started with
+    /// when the spawn call names none. Container-config *selection* never
+    /// reads it (#2024 S4a): that is `container_config_selection` below.
     pub(super) parent_config_path: Option<PathBuf>,
-    /// Session-start snapshot of the configured container configs, baked into
-    /// the tool description so agents see the menu from turn one (#1410).
-    /// Staleness is accepted: the config file is still consulted at spawn
-    /// time, and selection errors enumerate the live names.
-    pub(super) container_config_roster: String,
+    /// Composition's container-config selection (#2024 S4a): launch policy
+    /// over the launching agent's effective configuration for its checkout
+    /// (trusted overlay merged), or an explicit spawn `config` file. A tool
+    /// built without one refuses every new container before any script
+    /// runs; it composes no use case itself.
+    pub(super) container_config_selection:
+        Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
     /// The one owner of every process this tool spawns (#1935): the
     /// process-wide supervisor unless composition injects another, so no
     /// tool ever owns a throwaway supervisor whose drop abandons reaps.
@@ -218,7 +171,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
-            container_config_roster: EMPTY_ROSTER.to_string(),
+            container_config_selection: None,
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -242,7 +195,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
-            container_config_roster: EMPTY_ROSTER.to_string(),
+            container_config_selection: None,
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -250,10 +203,8 @@ impl SpawnTool {
         }
     }
 
-    /// Plumb the parent agent's own config path from the composition root so
-    /// container spawns can fall back to it when `config` is omitted
-    /// (#1369 follow-up). `None` leaves only the inherited runtime config
-    /// (`QUECTO_RUNTIME_CONFIG_PATH`) as a fallback source.
+    /// Composition's change-reasoning-effort use case (#1848), validating a
+    /// spawn `effort` for an explicit `model`; `None` checks syntax only.
     pub fn with_effort_control(
         mut self,
         effort_control: Option<
@@ -264,10 +215,27 @@ impl SpawnTool {
         self
     }
 
+    /// Plumb the parent agent's own config path from the composition root:
+    /// the `--config` forwarded to a container child whose spawn call names
+    /// none (`None` leaves the inherited `QUECTO_RUNTIME_CONFIG_PATH` as
+    /// the only forwarded source). It plays no part in selecting the
+    /// container config (#2024 S4a).
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
-        self.container_config_roster =
-            container_config_roster(parent_config_path.as_deref(), &self.base_dir);
         self.parent_config_path = parent_config_path;
+        self
+    }
+
+    /// The parent agent's own config path, as composed.
+    pub fn parent_config_path(&self) -> Option<&Path> {
+        self.parent_config_path.as_deref()
+    }
+
+    /// Install composition's container-config selection (#2024 S4a).
+    pub fn with_container_config_selection(
+        mut self,
+        selection: Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
+    ) -> Self {
+        self.container_config_selection = selection;
         self
     }
 

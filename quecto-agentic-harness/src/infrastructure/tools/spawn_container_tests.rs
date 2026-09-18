@@ -10,86 +10,15 @@ pub(super) fn parse_create(stdout: &[u8]) -> Result<CreateResult, DomainError> {
 pub(super) fn parse_exec(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
     parse_exec_result(stdout, None)
 }
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-#[test]
-fn validate_script_rejects_missing_or_unsafe_argv() {
-    assert!(
-        validate_container_config(&ContainerConfig {
-            default: false,
-            create: vec![],
-            cleanup: vec![],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        })
-        .is_err()
-    );
-    assert!(
-        validate_container_config(&ContainerConfig {
-            default: false,
-            create: vec!["".into()],
-            cleanup: vec![],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        })
-        .is_err()
-    );
-    assert!(
-        validate_container_config(&ContainerConfig {
-            default: false,
-            create: vec!["ok".into()],
-            cleanup: vec!["bad\0".into()],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        })
-        .is_err()
-    );
-    assert!(
-        validate_container_config(&ContainerConfig {
-            default: false,
-            create: vec!["ok".into()],
-            cleanup: vec![],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        })
-        .is_err()
-    );
-    assert!(
-        validate_container_config(&ContainerConfig {
-            default: false,
-            create: vec!["ok".into()],
-            cleanup: vec!["cleanup".into()],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        })
-        .is_ok()
-    );
-}
-
-fn configured_container_configs() -> Config {
-    let mut container_configs = HashMap::new();
-    container_configs.insert(
-        "default".to_string(),
-        ContainerConfig {
-            default: true,
-            create: vec!["echo".into()],
-            cleanup: vec!["echo".into()],
-            exec: vec![],
-            kill: vec![],
-            inspect: vec![],
-        },
-    );
-    Config {
-        container_configs,
-        ..Default::default()
-    }
+/// A composed container-config selection with no launching-agent source:
+/// only an explicit spawn `config` file supplies entries (#2024 S4a).
+pub(super) fn test_selection(
+    base_dir: &Path,
+) -> Arc<crate::application::subagents::use_cases::SelectContainerConfig> {
+    crate::composition::container_configs::build_container_config_selection(base_dir, None)
 }
 
 pub(super) fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
@@ -129,50 +58,50 @@ pub(super) fn base_config(container: ContainerSelection) -> SubagentConfig {
     }
 }
 
-#[test]
-fn container_config_selection_uses_the_default_label_and_enumerates_on_errors() {
-    let cfg = configured_container_configs();
-    // Omitted selection resolves to the entry labeled `"default": true`.
-    assert_eq!(container_config_name(&None, &cfg).unwrap(), "default");
-    assert!(container_config(&cfg, "default").is_ok());
-
-    // Unknown names enumerate the configured menu so agents can offer it.
-    let err = container_config(&cfg, "missing").unwrap_err().to_string();
-    assert!(err.contains("unknown container config 'missing'"), "{err}");
-    assert!(
-        err.contains("available container configs: default"),
-        "{err}"
-    );
-
-    // Defensive-arm only: in production Config::load rejects a non-empty map
-    // with no default before this code runs; the arm still enumerates so a
-    // future bypass cannot fail silently.
-    let mut unlabeled = configured_container_configs();
-    unlabeled
-        .container_configs
-        .get_mut("default")
-        .unwrap()
-        .default = false;
-    let err = container_config_name(&None, &unlabeled)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("no container config is labeled"), "{err}");
-    assert!(
-        err.contains("available container configs: default"),
-        "{err}"
-    );
-
-    // An explicitly selected name wins regardless of labels.
+#[tokio::test]
+async fn a_new_container_needs_a_composed_selection_but_a_local_child_does_not() {
+    let dir = TempDir::new().unwrap();
+    let config = base_config(ContainerSelection::New {
+        container_config: None,
+        name: None,
+    });
+    let err = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            swarm_context: None,
+            supervisor: &test_supervisor(),
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+            admission_dir: None,
+        },
+        &EnvironmentRegistry::new(),
+        None,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
-        container_config_name(&Some("other".into()), &cfg).unwrap(),
-        "other"
+        err.to_string(),
+        format!("tool error: {NO_CONTAINER_CONFIG_SELECTION_COMPOSED}")
     );
-}
-
-#[test]
-fn local_selection_has_no_container_config_requirement() {
-    let config = base_config(ContainerSelection::Local);
-    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
+    let local = base_config(ContainerSelection::Local);
+    assert!(
+        spawn_prepared_child(
+            &local,
+            &ChildCommand {
+                swarm_context: None,
+                supervisor: &test_supervisor(),
+                binary: Path::new("true"),
+                cli_args: &[],
+                base_dir: dir.path(),
+                admission_dir: None,
+            },
+            &EnvironmentRegistry::new(),
+            None,
+        )
+        .await
+        .is_ok()
+    );
 }
 
 #[cfg(unix)]
@@ -210,86 +139,47 @@ async fn local_subagent_inherits_parent_process_group() {
     );
 }
 
-#[test]
-fn relative_config_path_is_rejected_for_container_config() {
-    let mut config = base_config(ContainerSelection::New {
+/// The selection's refusals reach the launch as tool errors, in the use
+/// case's words, before any script runs.
+#[tokio::test]
+async fn selection_errors_surface_as_tool_errors_without_a_launch() {
+    let dir = TempDir::new().unwrap();
+    let selection = test_selection(dir.path());
+    let mut without_config = base_config(ContainerSelection::New {
         container_config: None,
         name: None,
     });
-    config.config_path = Some(PathBuf::from("relative.toml"));
-    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
-}
-
-fn write_container_configs(dir: &std::path::Path, default: &str) -> PathBuf {
-    let path = dir.join(format!("config-{default}.json"));
-    let config = serde_json::json!({
-        "container_configs": {
-            default: {"default": true, "create": ["/bin/true"], "cleanup": ["/bin/true"]}
-        }
-    });
-    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
-    path
-}
-
-#[test]
-fn parent_config_path_is_the_fallback_when_spawn_config_is_omitted() {
-    let dir = TempDir::new().unwrap();
-    let parent = write_container_configs(dir.path(), "parentset");
-    let config = base_config(ContainerSelection::New {
-        container_config: None,
-        name: None,
-    });
-    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
-    assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
-}
-
-#[test]
-fn explicit_spawn_config_wins_over_the_parent_config_path() {
-    let dir = TempDir::new().unwrap();
-    let parent = write_container_configs(dir.path(), "parentset");
-    let explicit = write_container_configs(dir.path(), "explicitset");
-    let mut config = base_config(ContainerSelection::New {
-        container_config: None,
-        name: None,
-    });
-    config.config_path = Some(explicit);
-    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
-    assert_eq!(
-        container_config_name(&None, &loaded).unwrap(),
-        "explicitset"
-    );
-}
-
-#[test]
-fn roster_config_loader_uses_read_only_trust_and_ignores_unapproved_repo_local_config() {
-    let dir = TempDir::new().unwrap();
-    let parent = write_container_configs(dir.path(), "parentset");
-    let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
-    std::fs::write(
-        checkout.join(".quecto/config.json"),
-        r#"{"container_configs":{"localset":{"default":true,"create":["/bin/false"],"cleanup":["/bin/true"]}}}"#,
+    let supervisor = test_supervisor();
+    let child = || ChildCommand {
+        swarm_context: None,
+        supervisor: &supervisor,
+        binary: Path::new("true"),
+        cli_args: &[],
+        base_dir: dir.path(),
+        admission_dir: None,
+    };
+    let err = spawn_prepared_child(
+        &without_config,
+        &child(),
+        &EnvironmentRegistry::new(),
+        Some(&selection),
     )
-    .unwrap();
-    let config = base_config(ContainerSelection::New {
-        container_config: None,
-        name: None,
-    });
-
-    let loaded = load_container_config_for_roster(&config, Some(&parent), &checkout).unwrap();
-
-    assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
-    assert!(!loaded.container_configs.contains_key("localset"));
-}
-
-#[test]
-fn relative_parent_config_path_is_rejected_for_container_config() {
-    let config = base_config(ContainerSelection::New {
-        container_config: None,
-        name: None,
-    });
-    let err = load_container_config(&config, Some(Path::new("relative.toml")), Path::new("/tmp"))
-        .unwrap_err();
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("container spawn requires --config so container_configs can be loaded"),
+        "{err}"
+    );
+    without_config.config_path = Some(PathBuf::from("relative.toml"));
+    let err = spawn_prepared_child(
+        &without_config,
+        &child(),
+        &EnvironmentRegistry::new(),
+        Some(&selection),
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("absolute"), "{err}");
 }
 
@@ -337,6 +227,7 @@ async fn cleanup_plan_clones_environment_and_argv() {
         cleanup_argv: vec!["echo".into(), "ok".into()],
         environments: None,
         stderr_tail: None,
+        container_diagnostics: Vec::new(),
     };
     let (env_ref, argv) = prepared.cleanup_plan();
     assert_eq!(env_ref.as_deref(), Some("env-test"));
@@ -425,36 +316,33 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
         name: None,
     });
     config.config_path = Some(cfg_path);
+    let selection = test_selection(dir.path());
+    let err = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            swarm_context: None,
+            supervisor: &test_supervisor(),
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+            admission_dir: None,
+        },
+        &EnvironmentRegistry::new(),
+        Some(&selection),
+    )
+    .await
+    .unwrap_err();
     assert!(
-        spawn_prepared_child(
-            &config,
-            &ChildCommand {
-                swarm_context: None,
-                supervisor: &test_supervisor(),
-                binary: Path::new("true"),
-                cli_args: &[],
-                base_dir: dir.path(),
-                admission_dir: None,
-            },
-            &EnvironmentRegistry::new(),
-            None,
-        )
-        .await
-        .is_err()
+        err.to_string()
+            .contains("failed to invoke script-managed create"),
+        "{err}"
     );
 }
 
 #[test]
 fn create_command_and_common_env_are_constructed_without_shell() {
-    let script = ContainerConfig {
-        default: false,
-        create: vec!["echo".into(), "prefix".into()],
-        cleanup: vec![],
-        exec: vec![],
-        kill: vec![],
-        inspect: vec![],
-    };
-    let mut cmd = script_command(&script.create, Path::new("/bin/quecto"), &["--mode".into()]);
+    let create = vec!["echo".to_string(), "prefix".to_string()];
+    let mut cmd = script_command(&create, Path::new("/bin/quecto"), &["--mode".into()]);
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
     let std_cmd = cmd.as_std();
     assert_eq!(std_cmd.get_program(), "echo");
@@ -500,6 +388,7 @@ async fn script_env_includes_optional_selection_values() {
     });
     config.config_path = Some(cfg_path);
     let registry = EnvironmentRegistry::new();
+    let selection = test_selection(dir.path());
     spawn_prepared_child(
         &config,
         &ChildCommand {
@@ -511,7 +400,7 @@ async fn script_env_includes_optional_selection_values() {
             admission_dir: None,
         },
         &registry,
-        None,
+        Some(&selection),
     )
     .await
     .unwrap();
@@ -566,4 +455,97 @@ async fn cleanup_runner_consumes_argv_only_when_command_exists() {
     let mut cmd = vec!["true".into()];
     run_cleanup_once(Some("C-test".into()), &mut cmd).await;
     assert!(cmd.is_empty());
+}
+
+/// A named launch from a checkout whose overlay is untrusted carries the
+/// overlay's diagnostic on the prepared child (#2024 S4a review M): the
+/// launch adapter puts it in the tool result, so the model sees it.
+#[tokio::test]
+async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
+    let dir = TempDir::new().unwrap();
+    let base = dir.path().join("base");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    let create = r#"printf '{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{}}'"#;
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::json!({"container_configs": {
+            "global": {"default": true, "create": ["/bin/sh", "-c", create], "cleanup": ["true"]},
+            "alt": {"create": ["/bin/sh", "-c", create], "cleanup": ["true"]}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let overlay = checkout.join(".quecto").join("config.json");
+    std::fs::write(
+        &overlay,
+        serde_json::json!({"container_configs": {"repo": {"default": true, "create": ["/bin/true"], "cleanup": ["true"]}}})
+            .to_string(),
+    )
+    .unwrap();
+    let selection = crate::composition::container_configs::build_container_config_selection(
+        &base,
+        Some(
+            crate::application::configuration::dto::ConfigSelection::Layered(
+                crate::application::configuration::dto::ConfigLayers {
+                    global: base.join("config.json"),
+                    overlay: Some(overlay.clone()),
+                    legacy_local: None,
+                },
+            ),
+        ),
+    );
+    let child = ChildCommand {
+        swarm_context: None,
+        supervisor: &test_supervisor(),
+        binary: Path::new("true"),
+        cli_args: &[],
+        base_dir: &base,
+        admission_dir: None,
+    };
+    let registry = EnvironmentRegistry::new();
+    // The implicit default is refused: the overlay's default is unknown.
+    let err = spawn_prepared_child(
+        &base_config(ContainerSelection::New {
+            container_config: None,
+            name: None,
+        }),
+        &child,
+        &registry,
+        Some(&selection),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("container: true refused")
+            && err.to_string().contains(&overlay.display().to_string()),
+        "{err}"
+    );
+    assert!(registry.get("C1").is_none(), "no create ran");
+    // A name launches from the global set, the diagnostic travelling along.
+    let prepared = spawn_prepared_child(
+        &base_config(ContainerSelection::New {
+            container_config: Some("alt".into()),
+            name: None,
+        }),
+        &child,
+        &registry,
+        Some(&selection),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        prepared.container_diagnostics.len(),
+        1,
+        "{:?}",
+        prepared.container_diagnostics
+    );
+    assert!(
+        prepared.container_diagnostics[0].contains(&overlay.display().to_string())
+            && prepared.container_diagnostics[0].contains("quecto config trust"),
+        "{:?}",
+        prepared.container_diagnostics
+    );
+    assert_eq!(registry.get("C1").unwrap().script_name, "alt");
 }

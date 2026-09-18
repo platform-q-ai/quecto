@@ -36,12 +36,11 @@ change from the architecture side.
   errors fail there, enumerating names — not at spawn time). Explicit
   selection (`container_config: "<name>"`) never consults labels, but is
   reachable only through a config that passed load validation.
-- **Agents can see the menu.** The spawn tool description carries a
-  session-start roster of the available container configs with the default
-  marked. The roster is a deliberate snapshot: the config file is re-read
-  at spawn time and selection errors enumerate the live names, so
-  enumerate-on-error is the runtime source of truth when the file has
-  changed since session start.
+- **Agents can see the menu.** Selection errors enumerate the live names,
+  and `quecto config get --effective container_configs` lists them before
+  a spawn. (The session-start roster in the spawn tool description this
+  ADR originally specified was removed by #1525; #2024 S4c restores a
+  discoverability surface.)
 - **Selection errors teach.** Unknown-name and label-validation errors
   list the configured names so an agent can offer the menu and confirm
   instead of dead-ending.
@@ -76,5 +75,20 @@ Working on an arbitrary new repository means adding a container config
 first (or instructing the agent to clone inside its container). Repo-local
 config overrides reintroduce location sensitivity for config *discovery*
 only and require a trust gate before repo-supplied argv may execute
-(#1409). The roster snapshot's staleness contract matches every other
-startup-loaded setting.
+(#1409). Since #2024 S4a that override is the one repo-local overlay
+(`<checkout>/.quecto/config.json`, merged entry-wise by the configuration
+capability) and the one trust record (`config-overlay-trust.json`,
+approved by `quecto config trust`); selection is launch policy in
+`application/subagents` over the launching agent's *checkout*, never the
+quecto base directory. An overlay that exists but was not applied makes
+an implicit `container: true` a refusal only when it *could* have changed
+the default: it is refused outright (a symbolic link), unparseable or failing the trust checks, or an
+untrusted document that declares `container_configs` — then the default
+it labels is unknown, so the launch must not quietly land in the global
+one. An untrusted overlay that declares no `container_configs` (say, one
+that only pins `agents.defaults`) cannot have changed the set, so the
+global default launches and the overlay's diagnostic travels as a warning;
+the rule reads the resolver's already-parsed top-level keys and applies
+nothing. An explicitly named config always launches from the global set,
+and a name the global set lacks fails naming the withheld overlay; every
+spawn result names the selected config and carries the layer diagnostics.

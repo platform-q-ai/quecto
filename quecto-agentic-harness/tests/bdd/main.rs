@@ -472,10 +472,6 @@ pub struct QuectoWorld {
     pub agent_cmd_last_command: Option<Arc<Mutex<String>>>,
     pub script_invocations: Arc<Mutex<Vec<serde_json::Value>>>,
     pub script_cleanup_targets: Arc<Mutex<Vec<String>>>,
-    /// Set by @serial scenarios that export QUECTO_RUNTIME_CONFIG_PATH so the
-    /// per-scenario Drop clears the process-wide var instead of leaking it
-    /// into later scenarios in the same bdd process.
-    pub restore_inherited_runtime_config: bool,
     /// Subagent spawn config for subagent scenarios
     pub subagent_config: Option<SubagentConfig>,
     /// Created subagent context
@@ -1428,6 +1424,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_discovery_steps;
 mod config_steps;
+mod container_mapping_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
 mod e2e_steps;
@@ -1727,8 +1724,9 @@ fn ask_owned_child_to_stop(
 impl QuectoWorld {
     /// A fresh world whose CLI context carries composition's sessions
     /// capability (#1970), its retained-context graph (#1978), the catalogue
-    /// handles (#1845), the provider-runtime builder and the tool-policy
-    /// persistence builder (#1849): every
+    /// handles (#1845), the provider-runtime builder, the tool-policy
+    /// persistence builder (#1849) and the container-config selection
+    /// builder (#2024 S4a): every
     /// `quecto agent …` run through `run_with_output` needs them or exits
     /// with "… capability not composed", exactly as the binary's `main`
     /// supplies them.
@@ -1743,6 +1741,8 @@ impl QuectoWorld {
             Some(quecto::composition::runtime::build_agent_provider);
         world.cli_context.tool_policy_persistence =
             Some(quecto::composition::tool_policy::build_tool_policy_persistence);
+        world.cli_context.container_config_selection =
+            Some(quecto::composition::container_configs::build_agent_container_config_selection);
         world
     }
 }
@@ -1792,10 +1792,6 @@ impl Drop for QuectoWorld {
                     .expect("run fixture process cleanup");
                 assert!(status.success(), "fixture process cleanup failed");
             }
-        }
-        if self.restore_inherited_runtime_config {
-            // SAFETY: the setting scenario is @serial and cucumber drops each world before the next serial scenario starts, so no concurrent env readers exist while the process-wide var is cleared.
-            unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };
         }
     }
 }

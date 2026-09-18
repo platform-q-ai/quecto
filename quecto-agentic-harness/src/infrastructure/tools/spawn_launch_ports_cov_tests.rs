@@ -95,6 +95,64 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     assert!(result.content.contains("environment_ref=env"));
 }
 
+/// The spawn result names the config the container was created with and
+/// carries the selection diagnostics verbatim (#2024 S4a review M): the
+/// model, not only the operator's stderr, learns which layers applied.
+#[tokio::test]
+async fn success_names_the_container_config_and_relays_the_selection_diagnostics() {
+    let tool = tool();
+    let env_ref = tool.environment_registry.mint_ref();
+    tool.environment_registry
+        .commit(crate::domain::environment_registry::EnvironmentRecord {
+            environment_ref: env_ref.clone(),
+            environment_id: "env-named".into(),
+            environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+            name: None,
+            workspace_path: std::path::PathBuf::from("/workspace"),
+            repository: String::new(),
+            script_name: "repo-r".into(),
+            retained_exec_argv: vec![],
+            retained_kill_argv: vec![],
+            retained_cleanup_argv: vec![],
+            retained_inspect_argv: vec![],
+            members: vec![],
+            status: crate::domain::environment_registry::EnvironmentStatus::Running,
+            metadata: serde_json::json!({}),
+            last_error: None,
+        });
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let identity = ports.allocate_identity(&config()).unwrap();
+    let silent = ports.success(&identity, Some(&env_ref));
+    assert!(
+        silent.content.contains(&format!(
+            "environment_ref={env_ref} container_config=repo-r workspace=/workspace."
+        )),
+        "{}",
+        silent.content
+    );
+    assert!(!silent.content.contains("diagnostic"), "{}", silent.content);
+    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None).await;
+    prepared.container_diagnostics = vec![
+        "repo-local config overlay /r/.quecto/config.json is not trusted (sha256 x) and was not applied; review it, then run `quecto config trust` from this directory".into(),
+    ];
+    let runtime = PreparedRuntime {
+        socket_path: std::path::PathBuf::from("/tmp/named.sock"),
+        pid: 0,
+        environment_ref: Some(env_ref.clone()),
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &config())
+        .await
+        .unwrap();
+    let result = ports.success(&identity, Some(&env_ref));
+    assert!(!result.is_error);
+    let expected = format!(
+        "Subagent 'worker' is running (uuid={}) environment_ref={env_ref} container_config=repo-r workspace=/workspace. Use agent_cmd to interact.\nConfiguration diagnostics:\nrepo-local config overlay /r/.quecto/config.json is not trusted (sha256 x) and was not applied; review it, then run `quecto config trust` from this directory",
+        identity.registry_key
+    );
+    assert_eq!(result.content, expected);
+}
+
 /// #1390 review finding: a join racing a kill must not register into a
 /// no-longer-running environment — the launch fails and the just-registered
 /// entry is removed again.

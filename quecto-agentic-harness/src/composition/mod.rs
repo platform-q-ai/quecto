@@ -2,6 +2,7 @@ pub mod active_session;
 pub mod catalogue;
 pub mod catalogue_defaults;
 pub mod configuration;
+pub mod container_configs;
 pub mod environments;
 pub mod find;
 pub mod fleet_settlement;

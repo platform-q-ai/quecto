@@ -51,9 +51,14 @@ pub enum OverlayState {
     /// Present but not approved: reported and not applied. `problem` is
     /// what `quecto config trust` would refuse it for, when it would — so
     /// the user is never sent to a command that will turn them away.
+    /// `sections` are the top-level keys the document declares — what the
+    /// withheld overlay *could* have changed, knowable without applying
+    /// any of it; empty when `problem` is set (a refused document
+    /// declares nothing).
     Untrusted {
         fingerprint: String,
         problem: Option<String>,
+        sections: Vec<String>,
     },
     /// Present but never applicable, whatever its content: not a regular
     /// file. Reported and not applied; `reason` says what it is instead.
@@ -157,6 +162,7 @@ impl ConfigSources {
                 OverlayState::Untrusted {
                     fingerprint,
                     problem: None,
+                    ..
                 },
             )) => lines.push(format!(
                 "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; review it, then run `quecto config trust` from this directory",
@@ -167,6 +173,7 @@ impl ConfigSources {
                 OverlayState::Untrusted {
                     fingerprint,
                     problem: Some(problem),
+                    ..
                 },
             )) => lines.push(format!(
                 "repo-local config overlay {} is not trusted (sha256 {fingerprint}) and was not applied; `quecto config trust` would refuse it as it stands: {problem}",

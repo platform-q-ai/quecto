@@ -30,6 +30,10 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// mirrored once into a private sidecar the child consumes at startup.
     parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
     parent_control_path: Option<PathBuf>,
+    /// What the container-config selection reported about the layers the
+    /// prepared child was selected from (#2024 S4a); relayed verbatim in
+    /// the spawn result so the model, not only stderr, sees it.
+    container_diagnostics: Vec<String>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -42,6 +46,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             initial_prompt_retry_deadline: None,
             parent_control: None,
             parent_control_path: None,
+            container_diagnostics: Vec::new(),
         }
     }
 
@@ -152,13 +157,14 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
-        // PR #1401 review: a container child must launch with the SAME config
-        // that authorized/created its environment. When the spawn call omits
-        // `config`, the container path (`load_container_config`) falls back to
-        // the parent's effective config — mirror that exact chain here so the
-        // child is never silently started on its default config while its
-        // environment was defined by the parent's. Local spawns keep the
-        // pre-existing explicit→inherited chain unchanged.
+        // The `--config` a container child is started with (PR #1401
+        // review, #2024 S4a): the spawn call's `config`, else the parent's
+        // own config file, else the inherited runtime path — the GLOBAL
+        // file only. The environment itself was created from the parent's
+        // effective configuration (global plus its checkout's trusted
+        // overlay); the child, running inside the container, has no
+        // checkout overlay to bind and never inherits one. Local spawns
+        // keep the pre-existing explicit→inherited chain unchanged.
         let effective_config = match config.container {
             crate::domain::subagent::ContainerSelection::Local => {
                 effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
@@ -200,13 +206,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         cli_args: &'b [std::ffi::OsString],
     ) -> LaunchFuture<'b, Result<Self::Prepared, DomainError>> {
         Box::pin(async move {
-            // The parent's own effective config (composition-plumbed CLI path,
-            // else the inherited runtime config) is the container-config
-            // fallback when the spawn call omits `config` (#1369 follow-up).
-            let parent_config = effective_config_path(
-                self.tool.parent_config_path.as_ref(),
-                inherited_runtime_config_path(),
-            );
             // Admission-enabled parents register the descendant before launch
             // and hand it the capability through a private sidecar (#1679 P3).
             let admission = crate::infrastructure::admission::process::current();
@@ -253,7 +252,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     admission_dir: admission_dir.as_deref(),
                 },
                 &self.tool.environment_registry,
-                parent_config.as_deref(),
+                self.tool.container_config_selection.as_deref(),
             )
             .await;
             if prepared.is_err() {
@@ -413,6 +412,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         config: &'b SubagentConfig,
     ) -> LaunchFuture<'b, Result<RegisteredLaunch, DomainError>> {
         Box::pin(async move {
+            // The selection diagnostics the prepared child carried belong
+            // to the spawn result (#2024 S4a): taken here, where the
+            // registered launch is assembled from what was prepared.
+            self.container_diagnostics = std::mem::take(&mut prepared.container_diagnostics);
             let agent_uuid = self
                 .agent_uuid
                 .as_ref()
@@ -587,8 +590,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         let env_ref = environment_ref
             .map(|r| {
                 // Members of one environment share its reported workspace, so
-                // the spawn result names it alongside the ref (#1369 slice 2).
-                let workspace = self
+                // the spawn result names it alongside the ref (#1369 slice
+                // 2) and the config it was created with (#2024 S4a): the
+                // model learns which container it landed in.
+                let details = self
                     .tool
                     .environment_registry
                     .get(r)
@@ -603,15 +608,29 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         } else {
                             ""
                         };
-                        format!(" workspace={}{sandbox}", record.workspace_path.display())
+                        format!(
+                            " container_config={} workspace={}{sandbox}",
+                            record.script_name,
+                            record.workspace_path.display()
+                        )
                     })
                     .unwrap_or_default();
-                format!(" environment_ref={r}{workspace}")
+                format!(" environment_ref={r}{details}")
             })
             .unwrap_or_default();
+        // The selection diagnostics, verbatim: an untrusted or refused
+        // overlay the launch did not apply is the model's to act on.
+        let diagnostics = if self.container_diagnostics.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\nConfiguration diagnostics:\n{}",
+                self.container_diagnostics.join("\n")
+            )
+        };
         ToolResult {
             content: format!(
-                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
+                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.{diagnostics}",
                 identity.session_name, identity.registry_key, env_ref
             ),
             is_error: false,

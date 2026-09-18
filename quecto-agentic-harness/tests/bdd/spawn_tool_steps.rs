@@ -795,27 +795,12 @@ fn given_script_spawn_via_parent_config(world: &mut QuectoWorld, script: String)
     rebuild_spawn_tool_with_parent_config(world, parent_config);
 }
 
-#[given(
-    expr = "script-managed subagent spawning is available through the inherited runtime config with default script {string}"
-)]
-fn given_script_spawn_via_inherited_runtime_config(world: &mut QuectoWorld, script: String) {
-    given_script_spawn(world, script, None, None);
-    // No composition-plumbed parent config path (the base SpawnTool from
-    // `given_script_spawn` carries none) — the only config source is the
-    // inherited QUECTO_RUNTIME_CONFIG_PATH a spawned child would receive.
-    let inherited = world.config_path.clone().expect("config path");
-    // SAFETY: the scenario is tagged @serial, so no other scenario runs concurrently in this process while the process-wide env is mutated.
-    unsafe { std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", inherited) };
-    world.restore_inherited_runtime_config = true;
-}
-
 #[given("script-managed subagent spawning is available with no parent config path")]
 fn given_script_spawn_no_config_source(world: &mut QuectoWorld) {
+    // The world's base SpawnTool has no parent config path, so its composed
+    // container-config selection has no launching-agent source (#2024
+    // S4a): a container spawn that names no file has nothing to load from.
     given_live_spawn_agent_cmd_mock_child(world);
-    // The world's base SpawnTool has no parent config path; clearing the
-    // inherited runtime config leaves genuinely NO container-config source.
-    // SAFETY: the scenario is tagged @serial, so no other scenario runs concurrently in this process while the process-wide env is mutated.
-    unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };
 }
 
 #[given(
@@ -834,7 +819,7 @@ fn given_script_child_running(world: &mut QuectoWorld, agent_id: String, task: S
     then_spawn_result_ok(world);
 }
 
-fn given_script_spawn(
+pub(crate) fn given_script_spawn(
     world: &mut QuectoWorld,
     default_script: String,
     baked_repo: Option<String>,
@@ -1040,7 +1025,7 @@ fn execute_spawn_json(world: &mut QuectoWorld, mut args: serde_json::Value) {
     execute_spawn_json_without_config(world, args);
 }
 
-fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::Value) {
+pub(crate) fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::Value) {
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
     world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {

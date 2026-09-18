@@ -57,6 +57,8 @@ mod delegated_children_roster;
 mod document_lock;
 #[path = "contracts/durable_prefix_observation.rs"]
 mod durable_prefix_observation;
+#[path = "contracts/effective_container_configs.rs"]
+mod effective_container_configs;
 #[path = "contracts/effort_default_persistence.rs"]
 mod effort_default_persistence;
 #[path = "contracts/effort_runtime.rs"]

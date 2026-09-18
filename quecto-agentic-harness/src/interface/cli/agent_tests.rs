@@ -17,6 +17,9 @@ fn default_ctx() -> CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
