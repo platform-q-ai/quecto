@@ -145,6 +145,10 @@ fn subagents_embed_teaches_container_environments() {
         "fresh clone of the config's `--repo`",
         "quecto container doctor",
         "config set --local container_configs",
+        // #2035: container: true is this repo's standard container.
+        "this repo's `standard` entry when the roster shows one",
+        "no global default overrides it",
+        "`quecto container init`",
         "sandbox",
         "\"mode\":\"existing\"",
         "environment_ref=C1",

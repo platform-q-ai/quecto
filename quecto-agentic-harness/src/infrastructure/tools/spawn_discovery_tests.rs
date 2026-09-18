@@ -246,7 +246,13 @@ fn the_definition_carries_one_compact_roster_line_only_when_composed() {
     let bare = crate::infrastructure::tools::spawn::SpawnTool::new(vec![])
         .with_parent_config_path(Some(cfg.clone()));
     let description = bare.definition().description;
-    assert!(description.contains("true starts a new container with the default config"));
+    assert!(
+        description.contains("true starts a new container with this repo's `standard` config when the roster shows one"),
+        "{description}"
+    );
+    // #2035: the rule is stated with the way to satisfy it.
+    assert!(description.contains("no global default overrides it"));
+    assert!(description.contains("run `quecto container init` first if it shows none"));
     assert!(!description.contains("Available container configs"));
 
     let composed = crate::composition::subagent_lifecycle::compose_launcher(

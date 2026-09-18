@@ -36,7 +36,7 @@ First bare `get_messages` returns the latest substantive assistant message, not 
 With `container_configs` configured, `spawn` can place a child in an isolated container: a **fresh clone of the config's `--repo` at its default branch** (no `--repo`: empty sandbox). The parent's working tree, branch and uncommitted changes are NOT inside; to work on a branch, push it and tell the child to fetch/checkout. Each config is self-contained (repo and auth baked in, no repo field).
 
 **Run a subagent in this repo's container** (six steps):
-1. `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `container_configs[]` with `name`, `default`, `source` (`overlay` = repo-bound, `global`), `repository`, `problem`, `joinable` (the spawn description's roster line shows the same set).
+1. `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `container_configs[]` with `name`, `default`, `source` (`overlay` = repo-bound, `global`), `repository`, `problem`, `joinable` (= the spawn description's `Available container configs:` line).
 2. `spawn {"agent_id":"…","task":"…","container":true}` — this repo's `standard` entry when the roster shows one (no global default overrides it; none? `quecto container init`), else the labelled default; or `"container":{"mode":"new","container_config":"<name>","name"?}` (`name` for later joins/kills).
 3. Read `container_config=<name>` in the result; confirm it is the repo meant.
 4. On failure the error quotes the script's stderr; run `quecto container doctor` here, apply the remedy, retry.
