@@ -62,17 +62,7 @@ pub fn compose_and_publish_runtime(
     // or binding set is rejected instead of replacing live budgets (#1679).
     let composed = match crate::infrastructure::admission::process::current() {
         Some(admission) => {
-            // A child inherits the parent's authority unconditionally (#2024
-            // S3, #2023): it composes against the published policy and never
-            // compares its own config's `admission` section (which S1 made
-            // global-only, so a child's explicit `--config` may differ or be
-            // `null`). Only a root validates its reload candidate.
-            let inherit = admission.inherits_authority();
-            let proposal = if inherit {
-                None
-            } else {
-                admission_candidate(config)
-            };
+            let (inherit, proposal) = admission_inheritance(&admission, config);
             ComposeProviderRuntimeUseCase::new().compose_and_publish(
                 &AdmissionProviderRuntimeFactory::new(admission.runtime_context().clone()),
                 &AdmissionRuntimeCandidate {
@@ -92,6 +82,28 @@ pub fn compose_and_publish_runtime(
         )?,
     };
     Ok(composed.snapshot)
+}
+
+/// Whether this process composes by inheriting the authority, and the
+/// candidate it offers otherwise. A child inherits the parent's authority
+/// unconditionally (#2024 S3, #2023): it composes against the published
+/// policy and never compares its own config's `admission` section (which S1
+/// made global-only, so a child's explicit `--config` may differ or be
+/// `null`). Only a root offers — and has validated — its reload candidate.
+pub fn admission_inheritance(
+    admission: &crate::infrastructure::admission::ProcessAdmission,
+    config: &Config,
+) -> (
+    bool,
+    Option<crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal>,
+) {
+    let inherit = admission.inherits_authority();
+    let proposal = if inherit {
+        None
+    } else {
+        admission_candidate(config)
+    };
+    (inherit, proposal)
 }
 
 /// The configured proposal offered to the restart-only admission factory. An

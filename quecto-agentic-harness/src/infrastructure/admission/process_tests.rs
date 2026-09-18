@@ -244,3 +244,37 @@ fn child_negotiation_consumes_its_sidecar_and_rejects_forgeries() {
     drop(parent);
     rt.block_on(server.shutdown());
 }
+
+/// M5c (#2024 S3): the binding kind is decided by how the process joined —
+/// a root never inherits (its own reload is validated), a child always does.
+#[test]
+fn a_root_never_inherits_and_a_child_always_does() {
+    let rt = runtime();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let server = rt
+        .block_on(AuthorityServer::start(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal(),
+        ))
+        .unwrap();
+    let root = negotiate(Negotiation::Root {
+        directory: directory.clone(),
+    })
+    .unwrap();
+    assert_eq!(root.kind(), BindingKind::Root);
+    assert!(!root.inherits_authority());
+    assert_eq!(root.directory(), directory);
+    assert!(root.connected());
+    assert_eq!(root.epoch(), 1);
+
+    let child_credential = rt.block_on(root.connection().register_child()).unwrap();
+    let context = temp.path().join("child.json");
+    write_admission_context(&context, &root.endpoint(), &child_credential).unwrap();
+    let child = negotiate(Negotiation::Child { context }).unwrap();
+    assert_eq!(child.kind(), BindingKind::Child);
+    assert!(child.inherits_authority());
+    assert_eq!(child.directory(), directory, "derived from the client dir");
+    assert!(child.connected());
+    rt.block_on(server.shutdown());
+}

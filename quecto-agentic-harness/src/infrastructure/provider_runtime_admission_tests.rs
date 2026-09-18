@@ -276,16 +276,24 @@ fn an_explicit_binding_still_wins_over_the_default() {
         ("*".into(), "second".into()),
     ]);
     let mut gates = gates();
-    gates.insert(
-        "second".into(),
-        Arc::new(NeverSend) as Arc<dyn AttemptAdmission>,
-    );
+    let account_gate = gates["account"].clone();
+    let second_gate: Arc<dyn AttemptAdmission> = Arc::new(NeverSend);
+    gates.insert("second".into(), second_gate.clone());
     let context = AdmissionRuntimeContext::new(
         proposal,
         gates,
         SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
     )
     .unwrap();
-    assert!(context.binding("openai-api").is_ok());
-    assert!(context.binding("unlisted").is_ok());
+    // The bound gate identity tells explicit from default (M5d): the explicit
+    // slot lands on its own alias's gate, an unlisted slot on the default's.
+    assert!(Arc::ptr_eq(
+        &context.binding("openai-api").unwrap().gate,
+        &account_gate
+    ));
+    assert!(Arc::ptr_eq(
+        &context.binding("unlisted").unwrap().gate,
+        &second_gate
+    ));
+    assert!(!Arc::ptr_eq(&account_gate, &second_gate));
 }
