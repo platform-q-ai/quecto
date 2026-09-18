@@ -18,7 +18,7 @@ turn — never tell the user to restart.
 
 ## Preconditions
 
-- `quecto version` works; `quecto status` exits 0 (its `Config:` line is the global file that `providers` and the credential store belong to; `QUECTO_BASE_DIR` moves both).
+- `quecto version` works; `quecto status` exits 0 (its `Config:` line is the global file; `providers`, `credentials.json` and `models.json` all live in that base dir — `QUECTO_BASE_DIR` moves them; `Workspace:` does not move).
 - For a repo default: you are in the repository root and `quecto status` shows `Overlay: none` or `(trusted)` (see `docs {"name": "config"}` for `(untrusted)`).
 - The model id is qualified: `provider/model` (`openai-api/gpt-5.6-luna`, `anthropic-api/claude-…`, `<models.json key>/<id>`). The writer does not check the id against the catalogue, so prove it runs (Verify).
 - Reasoning effort is per model: OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, every `openai-oauth` model) and xAI built-ins accept `low/medium/high…`; `openai-api` Chat Completions ids (`gpt-5.5`, mini/nano, codex) accept none; a `models.json` model only with `"reasoning": true`. A model with no effort control refuses `set_effort`; read `get_state`'s `effortLevels`, never guess.
@@ -30,12 +30,14 @@ turn — never tell the user to restart.
 ```
 quecto auth login --provider openai --token sk-proj-…        # → Credential stored for openai
 quecto auth login --provider anthropic --token sk-ant-…      # → Credential stored for anthropic
-quecto auth login --provider openai --oauth                   # browser flow
-quecto auth login --provider openai --device-code             # headless: prints a URL + code
 ```
 
-Ask the user for the key; do not echo it back, do not write it into any
-file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
+From an agent, **always pass `--token`**: without it (or with `--oauth`,
+which is the same thing) the command starts the browser OAuth flow and
+blocks until the callback arrives on `localhost:1455` — a tool call never
+returns from it. That flow, and `--device-code` (openai only: prints a URL
+and a code, then waits), are for a human at a terminal. Ask the user for
+the key; do not echo it back, do not write it into any file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 also work for one process. The store takes priority over
 `providers.openai.api_key` in the global file.
 
@@ -54,12 +56,12 @@ quecto config set --global agents.defaults.model '"openai-api/gpt-5.6-luna"'
 
 From a running session the same record is `set_model {"model":"openai-api/gpt-5.6-luna","persist":"local"}` (`"global"` for the global file; `set_effort` likewise) — it switches this session *and* pins; the TUI `/model` selector offers it with Tab. A refused pin (untrusted overlay, symbolic link, explicit `--config`, bare id) changes nothing.
 
-**3. Registry** (`~/.quecto/models.json`; start from `{"providers": {}}`; never edit harness source):
+**3. Registry** (`<base_dir>/models.json`; start from `{"providers": {}}`; never edit harness source):
 
 - Add a model to an existing provider: append to its `models` array (`id`, optional `name`, `contextWindow`, `maxTokens`, `reasoning`).
 - Add a provider on a runnable transport: `"api": "openai-completions"` or `"anthropic-messages"`, `baseUrl`, `"auth": {"mode":"apiKey","apiKey":"$MY_KEY"}` (an `$ENV` reference — a literal secret in `overrides` is rejected) or `{"mode":"oauth","oauthProvider":"openai"|"anthropic"}`. `google-generative-ai` is recognised but not runnable in this build.
 - Fix stale metadata: top-level `"overrides": {"openai-api/gpt-5.5": {"contextWindow": 999000}}`.
-- Refresh a provider's model list from its OpenAI-compatible `/models` endpoint: `quecto models discover <provider-key>` (rewrites only that provider's `models` array, atomically; `--watch --interval 3600` to keep it fresh).
+- Refresh a provider's model list from its OpenAI-compatible `/models` endpoint: `quecto models discover <provider-key>` — `<provider-key>` is a `models.json` provider with `"api": "openai-completions"` and a `baseUrl`; built-in slots are refused (`no refreshable catalogue source named 'openai-api'`). It rewrites only that provider's `models` array, atomically; `--watch --interval 3600` keeps it fresh.
 
 ## Verify
 
@@ -67,10 +69,12 @@ From a running session the same record is `set_model {"model":"openai-api/gpt-5.
 quecto auth status                                     # → Credentials:\n  openai (token) — active
 quecto config get --effective agents.defaults.model    # → "openai-api/gpt-5.6-luna"
 quecto status                                          # → Overlay: … (trusted)  Model: openai-api/gpt-5.6-luna  Effort: high
-quecto agent --no-session -m "Reply with exactly the word OK"   # → OK   (runs on the pinned model, from this directory)
+quecto agent --no-session -m "Reply with exactly the word OK"   # prints the reply only: OK
 ```
 
-The last line proves the id is runnable with the stored credential. Other
+The last line runs one model call on the pinned model from this directory
+and proves the id (and any effort) is runnable with the stored credential;
+skip it if the user does not want a model call. Other
 repositories keep the global default (`quecto config get --global
 agents.defaults.model` is unchanged by a repo pin). Your own running session
 is not switched: `set_model` for that. A registry edit shows up in the next
@@ -94,12 +98,13 @@ turn reloads it.
 |---|---|---|
 | `quecto auth status` → `no credentials stored` after a login | a different base dir | `echo $QUECTO_BASE_DIR`; log in with the same environment the agents run in |
 | `quecto status` → `OpenAI API: not set` although `auth status` is active | `status` reports the global file's `providers.openai.api_key` only | nothing to fix; trust `auth status` |
-| one-shot run fails with a credential/401 error | wrong slot (`openai-api` needs an API key, `openai-oauth` an OAuth login) or expired OAuth (`auth status` → `expired`) | pin the slot that matches the credential, or `quecto auth login … --oauth` again |
+| one-shot run fails with a credential/401 error | wrong slot (`openai-api` needs an API key, `openai-oauth` an OAuth login) or expired OAuth (`auth status` → `expired`) | pin the slot that matches the credential, or have the user run `quecto auth login … --oauth` at a terminal |
 | one-shot run reports an unknown model | id not in the catalogue for that slot | use an id the provider serves; for a custom provider add it to `models.json` first |
 | `refusing to write …: invalid effort level 'x'` | not one of `none, low, medium, high, xhigh, max` | pick one; the file is unchanged |
 | `set_effort` refused, `effortLevels: []` | the model has no effort control | leave effort unset |
 | a `models.json` provider is listed as not runnable | transport without an adapter, or credential reference unresolved | use `openai-completions`/`anthropic-messages`; export the `$ENV` the `apiKey` names |
-| `/model` still lacks the new entry | malformed `models.json` (last-good kept) | `jq . ~/.quecto/models.json` to find the error |
+| `/model` still lacks the new entry | malformed `models.json` (last-good kept) | `jq . <base_dir>/models.json` to find the error |
+| `quecto auth login` never returns | run without `--token` (browser OAuth flow waiting for a callback) | kill it; rerun with `--token`, or let the user finish it at a terminal |
 
 ## See also
 

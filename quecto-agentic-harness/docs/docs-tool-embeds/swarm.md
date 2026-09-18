@@ -29,8 +29,9 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
 - **Setup (preconditions → verify).** The standard container written by
   `quecto container init` is that adapter (its `create.sh` sets
   `QUECTO_SWARM_CONTAINER=isolated-pid-v1` and the checkout): follow
-  `docs {"name": "container-runtime"}` until `quecto container status` ends
-  with `ready:` and `quecto container doctor` exits 0, then spawn the
+  `docs {"name": "container-runtime"}` until `quecto container doctor` exits 0
+  and `quecto container status` reports the image present (its last line is
+  `ready:` unless you deliberately edited the Containerfile), then spawn the
   coordinator with `"container":{"mode":"new","container_config":"standard"}`.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists

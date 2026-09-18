@@ -12,16 +12,17 @@ result and prints the file it touched.
 
 | Situation | Page | Goal command | Verify (expected) | Rollback |
 |---|---|---|---|---|
-| First install: no credential yet | `docs {"name": "models"}` | `quecto auth login --provider openai --token <key>` (or `anthropic`, `--oauth`, `--device-code`) | `quecto auth status` → `openai (token) — active` | `quecto auth logout --provider openai` |
+| First install: no credential yet | `docs {"name": "models"}` | `quecto auth login --provider openai --token <key>` (or `--provider anthropic`; always `--token` from an agent — without it the browser OAuth flow blocks the call) | `quecto auth status` → `openai (token) — active` | `quecto auth logout --provider openai` |
 | New repo: a setting for this repo only, global untouched | `docs {"name": "config"}` | `quecto config set <dotted.key> <json>` | `quecto config get --effective <dotted.key>` prints the value; `quecto status` → `Overlay: <repo>/.quecto/config.json (trusted)` | `quecto config unset <dotted.key>`; `rm .quecto/config.json` drops the whole overlay |
-| Pin the default model (and effort) for this repo | `docs {"name": "models"}` | `quecto config set agents.defaults.model '"<provider/model>"'` | `quecto config get --effective agents.defaults.model` → `"<provider/model>"`; `quecto agent --no-session -m "Reply with exactly OK"` → `OK` | `quecto config unset agents.defaults.model` |
-| Enable the admission broker (one per host) | `docs {"name": "admission-broker"}` | `quecto config set --global admission '{…}'` then `quecto admission-broker install-service` | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto admission-broker uninstall-service` then `quecto config unset --global admission` |
+| Pin the default model (and effort) for this repo | `docs {"name": "models"}` | `quecto config set agents.defaults.model '"<provider/model>"'` | `quecto config get --effective agents.defaults.model` → `"<provider/model>"`; optionally one model call: `quecto agent --no-session -m "Reply with exactly OK"` prints `OK` | `quecto config unset agents.defaults.model` |
+| Enable the admission broker (one per host) | `docs {"name": "admission-broker"}` | `quecto config set --global admission '{"groups":…,"aliases":…,"bindings":…}'` (the exact JSON is on that page; `{}` is refused) then `quecto admission-broker install-service` (`--dry-run` first) | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto admission-broker uninstall-service` then `quecto config unset --global admission` |
 | A podman/docker container for this app | `docs {"name": "container-runtime"}` | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → last line `ready: spawn {"container":true} …`; `quecto container doctor` → every line `✓`, exit 0 | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard` |
 | A swarm (many agents, one container) | `docs {"name": "swarm"}` | the container row first, then `spawn … "container":{"mode":"new","container_config":"standard"}` | the spawn result names `container_config=standard`; `agent_cmd get_containers` lists it `running` | `agent_cmd kill_container` |
 
 A `quecto` command that changes a file prints the path it wrote and exits 0;
 a refusal prints the reason and exits 1 with the file byte-identical. Treat
-exit 1 as "not done", never retry the same command unchanged.
+exit 1 from a *write* as "not done", never retry the same command unchanged
+(a `config get` of an unset key also exits 1, with `is not set` — that is an answer).
 
 ## Order on a fresh machine
 
@@ -39,8 +40,8 @@ exit 1 as "not done", never retry the same command unchanged.
 | `<base_dir>/credentials.json` | API keys and OAuth tokens | `quecto auth login` only |
 | `<base_dir>/config.json` | the global file: `providers`, `admission`, global defaults | `quecto config set --global …` |
 | `<repo>/.quecto/config.json` | the repo overlay: `agents.defaults`, `tools`, `workflow`, `container_configs` | `quecto config set …`, `quecto container init` |
-| `<base_dir>/config-overlay-trust.json` | which overlay content is approved | `quecto config set`, `quecto config trust` |
-| `<base_dir>/models.json` | extra providers/models | you, with the schema on the `models` page |
+| `<base_dir>/config-overlay-trust.json` | which overlay content is approved | `quecto config set`, `quecto config trust`, `quecto container init` |
+| `<base_dir>/models.json` | extra providers/models | you, with the schema on the `models` page; `quecto models discover` |
 | `<base_dir>/admission/` | the broker's sockets, lock and journal | `quecto admission-broker run` / the service |
 | `<repo>/.quecto/containers/standard/` | Containerfile and runtime scripts | `quecto container init` |
 

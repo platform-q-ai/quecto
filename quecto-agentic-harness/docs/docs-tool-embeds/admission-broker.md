@@ -82,7 +82,7 @@ broker you address. Every output names the directory it addressed.
 
 - Linux with a systemd *user* session (`systemctl --user status` answers) for `install-service`; without one, run the broker under your own supervisor with `quecto admission-broker run --config <abs global config>`.
 - `quecto status` exits 0; its `Config:` line is the global file the section goes into (`QUECTO_BASE_DIR` moves it and the default `<base_dir>/admission` directory). The directory path must be short enough for a Unix socket (under ~100 characters).
-- No other broker holds `<base_dir>/admission` (a foreground `quecto admission-broker run` in a terminal, say): `quecto admission-broker status` → `not running for directory …`, exit 1, before you start.
+- No other broker holds `<base_dir>/admission` (a foreground `quecto admission-broker run` in a terminal, say): `quecto admission-broker status --directory <base_dir>/admission` → `not running for directory …`, exit 1, before you start. (Without `--directory` and before step 1, `status` says `config … not found; no `+'`admission`'+` section to address` or `no `+'`admission`'+` section is configured …` — also "no broker addressed".)
 - You know which provider slots the runtime constructs; with a default binding (`"*"`) you need not list them.
 
 ## Do
@@ -91,11 +91,10 @@ broker you address. Every output names the directory it addressed.
    ```
    quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
    ```
-   Expected: `set admission in /home/me/.quecto/config.json`, exit 0. Never write it into a repo overlay (refused: global-only).
-2. **Plan, then install the service** (systemd user unit `quecto-admission-broker.service`: `ExecStart=… admission-broker run --config "<abs>"`, `After=basic.target`, `Restart=on-failure`, `RestartPreventExitStatus=3`, `WantedBy=default.target`):
+   Expected: `set admission in /home/me/.quecto/config.json` (`(created)` appended when the file did not exist), exit 0. Never write it into a repo overlay (refused: global-only).
+2. **Plan** the service install — stop here and show the plan when the user asked only for a plan or a dry run:
    ```
    quecto admission-broker install-service --dry-run
-   quecto admission-broker install-service
    ```
    Expected dry run:
    ```
@@ -103,8 +102,12 @@ broker you address. Every output names the directory it addressed.
      - (dry run) write unit /home/me/.config/systemd/user/quecto-admission-broker.service
      - (dry run) systemctl --user daemon-reload && enable --now quecto-admission-broker.service
    ```
-   Expected install: `applied quecto-admission-broker.service (directory …/admission)` with "wrote unit …", "reloaded the user daemon", "enabled and started …". Idempotent: a second run reports "already up to date"; a changed binary or config path rewrites the unit and reports "restarted … on the rewritten unit". `--config <abs path>` pins another global file. Do not run `quecto admission-broker run` from a tool call: it stays in the foreground and ends with the call.
-3. **Restart agents** you want bounded: sessions started before the section existed compose without admission and keep running unbounded until restarted (a live reload never switches admission on or off — it reports the change and keeps the last-good runtime). Say this in your report; it includes the session you are running in.
+3. **Install** (systemd user unit `quecto-admission-broker.service`: `ExecStart=… admission-broker run --config "<abs>"`, `After=basic.target`, `Restart=on-failure`, `RestartPreventExitStatus=3`, `WantedBy=default.target`):
+   ```
+   quecto admission-broker install-service
+   ```
+   Expected: `applied quecto-admission-broker.service (directory …/admission)` with "wrote unit …", "reloaded the user daemon", "enabled and started …". Idempotent: a second run reports "already up to date"; a changed binary or config path rewrites the unit and reports "restarted … on the rewritten unit". `--config <abs path>` pins another global file. Do not run `quecto admission-broker run` from a tool call: it stays in the foreground and ends with the call.
+4. **Restart agents** you want bounded: sessions started before the section existed compose without admission and keep running unbounded until restarted (a live reload never switches admission on or off — it reports the change and keeps the last-good runtime). Say this in your report; it includes the session you are running in.
 
 ## Verify
 
@@ -112,7 +115,7 @@ broker you address. Every output names the directory it addressed.
 quecto admission-broker status
 ```
 
-Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`, and a fresh `quecto agent --no-session -m "Reply with exactly OK"` → `OK` while `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
+Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`. Optionally (one paid model call, for an operator at a terminal rather than from inside a session) a fresh `quecto agent --no-session -m "Reply with exactly OK"` prints `OK`, and `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
 
 ## Rollback
 
@@ -127,14 +130,14 @@ Then restart agents (they composed against the policy). Order matters: remove th
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `admission-broker: config … not found; no \`admission\` section to address` / `no \`admission\` section is configured; nothing to address (or pass --directory)` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
-| `refusing to write …: \`admission\` is global-only …` | `config set` without `--global` | add `--global` |
+| ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
+| ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
 | `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
-| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; compare the directory with `quecto config get --global admission.directory` |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line itself (`quecto config get --global admission.directory` answers only when you set it explicitly; unset = `<base_dir>/admission`) |
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path outside the base dir's ancestors, reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |
-| a new agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock … start \`quecto admission-broker run\` or remove the admission section` | section present, broker down | start the service, or roll back |
+| a new agent exits with ``admission negotiation failed: admission authority unreachable at …/client/admission.sock … start `quecto admission-broker run` or remove the admission section`` | section present, broker down | start the service, or roll back |
 | a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
 
@@ -194,7 +197,7 @@ children hold no inference permit. Children register a capability before socket
 readiness; socket readiness does not mean their first provider attempt is admitted.
 An interactive root can use reserved capacity while background children queue.
 
-For example, call `multi_tool_use.parallel` with two independent read-only tasks:
+For example, two independent read-only tasks in one turn — on an OpenAI model through its `multi_tool_use.parallel` wrapper (shown), on any other provider simply two `spawn` calls in the same turn:
 
 ```json
 {

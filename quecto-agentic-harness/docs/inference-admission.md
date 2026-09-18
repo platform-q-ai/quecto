@@ -249,8 +249,8 @@ supervise `quecto admission-broker run --config <abs global config>` yourself);
 `quecto status` exits 0 and its `Config:` line is the global file the section
 goes into (`QUECTO_BASE_DIR` moves it and the default `<base_dir>/admission`
 directory, whose path must be short enough for a Unix socket); no other broker
-holds the directory (`quecto admission-broker status` → `not running for
-directory …`, exit 1, before you start).
+holds the directory (`quecto admission-broker status --directory <base_dir>/admission`
+→ `not running for directory …`, exit 1, before you start).
 
 Activation (per host, per user):
 
@@ -261,11 +261,12 @@ Activation (per host, per user):
    ```sh
    quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
    ```
-   Expected: `set admission in /home/me/.quecto/config.json`, exit 0.
-2. Plan, then install the service:
+   Expected: `set admission in /home/me/.quecto/config.json` (`(created)`
+   appended when the file did not exist), exit 0.
+2. Plan the service install — stop here when only a plan or dry run was
+   asked for:
    ```sh
    quecto admission-broker install-service --dry-run
-   quecto admission-broker install-service
    ```
    Expected dry run:
    ```
@@ -273,20 +274,24 @@ Activation (per host, per user):
      - (dry run) write unit /home/me/.config/systemd/user/quecto-admission-broker.service
      - (dry run) systemctl --user daemon-reload && enable --now quecto-admission-broker.service
    ```
-   Expected install: `applied quecto-admission-broker.service (directory …)`
+3. Install:
+   ```sh
+   quecto admission-broker install-service
+   ```
+   Expected: `applied quecto-admission-broker.service (directory …)`
    with `wrote unit …`, `reloaded the user daemon`, `enabled and started …`
    (a second run: `unit … already up to date`). Do not run `quecto
    admission-broker run` from an agent tool call: it is foreground-only.
-3. Verify: `quecto admission-broker status` prints
+4. Verify: `quecto admission-broker status` prints
    `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`,
    exit 0; `systemctl --user status quecto-admission-broker.service` →
    `active (running)`.
-4. Start (or restart) every agent process. Roots register before composing a
+5. Start (or restart) every agent process. Roots register before composing a
    provider, so a session that cannot reach the authority exits with an error
    before any inference; a session started before the section existed keeps
    running unbounded until restarted (a live reload never switches admission
    on or off; it keeps the last-good runtime).
-5. Check a session: `get_state` carries `admission` (`directory`, `epoch`,
+6. Check a session: `get_state` carries `admission` (`directory`, `epoch`,
    `connected`, `authorityStatus`), and a queued attempt shows
    `progress.state = "waiting"` (TUI: "⏳ waiting for admission").
 
@@ -307,10 +312,10 @@ If it fails:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `admission-broker: config … not found; no \`admission\` section to address` / `no \`admission\` section is configured; nothing to address (or pass --directory)` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
-| `refusing to write …: \`admission\` is global-only …` | `config set` without `--global` | add `--global` |
+| ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
+| ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
 | `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
-| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than expected | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; `quecto config get --global admission.directory` |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than expected | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line (`config get --global admission.directory` answers only when set explicitly) |
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path (not the base dir or an ancestor), reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |

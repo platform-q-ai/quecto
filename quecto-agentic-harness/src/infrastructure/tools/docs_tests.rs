@@ -332,7 +332,7 @@ fn area_pages_share_the_runbook_shape() {
         "quecto auth status",
         "quecto auth logout --provider",
         "quecto models discover",
-        "~/.quecto/models.json",
+        "<base_dir>/models.json",
         "quecto config set agents.defaults.model",
         "quecto config set --global agents.defaults.model",
         "\"persist\":\"local\"",
