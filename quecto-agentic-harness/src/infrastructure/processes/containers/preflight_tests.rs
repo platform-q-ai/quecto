@@ -17,11 +17,15 @@ fn config(create: Vec<String>) -> DiagnosableContainerConfig {
     }
 }
 
+/// The `ok` lines of every mandatory check, as a shell `printf` body.
+const MANDATORY_OK_LINES: &str = "ok\\tjq\\tjq at /usr/bin/jq\\t\\nok\\tgit\\tgit at /usr/bin/git\\t\\nok\\trepo\\tnot needed\\t\\nok\\tstate-dir\\twritable\\t\\n";
+
 #[test]
-fn check_lines_are_parsed_in_order_and_other_lines_ignored() {
+fn check_lines_are_parsed_in_order_and_tabless_lines_ignored() {
     let checks = parse_checks(
-        b"ok\truntime-cli\tpodman at /usr/bin/podman\t\nnoise without tabs\nwarn\tgh\tgh missing\tinstall gh\nfail\timage\timage x is not present\tbuild it\nbogus\tstatus\tx\ty\n",
-    );
+        b"ok\truntime-cli\tpodman at /usr/bin/podman\t\nnoise without tabs\nwarn\tgh\tgh missing\tinstall gh\nfail\timage\timage x is not present\tbuild it\n",
+    )
+    .unwrap();
     assert_eq!(
         checks,
         vec![
@@ -45,9 +49,110 @@ fn check_lines_are_parsed_in_order_and_other_lines_ignored() {
             },
         ]
     );
+}
+
+#[test]
+fn a_check_shaped_line_that_is_not_a_check_refuses_the_report_naming_it() {
+    for (stdout, malformed) in [
+        (&b"ok\tjq\tfine\t\nfail\timage\n"[..], "fail\timage"),
+        (b"fail\timage", "fail\timage"),
+        (b"ok\t\tdetail\t", "ok\t\tdetail\t"),
+        (b"bogus\tstatus\tx\ty", "bogus\tstatus\tx\ty"),
+        (b"OK\tjq\tfine\t", "OK\tjq\tfine\t"),
+    ] {
+        assert_eq!(parse_checks(stdout).unwrap_err(), malformed);
+    }
+    assert_eq!(
+        parse_checks(b"ok\tjq\tfine").unwrap().len(),
+        1,
+        "three fields (no remedy) are a check"
+    );
+}
+
+#[test]
+fn a_script_that_dies_after_some_ok_lines_is_an_error_carrying_its_stderr() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let create = script(
+        dir.path(),
+        "dies.sh",
+        "printf 'ok\\truntime-cli\\tpodman\\t\\nok\\tjq\\tjq\\t\\n'\necho 'create: QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)' >&2\nexit 2",
+    );
+    let error = ScriptPreflight
+        .preflight(&config(create.clone()))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "create script `{}` exited exit status: 2 after 2 checks without reporting a failure: create: QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)",
+            create.join(" ")
+        )
+    );
+}
+
+#[test]
+fn a_successful_report_missing_a_mandatory_check_is_an_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let create = script(
+        dir.path(),
+        "short.sh",
+        "printf 'ok\\tjq\\tjq\\t\\nok\\tgit\\tgit\\t\\n'\nexit 0",
+    );
+    let error = ScriptPreflight
+        .preflight(&config(create.clone()))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "create script `{}` exited 0 without reporting the mandatory checks repo, state-dir (a report cut short is not a healthy one)",
+            create.join(" ")
+        )
+    );
+    let complete = script(
+        dir.path(),
+        "complete.sh",
+        &format!("printf '{MANDATORY_OK_LINES}'\nexit 0"),
+    );
+    assert_eq!(
+        ScriptPreflight.preflight(&config(complete)).unwrap().len(),
+        4
+    );
+}
+
+#[test]
+fn a_malformed_line_refuses_the_whole_report() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let create = script(
+        dir.path(),
+        "malformed.sh",
+        &format!("printf '{MANDATORY_OK_LINES}fail\\timage\\n'\nexit 1"),
+    );
+    let error = ScriptPreflight
+        .preflight(&config(create.clone()))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "create script `{}` printed a malformed check line \"fail\\timage\" (expected `ok|warn|fail<TAB>check<TAB>detail[<TAB>remedy]`)",
+            create.join(" ")
+        )
+    );
+}
+
+#[test]
+fn the_argv_and_the_stderr_of_a_report_never_carry_a_repo_token() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut create = script(
+        dir.path(),
+        "leaky.sh",
+        "echo \"create: cloning $2 failed\" >&2\nexit 2",
+    );
+    create.extend(["--repo".into(), "https://user:ghp_secret@host/x/y".into()]);
+    let error = ScriptPreflight.preflight(&config(create)).unwrap_err();
+    assert!(!error.contains("ghp_secret"), "{error}");
     assert!(
-        parse_checks(b"ok\t\tdetail\t").is_empty(),
-        "a nameless check is no check"
+        error.contains("--repo https://***@host/x/y")
+            && error.contains("cloning https://***@host/x/y failed"),
+        "{error}"
     );
 }
 

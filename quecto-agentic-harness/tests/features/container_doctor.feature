@@ -66,6 +66,21 @@ Feature: Container failures are diagnosable
     And the preflight should report a remedy for check "image" mentioning "docker build"
 
   @done @issue-2024 @container-spawn
+  Scenario: A --repo URL's embedded credentials never reach a preflight line
+    Given a controlled PATH whose fake podman reports every image as present
+    When I run the official docker create script with --preflight-only for image "quecto-box:local" and repository "https://user:ghp_secret@127.0.0.1:1/x/y"
+    Then the preflight should exit with a non-zero status
+    And the preflight should report check "repo" as failed naming "--repo https://***@127.0.0.1:1/x/y is unreachable"
+    And the output should not contain "ghp_secret"
+
+  @done @issue-2024 @container-spawn
+  Scenario: A --repo URL's embedded credentials never reach the spawn error
+    Given the default container config's create script fails with status 7 after printing "--repo https://user:ghp_secret@host/x/y is unreachable: fatal: could not read Username" on stderr
+    When I spawn script-managed subagent "container-redacted" with default selection and no config argument and task "CONTAINER_REDACTED_MARKER"
+    Then the spawn result should fail with "--repo https://***@host/x/y is unreachable: fatal: could not read Username"
+    And the spawn result should not contain "ghp_secret"
+
+  @done @issue-2024 @container-spawn
   Scenario: The host-local reference create script's preflight names an unreachable repository
     Given a controlled PATH whose fake podman reports every image as present
     When I run the host-local reference create script with --preflight-only and an unreachable repository
@@ -101,6 +116,52 @@ Feature: Container failures are diagnosable
     When I run quecto with arguments "container doctor --name nope"
     Then the exit code should be 1
     And stderr should contain "unknown container config 'nope'"
+
+  @done @issue-2024 @container-spawn
+  Scenario: quecto container doctor never prints the credentials embedded in a config's --repo
+    Given the checkout binds itself to the official docker create script with repository "https://user:ghp_secret@127.0.0.1:1/x/y" under a controlled PATH whose fake podman reports every image as present
+    When I run quecto with arguments "container doctor"
+    Then the exit code should be 1
+    And the output should contain "(create: bash "
+    And the output should contain "--repo https://***@127.0.0.1:1/x/y --image quecto-box:local)"
+    And the doctor output should show check "repo" as failed with a remedy mentioning "check the URL"
+    And the output should not contain "ghp_secret"
+
+  @done @issue-2024 @container-spawn
+  Scenario: quecto container doctor fails closed when the real create script dies after its first checks
+    Given the checkout binds itself to the official docker create script with a reachable local repository under a controlled PATH whose fake podman reports every image as present
+    And the bound create script runs with QUECTO_REPO_CHECK_TIMEOUT set to "abc"
+    When I run quecto with arguments "container doctor"
+    Then the exit code should be 1
+    And stderr should contain "exited exit status: 2 after 4 checks without reporting a failure"
+    And stderr should contain "QUECTO_REPO_CHECK_TIMEOUT must be a positive integer (seconds)"
+    And the output should not contain "checks failed"
+
+  @done @issue-2024 @container-spawn
+  Scenario: quecto container doctor fails closed when a create script exits non-zero after passing checks
+    Given the checkout binds itself to a create script that prints 4 passing checks then exits 2 with usage text "usage: fake-create --state-dir <dir> [--repo <url>]"
+    When I run quecto with arguments "container doctor"
+    Then the exit code should be 1
+    And stderr should contain "exited exit status: 2 after 4 checks without reporting a failure: usage: fake-create --state-dir <dir> [--repo <url>]"
+    And the output should not contain "checks failed"
+
+  @done @issue-2024 @container-spawn
+  Scenario: quecto container doctor refuses a malformed check line instead of skipping it
+    Given the checkout binds itself to a create script whose preflight prints a cut-short "fail" line for check "image"
+    When I run quecto with arguments "container doctor"
+    Then the exit code should be 1
+    And stderr should contain "printed a malformed check line"
+    And stderr should contain "expected `ok|warn|fail<TAB>check<TAB>detail[<TAB>remedy]`"
+    And the output should not contain "checks failed"
+
+  @done @issue-2024 @container-spawn
+  Scenario: quecto container doctor refuses to diagnose over an untrusted overlay in its own words
+    Given the checkout carries an untrusted overlay binding container config "r" with repository "https://example.test/repo-r"
+    When I run quecto with arguments "container doctor"
+    Then the exit code should be 1
+    And stderr should contain "container doctor refused: the checkout's repo-local config overlay was not applied"
+    And stderr should contain "quecto config trust"
+    And the output should not contain "to launch"
 
   @done @issue-2024 @container-spawn
   Scenario: quecto container doctor reports a create script without preflight support

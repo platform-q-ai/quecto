@@ -35,6 +35,11 @@
 set -euo pipefail
 
 log() { printf 'container-runtime-docker create: %s\n' "$*" >&2; }
+# A --repo URL may carry credentials (https://user:token@host/…); every
+# message that names it shows the URL with its userinfo replaced by ***.
+# The token stays in the config file and the clone; never in a preflight
+# line, a log line, or the create result.
+redact_url() { printf '%s' "$1" | sed -E 's#(://)[^/@]+@#\1***@#g'; }
 # Distinct exit codes so a failure is classifiable from its status alone.
 EXIT_USAGE=2
 EXIT_NO_RUNTIME=3
@@ -85,6 +90,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || usage "--state-dir is required"
+repo_shown="$(redact_url "$repo")"
 
 # --- Preflight ------------------------------------------------------------
 # Every check reports through `report`; the mode decides what a failure
@@ -155,7 +161,7 @@ if [ -n "$repo" ]; then
   if git_path="$(command -v git 2>/dev/null)"; then
     report ok git "git at $git_path" ""
   else
-    report fail git "git is not on PATH (needed to clone --repo $repo)" \
+    report fail git "git is not on PATH (needed to clone --repo $repo_shown)" \
       "install git" "$EXIT_NO_GIT"
   fi
 else
@@ -223,14 +229,14 @@ if [ -n "$repo" ]; then
     repo_error="$(GIT_ALLOW_PROTOCOL="file:https:ssh:git" GIT_TERMINAL_PROMPT=0 \
       bounded git ls-remote --exit-code -- "$repo" HEAD 2>&1 >/dev/null)" || repo_rc=$?
     if [ "$repo_rc" = 0 ]; then
-      report ok repo "--repo $repo is reachable" ""
+      report ok repo "--repo $repo_shown is reachable" ""
     elif [ "$repo_rc" = 2 ] && [ -z "$repo_error" ]; then
       # `--exit-code` 2: reachable, no HEAD — a freshly initialised
       # repository, which the clone below accepts.
-      report warn repo "--repo $repo is reachable but empty (no HEAD)" \
+      report warn repo "--repo $repo_shown is reachable but empty (no HEAD)" \
         "push an initial commit if members are expected to find one"
     elif [ "$repo_rc" = 124 ]; then
-      report fail repo "--repo $repo did not answer within ${probe_timeout}s" \
+      report fail repo "--repo $repo_shown did not answer within ${probe_timeout}s" \
         "check the host, your network and credentials (ssh key or 'gh auth login'); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_REPO_UNREACHABLE"
     else
       # git's first `fatal:` line names the cause; the trailing advice
@@ -240,11 +246,11 @@ if [ -n "$repo" ]; then
         case "$line" in fatal:*) repo_cause="$line"; break ;; esac
       done <<<"$repo_error"
       repo_error="${repo_cause:-$(last_line "$repo_error")}"
-      report fail repo "--repo $repo is unreachable: ${repo_error:-git ls-remote exited $repo_rc}" \
+      report fail repo "--repo $repo_shown is unreachable: ${repo_error:-git ls-remote exited $repo_rc}" \
         "check the URL, your network and credentials (ssh key or 'gh auth login'), or fix --repo in the container config" "$EXIT_REPO_UNREACHABLE"
     fi
   else
-    report warn repo "--repo $repo was not checked: git is missing" "fix the git check first"
+    report warn repo "--repo $repo_shown was not checked: git is missing" "fix the git check first"
   fi
 else
   report ok repo "not needed: sandbox config (no --repo)" ""
@@ -337,7 +343,7 @@ printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 child_cwd="$workspace_path"
 source="none"
 if [ -n "$repo" ]; then
-  log "checking out $repo"
+  log "checking out $repo_shown"
   # SECURITY (PR #1401 review): this clone runs on the HOST, before any
   # container exists. Whitelist git transports so command-running helpers
   # (`ext::sh -c ...`) cannot execute host commands — a containment bypass
@@ -525,6 +531,6 @@ jq -cn \
   --arg container "$container" \
   --arg cli "$cli" \
   --arg source "$source" \
-  --arg repository "$repo" \
+  --arg repository "$repo_shown" \
   --arg admission "$admission_capability" \
   '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

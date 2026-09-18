@@ -52,7 +52,7 @@ impl DiagnoseContainerRuntime {
                 config: config.name,
                 detail: format!(
                     "create script `{}` reported no preflight checks",
-                    config.create.join(" ")
+                    crate::domain::redaction::redact_url_userinfo(&config.create.join(" "))
                 ),
             });
         }

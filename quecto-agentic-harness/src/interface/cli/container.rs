@@ -11,6 +11,7 @@ use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeDiagnosis, ContainerRuntimeTarget,
 };
 use crate::application::environments::use_cases::DiagnoseContainerRuntime;
+use crate::domain::redaction::redact_url_userinfo;
 
 /// Composition's builder of the container-runtime doctor: the create
 /// preflight of the effective container config, over the run's own
@@ -88,10 +89,12 @@ fn cmd_doctor(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &m
 }
 
 fn present(diagnosis: &ContainerRuntimeDiagnosis, stdout: &mut String) {
+    // The create argv names the config's `--repo`; a token embedded in
+    // it belongs to the config file, not the terminal.
     stdout.push_str(&format!(
         "container config \"{}\" (create: {})\n",
         diagnosis.config,
-        diagnosis.create.join(" ")
+        redact_url_userinfo(&diagnosis.create.join(" "))
     ));
     let width = diagnosis
         .checks
